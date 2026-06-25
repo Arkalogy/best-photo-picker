@@ -45,7 +45,7 @@ jobs:
     runs-on: macos-14 # Apple Silicon; arm64-only artifact (Intel deferred)
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Verify tag matches package version
         # Same guard as publish.yml: never attach an app whose internal
@@ -62,7 +62,7 @@ jobs:
           fi
           echo "OK: tag $TAG_VERSION matches package and tauri.conf"
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11" # pinned — matches the sidecar/CI pin
 
@@ -77,7 +77,7 @@ jobs:
       - name: Build sidecar (PyInstaller)
         run: bash desktop/build-sidecar.sh
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "20"
 
@@ -131,7 +131,7 @@ jobs:
 
       - name: Upload smoke-test artifact (workflow_dispatch only)
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: macos-dmg
           path: BestPhotoPicker-macOS-arm64.dmg
