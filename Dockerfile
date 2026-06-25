@@ -1,5 +1,5 @@
 # Stage 1: Build dlib and other compiled dependencies
-FROM python:3.11-slim AS builder
+FROM python:3.14-slim AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake build-essential libopenblas-dev liblapack-dev && \
@@ -27,7 +27,7 @@ RUN pip install --no-cache-dir --prefix=/install ".[web,faces,nudity,heic]"
 
 
 # Stage 2: Slim runtime
-FROM python:3.11-slim
+FROM python:3.14-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libopenblas0 liblapack3 libgl1 libglib2.0-0 && \
