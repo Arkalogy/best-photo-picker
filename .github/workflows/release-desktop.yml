@@ -1,0 +1,138 @@
+name: Desktop App (macOS)
+
+# Builds the signed + notarized macOS desktop app (DMG) and attaches it
+# to the GitHub Release that triggered the run. Mirrors publish.yml's
+# safety: fires ONLY when a Release is *published* (the explicit button
+# on the Releases page) — drafting, saving, or pushing never triggers
+# it. workflow_dispatch is a build-only smoke test (no upload) — use it
+# to validate the signing/notarization chain WITHOUT cutting a release
+# tag (notarization typically takes 2-3 tries to get right).
+#
+# Code signing + notarization (decision 2026-06-17, supersedes the
+# 2026-06-11 unsigned decision): the app is signed with the Arkalogy
+# Developer ID certificate and notarized by Apple so it opens on
+# double-click — no Gatekeeper "Open Anyway" detour. Tauri reads the
+# six APPLE_* env vars below and signs + notarizes + staples
+# automatically; no manual codesign/notarytool calls needed. If the
+# secrets are absent (e.g. a fork), the build still produces an
+# UNSIGNED DMG so CI doesn't hard-fail — only Arkalogy releases are
+# signed. pipx remains the canonical install path for technical users;
+# this DMG is the front door for non-technical users.
+#
+# Required repo secrets (maintainer sets these once — see
+# docs/go-live-runbook.md and docs/macos-signing.md):
+#   APPLE_CERTIFICATE           base64 of the Developer ID Application .p12
+#   APPLE_CERTIFICATE_PASSWORD  password used when exporting the .p12
+#   APPLE_SIGNING_IDENTITY      "Developer ID Application: NAME (TEAMID)"
+#   APPLE_ID                    Apple account email (for notarization)
+#   APPLE_PASSWORD              app-specific password (NOT the account pw)
+#   APPLE_TEAM_ID               10-char Apple Developer Team ID
+#
+# Cost note: macOS runners bill at 10x Linux minutes and the
+# torch-bundling sidecar build is heavy (~20-30 min wall). That cost
+# is incurred only on explicit release publishes and manual smoke runs.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write # gh release upload
+
+jobs:
+  build-macos-app:
+    runs-on: macos-14 # Apple Silicon; arm64-only artifact (Intel deferred)
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify tag matches package version
+        # Same guard as publish.yml: never attach an app whose internal
+        # version disagrees with the release tag. Only meaningful on the
+        # release event; the workflow_dispatch smoke path is exempt.
+        if: github.event_name == 'release'
+        run: |
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          PKG_VERSION=$(python3 -c "import sys; sys.path.insert(0, '.'); from bpp import __version__; print(__version__)")
+          TAURI_VERSION=$(python3 -c "import json; print(json.load(open('desktop/src-tauri/tauri.conf.json'))['version'])")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ] || [ "$TAG_VERSION" != "$TAURI_VERSION" ]; then
+            echo "::error::Tag '$TAG_VERSION' vs package '$PKG_VERSION' vs tauri.conf '$TAURI_VERSION' — versions must all agree. Bump pyproject.toml, bpp/__init__.py, and desktop/src-tauri/tauri.conf.json before tagging."
+            exit 1
+          fi
+          echo "OK: tag $TAG_VERSION matches package and tauri.conf"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11" # pinned — matches the sidecar/CI pin
+
+      - name: Install bpp + PyInstaller
+        # Full extras so the frozen sidecar has feature parity with a
+        # maxed-out pip install (optional features can't pip-install
+        # themselves inside a frozen binary at runtime).
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[web,heic,faces,raw,nudity,inpaint]" pyinstaller
+
+      - name: Build sidecar (PyInstaller)
+        run: bash desktop/build-sidecar.sh
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install desktop deps
+        working-directory: desktop
+        run: npm ci
+
+      - name: Build Tauri app (signed + notarized DMG)
+        # Tauri signs + notarizes + staples automatically when the
+        # APPLE_* env vars are present. If they're absent (a fork
+        # without the secrets), it falls back to an unsigned DMG rather
+        # than failing the build. --bundles dmg gives the familiar
+        # double-click → drag-to-Applications installer.
+        working-directory: desktop
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npx tauri build --bundles dmg
+
+      - name: Rename DMG to a stable, version-less asset name
+        # The download page links to the "latest release" stable URL
+        # (…/releases/latest/download/<name>), which can't carry a
+        # version in the filename. Tauri emits a versioned DMG; copy it
+        # to the stable name the page expects.
+        run: |
+          DMG_DIR="desktop/src-tauri/target/release/bundle/dmg"
+          SRC=$(ls "$DMG_DIR"/*.dmg | head -1)
+          OUT="BestPhotoPicker-macOS-arm64.dmg"
+          cp "$SRC" "$OUT"
+          ls -lh "$OUT"
+          echo "ARTIFACT=$OUT" >> "$GITHUB_ENV"
+
+      - name: Verify the DMG is notarized (release only)
+        # Gatekeeper assessment proves the staple worked — a green
+        # "accepted source=Notarized Developer ID" is the whole point.
+        # Non-blocking on the smoke path (forks/unsigned builds).
+        if: github.event_name == 'release'
+        run: |
+          spctl -a -t open --context context:primary-signature -vv "$ARTIFACT" 2>&1 || {
+            echo "::warning::spctl assessment did not report Notarized — verify signing secrets are set"; }
+
+      - name: Upload to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${GITHUB_REF#refs/tags/}" "$ARTIFACT" --clobber
+
+      - name: Upload smoke-test artifact (workflow_dispatch only)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: BestPhotoPicker-macOS-arm64.dmg
+          retention-days: 7

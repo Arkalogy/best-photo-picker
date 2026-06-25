@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Best Photo Picker</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      background: #000;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      color: #fff;
+      -webkit-user-select: none;
+      user-select: none;
+      overflow: hidden;
+    }
+
+    .splash {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .logo-mark img {
+      width: 96px;
+      height: 96px;
+      border-radius: 20px;
+    }
+
+    .product-name {
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      color: #fff;
+    }
+
+    .status {
+      font-size: 12px;
+      font-weight: 400;
+      color: rgba(255,255,255,0.4);
+      margin-top: -8px;
+    }
+
+    .progress-track {
+      width: 200px;
+      height: 2px;
+      background: rgba(255,255,255,0.08);
+      border-radius: 1px;
+      overflow: hidden;
+      margin-top: 4px;
+    }
+    .progress-bar {
+      height: 100%;
+      width: 30%;
+      background: linear-gradient(90deg, #f06850, #9b59b6);
+      border-radius: 1px;
+      animation: slide 1.8s ease-in-out infinite;
+    }
+    @keyframes slide {
+      0%   { transform: translateX(-100%); }
+      50%  { transform: translateX(350%); }
+      100% { transform: translateX(-100%); }
+    }
+
+    .footer {
+      position: absolute;
+      bottom: 20px;
+      font-size: 11px;
+      color: rgba(255,255,255,0.2);
+      letter-spacing: 0.01em;
+    }
+  </style>
+</head>
+<body>
+  <div class="splash">
+    <div class="logo-mark"><img src="splash-icon.png" alt="Best Photo Picker"></div>
+    <div class="product-name">Best Photo Picker</div>
+    <div class="status">Starting&hellip;</div>
+    <div class="progress-track"><div class="progress-bar"></div></div>
+  </div>
+  <div class="footer">Arkalogy</div>
+</body>
+</html>

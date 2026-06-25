@@ -1,0 +1,120 @@
+name: Publish to PyPI
+
+# Fires only when a GitHub Release is *published* (the button on
+# the Releases page). Drafting or saving a release does NOT trigger
+# this — that's the safety: nothing publishes until you explicitly
+# hit Publish.
+on:
+  release:
+    types: [published]
+
+# Allow manual dry-run from the Actions tab without publishing
+# anything (workflow_dispatch with publish=false). Useful to verify
+# the build artifacts before tagging a real release.
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Actually publish to PyPI? (false = build-only smoke test)"
+        required: true
+        default: "false"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    name: Build wheel + sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify tag matches package version
+        # Guard against shipping a wheel whose internal version disagrees
+        # with the git tag that triggered the release. PyPI uploads are
+        # immutable, so a mismatch ships a permanently-mislabelled artifact
+        # under a release that "doesn't exist" to `pip install <pkg>==<tag>`.
+        # Only runs on `release: published`; workflow_dispatch (the build-
+        # only smoke path) is exempt because GITHUB_REF there isn't a tag.
+        if: github.event_name == 'release'
+        run: |
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          PKG_VERSION=$(python -c "import sys; sys.path.insert(0, '.'); from bpp import __version__; print(__version__)")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Release tag '$TAG_VERSION' does not match package version '$PKG_VERSION'. Bump pyproject.toml and bpp/__init__.py before tagging, or delete this tag and re-tag once versions agree."
+            exit 1
+          fi
+          echo "OK: tag $TAG_VERSION matches package version $PKG_VERSION"
+
+      - name: Install build tools
+        run: pip install --upgrade pip build
+
+      - name: Build package
+        run: python -m build
+
+      - name: Inspect built distributions
+        # Sanity: dist filenames should start with `bppicker-` (the PyPI
+        # distribution name). If they say `bpp-`, the rename in
+        # pyproject.toml didn't land — fail loudly here rather than
+        # publishing under the wrong name.
+        run: |
+          ls -la dist/
+          for f in dist/*; do
+            base=$(basename "$f")
+            case "$base" in
+              bppicker-*) echo "OK: $base" ;;
+              *) echo "FAIL: $base does not start with 'bppicker-'"; exit 1 ;;
+            esac
+          done
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    # Only run on `release: published`, OR on workflow_dispatch with
+    # inputs.publish == 'true'. The build-only path stops after `build`.
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true')
+    permissions:
+      # Required for PyPI Trusted Publisher (OIDC). No API token is
+      # stored — PyPI verifies the GitHub OIDC claim against the
+      # publisher binding configured at:
+      #   https://pypi.org/manage/account/publishing/
+      # Set up the publisher under repo `Arkalogy/best-photo-picker`,
+      # workflow filename `publish.yml`, environment name "pypi".
+      id-token: write
+
+    environment:
+      # Concentrates publish credentials/policy in one GitHub
+      # environment (Settings → Environments). Lets you require
+      # protection rules (manual approval, branch restrictions,
+      # secret rotation reminders) without touching the workflow.
+      name: pypi
+      url: https://pypi.org/p/bppicker
+
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # `skip-existing` makes a re-run of a partially-published
+          # release a no-op for the already-uploaded files instead of
+          # erroring. Doesn't bypass the "version is permanent" rule
+          # — re-uploading a *different* file with the same version
+          # still fails.
+          skip-existing: true
+          verbose: true

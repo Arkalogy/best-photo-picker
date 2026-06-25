@@ -1,0 +1,185 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+# Distribution name on PyPI. The original `bpp` is taken (a 2014
+# bioinformatics package), so we publish as `bppicker`. The Python
+# *import* package stays `bpp` — `pip install bppicker` then
+# `import bpp` is the contract.
+name = "bppicker"
+version = "0.1.0"
+description = "Local-first photo curation tool — score, deduplicate, and select the best photos from large collections"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+license = "MIT"
+authors = [{name = "Arkalogy", email = "support@arkalogy.com"}]
+keywords = ["photo", "photos", "photo-picker", "photo-curation", "photo-selection", "photo-album", "face-recognition", "image-scoring", "local-first", "self-hosted", "google-photos-alternative", "family-photos", "offline", "privacy", "burst-photos"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: MIT License",
+    # Python version classifiers must match the CI matrix in
+    # .github/workflows/ci.yml. The project pins to 3.11 only
+    # (Tauri sidecar version pin); 3.12 / 3.13 are untested. Bring
+    # them back here only after CI matrix expansion + a green run.
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Multimedia :: Graphics",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+]
+dependencies = [
+    "numpy>=1.24",  # used at module-top-level in 40+ files; declare explicitly
+    "opencv-python-headless>=4.8",
+    "Pillow>=10.3",  # 10.0-10.2 had CVE-2023-50447 (RCE) + CVE-2023-44271 (DoS)
+    "PyYAML>=6.0",
+    "tqdm>=4.65",
+    "onnxruntime>=1.16",
+    "qrcode[pil]>=7.0",
+    "cryptography>=42",  # Ed25519 signed-registry verifier (Batch 8 / item 23)
+]
+
+[project.optional-dependencies]
+heic = ["pillow-heif>=0.13"]
+web = ["flask>=3.1.3"]  # 3.1.3 fixes CVE-2026-27205
+faces = ["face_recognition>=1.3", "scipy>=1.10", "mediapipe>=0.10"]
+# Pinned tight: the bundled `320n.onnx` SHA-256 lives in
+# bpp/scoring/nudity.py:_EXPECTED_MODEL_SHA256. A new nudenet major
+# could silently ship a different model file; bumping the upper
+# bound requires re-pinning the SHA after a quality check.
+nudity = ["nudenet>=3.3,<4"]
+# CLIP semantic search and pet detection (YOLOv11n) both run via the
+# base `onnxruntime` dependency — the model weights are downloaded at
+# first use, so there's no extra Python package to install. (Earlier
+# pyproject snapshots declared empty `clip = []` / `pets = []` extras;
+# they were decorative — `pip install bppicker[pets]` installed
+# nothing — and have been removed. License gating on the AGPL-3.0
+# YOLOv11n weights happens at the model-download layer, documented in
+# NOTICE.txt.)
+raw = ["rawpy>=0.21"]
+# Pin to 0.1.0: later releases pin Pillow upper bounds that conflict
+# with our base Pillow>=10 / break HEIC support.
+#   * 0.1.0 — no Pillow pin (compatible with Pillow 10/11/12)
+#   * 0.1.1 — pillow<11      (forces Pillow downgrade)
+#   * 0.1.2 — pillow<10      (forces Pillow 9.5 → silently breaks HEIC,
+#                             reproduced in bug-fix commit f0dba2e)
+inpaint = ["simple-lama-inpainting==0.1.0"]
+dev = [
+    "bppicker[heic,web,faces,nudity,raw]",
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    # pytest-xdist gives ~2x test-job speedup in CI via parallel
+    # workers. We use --dist=loadfile (all tests in a file run in the
+    # same worker) so tests that share module-level globals
+    # (SmartAlbumRegistry, ModelSingleton instances, ctx fixtures)
+    # don't race across workers.
+    "pytest-xdist>=3.5",
+    # Property-based testing for parsers that handle untrusted input
+    # (EXIF blobs, filenames, share-token URLs). Modest --max-examples
+    # keeps CI under 10s per test.
+    "hypothesis>=6.100",
+    # pytest-randomly is loaded but disabled by default (-p no:randomly in
+    # pyproject.toml addopts). The weekly Randomized workflow re-enables it
+    # to catch order-dependent isolation regressions before they pile up.
+    "pytest-randomly>=3.15",
+    # Pinned exactly: CI's lint gate runs `ruff format --check .`, and
+    # ruff's formatter rules shift between releases. An unpinned ruff
+    # (CI did `pip install ruff`) drifts from whatever devs have locally,
+    # silently failing the gate on the next release PR. Bump deliberately.
+    "ruff==0.15.9",
+    "mypy>=1.8",
+    # pre-commit framework runs the .pre-commit-config.yaml hooks
+    # before each git commit. Today the only hook is the
+    # eslint-globals.json drift check (catches "added a JS function
+    # but forgot to regenerate the globals allowlist" — that error
+    # used to bite weeks later when the CI lint gate fired on
+    # PR -> main). Contributors install once after clone with
+    # `pre-commit install`; documented in CONTRIBUTING.md.
+    "pre-commit>=3.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Arkalogy/best-photo-picker"
+Repository = "https://github.com/Arkalogy/best-photo-picker"
+Issues = "https://github.com/Arkalogy/best-photo-picker/issues"
+
+[project.scripts]
+bpp = "bpp.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["bpp"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+  # Heavy / repo-local artifacts
+  "docs/screenshots/**",
+  "desktop/**",
+  ".github/**",
+  ".githooks/**",
+  "tests-e2e/**",
+  "playwright-report/**",
+  "playwright.config.mjs",
+  # Hypothesis test cache — written during pytest, pure noise on PyPI
+  ".hypothesis/**",
+  # JS / frontend dev tooling — not needed at runtime
+  "tsconfig.json",
+  "vitest.config.mjs",
+  "eslint.config.js",
+  ".prettierrc.json",
+  ".prettierignore",
+  "package.json",
+  "package-lock.json",
+  # Repo-level config + ops scripts
+  ".pre-commit-config.yaml",
+  ".dockerignore",
+  ".gitattributes",
+  "scripts/apply_branch_protection.sh",
+  # Per-version release notes ship via CHANGELOG.md, not separate files
+  "docs/release-notes-*.md",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+# L1: surface assertion context automatically. -ra prints a one-line
+# summary block at the end of any non-pass; --tb=short trims the
+# traceback to the "code line + the values that didn't match" part —
+# the most readable form for failed asserts. -p no:cacheprovider
+# avoids a `.pytest_cache` write fight when tests run in parallel.
+addopts = "-ra --tb=short --strict-markers --strict-config -p no:cacheprovider"
+markers = [
+    # End-to-end stress tests that spawn real subprocesses + load ML
+    # models. ~2 min wall time each. Skipped by default (-m 'not slow')
+    # so the regular `pytest` run stays fast; the `slow` job in
+    # .github/workflows/ci.yml runs them with `pytest -m slow`.
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "real_health_checks: opt out of the autouse health-check disabler; use on tests that directly exercise WebAppState file-health scanning",
+    "no_preaccept_permissive: opt out of the autouse pre-acceptance of the permissive-attribution models (SFace/YuNet/dlib); use on tests that exercise the acceptance gate's reject path",
+]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+
+# P6: strict mode applied to a focused scope around PhotoDict so the
+# TypedDict contract is actually enforced. Modules outside this list
+# get the lenient default — broaden the strict scope file by file as
+# annotations land. The CI gate is "mypy bpp/web/photo_dict.py" plus
+# any migrated endpoint listed below; that subset must stay green.
+[[tool.mypy.overrides]]
+module = [
+    "bpp.web.photo_dict",
+]
+disallow_untyped_defs = true
+disallow_any_unimported = false
+warn_unreachable = true
+strict_equality = true

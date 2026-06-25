@@ -1,0 +1,14 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bpp-example-plugin"
+version = "0.1.0"
+description = "Reference plugin showing the bpp extension-point contract"
+requires-python = ">=3.11"
+# List your actual dependencies here:
+dependencies = []
+# Declare the bpp.plugins entry-point so bpp's loader discovers this package:
+[project.entry-points."bpp.plugins"]
+example = "bpp_example_plugin.plugin:setup"

@@ -1,0 +1,10 @@
+node_modules/
+src-tauri/target/
+src-tauri/binaries/
+dist/
+build/
+*.dmg
+*.app
+*.AppImage
+*.deb
+*.msi

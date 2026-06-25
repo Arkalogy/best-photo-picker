@@ -1,0 +1,71 @@
+name: Test on Linux arm64
+
+# arm64 free runners (`ubuntu-24.04-arm`) are public-repo-only. While
+# the repo is private this workflow stays on `workflow_dispatch` only
+# — it neither auto-fires nor burns billed minutes. After the repo
+# flips public:
+#
+#   1. Uncomment the `pull_request` and `push` triggers below.
+#   2. Optionally add `linux-arm64` to the README hardware matrix's
+#      "Tested in CI" column.
+#
+# Until then, you can dispatch this workflow manually from the
+# Actions tab to spot-check that nothing broke for arm64 users.
+# (Linux arm64 has different SIMD code paths in ONNX Runtime + cv2
+# than x86_64; a passing x86_64 run does not imply an arm64 run
+# will pass.)
+
+on:
+  workflow_dispatch:
+  # pull_request:
+  #   branches: [main]
+  # push:
+  #   branches: [main]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  test-arm64:
+    name: Test (Linux arm64)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          # arm64 wheels differ from x86_64 — keep cache keys
+          # disjoint so a switch doesn't reuse the wrong wheel.
+          key: pip-arm64-3.11-${{ hashFiles('pyproject.toml') }}
+          restore-keys: pip-arm64-3.11-
+
+      - name: Cache ML models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bpp
+          key: bpp-models-arm64-${{ hashFiles('bpp/scoring/face*.py', 'bpp/scoring/clip*.py') }}
+          restore-keys: bpp-models-arm64-
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libgl1 libglib2.0-0 libegl1 libgles2
+
+      - name: Install package
+        run: |
+          pip install --upgrade pip "setuptools<82"
+          pip install git+https://github.com/ageitgey/face_recognition_models
+          pip install -e ".[dev,web,faces,nudity,heic,raw]"
+
+      - name: Run tests (skip slow)
+        run: pytest -n auto --dist=loadfile --tb=short -m "not slow"
+
+      - name: Run slow tests
+        run: pytest -m slow --tb=short
