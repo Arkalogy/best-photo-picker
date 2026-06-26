@@ -25,6 +25,8 @@ It's the only photo tool that **auto-scores your whole library for curation with
 
 For an annotated walkthrough of the full workflow — import → adjust → pick → export — plus the side surfaces (faces, calendar, map, duplicates), see **[docs/quickstart-gallery.md](docs/quickstart-gallery.md)**.
 
+📣 **Found a bug or have a feature idea?** [Open an issue](https://github.com/Arkalogy/best-photo-picker/issues/new/choose) · [Start a discussion](https://github.com/Arkalogy/best-photo-picker/discussions) · [Contributing guide](https://github.com/Arkalogy/best-photo-picker/blob/main/CONTRIBUTING.md). Security issues: please use [private vulnerability reporting](https://github.com/Arkalogy/best-photo-picker/security/advisories/new), not a public issue.
+
 ## Why Best Photo Picker?
 
 | | Best Photo Picker | Apple Photos | Google Photos | Lightroom | digiKam |
