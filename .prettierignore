@@ -1,0 +1,12 @@
+*
+!tests-js/
+!tests-js/**
+!tests-e2e/
+!tests-e2e/**
+!scripts/
+!scripts/*.mjs
+!eslint.config.js
+!vitest.config.mjs
+!playwright.config.mjs
+!package.json
+!.prettierrc.json

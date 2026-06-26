@@ -1,0 +1,115 @@
+name: Publish Docker image
+
+# Manual-only for v0.1.0 — a published Docker image is on the roadmap,
+# not part of the documented install path yet (users install via pip or
+# the macOS DMG). The release trigger is intentionally omitted so the
+# go-live doesn't attempt a Docker Hub push. Re-add:
+#     release:
+#       types: [published]
+# once Docker Hub publishing goes live (DOCKERHUB_TOKEN + DOCKERHUB_USERNAME
+# var + the arkalogy/bppicker repo). Until then it runs on demand only.
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Push to Docker Hub? (false = build-only smoke test)"
+        required: true
+        default: "false"
+
+# One-time setup (the repo owner does these once before the first
+# real publish):
+#   1. Repository Variables (Settings → Secrets and variables →
+#      Actions → Variables tab):
+#        DOCKERHUB_USERNAME = your Docker Hub user/org (e.g. `arkalogy`)
+#   2. Repository Secrets (Settings → Secrets and variables → Actions
+#      → Secrets tab):
+#        DOCKERHUB_TOKEN = an access token from
+#        https://hub.docker.com/settings/security with the
+#        "Read, Write, Delete" scope on the `bppicker` repo only.
+#   3. Create the Docker Hub repo `<DOCKERHUB_USERNAME>/bppicker` (the
+#      first push to a non-existent repo is rejected if the user has
+#      "Restricted" auto-create permissions; auto-create is the
+#      default but spelling it out lets us know).
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    name: Build multi-arch image
+    runs-on: ubuntu-latest
+
+    # Only attempt to log in / push when explicitly publishing.
+    # `do_push` is the single source of truth used in three steps below.
+    env:
+      do_push: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true') }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # QEMU lets the runner cross-compile arm64 from an x86_64 host.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      # buildx is the multi-platform builder.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Login is conditional so a workflow_dispatch smoke test
+      # (publish=false) doesn't even need DOCKERHUB_TOKEN to be set.
+      - name: Login to Docker Hub
+        if: env.do_push == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Compute tags + labels in one place. metadata-action handles
+      # the "use the release tag verbatim plus latest plus semver
+      # major/minor" pattern that's standard for OSS Docker repos.
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          # Image path: `<dockerhub-user>/bppicker`. If the user var
+          # isn't configured, the metadata action emits an empty path
+          # and the build/push step below fails loudly — better than
+          # silently pushing nowhere.
+          images: ${{ vars.DOCKERHUB_USERNAME }}/bppicker
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest,enable=${{ env.do_push == 'true' }}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build and (optionally) push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          # linux/amd64 covers the bulk of cloud + Intel-Mac users;
+          # linux/arm64 covers Apple Silicon + Raspberry Pi 4/5 +
+          # AWS Graviton. No 32-bit ARM — the ML wheels don't ship
+          # for armv7 anyway.
+          platforms: linux/amd64,linux/arm64
+          push: ${{ env.do_push == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # GHA cache keeps repeat builds fast — first build of a new
+          # release is ~12 min for both arches, subsequent rebuilds
+          # land in 2-3 min from cache.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Sanity step that runs even on smoke-test (publish=false): hits
+      # the docker manifest to confirm the build emitted the expected
+      # tag set. Catches the case where metadata-action silently emits
+      # no tags (e.g. user var missing).
+      - name: Show resulting tags
+        run: |
+          echo "do_push: $do_push"
+          echo "tags emitted by metadata-action:"
+          echo "${{ steps.meta.outputs.tags }}"
+          if [ -z "${{ steps.meta.outputs.tags }}" ]; then
+            echo "::error::metadata-action produced no tags — check vars.DOCKERHUB_USERNAME"
+            exit 1
+          fi

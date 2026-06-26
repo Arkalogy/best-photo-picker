@@ -1,0 +1,309 @@
+# CI runs only on pull requests targeting main (release gate).
+# Day-to-day development on develop is tested locally.
+#
+# Gates (lint job):
+#   - Python: version sync, ruff check, ruff format --check
+#   - JS:     eslint (+ generated globals sync), prettier --check,
+#             tsc --noEmit (@ts-check opt-in), vitest
+#   - E2E:    playwright test --list (parse-only, no browser/server)
+# Gates (test job):
+#   - pytest (~2050 tests, Python 3.11 only)
+#
+# Full Playwright runs are gated to workflow_dispatch in e2e.yml — they
+# need an analyzed library and add several minutes per run.
+#
+# Python 3.11 only matches the Tauri sidecar. Re-enable matrix
+# (3.12, 3.13) and `develop` triggers when adding contributors.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+# Opt into Node.js 24 for all actions (checkout, setup-python, setup-node).
+# GitHub deprecated the Node.js 20 runner for actions with a forced switch
+# on 2026-06-02 and removal on 2026-09-16. Setting this var eliminates the
+# deprecation warnings now and avoids a forced-break in June.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ruff
+        # Pinned to match pyproject's dev pin — ruff's formatter rules
+        # shift between releases, so an unpinned install drifts from local
+        # and fails `ruff format --check` on the next release PR.
+        run: pip install ruff==0.15.9
+
+      - name: Version sync check
+        run: |
+          python - <<'SCRIPT'
+          import json, re, pathlib, tomllib, sys
+          pyproject = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
+          init_text = pathlib.Path("bpp/__init__.py").read_text()
+          init = re.search(r'__version__\s*=\s*"(.+?)"', init_text).group(1)
+          tauri = json.load(open("desktop/src-tauri/tauri.conf.json"))["version"]
+          print(f"pyproject.toml: {pyproject}")
+          print(f"bpp/__init__.py: {init}")
+          print(f"tauri.conf.json: {tauri}")
+          if not (pyproject == init == tauri):
+              print(f"::error::Version mismatch! pyproject={pyproject} init={init} tauri={tauri}")
+              sys.exit(1)
+          print("All versions match.")
+          SCRIPT
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Format check
+        run: ruff format --check .
+
+      # Batch 2 / item 2 of the legal-posture rollout: no ML model
+      # weight file may ship in any Arkalogy artifact. The guard
+      # scans the bpp/ source tree first (catches a PR that drops a
+      # weight into the repo), then builds the wheel and scans its
+      # contents (catches a PR that hides a weight behind packaging
+      # tricks). A non-zero exit is a release blocker. The allowlist
+      # of legitimate non-restricted bundles lives in the script.
+      - name: No bundled model weights (source tree)
+        run: python3 scripts/check_no_bundled_weights.py
+
+      - name: Install build
+        run: pip install build
+
+      - name: Build wheel
+        run: python -m build --wheel --outdir dist/
+
+      - name: No bundled model weights (built wheel)
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          wheels=(dist/*.whl)
+          if [ ${#wheels[@]} -eq 0 ]; then
+            echo "::error::No wheel produced by python -m build" >&2
+            exit 1
+          fi
+          for w in "${wheels[@]}"; do
+            python3 scripts/check_no_bundled_weights.py --scan-wheel "$w"
+          done
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install JS dev deps
+        run: npm ci --no-audit --no-fund
+
+      - name: JS lint (ESLint + auto-generated globals allowlist)
+        run: npm run lint
+
+      - name: Verify .eslint-globals.json is in sync with source
+        run: git diff --exit-code .eslint-globals.json
+
+      - name: JS format check (Prettier — scoped to dev-tool JS)
+        run: npm run format:check
+
+      - name: JS type check (tsc --checkJs, opt-in via // @ts-check)
+        run: npm run typecheck
+
+      - name: JS unit tests (Vitest + jsdom)
+        run: npm run test:js
+
+      - name: E2E spec parse check (Playwright --list, no browser)
+        run: npm run test:e2e:list
+
+  test:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-3.11-${{ hashFiles('pyproject.toml') }}
+          restore-keys: pip-3.11-
+
+      # ML model cache: bpp downloads several models on first import
+      # (BlazeFace, SCRFD, CLIP, dlib, FaceLandmarker, etc.) — ~200 MB
+      # total. Without this cache, every CI run re-downloads them, adding
+      # 1-2 min before tests can start. Keyed on the file paths in
+      # bpp/scoring/face*.py so a model URL change invalidates the cache.
+      - name: Cache ML models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bpp
+          key: bpp-models-${{ hashFiles('bpp/scoring/face*.py', 'bpp/scoring/clip*.py') }}
+          restore-keys: bpp-models-
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libgl1 libglib2.0-0 libegl1 libgles2
+
+      - name: Install package with all dependencies
+        run: |
+          pip install --upgrade pip "setuptools<82"
+          pip install git+https://github.com/ageitgey/face_recognition_models
+          pip install -e ".[dev,web,faces,nudity,heic,raw]"
+
+      # `-n auto`: pytest-xdist parallel workers (one per CPU).
+      # `--dist=loadfile`: tests in the same file run in the same worker,
+      # avoiding cross-file state races (SmartAlbumRegistry, ModelSingleton).
+      # `-m "not slow"`: skip @slow stress tests (face-extraction
+      # subprocess smoke runs in the dedicated `stress` job below).
+      # Drop `-v`: per-test output adds ~5% overhead; keep --tb=short for
+      # readable failure tracebacks.
+      - name: Run tests
+        run: pytest -n auto --dist=loadfile --tb=short -m "not slow"
+
+  # Slow integration tests — spawn real subprocesses, load ML models,
+  # exercise the chunked face-extraction path that v0.1.0-rc had no
+  # CI coverage for. Without this job, the SCRFD-no-lock SIGSEGV that
+  # took 5 weeks to surface in the wild stays uncaught.
+  #
+  # Runs as a separate job so it doesn't gate every PR on a 2-3 min
+  # stress run, and so a flake here doesn't block fast-moving feature
+  # PRs while we still tune the test. Failure should be treated as a
+  # release blocker even if it doesn't block merge.
+  stress:
+    name: Slow integration tests
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-3.11-${{ hashFiles('pyproject.toml') }}
+          restore-keys: pip-3.11-
+      - name: Cache ML models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bpp
+          key: bpp-models-${{ hashFiles('bpp/scoring/face*.py', 'bpp/scoring/clip*.py') }}
+          restore-keys: bpp-models-
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libgl1 libglib2.0-0 libegl1 libgles2
+      - name: Install package
+        run: |
+          pip install --upgrade pip "setuptools<82"
+          pip install git+https://github.com/ageitgey/face_recognition_models
+          pip install -e ".[dev,web,faces,nudity,heic,raw]"
+      - name: Run slow tests
+        run: pytest -m slow --tb=short
+
+  # Smoke-test that `pip install -e ".[inpaint]"` works on a clean
+  # Python 3.11 environment, with NO other extras installed. Catches
+  # transitive-dep drift in simple-lama-inpainting (it has shipped
+  # versions with pillow<10 and pillow<11 pins that would silently
+  # downgrade Pillow and break HEIC). This job runs in parallel with
+  # `test`; failure here means the documented install path is broken.
+  base-clean-install:
+    # R12-OSS-4: verify the standard user-facing install combo resolves
+    # cleanly on a FRESH pip cache. The main `test` job restores cached
+    # deps, which can hide transitive conflicts introduced by a dep bump
+    # (pip doesn't re-solve constraints against the full tree if everything
+    # hits the cache). This job intentionally skips the pip cache so pip
+    # always runs a full dep-resolution pass.
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libgl1 libglib2.0-0 libegl1 libgles2
+
+      - name: Fresh install (no cache)
+        # Note: no actions/cache step — pip resolves from scratch every run.
+        # Uses the README-recommended combo (heic requires libheif on Ubuntu,
+        # but the import smoke-test only covers the non-heic extras).
+        run: |
+          pip install --upgrade pip "setuptools<82"
+          pip install git+https://github.com/ageitgey/face_recognition_models
+          pip install -e ".[web,faces,nudity,raw]"
+
+      - name: pip check (no broken requirements)
+        run: pip check
+
+      - name: Import smoke test
+        run: |
+          python -c "import bpp.web.app; print('bpp.web.app OK')"
+          python -c "from bpp.scoring.aggregate import analyze_all; print('scoring OK')"
+          python -c "import bpp.cli; print('bpp.cli OK')"
+
+  inpaint-clean-install:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1 libglib2.0-0
+
+      - name: Clean install of inpaint extra (no other extras)
+        run: |
+          pip install --upgrade pip
+          pip install -e ".[inpaint]"
+
+      - name: pip check (no broken requirements)
+        run: pip check
+
+      - name: Verify Pillow is still >= 10
+        run: |
+          python - <<'PY'
+          import PIL, sys
+          major = int(PIL.__version__.split('.')[0])
+          assert major >= 10, f"Pillow {PIL.__version__} got pulled below 10 by an inpaint dep — would break HEIC"
+          print(f"Pillow {PIL.__version__} OK")
+          PY
+
+      - name: Imports succeed
+        run: |
+          python -c "import simple_lama_inpainting; print('simple_lama_inpainting:', simple_lama_inpainting.__name__)"
+          python -c "import torch; print('torch:', torch.__version__)"
+          python -c "import torchvision; print('torchvision:', torchvision.__version__)"
+          python -c "import bpp.ai.inpainting; print('bpp.ai.inpainting OK')"

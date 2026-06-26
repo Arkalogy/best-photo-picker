@@ -1,0 +1,54 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+!bpp/web/static/vendor/**/dist/
+build/
+.eggs/
+*.egg
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+*.sqlite
+*.db
+.venv/
+venv/
+env/
+.env
+.DS_Store
+.idea/
+.vscode/
+.claude/
+CLAUDE.md
+.coverage
+
+# Tauri desktop build artifacts
+desktop/src-tauri/target/
+desktop/src-tauri/binaries/
+desktop/src-tauri/gen/
+desktop/node_modules/
+
+# Frontend dev tooling
+node_modules/
+# .eslint-globals.json is committed — CI regenerates it and fails on drift
+
+# Playwright
+test-results/
+playwright-report/
+playwright/.cache/
+
+# Local-only files (not shipped)
+library/
+reviews/
+# scripts/ directory tracked; individual local-only files excluded by name
+scripts/launch*.sh
+pm.md
+pm-*.md
+user_guide.md
+launch.command
+docs/v0.1.0_release_notes.md
+docs/launch_posts.md
+refactor-plan.md
+
+# Local-only secrets directory — Ed25519 signing keys, etc. NEVER commit.
+.secrets/

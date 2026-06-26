@@ -1,0 +1,1266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Best Photo Picker</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a84ff'/%3E%3Ctext x='16' y='21' text-anchor='middle' font-family='-apple-system,system-ui,sans-serif' font-size='13' font-weight='800' fill='white' letter-spacing='-0.5'%3EBPP%3C/text%3E%3C/svg%3E">
+<!-- iOS PWA: "Add to Home Screen" support. apple-touch-icon shows
+     in the home-screen tile; apple-mobile-web-app-* settings make the
+     launched app full-screen with the dark status bar. Android +
+     desktop browsers read manifest.json. -->
+<link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+<link rel="manifest" href="/static/manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Best Photo Picker">
+<meta name="theme-color" content="#0f1216">
+<link rel="stylesheet" href="/static/css/app.css?v={{ asset_version }}">
+<script nonce="{{ csp_nonce }}">document.documentElement.setAttribute("data-theme",localStorage.getItem("bpp-theme")||"dark")</script>
+<script nonce="{{ csp_nonce }}">
+// Strip _token from the URL bar after first paint. The token is
+// already captured in the meta tag below; leaving it in the URL
+// just makes screenshots / screen recordings leak it. Idempotent.
+(function(){
+  try {
+    if (window.location.search.indexOf("_token=") !== -1) {
+      var clean = window.location.pathname + window.location.hash;
+      window.history.replaceState({}, "", clean);
+    }
+  } catch (e) { /* old browsers — ignore */ }
+})();
+</script>
+<!-- Leaflet + markercluster vendored locally so the app shell does
+     no third-party network call on load. The README's privacy
+     section claims "no telemetry, opt-in network features only" —
+     a CDN fetch on every page load contradicts that. Original
+     sources: leaflet 1.9.4 (BSD-2), leaflet.markercluster 1.5.3
+     (MIT). See bpp/web/static/vendor/ for license attribution. -->
+<link rel="stylesheet" href="/static/vendor/leaflet/dist/leaflet.css">
+<script src="/static/vendor/leaflet/dist/leaflet.js"></script>
+<link rel="stylesheet" href="/static/vendor/leaflet.markercluster/dist/MarkerCluster.css">
+<link rel="stylesheet" href="/static/vendor/leaflet.markercluster/dist/MarkerCluster.Default.css">
+<script src="/static/vendor/leaflet.markercluster/dist/leaflet.markercluster.js"></script>
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="sidebar-header">
+    <a class="app-logo" data-action="switchToLibrary" title="Go to library">
+      <div class="logo-mark"><span>BPP</span></div>
+      <div class="logo-text">Best Photo Picker</div>
+    </a>
+    <div class="sidebar-library-btn" data-action="showLibraryPicker" title="Switch library">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 4.5V12a1.5 1.5 0 001.5 1.5h9A1.5 1.5 0 0014 12V6a1.5 1.5 0 00-1.5-1.5H8L6.5 3H3.5A1.5 1.5 0 002 4.5z"/></svg>
+      <span class="sidebar-library-name" id="library-name-display">Library</span>
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="width:10px;height:10px"><path d="M5 6l3 3 3-3"/></svg>
+    </div>
+  </div>
+
+  <nav class="sidebar-nav" id="sidebar-nav">
+    <div id="album-nav">
+      <div id="album-list"></div>
+    </div>
+
+    <div id="analyzing-banner" class="analyzing-banner hidden">
+      Analyzing photos&hellip;
+      <div class="ab-progress"><div class="ab-fill" id="ab-fill"></div></div>
+    </div>
+  </nav>
+
+  <div id="on-this-day" class="hidden"></div>
+  <div id="memories-nav" class="hidden"></div>
+
+  <div class="sidebar-footer">
+    <div class="lib-stats" id="lib-stats"></div>
+    <div class="made-by">
+      <a href="https://arkalogy.com" target="_blank" rel="noopener">Arkalogy</a>
+      &middot;
+      <a href="https://buymeacoffee.com/arkalogy" target="_blank" rel="noopener" class="coffee-link">☕ Buy us a coffee</a>
+    </div>
+  </div>
+</aside>
+<div class="sidebar-overlay" id="sidebar-overlay" data-action="toggleSidebar"></div>
+
+<main class="main">
+  <div class="update-banner hidden" id="update-banner">
+    <span id="update-banner-text"></span>
+    <a id="update-banner-link" href="#" target="_blank" rel="noopener">View release</a>
+    <button class="update-banner-dismiss" data-action="dismissUpdateBanner" aria-label="Dismiss">&times;</button>
+  </div>
+  <div class="toolbar hidden" id="toolbar">
+    <div class="toolbar-left">
+      <button class="sidebar-toggle" data-action="toggleSidebar" title="Toggle sidebar" aria-label="Toggle sidebar">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="3" y1="5" x2="17" y2="5"/><line x1="3" y1="10" x2="17" y2="10"/><line x1="3" y1="15" x2="17" y2="15"/></svg>
+      </button>
+      <div class="toolbar-title-group">
+        <div class="toolbar-title" id="toolbar-title">Library</div>
+        <div class="toolbar-subtitle" id="toolbar-subtitle"></div>
+      </div>
+    </div>
+    <div class="toolbar-center">
+      <div class="zoom-control" id="zoom-control">
+        <svg data-action="stepZoom" data-arg0="-10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" role="button" tabindex="0" aria-label="Zoom out"><rect x="1" y="1" width="14" height="14" rx="2"/><line x1="5" y1="8" x2="11" y2="8"/></svg>
+        <input type="range" id="zoom-slider" min="40" max="300" value="80" data-oninput="applyZoom" aria-label="Zoom level">
+        <svg data-action="stepZoom" data-arg0="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" role="button" tabindex="0" aria-label="Zoom in"><rect x="1" y="1" width="14" height="14" rx="2"/><line x1="5" y1="8" x2="11" y2="8"/><line x1="8" y1="5" x2="8" y2="11"/></svg>
+        <span class="zoom-pct" id="zoom-pct">80%</span>
+      </div>
+    </div>
+    <div class="toolbar-right">
+      <button class="toolbar-btn" id="btn-search-toolbar" data-action="showSearch" title="Search (&#8984;K)" aria-label="Search"></button>
+      <div class="toolbar-popover-anchor toolbar-split" id="analyze-menu-anchor">
+        <button class="toolbar-btn" id="btn-analyze-toolbar" data-action="startReanalyze" title="Re-analyze library (scores, faces, CLIP)" aria-label="Re-analyze"></button>
+        <button class="toolbar-split-caret" id="btn-analyze-menu" data-stop-propagation="true" data-action="toggleToolbarPopover" data-arg0="analyze-menu" title="More analysis actions" aria-label="More analysis actions">&#9662;</button>
+        <div class="toolbar-popover" id="analyze-menu-popover">
+          <div class="popover-option" data-action="startReanalyze">Re-analyze library<small>Re-score sharpness, faces, CLIP</small></div>
+          <div class="popover-sep"></div>
+          <div class="popover-option" data-action="confirmRetryFaceExtraction">Re-extract faces<small>Rebuild face data from scratch</small></div>
+        </div>
+      </div>
+      <div class="toolbar-sep"></div>
+      <div class="toolbar-pick" id="toolbar-pick" title="How many photos to select from this album">
+        <label for="toolbar-k">Pick</label>
+        <input type="number" id="toolbar-k" min="1" max="9999" value="50" data-onchange="syncKFromToolbar" data-onkeydown="onToolbarKKeydown">
+        <span class="toolbar-pick-scope" id="toolbar-pick-scope"></span>
+      </div>
+      <button class="toolbar-chip toolbar-chip-picks" id="toolbar-show-picks" data-action="toggleShowPicks" title="Toggle: show only BPP picked photos" style="display:none">
+        BPP Picks
+      </button>
+      <div class="toolbar-popover-anchor" id="sort-anchor">
+        <button class="toolbar-btn" id="btn-sort" data-stop-propagation="true" data-action="toggleToolbarPopover" data-arg0="sort" title="Sort" aria-label="Sort photos"></button>
+        <div class="toolbar-popover" id="sort-popover">
+          <div class="popover-option" data-sort="date-asc" data-action="setSortFromPopover" data-arg0="date-asc">Date: oldest first</div>
+          <div class="popover-option" data-sort="date-desc" data-action="setSortFromPopover" data-arg0="date-desc">Date: newest first</div>
+          <div class="popover-option" data-sort="score-desc" data-action="setSortFromPopover" data-arg0="score-desc">Score: highest</div>
+          <div class="popover-option" data-sort="score-asc" data-action="setSortFromPopover" data-arg0="score-asc">Score: lowest</div>
+          <div class="popover-option" data-sort="name" data-action="setSortFromPopover" data-arg0="name">Filename</div>
+          <div class="popover-option" data-sort="size-desc" data-action="setSortFromPopover" data-arg0="size-desc">File size: largest</div>
+          <div class="popover-option" data-sort="size-asc" data-action="setSortFromPopover" data-arg0="size-asc">File size: smallest</div>
+          <div class="popover-option" data-sort="faces-desc" data-action="setSortFromPopover" data-arg0="faces-desc">Face count: most</div>
+        </div>
+      </div>
+      <div class="toolbar-popover-anchor" id="filter-anchor">
+        <button class="toolbar-btn" id="btn-filter" data-stop-propagation="true" data-action="toggleToolbarPopover" data-arg0="filter" title="Filter" aria-label="Filter photos"></button>
+        <div class="toolbar-popover" id="filter-popover">
+          <div class="popover-option" data-filter="all" data-action="setFilterFromPopover" data-arg0="all">All photos</div>
+          <div class="popover-option" data-filter="selected" data-action="setFilterFromPopover" data-arg0="selected">Selected only</div>
+          <div class="popover-option" data-filter="not-selected" data-action="setFilterFromPopover" data-arg0="not-selected">Not selected</div>
+          <div class="popover-option" data-filter="favorites" data-action="setFilterFromPopover" data-arg0="favorites">Favorites</div>
+          <div class="popover-option" data-filter="overridden" data-action="setFilterFromPopover" data-arg0="overridden">Overridden</div>
+          <div class="popover-option" data-filter="enhanced" data-action="setFilterFromPopover" data-arg0="enhanced">Enhanced</div>
+          <div class="popover-sep"></div>
+          <div class="popover-option" data-filter="photos-only" data-action="setFilterFromPopover" data-arg0="photos-only">Photos only</div>
+          <div class="popover-option" data-filter="videos-only" data-action="setFilterFromPopover" data-arg0="videos-only">Videos only</div>
+          <div class="popover-option" data-filter="raw-only" data-action="setFilterFromPopover" data-arg0="raw-only">RAW only</div>
+          <div class="popover-sep"></div>
+          <div class="popover-option" data-filter="deleted" data-action="setFilterFromPopover" data-arg0="deleted">Deleted</div>
+        </div>
+      </div>
+      <button class="toolbar-btn" id="btn-import-toolbar" data-action="showImportModal" title="Import photos from a folder" aria-label="Import photos"></button>
+      <button class="toolbar-btn" id="btn-slideshow" data-action="startSlideshow" title="Start slideshow (selected photos)" aria-label="Start slideshow"></button>
+      <button class="toolbar-btn" id="btn-export" data-action="showExportModal" title="Export selected photos (E)" aria-label="Export selected photos"></button>
+      <button class="toolbar-btn" id="btn-settings-toolbar" data-action="showSettings" title="Settings and tools" aria-label="Settings"></button>
+    </div>
+    <!-- Hidden selects for renderGrid() state -->
+    <select id="sort-by" class="hidden" data-onchange="renderGrid">
+      <option value="date-asc">Date: oldest</option>
+      <option value="date-desc">Date: newest</option>
+      <option value="score-desc">Score: high</option>
+      <option value="score-asc">Score: low</option>
+      <option value="name">Filename</option>
+      <option value="size-desc">Size: largest</option>
+      <option value="size-asc">Size: smallest</option>
+      <option value="faces-desc">Faces: most</option>
+    </select>
+    <select id="filter-by" class="hidden" data-onchange="onFilterChange">
+      <option value="all" selected>All photos</option>
+      <option value="selected">Selected only</option>
+      <option value="not-selected">Not selected</option>
+      <option value="favorites">Favorites</option>
+      <option value="overridden">Overridden</option>
+      <option value="enhanced">Enhanced</option>
+      <option value="photos-only">Photos only</option>
+      <option value="videos-only">Videos only</option>
+      <option value="raw-only">RAW only</option>
+      <option value="deleted">Deleted</option>
+    </select>
+    <span id="tag-filter-chip" class="hidden"></span>
+  </div>
+
+  <div class="confirm-overlay" id="confirm-overlay" role="alertdialog" aria-modal="true" data-action="_bppBackdropClose" data-backdrop-fn="resolveConfirm" data-backdrop-arg="false">
+    <div class="confirm-dialog"></div>
+  </div>
+
+  <div class="ctx-menu hidden" id="lb-ctx-menu">
+    <div class="ctx-menu-item" data-action="include" id="lb-ctx-include">Include <span class="ctx-shortcut">&uarr;</span></div>
+    <div class="ctx-menu-item" data-action="exclude" id="lb-ctx-exclude">Exclude <span class="ctx-shortcut">&darr;</span></div>
+    <div class="ctx-menu-item" data-action="favorite" id="lb-ctx-fav">Favorite <span class="ctx-shortcut">F</span></div>
+    <div class="ctx-menu-sep"></div>
+    <div class="ctx-menu-item" data-action="edit">Edit <span class="ctx-shortcut">E</span></div>
+    <div class="ctx-menu-item" data-action="enhance" id="lb-ctx-enhance">Enhance <span class="ctx-shortcut">A</span></div>
+    <div class="ctx-menu-sep"></div>
+    <div class="ctx-menu-item" data-action="tag-person" id="lb-ctx-tag" title="Note someone is in this photo, without outlining their face.">Tag person&hellip; <span class="ctx-shortcut">T</span></div>
+    <div class="ctx-menu-item" data-action="add-face" id="lb-ctx-add-face" title="Outline a face the detector missed.">Add face&hellip; <span class="ctx-shortcut">N</span></div>
+    <div class="ctx-menu-item" data-action="sensitive" id="lb-ctx-sensitive" title="Correct the on-device content filter for this photo.">Mark sensitive <span class="ctx-shortcut">M</span></div>
+    <div class="ctx-menu-item" data-action="show-in-finder">Show in Finder <span class="ctx-shortcut">S</span></div>
+    <div class="ctx-menu-sep"></div>
+    <div class="ctx-menu-item danger" data-action="delete">Delete <span class="ctx-shortcut">D</span></div>
+  </div>
+
+  <div class="ctx-menu hidden" id="person-ctx-menu">
+    <div class="ctx-menu-item ctx-face-only" data-action="reassign" title="Change which person this face belongs to">Reassign this face to&hellip; <span class="ctx-shortcut">T</span></div>
+    <div class="ctx-menu-item ctx-face-only danger" data-action="dismiss-face" title="Dismiss this detection — other photos untouched">Dismiss this face (this photo) <span class="ctx-shortcut">P</span></div>
+    <div class="ctx-menu-sep ctx-face-only"></div>
+    <div class="ctx-menu-item" data-action="rename" data-key="r" title="Give this person a name">Rename <span class="ctx-shortcut">R</span></div>
+    <div class="ctx-menu-item" data-action="change-avatar" data-key="a" title="Choose a different face photo as avatar">Change avatar <span class="ctx-shortcut">A</span></div>
+    <div class="ctx-menu-item" data-action="merge" data-key="m" title="Combine this person with another">Merge with&hellip; <span class="ctx-shortcut">M</span></div>
+    <div class="ctx-menu-item" data-action="split" data-key="s" title="Select wrong faces and move them to a new person">Split&hellip; <span class="ctx-shortcut">S</span></div>
+    <div class="ctx-menu-item" data-action="toggle-exclude" data-key="x" title="Keep in face lists but never pick their photos">Exclude from picks <span class="ctx-shortcut">X</span></div>
+    <div class="ctx-menu-item" data-action="toggle-boost" data-key="b" title="Favor this person's photos during Auto-pick (same as selecting their chip in the sidebar)">Boost in picks <span class="ctx-shortcut">B</span></div>
+    <div class="ctx-menu-sep"></div>
+    <div class="ctx-menu-item danger" data-action="not-a-face" data-key="n" title="Mark as false detection — these aren't real faces. Moves to Ignored.">Not a face <span class="ctx-shortcut">N</span></div>
+    <div class="ctx-menu-item danger" data-action="dismiss" data-key="d" title="Remove from sidebar, chips, and scoring. Recoverable from Ignored.">Dismiss <span class="ctx-shortcut">D</span></div>
+  </div>
+  <div class="ctx-menu hidden" id="pet-ctx-menu">
+    <div class="ctx-menu-item" data-action="rename" title="Give this pet a name">Rename</div>
+    <div class="ctx-menu-item" data-action="identify" title="Select photos of an individual pet">Identify&hellip;</div>
+    <div class="ctx-menu-item" data-action="merge" title="Combine with another pet group">Merge with&hellip;</div>
+    <div class="ctx-menu-sep"></div>
+    <div class="ctx-menu-item danger" data-action="not-a-pet" title="Mark as false detection — these aren't real pets. Removes the group from Pets and photo chips.">Not a pet</div>
+  </div>
+  <div class="ctx-menu hidden" id="card-ctx-menu">
+    <div class="ctx-menu-item" data-action="favorite" data-key="f" id="card-ctx-fav" title="Mark as favorite">Favorite <span class="ctx-shortcut">F</span></div>
+    <div class="ctx-menu-sep" id="card-ctx-sep1"></div>
+    <div class="ctx-menu-item" data-action="include" data-key="i" id="card-ctx-include" title="Force this photo into the selection">Force Include <span class="ctx-shortcut">I</span></div>
+    <div class="ctx-menu-item" data-action="exclude" data-key="x" id="card-ctx-exclude" title="Force this photo out of the selection">Force Exclude <span class="ctx-shortcut">X</span></div>
+    <div class="ctx-menu-sep" id="card-ctx-sep2"></div>
+    <div class="ctx-menu-item" data-action="add-to-album" data-key="a" title="Add this photo to a manual album">Add to Album&hellip; <span class="ctx-shortcut">A</span></div>
+    <div class="ctx-menu-item" data-action="tag-person" data-key="t" id="card-ctx-tag" title="Note someone is in this photo, without drawing a box.">Tag person&hellip; <span class="ctx-shortcut">T</span></div>
+    <div class="ctx-menu-sep"></div>
+    <div class="ctx-menu-item" data-action="enhance" data-key="e" id="card-ctx-enhance" title="Auto-enhance brightness and contrast">Enhance <span class="ctx-shortcut">E</span></div>
+    <div class="ctx-menu-item" data-action="revert-enhance" data-key="r" id="card-ctx-revert" style="display:none" title="Undo auto-enhancement">Revert Enhancement <span class="ctx-shortcut">R</span></div>
+    <div class="ctx-menu-sep"></div>
+    <div class="ctx-menu-item" data-action="rename" data-key="b" title="Rename selected photos with a pattern">Batch Rename&hellip; <span class="ctx-shortcut">B</span></div>
+    <div class="ctx-menu-sep"></div>
+    <div class="ctx-menu-item" data-action="hide" data-key="h" id="card-ctx-hide" title="Hide from grid (still in library)">Hide <span class="ctx-shortcut">H</span></div>
+    <div class="ctx-menu-item" data-action="unhide" data-key="h" id="card-ctx-unhide" style="display:none" title="Show this photo in the grid again">Unhide <span class="ctx-shortcut">H</span></div>
+    <div class="ctx-menu-item danger" data-action="delete" data-key="d" id="card-ctx-delete" title="Move to trash">Delete <span class="ctx-shortcut">D</span></div>
+    <div class="ctx-menu-item" data-action="restore" id="card-ctx-restore" style="display:none" title="Restore from trash">Restore</div>
+    <div class="ctx-menu-item danger" data-action="perm-delete" id="card-ctx-perm-delete" style="display:none" title="Permanently delete (cannot be undone)">Delete Permanently</div>
+  </div>
+  <div class="timeline-bar hidden" id="timeline-bar"></div>
+
+  <main class="content">
+    <div class="empty-state hidden" id="empty-state">
+      <div class="icon">&#x1f4f7;</div>
+      <div class="title">Welcome to Best Photo Picker</div>
+      <div class="desc">Import a folder of photos to get started. The app will score, deduplicate, and help you pick the best ones.</div>
+      <button class="btn-import-cta" data-action="showImportModal">Import Photos</button>
+      <div class="steps">
+        <div class="step"><span class="step-num">1</span>Import</div>
+        <div class="step"><span class="step-num">2</span>Score</div>
+        <div class="step"><span class="step-num">3</span>Pick</div>
+        <div class="step"><span class="step-num">4</span>Export</div>
+      </div>
+    </div>
+    <div id="nudge-container"></div>
+    <div class="person-album-bar hidden" id="person-album-bar"></div>
+    <div class="person-selection-bar hidden" id="person-photo-selection-bar"></div>
+    <div class="grid hidden" id="photo-grid"></div>
+    <div class="calendar-view hidden" id="calendar-view"></div>
+    <div class="map-view hidden" id="map-view">
+      <div class="map-container" id="map-container"></div>
+    </div>
+  </main>
+
+  <div class="status-bar hidden" id="status-bar">
+    <div class="status-left" id="status-summary"></div>
+    <div class="status-center hidden" id="status-progress">
+      <span class="status-progress-text" id="status-progress-text"></span>
+      <div class="progress-bar"><div class="fill" id="status-progress-fill"></div></div>
+      <button class="status-cancel-btn" data-action="cancelOperation" title="Cancel">&times;</button>
+    </div>
+    <div class="status-right" id="status-right"></div>
+    <div class="activity-bell-wrap" id="activity-bell-wrap">
+      <button class="activity-bell-btn" data-action="toggleActivityDropdown" title="Activity log" aria-label="Activity log">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a1 1 0 0 0-1 1v.6A4.5 4.5 0 0 0 3.5 7v3.5l-1 1.5H6a2 2 0 1 0 4 0h3.5l-1-1.5V7A4.5 4.5 0 0 0 9 2.6V2a1 1 0 0 0-1-1z"/></svg>
+        <span class="activity-badge" id="activity-badge" style="display:none">0</span>
+      </button>
+      <div class="activity-dropdown" id="activity-dropdown" style="display:none">
+        <div class="activity-dropdown-header">
+          <span>Recent Activity</span>
+          <a class="activity-view-all" data-action="showActivityLog">View all</a>
+        </div>
+        <div class="activity-dropdown-list" id="activity-dropdown-list"></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div class="lightbox-overlay" id="lightbox" role="dialog" aria-modal="true" aria-label="Photo viewer" data-action="closeLightbox" data-arg0="event">
+  <button class="lightbox-close" data-action="closeLightbox" aria-label="Close">&times;</button>
+  <button class="lightbox-nav prev" data-stop-propagation="true" data-action="lightboxNav" data-arg0="-1" aria-label="Previous photo">&#8249;</button>
+  <button class="lightbox-nav next" data-stop-propagation="true" data-action="lightboxNav" data-arg0="1" aria-label="Next photo">&#8250;</button>
+  <div class="lightbox-content" data-stop-propagation="true">
+    <div class="lb-img-col">
+      <!-- Editor bar above image: always visible. Clicking a tab opens the editor. -->
+      <div class="editor-img-bar" id="editor-img-bar">
+        <div class="editor-img-tabs">
+          <button class="editor-tab" data-tab="adjust" data-action="_editorTabClick" data-arg0="adjust">Adjust</button>
+          <button class="editor-tab" data-tab="styles" data-action="_editorTabClick" data-arg0="styles">Styles</button>
+          <button class="editor-tab" data-tab="crop" data-action="_editorTabClick" data-arg0="crop">Crop</button>
+          <button class="editor-tab" data-tab="remove" data-action="_editorTabClick" data-arg0="remove">Clean Up</button>
+        </div>
+        <div class="editor-img-tools">
+          <button class="editor-img-tool-btn" data-action="_editorQuickRotate" title="Rotate 90° clockwise">↻</button>
+          <button class="editor-img-tool-btn" id="editor-enhance-btn" data-action="lbEnhance" title="Auto-enhance brightness, contrast, color" aria-label="Enhance">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1v14M1 8h14M3.5 3.5l9 9M12.5 3.5l-9 9"/></svg>
+          </button>
+          <span class="editor-img-toolbar-sep"></span>
+          <div class="editor-zoom-group">
+            <div class="editor-zoom-controls">
+              <button class="editor-img-tool-btn" data-action="_editorZoomOut" title="Zoom out">−</button>
+              <input type="range" id="editor-zoom-slider" class="editor-zoom-range" min="1" max="5" step="0.1" value="1" data-oninput="_editorOnZoomSlider" title="Zoom">
+              <button class="editor-img-tool-btn" data-action="_editorZoomIn" title="Zoom in">+</button>
+              <span class="editor-zoom-pct" id="editor-zoom-pct">100%</span>
+            </div>
+          </div>
+          <span class="editor-img-toolbar-sep"></span>
+          <button class="editor-img-tool-btn editor-revert-btn" data-action="_editorRevertToOriginal" title="Revert to original — discard all edits" aria-label="Revert to original">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3L3 6l3 3"/><path d="M3 6h7a4 4 0 010 8H8"/></svg>
+          </button>
+          <span class="editor-img-toolbar-sep"></span>
+          <!-- Unified header: pick/favorite/delete live with the editing
+               tools. Active states + undo visibility are synced per photo
+               by updateLightboxActions. -->
+          <button class="editor-img-tool-btn lb-top-act" id="lb-top-include" data-action="lbAction" data-arg0="include" title="Include this photo in picks &#10;Shortcut: ↑ Arrow Up" aria-label="Include">&#10003;</button>
+          <button class="editor-img-tool-btn lb-top-act" id="lb-top-exclude" data-action="lbAction" data-arg0="exclude" title="Exclude this photo from picks &#10;Shortcut: ↓ Arrow Down" aria-label="Exclude">&#10005;</button>
+          <button class="editor-img-tool-btn lb-top-act" id="lb-top-fav" data-action="lbToggleFav" title="Toggle favorite &#10;Shortcut: F" aria-label="Favorite">&#9829;</button>
+          <button class="editor-img-tool-btn lb-top-act lb-top-danger" id="lb-top-delete" data-action="lbDelete" title="Move to trash &#10;Can be restored later" aria-label="Delete">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h12M5.3 4V2.7a1 1 0 011-1h3.4a1 1 0 011 1V4M6 7v5M10 7v5"/><path d="M3.5 4l.7 9.3a1 1 0 001 .9h5.6a1 1 0 001-.9L12.5 4"/></svg>
+          </button>
+          <button class="kb-undo" id="lb-undo" data-action="lbUndo">Undo <kbd>&#8984;Z</kbd></button>
+        </div>
+      </div>
+      <div class="lb-img-wrapper" data-oncontextmenu="showLbCtxMenu">
+        <img class="lightbox-img" id="lb-img" src="" alt="">
+        <video class="lightbox-video hidden" id="lb-video" controls playsinline preload="metadata"></video>
+        <div class="lb-flash" id="lb-flash"></div>
+        <div class="lb-action-text" id="lb-action-text"></div>
+        <div class="lb-zoom-indicator" id="lb-zoom-level"></div>
+      </div>
+    </div>
+    <div class="lightbox-panel" id="lightbox-panel">
+      <!-- Mobile-only drag handle (hidden on desktop via CSS).
+           Tap to toggle the bottom sheet between collapsed (~30vh)
+           and expanded (~80vh). Wired in lightbox.mjs. -->
+      <div class="lb-panel-handle" id="lb-panel-handle" role="button" aria-label="Toggle info panel" tabindex="0"></div>
+      <div class="lb-header">
+        <div class="lb-meta-row">
+          <span class="lb-date" id="lb-date"></span>
+          <span class="lb-quality" id="lb-quality"></span>
+        </div>
+        <div class="lb-filename" id="lb-filename" data-action="lbCopyFilePath"></div>
+      </div>
+      <!-- Single scrollable panel: actions + all info -->
+      <div class="lb-panel-body" id="lb-panel-body">
+        <div id="lb-actions"></div>
+        <div class="lb-scores" id="lb-scores"></div>
+        <div class="lb-faces hidden" id="lb-faces"></div>
+        <div class="lb-pets hidden" id="lb-pets"></div>
+        <div class="lb-tags hidden" id="lb-tags"></div>
+        <div class="lb-similar hidden" id="lb-similar">
+          <div class="lb-similar-label">Similar photos</div>
+          <div class="lb-similar-grid" id="lb-similar-strip"></div>
+        </div>
+        <div class="lb-exif hidden" id="lb-exif"></div>
+        <div class="lb-exif hidden" id="lb-video-info"></div>
+        <!-- Map belongs to the Info section above it (panel-cleanup item 3):
+             no LOCATION header of its own, just the Expand affordance. -->
+        <!-- Expand wires via data-action (delegation): a direct listener
+             dies whenever the editor rebuilds the panel's innerHTML. -->
+        <div class="lb-map-container hidden" id="lb-map-container">
+          <div class="lb-map-header" id="lb-map-header" data-action="toggleLightboxMap">
+            <span class="lb-map-toggle" id="lb-map-toggle">Expand</span>
+          </div>
+          <div id="lb-map" class="lb-map"></div>
+        </div>
+        <div class="lb-trim hidden" id="lb-trim"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="compare-overlay" id="compare-overlay" role="dialog" aria-modal="true" aria-label="Compare photos" data-action="closeCompare" data-arg0="event">
+  <button class="compare-close" data-action="closeCompare" aria-label="Close">&times;</button>
+  <div class="compare-sibling-strip hidden" id="compare-sibling-strip" data-stop-propagation="true"></div>
+  <div class="compare-content" data-stop-propagation="true">
+    <div class="compare-side" id="compare-left">
+      <div class="compare-side-label" id="compare-left-label"></div>
+      <div class="compare-img-wrap">
+        <img class="compare-img" id="compare-left-img" src="" alt="">
+      </div>
+      <div class="compare-info" id="compare-left-info"></div>
+    </div>
+    <div class="compare-divider"></div>
+    <div class="compare-side" id="compare-right">
+      <div class="compare-side-label" id="compare-right-label"></div>
+      <div class="compare-img-wrap">
+        <img class="compare-img" id="compare-right-img" src="" alt="">
+      </div>
+      <div class="compare-info" id="compare-right-info"></div>
+    </div>
+  </div>
+  <div class="compare-toolbar" id="compare-toolbar"></div>
+</div>
+
+<div id="batch-bar">
+  <span class="batch-count" id="batch-count">0 selected</span>
+  <div class="batch-sep"></div>
+  <button class="batch-btn batch-include" data-action="batchOverride" data-arg0="include" title="Force include all">Include</button>
+  <button class="batch-btn batch-exclude" data-action="batchOverride" data-arg0="exclude" title="Force exclude all">Exclude</button>
+  <button class="batch-btn batch-fav" data-action="batchFavorite" data-arg0="true" title="Favorite all">Favorite</button>
+  <button class="batch-btn" data-action="batchFavorite" data-arg0="false" title="Unfavorite all">Unfavorite</button>
+  <button class="batch-btn" data-action="batchOverride" data-arg0="null" title="Clear overrides">Clear</button>
+  <div class="batch-sep"></div>
+  <button class="batch-btn" data-action="showAlbumPickerModal" title="Add to album">+ Album</button>
+  <button class="batch-btn" data-action="batchAddTag" title="Add tag">+ Tag</button>
+  <button class="batch-btn batch-enhance" data-action="batchEnhance" title="Auto-enhance selected">Enhance</button>
+  <button class="batch-btn" id="batch-hide-btn" data-action="batchHide" title="Hide photos">Hide</button>
+  <button class="batch-btn batch-exclude" data-action="batchDelete" title="Delete photos">Delete</button>
+  <button class="batch-btn" id="batch-compare-btn" data-action="openCompareFromSelection" title="Compare selected (C)">Compare</button>
+  <button class="batch-btn" data-action="batchExport" title="Export selected photos">Export</button>
+  <button class="batch-btn batch-deselect" data-action="clearMultiSelect">Deselect all</button>
+</div>
+
+<div class="modal-overlay" id="album-picker-overlay" role="dialog" aria-modal="true" aria-label="Add to album" data-action="_bppBackdropClose" data-backdrop-fn="hideAlbumPicker">
+  <div class="modal album-picker-modal">
+    <div class="modal-title modal-title-spaced">Add to Album</div>
+    <div class="album-picker-list" id="album-picker-list"></div>
+    <div class="album-picker-create">
+      <input type="text" id="album-picker-new-name" placeholder="New album name" data-onkeydown="_kbEnterCreateAlbum">
+      <button class="modal-btn modal-btn-primary" data-action="createAlbumAndAdd">Create</button>
+    </div>
+    <div class="modal-actions">
+      <button class="modal-btn modal-btn-secondary" data-action="hideAlbumPicker">Cancel</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- Face-embedder acceptance dialog (canonical click-through for restricted entries) -->
+<div class="modal-overlay" id="fe-acceptance-overlay" role="dialog" aria-modal="true" aria-label="Review and accept model terms" style="display: none">
+  <div class="modal fe-acceptance-modal">
+    <div class="modal-title modal-title-spaced">Review &amp; accept model terms</div>
+    <div id="fe-acceptance-body" class="fe-acceptance-body">
+      <p class="setting-muted">Loading…</p>
+    </div>
+    <div class="modal-actions">
+      <button class="modal-btn modal-btn-secondary" data-action="closeFaceEmbedderAcceptance">Cancel</button>
+      <button class="modal-btn modal-btn-primary" id="fe-accept-btn" data-action="confirmFaceEmbedderAcceptance" disabled>I accept</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- Onboarding overlay (first-run) -->
+<div class="onboarding-overlay hidden" id="onboarding-overlay" role="dialog" aria-modal="true" aria-label="Welcome to Best Photo Picker" data-action="_bppBackdropClose" data-backdrop-fn="_onboardingSkip">
+  <div class="onboarding-modal">
+    <div class="onboarding-body" id="onboarding-body"></div>
+    <div class="onboarding-dots" id="onboarding-dots"></div>
+  </div>
+</div>
+
+<div id="toast-container" role="status" aria-live="polite"></div>
+
+<div class="modal-overlay" id="modal-overlay" role="dialog" aria-modal="true" data-action="closeModal" data-pass-event="true">
+  <div class="modal">
+    <div class="modal-icon" id="modal-icon"></div>
+    <div class="modal-title" id="modal-title"></div>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-actions" id="modal-actions">
+      <button class="modal-btn modal-btn-primary" data-action="closeModal">OK</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="wizard-overlay" role="dialog" aria-modal="true" aria-label="Setup wizard">
+  <div class="modal modal-wizard">
+    <div class="modal-icon" id="wiz-icon"></div>
+    <div class="modal-title" id="wiz-title"></div>
+    <div class="modal-body wiz-body-left" id="wiz-body"></div>
+    <div class="modal-actions" id="wiz-actions"></div>
+  </div>
+</div>
+
+<input type="hidden" id="input-dir" value="">
+
+<div class="modal-overlay" id="import-modal-overlay" role="dialog" aria-modal="true" aria-label="Import photos" data-action="_bppBackdropClose" data-backdrop-fn="hideImportModal">
+  <div class="modal modal-import">
+    <div class="modal-title modal-title-spaced">Import Photos</div>
+    <p class="modal-desc">Choose a folder of photos to add to your library. Photos are copied into the library &mdash; your originals are not moved or modified.</p>
+    <div class="field">
+      <label>Source folder</label>
+      <div class="input-row">
+        <input type="text" id="import-dir-input" placeholder="/path/to/photos" data-oninput="validateImportModal">
+        <button class="btn-browse" data-action="openImportBrowser">Browse</button>
+      </div>
+    </div>
+    <div class="import-option-row">
+      <label class="setting-toggle import-option-toggle" title="iPhone Live Photos export as two files: the still you took and a motion-component sidecar (IMG_xxxx_1.HEIC). Sidecars are visually identical to their parent and are hidden from the grid. Uncheck (recommended) to skip them entirely — they add no picking value and double your photo count.">
+        <input type="checkbox" id="import-live-photo-sidecars">
+        <span class="toggle-track"></span>
+      </label>
+      <span class="import-option-label">Import Live Photo motion sidecars <span class="tip" data-tip="iPhone Live Photos export as two files — the still you took (IMG_4214.HEIC) and a near-identical motion sidecar (IMG_4214_1.HEIC). Sidecars are hidden from the grid and picking views. Recommended: leave off — they add no picking value and double your photo count.">i</span></span>
+    </div>
+    <div class="modal-flex-row">
+      {% if not serve_mode %}
+      <button class="btn-primary modal-action-btn" id="btn-modal-analyze" data-action="startAnalyzeFromModal" disabled>Analyze</button>
+      {% endif %}
+      <button class="btn-primary modal-action-btn-import" id="btn-modal-import" data-action="startImportFromModal" disabled>Import</button>
+    </div>
+    <p class="modal-hint">After import, photos are scored on sharpness, lighting, faces, and composition. This may take a few minutes for large folders.</p>
+    <div class="modal-center-row">
+      <button class="modal-btn modal-btn-secondary modal-cancel-btn" data-action="hideImportModal">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Settings modal -->
+<!-- Cmd+K Search Modal -->
+<div class="search-overlay" id="search-overlay" role="dialog" aria-modal="true" aria-label="Search" data-action="_bppBackdropClose" data-backdrop-fn="hideSearch">
+  <div class="search-modal">
+    <div class="search-input-row">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6.5" cy="6.5" r="4.5"/><line x1="10" y1="10" x2="14" y2="14"/></svg>
+      <input class="search-input" id="search-input" type="text" placeholder="Search photos, people, albums..." autocomplete="off" spellcheck="false">
+      <span class="search-kbd">esc</span>
+    </div>
+    <div class="search-results" id="search-results"></div>
+    <div class="search-footer">
+      <span><kbd>&uarr;</kbd><kbd>&darr;</kbd> navigate</span>
+      <span><kbd>&crarr;</kbd> open</span>
+      <span><kbd>esc</kbd> close</span>
+    </div>
+  </div>
+</div>
+
+<!-- Slideshow Overlay -->
+<div class="ss-overlay hidden" id="slideshow-overlay">
+  <img class="ss-img ss-active" id="ss-img-a" alt="">
+  <img class="ss-img" id="ss-img-b" alt="">
+  <video class="ss-video hidden" id="ss-video" playsinline></video>
+  <div class="ss-info hidden" id="ss-info"></div>
+  <div class="ss-controls" id="ss-controls">
+    <button class="ss-btn" data-action="slideshowNav" data-arg0="-1" title="Previous (Left arrow)" aria-label="Previous photo">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M10 3l-5 5 5 5z"/></svg>
+    </button>
+    <button class="ss-btn" id="ss-play-btn" data-action="slideshowTogglePlay" title="Play/Pause (Space)" aria-label="Play or pause slideshow"></button>
+    <button class="ss-btn" data-action="slideshowNav" data-arg0="1" title="Next (Right arrow)" aria-label="Next photo">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M6 3l5 5-5 5z"/></svg>
+    </button>
+    <span class="ss-sep"></span>
+    <button class="ss-speed-btn active" data-speed="3000" data-action="slideshowSetSpeed" data-arg0="3000">3s</button>
+    <button class="ss-speed-btn" data-speed="5000" data-action="slideshowSetSpeed" data-arg0="5000">5s</button>
+    <button class="ss-speed-btn" data-speed="8000" data-action="slideshowSetSpeed" data-arg0="8000">8s</button>
+    <span class="ss-sep"></span>
+    <button class="ss-btn" id="ss-shuffle-btn" data-action="slideshowToggleShuffle" title="Shuffle (S)" aria-label="Toggle shuffle"></button>
+    <button class="ss-btn active" id="ss-kb-btn" data-action="slideshowToggleKenBurns" title="Ken Burns effect (K)" aria-label="Toggle Ken Burns"></button>
+    <button class="ss-btn" id="ss-info-btn" data-action="slideshowToggleInfo" title="Show info (I)" aria-label="Toggle photo info"></button>
+    <span class="ss-sep"></span>
+    <span class="ss-counter" id="ss-counter"></span>
+    <button class="ss-btn ss-close-btn" data-action="stopSlideshow" title="Exit (Esc)" aria-label="Exit slideshow">&times;</button>
+  </div>
+</div>
+
+<!-- Library Picker Modal -->
+<div class="library-picker-overlay hidden" id="library-picker-overlay" data-action="_bppBackdropClose" data-backdrop-fn="hideLibraryPicker">
+  <div class="library-picker-modal">
+    <div class="library-picker-header">
+      <h2>Libraries</h2>
+      <button class="library-picker-close" data-action="hideLibraryPicker">&times;</button>
+    </div>
+    <div class="library-picker-body" id="library-list"></div>
+    <div class="library-picker-footer">
+      <button data-action="addExistingLibrary">Add Existing</button>
+      <button data-action="createNewLibrary">New Library</button>
+    </div>
+  </div>
+</div>
+
+<div class="settings-overlay" id="settings-overlay" role="dialog" aria-modal="true" aria-label="Settings" data-action="_bppBackdropClose" data-backdrop-fn="hideSettings">
+  <div class="settings-panel">
+    <div class="settings-header">
+      <div class="settings-title-row">
+        <h2>Settings</h2>
+        <button data-action="hideSettings" aria-label="Close settings">&times;</button>
+      </div>
+      <div class="settings-tabs">
+        <button class="settings-tab active" data-tab="app" data-action="switchSettingsTab" data-arg0="app">App</button>
+        <button class="settings-tab" data-tab="library" data-action="switchSettingsTab" data-arg0="library">Library</button>
+        <button class="settings-tab" data-tab="scoring" data-action="switchSettingsTab" data-arg0="scoring">Scoring</button>
+        <button class="settings-tab" data-tab="models" data-action="switchSettingsTab" data-arg0="models">Models</button>
+        <button class="settings-tab" data-tab="advanced" data-action="switchSettingsTab" data-arg0="advanced">Advanced</button>
+        <button class="settings-tab" data-tab="activity" data-action="_openActivityTab">Activity</button>
+        <button class="settings-tab" data-tab="share" data-action="_openShareTab">Share</button>
+      </div>
+      <div class="settings-library-banner" id="settings-library-banner">
+        Settings for library <strong id="settings-library-name"></strong>
+      </div>
+    </div>
+    <div class="settings-body">
+      <!-- ── App tab (app-wide, localStorage) ── -->
+      <div class="settings-tab-pane active" id="settings-pane-app">
+        <div class="setting-item">
+          <div class="settings-row">
+            <label>Appearance</label>
+            <div class="theme-toggle" role="radiogroup" aria-label="Theme">
+              <button class="theme-btn" data-theme="light" data-action="setTheme" data-arg0="light" aria-label="Light">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="3.5" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                Light
+              </button>
+              <button class="theme-btn" data-theme="dark" data-action="setTheme" data-arg0="dark" aria-label="Dark">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M13.4 10.3A5.5 5.5 0 015.7 2.6a6.5 6.5 0 107.7 7.7z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                Dark
+              </button>
+              <button class="theme-btn" data-theme="auto" data-action="setTheme" data-arg0="auto" aria-label="Auto">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="10" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M8 3v10" stroke="currentColor" stroke-width="1.5"/></svg>
+                Auto
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="setting-item">
+          <div class="settings-row">
+            <label>Product tour</label>
+            <button class="preset-btn save" data-action="_settingsStartTour">Start</button>
+          </div>
+        </div>
+        <div class="settings-section"><h3>Updates</h3></div>
+        <div class="setting-item">
+          <div class="settings-row">
+            <label>Check for updates on startup</label>
+            <label class="setting-toggle">
+              <input type="checkbox" id="check-updates-toggle" checked data-onchange="toggleCheckUpdates">
+              <span class="toggle-track"></span>
+            </label>
+          </div>
+        </div>
+        <div class="setting-item">
+          <div class="settings-row">
+            <label id="update-status-label">No update info yet</label>
+            <button class="preset-btn save" id="check-updates-btn" data-action="manualUpdateCheck">Check Now</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Library tab (per-library, DB) ── -->
+      <div class="settings-tab-pane" id="settings-pane-library">
+        <div class="setting-item">
+          <div class="settings-row">
+            <label title="Change the display name of this library">Rename library</label>
+            <button class="preset-btn save" data-action="_settingsRenameLibrary">Rename</button>
+          </div>
+        </div>
+        <div class="setting-item">
+          <div class="settings-row">
+            <label title="Open a different photo library folder">Switch library</label>
+            <button class="preset-btn save" data-action="_settingsSwitchLibrary">Switch</button>
+          </div>
+        </div>
+        <div class="settings-section"><h3>Analysis</h3></div>
+        <div class="setting-item">
+          <div class="settings-row">
+            <label title="Re-score sharpness, exposure, faces, pets, CLIP. Reuses cached face embeddings — to rebuild face detection from scratch use the analyze menu's &quot;Re-extract faces&quot; instead.">Re-analyze library</label>
+            <button class="preset-btn save" data-action="_settingsReanalyze">Analyze All</button>
+          </div>
+        </div>
+        <div class="setting-item">
+          <div class="settings-row">
+            <label title="Compute perceptual hashes and group near-identical photos (burst shots, Live Photo pairs, etc.) into similarity clusters. Runs automatically after each import.">Compute similarity clusters</label>
+            <button class="preset-btn save" id="btn-recompute-hashes" data-action="_settingsRecomputeHashes">Compute</button>
+          </div>
+        </div>
+        <div class="setting-item">
+          <div class="settings-row">
+            <label>Clear scoring cache <span class="tip" data-tip="Deletes cached scores so the next analysis re-runs all ML models from scratch. Use after model upgrades or if scores seem wrong.">i</span></label>
+            <button class="preset-btn" data-action="clearAnalysisCache">Clear Cache</button>
+          </div>
+        </div>
+        <div class="setting-item">
+          <div class="settings-row">
+            <label title="Automatically tune scoring weights based on your Include/Exclude choices. Works best after you've marked 20+ photos.">Auto-optimize weights</label>
+            <button class="preset-btn save" data-action="_settingsAutoOptimize">Optimize</button>
+          </div>
+        </div>
+        <div class="settings-section">
+          <h3>Danger zone</h3>
+          <p>Permanently delete all photos from disk and database.</p>
+          <p id="clear-photo-count" class="danger-warning"></p>
+          <div class="danger-confirm-row">
+            <input type="text" id="clear-confirm-input" placeholder='Type "delete" to confirm'
+                   data-oninput="validateClearConfirm">
+            <button class="btn-danger" id="btn-clear-library" data-action="clearLibrary">Delete All</button>
+          </div>
+        </div>
+      </div>
+      <!-- ── Scoring tab ── -->
+      <div class="settings-tab-pane" id="settings-pane-scoring">
+        <div class="settings-section"><h3>Selection</h3>
+          <p>How many photos to pick and how to spread them across your timeline.</p>
+        </div>
+        <div class="setting-item">
+          <div class="field">
+            <label>Target count <span class="tip" data-tip="Total number of photos to pick from the collection.">i</span></label>
+            <input type="number" id="param-k" value="50" min="1" max="9999" data-oninput="scheduleRecompute">
+          </div>
+          <div class="slider-row">
+            <label>Per day</label>
+            <span class="tip" data-tip="Max photos per day. Prevents one event from dominating.">i</span>
+            <input type="range" min="1" max="20" step="1" value="3" data-param="max_per_day">
+            <span class="val">3</span>
+          </div>
+          <div class="slider-row">
+            <label>Month min</label>
+            <span class="tip" data-tip="Guarantee at least this many per month, even if scores are low.">i</span>
+            <input type="range" min="0" max="10" step="1" value="1" data-param="min_per_month">
+            <span class="val">1</span>
+          </div>
+          <div class="slider-row">
+            <label>Month max</label>
+            <span class="tip" data-tip="Max photos per month. 0 = unlimited.">i</span>
+            <input type="range" min="0" max="30" step="1" value="0" data-param="max_per_month">
+            <span class="val">0</span>
+          </div>
+          <div class="slider-row">
+            <label>Variety</label>
+            <span class="tip" data-tip="Prevents picking visually similar photos. Higher = more variety, fewer repeated scenes. Uses AI when CLIP is enabled, falls back to hash matching. 0 = off.">i</span>
+            <input type="range" min="0" max="0.98" step="0.01" value="0.85" data-param="selection_similarity_threshold">
+            <span class="val">0.85</span>
+          </div>
+        </div>
+
+        <div class="settings-section"><h3>Presets</h3></div>
+        <div class="setting-item">
+          <div class="preset-row">
+            <select id="preset-select" data-onchange="loadPreset">
+              <option value="">Load preset...</option>
+            </select>
+            <button class="preset-btn" id="btn-delete-preset" data-action="deletePreset" title="Delete" style="display:none">&times;</button>
+            <button class="preset-btn save" id="btn-update-preset" data-action="updatePreset" style="display:none">Update</button>
+            <button class="preset-btn save" id="btn-save-preset" data-action="showPresetSaveForm">Save</button>
+          </div>
+        </div>
+
+        <div class="settings-section"><h3>Quality weights</h3></div>
+        <div class="setting-item">
+          <div class="slider-row">
+            <label>Sharpness</label>
+            <span class="tip" data-tip="How much to penalize blurry photos. Higher = sharper photos preferred.">i</span>
+            <input type="range" min="0" max="1" step="0.01" value="0.30" data-param="blur_weight">
+            <span class="val">0.30</span>
+          </div>
+          <div class="slider-row">
+            <label>Lighting</label>
+            <span class="tip" data-tip="Prefer well-lit photos over under- or overexposed ones.">i</span>
+            <input type="range" min="0" max="1" step="0.01" value="0.20" data-param="exposure_weight">
+            <span class="val">0.20</span>
+          </div>
+          <div class="slider-row">
+            <label>Face quality</label>
+            <span class="tip" data-tip="Favor photos with visible, well-framed faces.">i</span>
+            <input type="range" min="0" max="1" step="0.01" value="0.35" data-param="face_weight">
+            <span class="val">0.35</span>
+          </div>
+          <div class="slider-row">
+            <label>Composition</label>
+            <span class="tip" data-tip="Prefer well-composed shots with good framing and visual balance.">i</span>
+            <input type="range" min="0" max="1" step="0.01" value="0.15" data-param="composition_weight">
+            <span class="val">0.15</span>
+          </div>
+          <div class="slider-row">
+            <label>Sensitive photos</label>
+            <span class="tip" id="sensitive-filter-tip" data-tip="Photos the on-device filter flags as sensitive. Allow = they compete for picks; Exclude = kept out of auto-picks (still in your library). Manual includes always win.">i</span>
+            <div class="theme-toggle" id="sensitive-toggle" role="radiogroup" aria-label="Sensitive photos in auto-picks">
+              <button class="theme-btn active" data-sens="allow" data-action="_setSensitiveMode" data-arg0="allow" role="radio" aria-checked="true">Allow</button>
+              <button class="theme-btn" data-sens="exclude" data-action="_setSensitiveMode" data-arg0="exclude" role="radio" aria-checked="false">Exclude</button>
+            </div>
+          </div>
+          <div class="slider-row">
+            <label>Flag sensitivity</label>
+            <span class="tip" data-tip="How confident the on-device filter must be before flagging a photo &quot;may be sensitive&quot;. Higher = fewer false positives (baby/bath photos). Default 0.70.">i</span>
+            <input type="range" id="sensitive-threshold-slider" min="0.3" max="0.95" step="0.05" value="0.70" data-oninput="_onSensitiveThresholdInput" data-onchange="_onSensitiveThresholdCommit">
+            <span class="val" id="sensitive-threshold-val">0.70</span>
+          </div>
+        </div>
+        <div class="setting-item" id="optimize-section">
+          <button class="preset-btn save btn-full-width" id="btn-auto-optimize" data-action="runAutoOptimize">Auto-optimize weights</button>
+          <div class="face-status hidden mt-4" id="optimize-status"></div>
+        </div>
+
+        <div class="settings-section"><h3>Duplicates</h3>
+          <p>Find and remove near-identical photos so you don't pick the same shot twice.</p>
+        </div>
+        <div class="setting-item">
+          <div id="clip-status-row" class="hidden">
+            <div class="clip-status-header">
+              <span class="clip-status-label">Smart dedup</span>
+              <span class="clip-badge off" id="clip-status-badge">Off</span>
+            </div>
+            <p class="setting-muted" id="clip-status-desc">Uses AI to catch visually similar photos that basic hashing misses. Click below to enable.</p>
+            <button class="preset-btn save hidden mt-4 btn-full-width" id="btn-clip-extract" data-action="startClipExtraction">Compute CLIP embeddings</button>
+            <div class="hidden" id="clip-progress">
+              <span id="clip-progress-text" class="clip-progress-text">Computing...</span>
+              <div class="clip-progress-track">
+                <div id="clip-progress-fill" class="clip-progress-fill"></div>
+              </div>
+            </div>
+            <div id="clip-cap-banner" class="hidden clip-cap-banner">
+              <p id="clip-cap-msg" class="clip-cap-msg"></p>
+              <p id="clip-cap-learn" class="clip-cap-learn hidden setting-muted">
+                Semantic dedup loads every photo's CLIP fingerprint into memory at once.
+                Peak footprint is ~3x the fingerprint size: the dictionary, the search matrix,
+                and the dedup scratch matrix all live at the same time. The default 200,000-photo
+                cap keeps that under ~1.2&nbsp;GB — comfortable on a 16&nbsp;GB machine sharing
+                memory with a browser and the OS. Enabling above the cap is safe as long as you
+                have headroom for the reported peak; if you start seeing the app slow under
+                memory pressure, disable below.
+              </p>
+              <div class="clip-cap-actions">
+                <button class="preset-btn save" id="btn-clip-cap-enable" data-action="enableClipCapOverride">Enable anyway</button>
+                <button class="preset-btn" id="btn-clip-cap-learn" data-action="toggleClipCapLearnMore">Learn more</button>
+              </div>
+            </div>
+            <div id="clip-cap-active" class="hidden clip-cap-active setting-muted">
+              <span id="clip-cap-active-msg"></span>
+              <button class="clip-cap-disable-link" id="btn-clip-cap-disable" data-action="disableClipCapOverride">Disable</button>
+            </div>
+          </div>
+          <div id="dedup-adaptive-info" class="hidden dedup-adaptive-info">
+            Threshold: <strong id="dedup-threshold-val" class="dedup-threshold-val">0.92</strong>
+            &middot; <span id="dedup-feedback-count">0</span> feedback signals
+          </div>
+          <div id="hash-dedup-controls">
+            <p class="setting-muted">Basic hash matching — catches exact and near-exact copies.</p>
+            <div class="slider-row">
+              <label>Sensitivity</label>
+              <span class="tip" data-tip="How similar two photos must be to count as duplicates. Lower = only near-identical, higher = catches more variations.">i</span>
+              <input type="range" min="0" max="30" step="1" value="10" data-param="hash_distance_threshold">
+              <span class="val">10</span>
+            </div>
+            <div class="slider-row">
+              <label>Burst gap</label>
+              <span class="tip" data-tip="Photos taken within this many seconds are grouped as a burst. Only the best from each burst is kept.">i</span>
+              <input type="range" min="0" max="120" step="1" value="15" data-param="time_window_seconds">
+              <span class="val">15</span>
+            </div>
+            <div class="slider-row">
+              <label>Across dates</label>
+              <span class="tip" data-tip="Also remove near-identical photos taken on different days (e.g. same pose, different occasion). 0 = same-day only.">i</span>
+              <input type="range" min="0" max="15" step="1" value="5" data-param="global_hash_distance_threshold">
+              <span class="val">5</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-section"><h3>Manual picks</h3></div>
+        <div class="setting-item" id="override-section">
+          <div class="override-desc">
+            Photos you've forced in or out. These override the algorithm.
+          </div>
+          <div class="stats" id="override-stats">None</div>
+          <button class="btn-text-danger" data-action="clearOverrides">Clear all</button>
+        </div>
+
+        <div class="settings-footer">
+          <p>Changes take effect immediately.</p>
+        </div>
+      </div>
+
+      <!-- ── Advanced tab ── -->
+      <div class="settings-tab-pane" id="settings-pane-advanced">
+        <div class="setting-item setting-item-grouped" id="settings-face-section" style="display:none">
+          <div class="setting-item-header">
+            <span class="setting-item-label">Face grouping <span class="setting-info" role="button" tabindex="0" data-action="_toggleSettingTip" data-onkeydown="_kbToggleTip">?</span></span>
+            <span class="setting-item-val" id="face-cluster-val">0.55</span>
+          </div>
+          <input type="range" id="face-cluster-slider" min="0.3" max="1.2" step="0.02" value="0.80"
+            aria-label="Face grouping threshold" data-oninput="updateFaceThresholdLabel">
+          <div class="setting-item-hints"><span>More groups</span><span>Fewer groups</span></div>
+          <p class="setting-tip">
+            Controls how strict the matcher is when deciding whether two faces are the same person.
+            Move left if strangers end up in one group; move right if one person is split across several.
+            <strong>Regroup</strong> rebuilds all person groups from scratch using the new threshold —
+            faces stay attached to photos, but who they're grouped with may change.
+          </p>
+          <p class="setting-learned-threshold" id="face-learned-threshold" style="display:none"></p>
+          <div class="setting-nudge" id="face-recluster-nudge" style="display:none">
+            <span>Your corrections suggest regrouping might improve accuracy.</span>
+            <button class="preset-btn" data-action="dismissFaceNudge">Dismiss</button>
+          </div>
+          <button class="preset-btn save setting-item-action" id="btn-recluster" data-action="applyFaceRecluster">Regroup faces</button>
+        </div>
+        <div class="setting-item">
+          <div class="setting-item-header">
+            <span class="setting-item-label">Face detection <span class="setting-info" role="button" tabindex="0" data-action="_toggleSettingTip" data-onkeydown="_kbToggleTip">?</span></span>
+            <span class="setting-item-val" id="face-confidence-val">0.20</span>
+          </div>
+          <input type="range" id="face-confidence-slider" min="0.10" max="0.50" step="0.02" value="0.20"
+            aria-label="Face detection sensitivity" data-oninput="updateFaceConfidenceLabel">
+          <div class="setting-item-hints"><span>Fewer faces</span><span>More faces</span></div>
+          <p class="setting-tip">Higher finds more faces but may include false positives.</p>
+        </div>
+        <div class="setting-item">
+          <div class="setting-item-header">
+            <span class="setting-item-label">Pet detection <span class="setting-info" role="button" tabindex="0" data-action="_toggleSettingTip" data-onkeydown="_kbToggleTip">?</span></span>
+            <span class="setting-item-val" id="pet-confidence-val">0.20</span>
+          </div>
+          <input type="range" id="pet-confidence-slider" min="0.10" max="0.50" step="0.02" value="0.20"
+            aria-label="Pet detection sensitivity" data-oninput="updatePetConfidenceLabel">
+          <div class="setting-item-hints"><span>Fewer pets</span><span>More pets</span></div>
+          <p class="setting-tip">Lower catches small or distant pets but may include false positives. Default 0.20 is tuned for cats on furniture.</p>
+        </div>
+        <div class="setting-item">
+          <div class="setting-item-header">
+            <span class="setting-item-label">Group detection <span class="setting-info" role="button" tabindex="0" data-action="_toggleSettingTip" data-onkeydown="_kbToggleTip">?</span></span>
+            <span class="setting-item-val" id="group-min-photos-val">3</span>
+          </div>
+          <input type="range" id="group-min-photos-slider" min="1" max="10" step="1" value="3"
+            aria-label="Group detection minimum shared photos" data-oninput="updateGroupMinPhotosLabel">
+          <div class="setting-item-hints"><span>More groups</span><span>Fewer groups</span></div>
+          <p class="setting-tip">How many photos two people must share before they form a group in the Groups view. Lower surfaces one-off get-togethers; higher keeps only recurring constellations. Takes effect the next time Groups loads.</p>
+        </div>
+        <div class="setting-item">
+          <div class="setting-item-header">
+            <span class="setting-item-label">Face recognition quality <span class="setting-info" role="button" tabindex="0" data-action="_toggleSettingTip" data-onkeydown="_kbToggleTip">?</span></span>
+            <span class="setting-item-val" id="face-embed-conf-val">0.65</span>
+          </div>
+          <input type="range" id="face-embed-conf-slider" min="0.40" max="0.85" step="0.05" value="0.65"
+            aria-label="Face recognition quality" data-oninput="updateFaceEmbedConfLabel">
+          <div class="setting-item-hints"><span>Catch more</span><span>Higher quality</span></div>
+          <p class="setting-tip">How confident the detector must be before recognizing a face for person grouping. Default is optimized — raise if you see non-faces (hands, toys) in person groups, lower if people are missing. Requires re-analysis.</p>
+        </div>
+        <div class="setting-item">
+          <div class="setting-item-header">
+            <span class="setting-item-label">Minimum face size <span class="setting-info" role="button" tabindex="0" data-action="_toggleSettingTip" data-onkeydown="_kbToggleTip">?</span></span>
+            <span class="setting-item-val" id="min-face-area-val">0.20%</span>
+          </div>
+          <input type="range" id="min-face-area-slider" min="0.05" max="1.0" step="0.05" value="0.20"
+            aria-label="Minimum face size" data-oninput="updateMinFaceAreaLabel">
+          <div class="setting-item-hints"><span>Catch distant</span><span>Ignore small</span></div>
+          <p class="setting-tip">Minimum face area as percentage of image. Lower catches distant faces in landscapes but may add noise. Default 0.20% ≈ 40×40 pixels at 1024px. Requires re-analysis.</p>
+        </div>
+        <div class="setting-item">
+          <div class="setting-item-header">
+            <span class="setting-item-label">Embedding quality gate <span class="setting-info" role="button" tabindex="0" data-action="_toggleSettingTip" data-onkeydown="_kbToggleTip">?</span></span>
+            <span class="setting-item-val" id="min-embed-quality-val">0.25</span>
+          </div>
+          <input type="range" id="min-embed-quality-slider" min="0.10" max="0.50" step="0.05" value="0.25"
+            aria-label="Embedding quality gate" data-oninput="updateMinEmbedQualityLabel">
+          <div class="setting-item-hints"><span>Accept more</span><span>Stricter</span></div>
+          <p class="setting-tip">Minimum quality score (frontality, sharpness, size) for a face to enter person grouping. Higher reduces noise but may miss profile shots. Requires re-analysis.</p>
+        </div>
+        <div class="setting-item">
+          <div class="setting-item-header">
+            <span class="setting-item-label">Analysis resolution <span class="setting-info" role="button" tabindex="0" data-action="_toggleSettingTip" data-onkeydown="_kbToggleTip">?</span></span>
+            <span class="setting-item-val" id="max-long-side-val">1024 px</span>
+          </div>
+          <input type="range" id="max-long-side-slider" min="768" max="2560" step="128" value="1024"
+            aria-label="Analysis resolution" data-oninput="updateMaxLongSideLabel">
+          <div class="setting-item-hints"><span>Faster</span><span>More detail</span></div>
+          <p class="setting-tip">Higher catches smaller faces in group shots but takes longer.</p>
+        </div>
+        <div class="setting-item">
+          <div class="setting-item-header">
+            <span class="setting-item-label">Duplicate detection <span class="setting-info" role="button" tabindex="0" data-action="_toggleSettingTip" data-onkeydown="_kbToggleTip">?</span></span>
+            <span class="setting-item-val" id="clip-threshold-val">0.92</span>
+          </div>
+          <input type="range" id="clip-threshold-slider" min="0.80" max="0.99" step="0.01" value="0.92"
+            aria-label="Duplicate detection threshold" data-oninput="updateClipThresholdLabel">
+          <div class="setting-item-hints"><span>Catch more</span><span>Exact only</span></div>
+          <p class="setting-tip">Lower catches crops and slight edits too.</p>
+        </div>
+        <div class="setting-item">
+          <div class="setting-item-header">
+            <span class="setting-item-label">Thumbnail quality <span class="setting-info" role="button" tabindex="0" data-action="_toggleSettingTip" data-onkeydown="_kbToggleTip">?</span></span>
+            <span class="setting-item-val" id="thumbnail-size-val">64 px</span>
+          </div>
+          <input type="range" id="thumbnail-size-slider" min="32" max="256" step="16" value="64"
+            aria-label="Thumbnail quality" data-oninput="updateThumbnailSizeLabel">
+          <div class="setting-item-hints"><span>Smaller</span><span>Sharper</span></div>
+          <p class="setting-tip">Larger thumbnails look sharper but use more memory.</p>
+        </div>
+        <div class="setting-item">
+          <div class="setting-item-header">
+            <span class="setting-item-label">Follow shortcuts <span class="setting-info" role="button" tabindex="0" data-action="_toggleSettingTip" data-onkeydown="_kbToggleTip">?</span></span>
+            <label class="setting-toggle">
+              <input type="checkbox" id="follow-symlinks-toggle" data-onchange="toggleFollowSymlinks">
+              <span class="toggle-track"></span>
+            </label>
+          </div>
+          <p class="setting-tip">Scan inside aliases and linked folders. Turn on if your photos are on an external drive or NAS.</p>
+        </div>
+        <div class="settings-footer">
+          <p>Changes apply on next <strong>Analyze All</strong>.</p>
+        </div>
+      </div>
+
+      <!-- ── Models tab — registry-driven model catalog + license posture ── -->
+      <div class="settings-tab-pane" id="settings-pane-models">
+        <p class="setting-tip" id="bpp-posture-banner" data-source="BPP_POSTURE_STATEMENT">{{ bpp_posture_statement }}</p>
+        <div id="face-embedder-picker" class="fe-picker">
+          <p class="setting-muted">Loading…</p>
+        </div>
+      </div>
+
+      <!-- ── Share tab — LAN sharing URL + QR code ── -->
+      <div class="settings-tab-pane" id="settings-pane-share">
+        <div id="share-tab-content">
+          <div class="activity-empty">Loading…</div>
+        </div>
+      </div>
+
+      <!-- ── Activity tab ── -->
+      <div class="settings-tab-pane" id="settings-pane-activity">
+        <div class="activity-tab-toolbar">
+          <select id="activity-level-filter" data-onchange="activityFilterChanged" aria-label="Filter by level">
+            <option value="all">All levels</option>
+            <option value="warning">Warnings &amp; errors</option>
+            <option value="error">Errors only</option>
+          </select>
+          <button class="preset-btn" data-action="copyActivityLog">Copy log</button>
+          <button class="preset-btn" data-action="clearActivityLog">Clear log</button>
+        </div>
+        <div class="activity-log-entries" id="activity-log-entries">
+          <div class="activity-empty">Loading…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Export modal -->
+<div class="modal-overlay" id="export-modal-overlay" role="dialog" aria-modal="true" aria-label="Export photos" data-action="_bppBackdropClose" data-backdrop-fn="hideExportModal">
+  <div class="modal modal-export">
+    <div class="modal-title modal-title-spaced" id="export-modal-title">Export Selected Photos</div>
+    <div class="field">
+      <label>What to export</label>
+      <select id="export-scope" data-onchange="updateExportScope">
+        <option value="picks">BPP Picks</option>
+        <option value="view">All in current view</option>
+        <option value="batch" hidden>Selected photos</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Output folder</label>
+      <div class="input-row">
+        <input type="text" id="export-dir" placeholder="/path/to/output">
+        <button class="btn-browse" data-action="openExportBrowser">Browse</button>
+      </div>
+    </div>
+    <div class="export-options-row">
+      <div class="field field-inline">
+        <label for="export-format">Format</label>
+        <select id="export-format" data-onchange="toggleExportQuality">
+          <option value="original">Original</option>
+          <option value="jpeg">JPEG</option>
+          <option value="png">PNG</option>
+        </select>
+      </div>
+      <div class="field field-inline">
+        <label for="export-max-size">Max size</label>
+        <select id="export-max-size">
+          <option value="">Original</option>
+          <option value="4096">4096px</option>
+          <option value="2048">2048px</option>
+          <option value="1024">1024px</option>
+          <option value="512">512px</option>
+        </select>
+      </div>
+      <div class="field field-inline" id="export-quality-field">
+        <label for="export-quality">Quality</label>
+        <select id="export-quality">
+          <option value="95">High (95)</option>
+          <option value="85" selected>Good (85)</option>
+          <option value="70">Medium (70)</option>
+          <option value="50">Low (50)</option>
+        </select>
+      </div>
+    </div>
+    <div class="field">
+      <label for="export-mode">Copy method</label>
+      <select id="export-mode" aria-label="Copy method">
+        <!-- Options populated from ExportModeRegistry on modal open
+             (populateExportModes); copy/hardlink/symlink + any plugin modes. -->
+        <option value="copy">Copy photo bytes (default).</option>
+      </select>
+    </div>
+    <div class="field">
+      <label class="export-zip-label">
+        <input type="checkbox" id="export-zip-toggle">
+        Bundle into a single .zip file
+        <span class="tip" data-tip="Packs the photos into one best-photos.zip you can hand off in a single drag (AirDrop, USB, email attachment). Uses the same format/size/metadata options above.">i</span>
+      </label>
+    </div>
+    <div class="modal-flex-row">
+      <button class="btn-primary modal-action-btn-export" id="btn-do-export" data-action="doExport">Export</button>
+    </div>
+    <div class="export-status export-status-center" id="export-status"></div>
+    <div class="modal-center-row">
+      <button class="modal-btn modal-btn-secondary modal-cancel-btn" data-action="hideExportModal">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<meta name="auth-token" content="{{ auth_token }}">
+<script nonce="{{ csp_nonce }}">const serveMode = {{ 'true' if serve_mode else 'false' }};</script>
+
+<!-- ES modules bridge — re-exposes module exports as window globals so
+     existing non-module callers (lightbox.js, calendar.js, etc.) keep
+     working unchanged. The module is `defer`-ed by spec so it runs
+     after classic scripts; we still re-assign onto window inside each
+     non-module file's classic copy for synchronous availability.
+     See docs/js-modules-migration.md. -->
+<script type="module" nonce="{{ csp_nonce }}">
+  // T0.1: action registry must load FIRST so window.__bppActionRegistry
+  // is set before any other module calls registerAction(). Import is
+  // side-effect-only — the module exposes itself on window for the
+  // click dispatcher in globals.js.
+  import * as _actionRegistry from "/static/js/modules/action-registry.mjs";
+  import * as stateModule from "/static/js/modules/state.mjs";
+  import * as dateFormat from "/static/js/modules/date-format.mjs";
+  import * as textFormat from "/static/js/modules/text-format.mjs";
+  import * as formatHelpers from "/static/js/modules/format-helpers.mjs";
+  import * as scoreFormat from "/static/js/modules/score-format.mjs";
+  import * as apiClient from "/static/js/modules/api-client.mjs";
+  import * as viewGuard from "/static/js/modules/view-guard.mjs";
+  import * as toastModule from "/static/js/modules/toast.mjs";
+  import * as theme from "/static/js/modules/theme.mjs";
+  import * as settingsClient from "/static/js/modules/settings-client.mjs";
+  import * as dialogs from "/static/js/modules/dialogs.mjs";
+  import * as modal from "/static/js/modules/modal.mjs";
+  import * as updateChecker from "/static/js/modules/update-checker.mjs";
+  import * as nudges from "/static/js/modules/nudges.mjs";
+  import * as timeline from "/static/js/modules/timeline.mjs";
+  import * as presets from "/static/js/modules/presets.mjs";
+  import * as memories from "/static/js/modules/memories.mjs";
+  import * as onThisDay from "/static/js/modules/on-this-day.mjs";
+  import * as wizard from "/static/js/modules/wizard.mjs";
+  import * as importWorker from "/static/js/modules/import-worker.mjs";
+  import * as clipModule from "/static/js/modules/clip.mjs";
+  import * as activityLog from "/static/js/modules/activity-log.mjs";
+  import * as groupsModule from "/static/js/modules/groups.mjs";
+  import * as mapModule from "/static/js/modules/map.mjs";
+  import * as libraryModule from "/static/js/modules/library.mjs";
+  import * as batchRename from "/static/js/modules/batch-rename.mjs";
+  import * as onboarding from "/static/js/modules/onboarding.mjs";
+  import * as tagsModule from "/static/js/modules/tags.mjs";
+  import * as tagsViewModule from "/static/js/modules/tags-view.mjs";
+  import * as editorRedeye from "/static/js/modules/editor-redeye.mjs";
+  import * as dupeReview from "/static/js/modules/dupe-review.mjs";
+  import * as inspector from "/static/js/modules/inspector.mjs";
+  import * as slideshow from "/static/js/modules/slideshow.mjs";
+  import * as tourModule from "/static/js/modules/tour.mjs";
+  import * as facesModule from "/static/js/modules/faces.mjs";
+  import * as toolbarModule from "/static/js/modules/toolbar.mjs";
+  import * as searchModule from "/static/js/modules/search.mjs";
+  import * as deletedCtxMenuModule from "/static/js/modules/deleted-ctx-menu.mjs";
+  import * as deletedEnhanceModule from "/static/js/modules/deleted-enhance.mjs";
+  import * as deletedModule from "/static/js/modules/deleted.mjs";
+  import * as analysisStatusModule from "/static/js/modules/analysis-status.mjs";
+  import * as analysisRecomputeModule from "/static/js/modules/analysis-recompute.mjs";
+  import * as analysisInstallModule from "/static/js/modules/analysis-install.mjs";
+  import * as analysisModule from "/static/js/modules/analysis.mjs";
+  import * as calendarRenderModule from "/static/js/modules/calendar-render.mjs";
+  import * as calendarSelectionModule from "/static/js/modules/calendar-selection.mjs";
+  import * as calendarModule from "/static/js/modules/calendar.mjs";
+  import * as compareSiblingModule from "/static/js/modules/compare-sibling.mjs";
+  import * as compareModule from "/static/js/modules/compare.mjs";
+  import * as navigationModule from "/static/js/modules/navigation.mjs";
+  import * as uiHelpersModule from "/static/js/modules/ui-helpers.mjs";
+  import * as utilsModule from "/static/js/modules/utils.mjs";
+  import * as coreModule from "/static/js/modules/core.mjs";
+  import * as modalsModelsListModule from "/static/js/modules/modals-models-list.mjs";
+  import * as modalsModelsModule from "/static/js/modules/modals-models.mjs";
+  import * as modalsFaceEmbeddersModule from "/static/js/modules/modals-face-embedders.mjs";
+  import * as modalsModule from "/static/js/modules/modals.mjs";
+  import * as petsPickersModule from "/static/js/modules/pets-pickers.mjs";
+  import * as petsModule from "/static/js/modules/pets.mjs";
+  import * as editorCropModule from "/static/js/modules/editor-crop.mjs";
+  import * as editorInpaintModule from "/static/js/modules/editor-inpaint.mjs";
+  import * as photosSelectModule from "/static/js/modules/photos-select.mjs";
+  import * as photosHoverModule from "/static/js/modules/photos-hover.mjs";
+  import * as photosVgridModule from "/static/js/modules/photos-vgrid.mjs";
+  import * as photosBatchModule from "/static/js/modules/photos-batch.mjs";
+  import * as photosCardModule from "/static/js/modules/photos-card.mjs";
+  import * as photosModule from "/static/js/modules/photos.mjs";
+  import * as albumsRenderModule from "/static/js/modules/albums-render.mjs";
+  import * as albumsSwitchModule from "/static/js/modules/albums-switch.mjs";
+  import * as albumsMenusModule from "/static/js/modules/albums-menus.mjs";
+  import * as albumsModule from "/static/js/modules/albums.mjs";
+  import * as editorConstantsModule from "/static/js/modules/editor-constants.mjs";
+  import * as editorStylesModule from "/static/js/modules/editor-styles.mjs";
+  import * as editorPreviewModule from "/static/js/modules/editor-preview.mjs";
+  import * as editorRenderingModule from "/static/js/modules/editor-rendering.mjs";
+  import * as editorToolsModule from "/static/js/modules/editor-tools.mjs";
+  import * as editorModule from "/static/js/modules/editor.mjs";
+  import * as lightboxActionsModule from "/static/js/modules/lightbox-actions.mjs";
+  import * as lightboxFacePickerModule from "/static/js/modules/lightbox-face-picker.mjs";
+  import * as lightboxFaceAssignModule from "/static/js/modules/lightbox-face-assign.mjs";
+  import * as lightboxFaceOverlaysModule from "/static/js/modules/lightbox-face-overlays.mjs";
+  import * as lightboxInputModule from "/static/js/modules/lightbox-input.mjs";
+  import * as lightboxFaceEditModule from "/static/js/modules/lightbox-face-edit.mjs";
+  import * as lightboxInfoModule from "/static/js/modules/lightbox-info.mjs";
+  import * as lightboxOpenModule from "/static/js/modules/lightbox-open.mjs";
+  import * as lightboxModule from "/static/js/modules/lightbox.mjs";
+  import * as peopleAlbumBarModule from "/static/js/modules/people-album-bar.mjs";
+  import * as peopleReviewModule from "/static/js/modules/people-review.mjs";
+  import * as photoPreviewModule from "/static/js/modules/photo-preview.mjs";
+  import * as peoplePairReviewModule from "/static/js/modules/people-pair-review.mjs";
+  import * as peoplePickersModule from "/static/js/modules/people-pickers.mjs";
+  import * as peopleActionsModule from "/static/js/modules/people-actions.mjs";
+  import * as peopleCtxMenuModule from "/static/js/modules/people-ctx-menu.mjs";
+  import * as peopleViewModule from "/static/js/modules/people-view.mjs";
+  import * as peopleMergeModule from "/static/js/modules/people-merge.mjs";
+  import * as peopleModule from "/static/js/modules/people.mjs";
+  import * as shareTabModule from "/static/js/modules/share-tab.mjs";
+  import * as sidebarSafetyModule from "/static/js/modules/sidebar-safety.mjs";
+  import * as sensitiveModule from "/static/js/modules/sensitive.mjs";
+  import "/static/js/modules/tooltip.mjs"; // self-attaches listeners on import
+  // The classic copies have been removed — these modules now ARE the
+  // runtime. See docs/js-modules-migration.md for the path.
+  Object.assign(
+    window,
+    stateModule, dateFormat, textFormat, formatHelpers, scoreFormat,
+    apiClient, viewGuard, toastModule, theme, settingsClient, dialogs, modal,
+    updateChecker, nudges, timeline, presets, memories, onThisDay, wizard,
+    importWorker, clipModule, activityLog, groupsModule, mapModule,
+    libraryModule, batchRename, onboarding, tagsModule, tagsViewModule, editorRedeye,
+    dupeReview, inspector, slideshow, tourModule, facesModule, toolbarModule,
+    searchModule, deletedCtxMenuModule, deletedEnhanceModule, deletedModule, analysisInstallModule, analysisModule, analysisStatusModule, analysisRecomputeModule, calendarRenderModule, calendarSelectionModule, calendarModule, compareSiblingModule, compareModule,
+    navigationModule, uiHelpersModule, utilsModule, coreModule, modalsModelsListModule, modalsModelsModule, modalsFaceEmbeddersModule, modalsModule,
+    petsPickersModule, petsModule, editorCropModule, editorInpaintModule, photosSelectModule, photosHoverModule, photosVgridModule, photosBatchModule, photosCardModule, photosModule,
+    albumsModule, editorConstantsModule, editorStylesModule, editorPreviewModule, editorRenderingModule, editorToolsModule, editorModule, lightboxInfoModule, lightboxFaceEditModule,
+    lightboxFacePickerModule, lightboxFaceAssignModule, lightboxFaceOverlaysModule,
+    lightboxInputModule, lightboxActionsModule, lightboxOpenModule, lightboxModule,
+    peopleAlbumBarModule, peopleActionsModule, peopleCtxMenuModule, peoplePickersModule, peopleReviewModule, photoPreviewModule, peoplePairReviewModule, peopleViewModule, peopleMergeModule, peopleModule, shareTabModule,
+    sidebarSafetyModule, sensitiveModule,
+  );
+  // Install the view-guard setter on window.currentView immediately
+  // after the bridge so every subsequent view switch bumps the token
+  // and aborts in-flight per-view fetches.
+  viewGuard.installViewGuard();
+  // app.mjs is the bootstrap — imported AFTER the bridge so it can call
+  // any window-bridged classic globals during DOMContentLoaded init.
+  await import("/static/js/modules/app.mjs");
+</script>
+
+<script src="/static/js/globals.js?v={{ asset_version }}"></script>
+<div id="server-down-overlay" class="modal-overlay" style="z-index:99999">
+  <div class="server-down-inner" style="text-align:center;color:var(--text-primary);font-family:var(--font)">
+    <h2 style="margin:0 0 8px">Reconnecting&hellip;</h2>
+    <p style="color:var(--text-secondary);margin:0 0 16px">Waiting for the server to come back.</p>
+    <button class="btn btn-primary" data-action="_bppReload" style="display:none">Retry</button>
+  </div>
+</div>
+</body>
+</html>

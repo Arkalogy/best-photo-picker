@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+# Pre-commit hook: fast OSS-readiness checks on staged files.
+# Install: git config core.hooksPath .githooks
+
+set -euo pipefail
+
+RED='\033[0;31m'
+YELLOW='\033[0;33m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+BOLD='\033[1m'
+
+errors=0
+warnings=0
+
+staged_files=$(git diff --cached --name-only --diff-filter=ACM | grep -v '\.githooks/' || true)
+if [ -z "$staged_files" ]; then
+    exit 0
+fi
+
+echo "${BOLD}OSS pre-commit checks${NC}"
+echo "─────────────────────"
+
+# ── 1. Secrets scan ──
+secret_patterns=(
+    'AKIA[0-9A-Z]{16}'                    # AWS access key
+    'sk-[a-zA-Z0-9]{20,}'                 # OpenAI / Stripe secret key
+    'ghp_[a-zA-Z0-9]{36}'                 # GitHub personal access token
+    'gho_[a-zA-Z0-9]{36}'                 # GitHub OAuth token
+    'xox[bpors]-[a-zA-Z0-9\-]+'          # Slack tokens
+    'password\s*=\s*["\x27][^"\x27]+'     # password = "..."
+    'secret\s*=\s*["\x27][^"\x27]+'       # secret = "..."
+    'api_key\s*=\s*["\x27][^"\x27]+'      # api_key = "..."
+    'token\s*=\s*["\x27][^"\x27]+'        # token = "..."
+)
+
+for pattern in "${secret_patterns[@]}"; do
+    matches=$(echo "$staged_files" | xargs grep -lEn "$pattern" 2>/dev/null || true)
+    if [ -n "$matches" ]; then
+        echo -e "${RED}FAIL${NC} Possible secret detected (pattern: ${pattern%%\\*}...)"
+        echo "$matches" | while read -r line; do echo "  $line"; done
+        errors=$((errors + 1))
+    fi
+done
+if [ $errors -eq 0 ]; then
+    echo -e "${GREEN}PASS${NC} No secrets detected in staged files"
+fi
+
+# ── 2. Forbidden files ──
+forbidden_patterns=('.env' 'credentials' '*.pem' '*.key' '*.p12' '*.jks')
+for pat in "${forbidden_patterns[@]}"; do
+    bad=$(echo "$staged_files" | grep -i "$pat" || true)
+    if [ -n "$bad" ]; then
+        echo -e "${RED}FAIL${NC} Forbidden file staged: $bad"
+        errors=$((errors + 1))
+    fi
+done
+
+# ── 3. Private paths ──
+py_files=$(echo "$staged_files" | grep -E '\.(py|html|js|json|yaml|yml|toml|cfg|md)$' || true)
+if [ -n "$py_files" ]; then
+    private_paths=$(echo "$py_files" | xargs grep -n '/Users/\|/home/\|C:\\Users\\' 2>/dev/null | grep -v '.gitignore\|CLAUDE.md' || true)
+    if [ -n "$private_paths" ]; then
+        echo -e "${YELLOW}WARN${NC} Private paths found in staged files:"
+        echo "$private_paths" | head -5 | while read -r line; do echo "  $line"; done
+        count=$(echo "$private_paths" | wc -l | tr -d ' ')
+        if [ "$count" -gt 5 ]; then echo "  ... and $((count - 5)) more"; fi
+        warnings=$((warnings + 1))
+    fi
+fi
+
+# ── 4. Lint (ruff) ──
+staged_py=$(echo "$staged_files" | grep '\.py$' || true)
+if [ -n "$staged_py" ]; then
+    if command -v ruff &>/dev/null || [ -x .venv/bin/ruff ]; then
+        ruff_cmd="${VIRTUAL_ENV:-$(pwd)/.venv}/bin/ruff"
+        [ -x "$ruff_cmd" ] || ruff_cmd="ruff"
+
+        if ! echo "$staged_py" | xargs "$ruff_cmd" check --quiet 2>/dev/null; then
+            echo -e "${RED}FAIL${NC} ruff check found lint errors"
+            errors=$((errors + 1))
+        else
+            echo -e "${GREEN}PASS${NC} ruff check clean"
+        fi
+
+        if ! echo "$staged_py" | xargs "$ruff_cmd" format --check --quiet 2>/dev/null; then
+            echo -e "${RED}FAIL${NC} ruff format check failed (run: ruff format .)"
+            errors=$((errors + 1))
+        else
+            echo -e "${GREEN}PASS${NC} ruff format clean"
+        fi
+    else
+        echo -e "${YELLOW}WARN${NC} ruff not found, skipping lint"
+        warnings=$((warnings + 1))
+    fi
+fi
+
+# ── 5. print() in Python (non-test, non-CLI) ──
+if [ -n "$staged_py" ]; then
+    lib_py=$(echo "$staged_py" | grep -v 'test\|cli\|__main__' || true)
+    if [ -n "$lib_py" ]; then
+        prints=$(echo "$lib_py" | xargs grep -n '^\s*print(' 2>/dev/null || true)
+        if [ -n "$prints" ]; then
+            echo -e "${YELLOW}WARN${NC} print() in library code (use logger instead):"
+            echo "$prints" | head -3 | while read -r line; do echo "  $line"; done
+            warnings=$((warnings + 1))
+        fi
+    fi
+fi
+
+# ── 6. Raw exception strings leaked to API ──
+if [ -n "$staged_py" ]; then
+    leaked=$(echo "$staged_py" | xargs grep -n 'str(e)\|str(err)\|str(exc)' 2>/dev/null | grep -i 'jsonify\|return\|response' || true)
+    if [ -n "$leaked" ]; then
+        echo -e "${YELLOW}WARN${NC} Exception string possibly leaked to API response:"
+        echo "$leaked" | head -3 | while read -r line; do echo "  $line"; done
+        warnings=$((warnings + 1))
+    fi
+fi
+
+# ── Summary ──
+echo "─────────────────────"
+if [ $errors -gt 0 ]; then
+    echo -e "${RED}${BOLD}BLOCKED${NC}: $errors error(s), $warnings warning(s)"
+    echo "Fix errors above or bypass with: git commit --no-verify"
+    exit 1
+elif [ $warnings -gt 0 ]; then
+    echo -e "${YELLOW}${BOLD}OK with warnings${NC}: $warnings warning(s)"
+    exit 0
+else
+    echo -e "${GREEN}${BOLD}All checks passed${NC}"
+    exit 0
+fi

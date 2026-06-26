@@ -1,0 +1,7 @@
+include README.md
+include LICENSE
+include NOTICE.txt
+include CHANGELOG.md
+recursive-include bpp/web/static *
+recursive-include bpp/web/templates *
+recursive-include bpp/scoring/models *.tflite

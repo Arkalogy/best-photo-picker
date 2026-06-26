@@ -1,0 +1,23 @@
+# Best Photo Picker configuration
+# All values shown are defaults. Uncomment and change as needed.
+
+# Scoring weights (must sum to ~1.0 for intuitive interpretation)
+# blur_weight: 0.30
+# exposure_weight: 0.20
+# face_weight: 0.35
+# composition_weight: 0.15
+
+# Image processing
+# max_long_side: 1024       # Downscale long side to this before analysis
+# thumbnail_size: 64        # Size for perceptual hash thumbnails
+
+# Deduplication
+# hash_distance_threshold: 10  # dHash Hamming distance threshold for "same" image
+# time_window_seconds: 15      # Cluster burst photos within this time window
+
+# Diversity
+# max_per_day: 3            # Max selected photos per calendar day
+# min_per_month: 1          # Try to include at least 1 per month
+
+# Security
+# follow_symlinks: false    # Do not follow symlinks in input by default

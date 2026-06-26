@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Best Photo Picker — find your best photos, on your own Mac</title>
+    <meta
+      name="description"
+      content="Drowning in thousands of family photos? Best Photo Picker scores every shot and helps you pick the best ones — entirely on your machine. Free, no account, no cloud."
+    />
+    <!-- Open Graph so the link looks right when shared -->
+    <meta property="og:title" content="Best Photo Picker" />
+    <meta
+      property="og:description"
+      content="Find your best photos, on your own Mac. Free, local-first, no cloud."
+    />
+    <meta
+      property="og:image"
+      content="https://raw.githubusercontent.com/Arkalogy/best-photo-picker/main/docs/screenshots/tauri/01-grid.png"
+    />
+    <style>
+      :root {
+        --ink: #16202b;
+        --muted: #5b6b7a;
+        --accent: #2d6cdf;
+        --accent-ink: #fff;
+        --bg: #f7f9fc;
+        --card: #fff;
+        --line: #e3e9f0;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font: 17px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+        color: var(--ink);
+        background: var(--bg);
+      }
+      .wrap {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 0 20px;
+      }
+      header {
+        text-align: center;
+        padding: 64px 20px 32px;
+      }
+      h1 {
+        font-size: 2.4rem;
+        margin: 0 0 8px;
+        letter-spacing: -0.02em;
+      }
+      .tagline {
+        font-size: 1.25rem;
+        color: var(--muted);
+        max-width: 620px;
+        margin: 0 auto 32px;
+      }
+      .cta {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        background: var(--accent);
+        color: var(--accent-ink);
+        text-decoration: none;
+        font-weight: 600;
+        font-size: 1.15rem;
+        padding: 16px 28px;
+        border-radius: 12px;
+        box-shadow: 0 6px 20px rgba(45, 108, 223, 0.28);
+        transition: transform 0.08s ease;
+      }
+      .cta:active {
+        transform: translateY(1px);
+      }
+      .cta small {
+        font-weight: 400;
+        opacity: 0.85;
+        font-size: 0.8rem;
+      }
+      .subline {
+        color: var(--muted);
+        font-size: 0.95rem;
+        margin-top: 14px;
+      }
+      .subline code {
+        background: #eef2f8;
+        padding: 2px 7px;
+        border-radius: 6px;
+        font-size: 0.9em;
+      }
+      .shots {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+        margin: 40px 0;
+      }
+      .shots img {
+        width: 100%;
+        border-radius: 12px;
+        border: 1px solid var(--line);
+        display: block;
+      }
+      .features {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 28px 32px;
+        margin: 32px 0;
+      }
+      .features h2 {
+        margin-top: 0;
+        font-size: 1.3rem;
+      }
+      .features ul {
+        margin: 0;
+        padding-left: 1.1em;
+        color: var(--ink);
+      }
+      .features li {
+        margin: 8px 0;
+      }
+      footer {
+        text-align: center;
+        color: var(--muted);
+        font-size: 0.9rem;
+        padding: 40px 20px 64px;
+        border-top: 1px solid var(--line);
+        margin-top: 24px;
+      }
+      footer a {
+        color: var(--accent);
+      }
+      @media (max-width: 640px) {
+        .shots {
+          grid-template-columns: 1fr;
+        }
+        h1 {
+          font-size: 1.9rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="wrap">
+        <h1>Best Photo Picker</h1>
+        <p class="tagline">
+          Drowning in thousands of family photos? Find your best ones in
+          minutes — scored automatically, entirely on your own Mac. No account,
+          no cloud, nothing uploaded.
+        </p>
+        <a
+          class="cta"
+          href="https://github.com/Arkalogy/best-photo-picker/releases/latest/download/BestPhotoPicker-macOS-arm64.dmg"
+        >
+          Download for Mac
+          <small id="ctaNote">Apple Silicon · free</small>
+        </a>
+        <p class="subline">
+          Double-click the download, drag it into Applications, and open it —
+          that's it.
+        </p>
+        <p class="subline" id="otherPlatforms">
+          Intel Mac, Windows, or Linux?
+          Install with <code>pipx install "bppicker[web]"</code> —
+          see the <a href="https://github.com/Arkalogy/best-photo-picker#install">install guide</a>.
+        </p>
+      </div>
+    </header>
+
+    <main class="wrap">
+      <div class="shots">
+        <img
+          src="https://raw.githubusercontent.com/Arkalogy/best-photo-picker/main/docs/screenshots/tauri/01-grid.png"
+          alt="Photo grid with quality scores"
+          loading="lazy"
+        />
+        <img
+          src="https://raw.githubusercontent.com/Arkalogy/best-photo-picker/main/docs/screenshots/tauri/04-picks.png"
+          alt="Best-photo picks"
+          loading="lazy"
+        />
+        <img
+          src="https://raw.githubusercontent.com/Arkalogy/best-photo-picker/main/docs/screenshots/tauri/03-faces.png"
+          alt="Faces and people"
+          loading="lazy"
+        />
+        <img
+          src="https://raw.githubusercontent.com/Arkalogy/best-photo-picker/main/docs/screenshots/tauri/10-duplicates.png"
+          alt="Duplicate review"
+          loading="lazy"
+        />
+      </div>
+
+      <section class="features">
+        <h2>What it does</h2>
+        <ul>
+          <li>
+            <strong>Scores every photo</strong> on sharpness, lighting, faces,
+            and composition — so the good ones rise to the top.
+          </li>
+          <li>
+            <strong>Boost the people who matter.</strong> Tell it whose photos to
+            favor — your kid, for the grandparents — and the picks follow.
+          </li>
+          <li>
+            <strong>Clears out near-duplicates</strong> so you're choosing
+            between keepers, not burst frames.
+          </li>
+          <li>
+            <strong>Stays on your machine.</strong> No account, no subscription,
+            no cloud upload. Open source under the MIT license.
+          </li>
+        </ul>
+      </section>
+    </main>
+
+    <footer>
+      <p>
+        By <a href="https://arkalogy.com">Arkalogy</a> ·
+        <a href="https://github.com/Arkalogy/best-photo-picker">Source on GitHub</a>
+      </p>
+    </footer>
+
+    <script>
+      // Light touch: if the visitor clearly isn't on an Apple-Silicon Mac,
+      // nudge them toward the pip path instead of a DMG they can't run.
+      // Purely cosmetic — the download link always works for those who want it.
+      (function () {
+        var ua = navigator.userAgent || "";
+        var isMac = /Macintosh|Mac OS X/.test(ua);
+        if (!isMac) {
+          var note = document.getElementById("ctaNote");
+          if (note) note.textContent = "Apple Silicon Mac";
+        }
+      })();
+    </script>
+  </body>
+</html>

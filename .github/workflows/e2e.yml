@@ -1,0 +1,118 @@
+# Playwright e2e test suite.
+#
+# The e2e suite needs a running Flask server backed by a real (analyzed)
+# library. We provision one on the fly with scripts/setup_e2e_library.py
+# (12 procedural photos, no network). Analysis runs once and is cached
+# inside the workflow's tmp library — no external assets required.
+#
+# Triggers:
+#   - workflow_dispatch:   manual runs from the Actions tab for branch QA
+#   - push.tags v*.*.*:    release-tag gate. A failed e2e here surfaces a
+#                          regression before publish.yml downloads PyPI
+#                          deps + docker.yml builds an image. Better to
+#                          discover "the lightbox is broken" before the
+#                          installable artifact ships.
+#
+# Not on PRs: analyze + model downloads + browser fixtures total ~3-5
+# minutes and would burn paid Actions minutes on every push. The main
+# CI job already parse-checks the spec files via `playwright test --list`.
+
+name: E2E
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to run e2e on"
+        required: false
+        default: ""
+  push:
+    tags:
+      - "v*.*.*"
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch || github.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-3.11-${{ hashFiles('pyproject.toml') }}
+          restore-keys: pip-3.11-
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libgl1 libglib2.0-0 libegl1 libgles2
+
+      - name: Install package with all dependencies
+        run: |
+          pip install --upgrade pip "setuptools<82"
+          pip install git+https://github.com/ageitgey/face_recognition_models
+          pip install -e ".[dev,web,faces,nudity,clip,heic,raw]"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install JS dev deps
+        run: npm ci --no-audit --no-fund
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run e2e (synthetic + empty passes)
+        env:
+          BPP_E2E_LIBRARY: ${{ runner.temp }}/bpp_e2e_library
+          # Per-run acceptance log so the registry-picker accept tests are
+          # deterministic (a model isn't "already accepted" from a prior
+          # run) and the suite never writes to a developer's real
+          # ~/.config/bpp acceptance log.
+          BPP_ACCEPTANCE_LOG_PATH: ${{ runner.temp }}/bpp_e2e_accept.jsonl
+          # Pin the server log to a known path so the failure artifact below
+          # can always find it (run_e2e.sh's mktemp fallback honors $TMPDIR,
+          # which isn't guaranteed to be /tmp on the runner).
+          BPP_E2E_SERVER_LOG: ${{ runner.temp }}/bpp_e2e_server.log
+        run: |
+          # The runner provisions each fixture, starts/stops the server on
+          # :5001 per pass, and runs the matching Playwright grep:
+          #   synthetic → every spec except @demo/@empty
+          #   empty     → @empty (brand-new library, onboarding first_run)
+          # The @demo pass is LOCAL ONLY — CI has no demo library.
+          bash scripts/run_e2e.sh ci
+
+      - name: Upload server log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bpp-server-log
+          path: ${{ runner.temp }}/bpp_e2e_server.log
+          if-no-files-found: ignore
+
+      - name: Upload Playwright trace on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-trace
+          path: test-results/
+          if-no-files-found: ignore

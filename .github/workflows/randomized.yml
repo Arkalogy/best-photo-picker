@@ -1,0 +1,74 @@
+# Weekly randomized test run — flushes out order-dependent failures.
+#
+# Background: the test suite found three latent isolation bugs in late
+# May 2026 (DB connection-pool reuse, health-check `missing=1` race,
+# vitest 4 RAF stub timing). Those were all sensitive to ordering and
+# only surfaced once a specific test happened to precede another.
+#
+# This workflow shuffles the test order weekly to catch the *next* such
+# bug before it accumulates. Failure here doesn't gate any PR — it's a
+# heartbeat signal: when this turns red, investigate isolation.
+#
+# Runs on `workflow_dispatch` (manual) and a weekly schedule. Uses the
+# same setup as the main CI test job, so any environmental drift is
+# caught here too.
+
+name: Randomized tests
+
+on:
+  schedule:
+    # Sundays at 06:00 UTC — well outside busy hours, doesn't block any
+    # weekday review cadence. Cron is approximate; GitHub may delay a
+    # scheduled run during platform load.
+    - cron: "0 6 * * 0"
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  randomized:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-3.11-${{ hashFiles('pyproject.toml') }}
+          restore-keys: pip-3.11-
+
+      - name: Cache ML models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bpp
+          key: bpp-models-${{ hashFiles('bpp/scoring/face*.py', 'bpp/scoring/clip*.py') }}
+          restore-keys: bpp-models-
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libgl1 libglib2.0-0 libegl1 libgles2
+
+      - name: Install package with all dependencies
+        run: |
+          pip install --upgrade pip "setuptools<82"
+          pip install git+https://github.com/ageitgey/face_recognition_models
+          pip install -e ".[dev,web,faces,nudity,heic,raw]"
+          pip install pytest-randomly
+
+      # The project's pyproject.toml sets `-p no:randomly` so day-to-day
+      # runs are deterministic. We override that here with `-p randomly`
+      # to shuffle file + class + method order.
+      # No `--dist=loadfile` (or any xdist parallelism): we WANT to break
+      # cross-file state assumptions. Serial run is the point.
+      # Drop `-p no:cacheprovider` too — we want to see what fails first
+      # and `--randomly-seed=last` works for re-runs.
+      - name: Run tests with randomized order
+        run: pytest -p randomly --tb=short -m "not slow"

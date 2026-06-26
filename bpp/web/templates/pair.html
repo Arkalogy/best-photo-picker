@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Best Photo Picker — Waiting to connect</title>
+<meta name="referrer" content="no-referrer">
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --fg: #fff;
+    --fg-dim: rgba(255,255,255,0.7);
+    --accent: #0a84ff;
+    --warn: #f59e0b;
+  }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    box-sizing: border-box;
+  }
+  .pair-card {
+    max-width: 360px;
+    width: 100%;
+    text-align: center;
+  }
+  .pair-icon {
+    width: 72px;
+    height: 72px;
+    margin: 0 auto 24px;
+    border-radius: 18px;
+    background: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-weight: 800;
+    font-size: 24px;
+    letter-spacing: -0.5px;
+  }
+  .pair-spinner {
+    width: 28px;
+    height: 28px;
+    border: 3px solid rgba(255,255,255,0.18);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    margin: 24px auto;
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  h1 { font-size: 22px; font-weight: 600; margin: 0 0 8px; }
+  p  { color: var(--fg-dim); line-height: 1.5; margin: 0 0 12px; font-size: 15px; }
+  .pair-state-trusted .pair-spinner,
+  .pair-state-trusted .pair-status,
+  .pair-state-revoked .pair-spinner { display: none; }
+  .pair-cta, .pair-request-btn {
+    margin-top: 24px;
+    padding: 12px 20px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: 15px;
+    cursor: pointer;
+    width: 100%;
+    display: none;
+  }
+  .pair-cta:disabled, .pair-request-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .pair-state-trusted .pair-cta { display: inline-block; }
+  .pair-state-revoked .pair-request-btn { display: inline-block; }
+  .pair-warn {
+    color: var(--warn);
+    font-size: 14px;
+    margin-top: 16px;
+    display: none;
+  }
+  .pair-state-revoked .pair-warn,
+  .pair-state-stalled .pair-warn { display: block; }
+</style>
+</head>
+<body>
+<div class="pair-card pair-state-pending" id="pair-waiting">
+  <div class="pair-icon">BPP</div>
+  <h1 id="pair-title">Waiting for the owner to approve…</h1>
+  <p id="pair-subtitle">Open Best Photo Picker on the host computer and approve this device.</p>
+  <div class="pair-spinner"></div>
+  <p class="pair-status" id="pair-status">Checking…</p>
+  <button class="pair-cta" id="pair-cta" data-action="_bppReload">Open library</button>
+  <button class="pair-request-btn" id="pair-request-btn">Request access again</button>
+  <p class="pair-warn" id="pair-warn"></p>
+</div>
+<script nonce="{{ csp_nonce }}">
+(function(){
+  // Strip the _token from the URL so the user doesn't accidentally
+  // share it via screenshot (it's already in the cookie / referer-free).
+  try {
+    if (window.location.search.indexOf("_token=") !== -1) {
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  } catch (e) {}
+
+  var card = document.getElementById("pair-waiting");
+  var status = document.getElementById("pair-status");
+  var title = document.getElementById("pair-title");
+  var subtitle = document.getElementById("pair-subtitle");
+  var warn = document.getElementById("pair-warn");
+  var requestBtn = document.getElementById("pair-request-btn");
+  var startedAt = Date.now();
+  var STALL_AT_MS = 60 * 1000;
+  var pollTimer = null;
+  var stopped = false; // pause polling while user is in revoked terminal state
+
+  function setState(state) {
+    card.className = "pair-card pair-state-" + state;
+  }
+
+  function showWaiting() {
+    setState("pending");
+    title.textContent = "Waiting for the owner to approve…";
+    subtitle.textContent = "Open Best Photo Picker on the host computer and approve this device.";
+    warn.textContent = "";
+    startedAt = Date.now();
+    stopped = false;
+    poll();
+  }
+
+  function poll() {
+    if (stopped) return;
+    fetch("/api/v1/share/pair/status", { credentials: "same-origin" })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d.state === "trusted") {
+          setState("trusted");
+          title.textContent = "Approved!";
+          subtitle.textContent = "You're all set. Open the library to start browsing.";
+          status.textContent = "";
+          stopped = true;
+          // Auto-reload after a beat — feels less like a manual step
+          setTimeout(function(){ location.reload(); }, 600);
+          return;
+        }
+        if (d.state === "revoked") {
+          setState("revoked");
+          title.textContent = "Access revoked";
+          subtitle.textContent = "If you didn't mean to lose access, ask the owner to approve you again.";
+          status.textContent = "";
+          warn.textContent = "Your previous approval was revoked.";
+          // Stop polling — user must explicitly tap the button to
+          // re-request. This prevents the Mac from getting silent
+          // pending requests every time the phone reloads.
+          stopped = true;
+          return;
+        }
+        // Pending or unknown — keep polling
+        var elapsed = Date.now() - startedAt;
+        if (elapsed > STALL_AT_MS) {
+          setState("stalled");
+          status.textContent = "Still waiting — make sure the host is awake.";
+          warn.textContent = "If the host is closed, this won't go through.";
+        } else {
+          status.textContent = "Waiting for approval…";
+        }
+        pollTimer = setTimeout(poll, 2000);
+      })
+      .catch(function(){
+        if (!stopped) pollTimer = setTimeout(poll, 3000);
+      });
+  }
+
+  requestBtn.addEventListener("click", function(){
+    requestBtn.disabled = true;
+    fetch("/api/v1/share/pair/request", {
+      method: "POST",
+      credentials: "same-origin"
+    })
+      .then(function(r){
+        if (!r.ok) throw new Error("request failed: " + r.status);
+        return r.json();
+      })
+      .then(function(d){
+        requestBtn.disabled = false;
+        if (d.state === "trusted") {
+          // Edge case: already trusted (owner re-approved between
+          // load and click). Reload into the SPA.
+          location.reload();
+          return;
+        }
+        showWaiting();
+      })
+      .catch(function(e){
+        requestBtn.disabled = false;
+        warn.textContent = "Couldn't send request. Try again.";
+      });
+  });
+
+  poll();
+})();
+</script>
+</body>
+</html>

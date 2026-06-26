@@ -1,0 +1,48 @@
+name: Download page (GitHub Pages)
+
+# Publishes the static "Download for Mac" landing page in docs/landing/
+# to GitHub Pages. This is the non-technical front door: a parent who
+# hears about bpp lands here and clicks one button — no GitHub Releases
+# spelunking.
+#
+# ONE-TIME SETUP (maintainer): Settings → Pages → Build and deployment
+# → Source = "GitHub Actions". After that this workflow owns the site.
+# Point arkalogy.com (or download.arkalogy.com) at it later via a CNAME
+# if you want a branded URL.
+#
+# Triggers: a push to main that touches docs/landing/ (so a release
+# merge republishes it), or a manual run. It does NOT run on develop or
+# on PRs — cheap ubuntu job, only fires when the page actually changes.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/landing/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never cancel an in-flight deploy; let it finish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/landing
+      - id: deployment
+        uses: actions/deploy-pages@v4
