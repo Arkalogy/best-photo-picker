@@ -1,0 +1,117 @@
+version: 2
+
+# Dependabot config for Best Photo Picker.
+#
+# Tuning notes:
+#   - Weekly cadence everywhere — daily floods the inbox; monthly
+#     misses real CVE windows. Weekly is the sweet spot for a
+#     single-maintainer OSS project.
+#   - PR limit caps the in-flight Dependabot PR count so a quiet
+#     month doesn't dump 30 upgrades in one Sunday.
+#   - Grouped updates collapse routine version bumps into one PR
+#     per ecosystem so review effort scales with breaking-change
+#     risk, not dependency count.
+#   - Labels mirror the conventions in the issue templates so the
+#     existing GitHub label set covers Dependabot PRs without
+#     manual relabeling.
+#
+# Activates the moment Dependabot alerts are enabled in Settings →
+# Code security. On a Free private repo only the alerts UI is
+# available; the auto-PRs require the repo to flip public (or
+# Dependabot updates to be enabled, which is free either way).
+
+updates:
+  # Python — the runtime install + the dev-extra pin live in
+  # pyproject.toml. Hatchling reads it; Dependabot supports the
+  # PEP 621 schema directly under the `pip` ecosystem name.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "python"
+    groups:
+      python-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # GitHub Actions — every workflow uses pinned majors (`@v4`,
+  # `@release/v1`). Dependabot keeps these in sync with upstream
+  # major-version releases. The packaging tests pin the
+  # no-`@main`/`@master` rule so a Dependabot bump can't
+  # accidentally introduce one.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  # Frontend dev tooling at repo root — eslint, prettier, vitest,
+  # typescript. Used only by the `lint` / `typecheck` / `test:js`
+  # CI gates; nothing ships to users from this manifest.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "javascript"
+    groups:
+      js-dev:
+        dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Tauri desktop wrapper. Updates can break native menu/IPC
+  # behaviour — keep these on the same cadence but ungrouped so
+  # each one is reviewed individually. Cargo updates for the Rust
+  # side ride along under the `cargo` ecosystem below.
+  - package-ecosystem: "npm"
+    directory: "/desktop"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "javascript"
+      - "desktop"
+
+  - package-ecosystem: "cargo"
+    directory: "/desktop/src-tauri"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "rust"
+      - "desktop"
+
+  # Docker base image — the runtime python:3.11-slim and the
+  # apt-installed system libs ship to every container user. CVEs
+  # in libopenblas / libheif / etc. land here.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 2
+    labels:
+      - "dependencies"
+      - "docker"

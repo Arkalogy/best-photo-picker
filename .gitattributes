@@ -1,0 +1,6 @@
+# Vendored third-party assets — match upstream byte-for-byte so future
+# upgrades are clean diffs against unpkg/release artifacts. Disable
+# whitespace checks (so `git diff --check` doesn't flag trailing
+# whitespace from upstream) and tell GitHub's linguist to exclude them
+# from language statistics.
+bpp/web/static/vendor/** -whitespace linguist-vendored=true

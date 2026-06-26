@@ -1,0 +1,47 @@
+#!/bin/bash
+# Developer launcher: double-click this file in Finder to start the
+# Tauri DEV build of Best Photo Picker (cargo / npm rebuilds + hot
+# reload). Requires the Rust + Node toolchains installed and the
+# repo checked out at this script's location.
+#
+# *** This is NOT the path end users are expected to take. ***
+# End users install via `pip install bppicker[web]` + `bpp serve`,
+# or download the prebuilt `.app` bundle from a GitHub release. The
+# README's "Installing on a New Machine" section covers both.
+#
+# Usage:
+#   cp launch.command.template launch.command
+#   chmod +x launch.command
+#   open launch.command  (or double-click in Finder)
+#
+# The committed `.template` ships the project's default library
+# path. Customize your local copy to taste; the unsuffixed
+# `launch.command` is gitignored so each contributor keeps their own.
+cd "$(dirname "$0")"
+
+# Kill any existing instances
+pkill -f 'bpp serve' 2>/dev/null
+pkill -f 'bpp-desktop' 2>/dev/null
+sleep 1
+
+# Start Python server in background (suppress all output).
+# `--library` defaults to ~/Pictures/BestPhotoPicker (same default
+# the in-app library picker uses). Override BPP_LIBRARY in the
+# environment to point at a different location.
+LIBRARY="${BPP_LIBRARY:-$HOME/Pictures/BestPhotoPicker}"
+.venv/bin/bpp serve --library "$LIBRARY" --no-browser > /dev/null 2>&1 &
+SERVER_PID=$!
+
+# Wait for server silently
+echo "Starting Best Photo Picker..."
+for i in $(seq 1 30); do
+  curl -s -o /dev/null http://localhost:5001/ && break
+  sleep 1
+done
+
+# Start Tauri app (suppress output)
+cd desktop && npm run dev > /dev/null 2>&1
+
+# When Tauri exits, kill the server
+kill $SERVER_PID 2>/dev/null
+echo "Best Photo Picker closed."

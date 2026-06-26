@@ -1,0 +1,281 @@
+Best Photo Picker — Third-Party Software Notices
+=================================================
+
+bpp itself is licensed under the MIT License (see LICENSE). This file
+documents the dependencies and downloaded models bpp uses, organized
+by *how they reach the user* so the license obligations are explicit.
+
+Trust model summary
+-------------------
+- **Bundled** (ships inside the wheel / repo): permissive only
+  (Apache-2.0, MIT, HPND). No copyleft code is checked into the
+  repository or shipped in the package.
+- **Required runtime**: permissive only (Apache-2.0, MIT, HPND, BSD,
+  MPL-2.0). `pip install bppicker` pulls these in by default.
+- **Optional runtime**: includes LGPL and GPL components. Each is an
+  opt-in `pip` extra that the user installs separately, accepting the
+  terms of the relevant license at install time.
+- **Downloaded at first-use**: ML model weights fetched on demand from
+  upstream hosts. Some weights are AGPL-licensed (Ultralytics YOLOv11n).
+  Only the ONNX-exported weights are loaded — no AGPL Python code runs
+  in the user's process.
+
+================================================================
+Bundled (ships in the bpp package)
+================================================================
+
+- BlazeFace short-range face detector (bundled at
+  `bpp/scoring/models/blaze_face_short_range.tflite`)
+  Apache License 2.0
+  https://github.com/google/mediapipe/blob/master/LICENSE
+
+- Leaflet 1.9.4 (vendored at
+  `bpp/web/static/vendor/leaflet/`) — BSD-2-Clause
+  Full license text: bpp/web/static/vendor/leaflet/LICENSE
+  Upstream: https://github.com/Leaflet/Leaflet/blob/main/LICENSE
+
+  Copyright (c) 2010-2024, Volodymyr Agafonkin
+  Copyright (c) 2010-2011, CloudMade
+  All rights reserved.
+
+  Redistribution and use in source and binary forms, with or without
+  modification, are permitted provided that the following conditions are
+  met:
+    1. Redistributions of source code must retain the above copyright
+       notice, this list of conditions and the following disclaimer.
+    2. Redistributions in binary form must reproduce the above copyright
+       notice, this list of conditions and the following disclaimer in
+       the documentation and/or other materials provided with the
+       distribution.
+  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+  "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+  LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+  A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL COPYRIGHT
+  HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+  INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES.
+
+- Leaflet.markercluster 1.5.3 (vendored at
+  `bpp/web/static/vendor/leaflet.markercluster/`) — MIT License
+  Full license text: bpp/web/static/vendor/leaflet.markercluster/MIT-LICENCE.txt
+  Upstream: https://github.com/Leaflet/Leaflet.markercluster/blob/master/MIT-LICENCE.txt
+
+  Copyright (c) 2012, David Geo Holmes <david.geo.holmes@gmail.com>
+
+  Permission is hereby granted, free of charge, to any person obtaining
+  a copy of this software and associated documentation files (the
+  "Software"), to deal in the Software without restriction, including
+  without limitation the rights to use, copy, modify, merge, publish,
+  distribute, sublicense, and/or sell copies of the Software, and to
+  permit persons to whom the Software is furnished to do so, subject to
+  the following conditions:
+    The above copyright notice and this permission notice shall be
+    included in all copies or substantial portions of the Software.
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+  EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+  MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+
+================================================================
+Required runtime (pulled in by `pip install bppicker`)
+================================================================
+
+- OpenCV (opencv-python-headless) — Apache License 2.0
+  https://github.com/opencv/opencv/blob/master/LICENSE
+- Pillow — Historical Permission Notice and Disclaimer (HPND)
+  https://github.com/python-pillow/Pillow/blob/main/LICENSE
+- PyYAML — MIT License
+  https://github.com/yaml/pyyaml/blob/main/LICENSE
+- tqdm — MPL-2.0 / MIT License
+  https://github.com/tqdm/tqdm/blob/master/LICENCE
+- Flask — BSD 3-Clause License
+  https://github.com/pallets/flask/blob/main/LICENSE.txt
+- ONNX Runtime — MIT License
+  https://github.com/microsoft/onnxruntime/blob/main/LICENSE
+- SciPy — BSD 3-Clause License
+  https://github.com/scipy/scipy/blob/main/LICENSE.txt
+- qrcode — BSD License
+  https://github.com/lincolnloop/python-qrcode/blob/main/LICENSE
+
+================================================================
+Optional runtime (opt-in via pip extras)
+================================================================
+
+These dependencies are NOT installed by default. The user must
+explicitly request the corresponding extra and thereby accept its
+license terms:
+
+- pillow-heif — GPLv2 (binary wheel bundles x265 which is GPLv2;
+  Python source is BSD-3-Clause; libheif is LGPL-3.0)
+  Extra: `bppicker[heic]`
+  https://github.com/bigcat88/pillow_heif/blob/master/LICENSE.txt
+- face_recognition — MIT License
+  Extra: `bppicker[faces]`
+  https://github.com/ageitgey/face_recognition/blob/master/LICENSE
+- dlib — Boost Software License 1.0
+  Extra: `bppicker[faces]`
+  https://github.com/davisking/dlib/blob/master/LICENSE.txt
+- NudeNet — GPL-3.0 (optional NSFW filter)
+  Extra: `bppicker[nudity]`
+  https://github.com/notAI-tech/NudeNet/blob/main/LICENSE
+  Note: NudeNet is GPL-3.0. Distributing a derived work that bundles
+  NudeNet would trigger GPL obligations on the whole work — that is
+  the reason we ship it strictly as an optional pip extra rather than
+  vendoring or default-installing it.
+- rawpy — MIT (links to LibRaw, which is LGPL-2.1)
+  Extra: `bppicker[raw]`
+  https://github.com/letmaik/rawpy/blob/master/LICENSE
+- simple-lama-inpainting — Apache 2.0 (LaMa model wrapper)
+  Extra: `bppicker[inpaint]`
+  https://github.com/enesmsahin/simple-lama-inpainting
+  Note: pulls in `torch` (BSD-3) and `torchvision` (BSD-3) as
+  transitive dependencies. The wrapper code is Apache 2.0; the
+  underlying LaMa model weights, fetched by bpp's verified-
+  download path before the wrapper sees them, have their own
+  license terms — see https://github.com/advimman/lama for the
+  original research project. We pin to `==0.1.0` because that
+  release does not pin pillow<10 (later releases do, which would
+  break HEIC support).
+
+  Integrity (R8-M16, closed): bpp pre-fetches `big-lama.pt` via
+  the SHA-256-pinned + 120s-timeout `download_file()` helper that
+  every other bpp ML model uses, then points
+  `simple_lama_inpainting` at the verified file via its documented
+  `LAMA_MODEL` env-var override. The library's unsafe
+  `torch.hub.download_url_to_file(..., hash_prefix=None)` path
+  never runs. See `bpp/ai/inpainting.py` for the pinned SHA-256
+  and the loader that hands the verified path to `SimpleLama`.
+
+================================================================
+Desktop app (.app) build toolchain
+================================================================
+
+The optional desktop app bundles the bpp server as a sidecar binary
+built with PyInstaller in CI. PyInstaller is a build-time tool: it is
+never a runtime dependency, never listed in pyproject, and never
+distributed itself. What its build embeds in the sidecar binary:
+
+- PyInstaller bootloader + loader —
+  GPL-2.0-or-later WITH Bootloader-exception
+  Copyright (c) 2010-2023, PyInstaller Development Team
+  Copyright (c) 2005-2009, Giovanni Bajo
+  https://github.com/pyinstaller/pyinstaller/blob/develop/COPYING.txt
+  The Bootloader Exception grants "unlimited permission to link or
+  embed compiled bootloader and related files into combinations with
+  other programs, and to distribute those combinations without any
+  restriction coming from the use of those files." The sidecar binary
+  is such a combination; no GPL obligation attaches to bpp through it.
+- PyInstaller run-time hooks (PyInstaller/hooks/rthooks) —
+  Apache License 2.0 (relicensed upstream specifically for embedding)
+- pyinstaller-hooks-contrib run-time hooks
+  (_pyinstaller_hooks_contrib/rthooks) — Apache License 2.0.
+  Its *standard* hooks are GPL-2.0-or-later but execute at build time
+  only (inside CI) and are not copied into the output binary.
+
+Standing constraints that keep the exception valid for us:
+  1. Never modify or fork the bootloader — modifications would be
+     plain GPL and require source publication of those changes.
+  2. Never vendor PyInstaller into this repository or redistribute it
+     outside a built combination — that act is plain-GPL distribution.
+
+================================================================
+How this notice is kept honest
+================================================================
+
+The required-runtime list above is exactly the set of packages a fresh
+`pip install bppicker` pulls in (no extras). Each opt-in extra has its
+own permitted copyleft list; the recipes below let any auditor (your
+legal team, a security reviewer, future-you) re-prove every install
+path mechanically. Run each recipe in a fresh venv and compare the
+grep output against the expected line below. Anything not in the
+expected list is a drift signal — open an issue.
+
+# Base install (must be empty)
+    python -m venv /tmp/bpp-license-audit
+    /tmp/bpp-license-audit/bin/pip install bppicker
+    /tmp/bpp-license-audit/bin/pip install pip-licenses
+    /tmp/bpp-license-audit/bin/pip-licenses --from=mixed --order=license \
+        --format=plain | grep -iE 'GPL|LGPL|AGPL'
+# Expected: empty.
+
+# [faces] (must be empty)
+    python -m venv /tmp/bpp-license-audit-faces
+    /tmp/bpp-license-audit-faces/bin/pip install "bppicker[faces]"
+    /tmp/bpp-license-audit-faces/bin/pip install pip-licenses
+    /tmp/bpp-license-audit-faces/bin/pip-licenses --from=mixed --order=license \
+        --format=plain | grep -iE 'GPL|LGPL|AGPL'
+# Expected: empty. mediapipe (Apache-2.0), scipy (BSD-3-Clause), and
+# their transitives are all permissive — anything else is drift.
+
+# [heic] (must be exactly pillow-heif + libheif)
+    python -m venv /tmp/bpp-license-audit-heic
+    /tmp/bpp-license-audit-heic/bin/pip install "bppicker[heic]"
+    /tmp/bpp-license-audit-heic/bin/pip install pip-licenses
+    /tmp/bpp-license-audit-heic/bin/pip-licenses --from=mixed --order=license \
+        --format=plain | grep -iE 'GPL|LGPL|AGPL'
+# Expected: pillow-heif (GPLv2 binary wheel because of bundled x265)
+# plus libheif (LGPL-3.0). Anything else is drift.
+
+# [nudity] (must be exactly NudeNet)
+    python -m venv /tmp/bpp-license-audit-nudity
+    /tmp/bpp-license-audit-nudity/bin/pip install "bppicker[nudity]"
+    /tmp/bpp-license-audit-nudity/bin/pip install pip-licenses
+    /tmp/bpp-license-audit-nudity/bin/pip-licenses --from=mixed --order=license \
+        --format=plain | grep -iE 'GPL|LGPL|AGPL'
+# Expected: NudeNet (GPL-3.0). Anything else is drift.
+
+# [raw] (must be exactly LibRaw)
+    python -m venv /tmp/bpp-license-audit-raw
+    /tmp/bpp-license-audit-raw/bin/pip install "bppicker[raw]"
+    /tmp/bpp-license-audit-raw/bin/pip install pip-licenses
+    /tmp/bpp-license-audit-raw/bin/pip-licenses --from=mixed --order=license \
+        --format=plain | grep -iE 'GPL|LGPL|AGPL'
+# Expected: LibRaw (LGPL-2.1; rawpy itself is MIT). Anything else is drift.
+
+# [inpaint] (must be empty)
+    python -m venv /tmp/bpp-license-audit-inpaint
+    /tmp/bpp-license-audit-inpaint/bin/pip install "bppicker[inpaint]"
+    /tmp/bpp-license-audit-inpaint/bin/pip install pip-licenses
+    /tmp/bpp-license-audit-inpaint/bin/pip-licenses --from=mixed --order=license \
+        --format=plain | grep -iE 'GPL|LGPL|AGPL'
+# Expected: empty. simple-lama-inpainting (Apache-2.0), torch and
+# torchvision (BSD-3) are all permissive — anything else is drift.
+
+Note: pip-licenses run against a dev venv WILL show entries from
+tools like `twine`, `readme_renderer`, or `insightface` if they were
+manually installed for development. Those are not in the end-user
+install path. The clean-venv recipes above are the only reliable
+audit.
+
+================================================================
+Downloaded at first-use (model weights only)
+================================================================
+
+These are fetched over HTTPS the first time a feature is used and
+stored in the user's cache directory. Only ONNX-exported weights are
+loaded — no copyleft Python code runs in the host process.
+
+- MediaPipe model weights — Apache License 2.0
+  https://github.com/google/mediapipe/blob/master/LICENSE
+  Includes face landmark detection, hand detection, pose detection,
+  and selfie segmentation models.
+- YuNet face detector ONNX weights — Apache License 2.0
+  https://github.com/opencv/opencv_zoo (models/face_detection_yunet)
+  Downloaded at runtime from media.githubusercontent.com/media/opencv/opencv_zoo
+- SCRFD face detector ONNX weights — MIT License (upstream insightface)
+  Upstream: https://github.com/deepinsight/insightface
+  Runtime download source: a third-party HuggingFace mirror at
+  https://huggingface.co/RuteNL/SCRFD-face-detection-ONNX
+  (the bnkps variant insightface released, mirrored for stable
+  download — SHA-256 pinned in `bpp/scoring/face_scrfd.py` so the
+  mirror can't substitute different bytes)
+- SFace face embedding ONNX weights — Apache License 2.0
+  https://github.com/opencv/opencv_zoo
+- CLIP ViT-B/32 ONNX weights — MIT License
+  https://github.com/openai/CLIP/blob/main/LICENSE
+- YOLOv11n (Ultralytics) ONNX weights — AGPL-3.0
+  https://github.com/ultralytics/ultralytics/blob/main/LICENSE
+  Note: Only the exported ONNX weights are downloaded at runtime for
+  local inference. The Ultralytics Python package is NOT installed
+  and no AGPL Python code runs in the user's process. The ONNX-graph
+  format is interpreted by ONNX Runtime (MIT). If the user redistributes
+  these weights in their own derived work, AGPL terms attach to that
+  redistribution.

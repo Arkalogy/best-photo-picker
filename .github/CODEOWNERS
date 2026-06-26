@@ -1,0 +1,28 @@
+# Code owners — gates on legally-sensitive paths.
+#
+# See MODEL_POLICY.md for the rationale. The paths below require
+# explicit owner review when branch protection enables "Require
+# review from Code Owners." This catches well-meaning PRs that
+# would otherwise silently add a non-permissive model, bypass the
+# download chokepoint, or relax a restriction class.
+
+# Catch-all: anything not specifically owned still needs maintainer
+# approval, but doesn't block on this file.
+*                                    @Arkalogy/maintainers
+
+# Model registry and license-posture infrastructure.
+/bpp/registry/                       @Arkalogy/maintainers
+/bpp/scoring/model_base.py           @Arkalogy/maintainers
+/bpp/scoring/face_embed.py           @Arkalogy/maintainers
+/bpp/scoring/face_embedder_registry.py @Arkalogy/maintainers
+/bpp/scoring/face_detector_registry.py @Arkalogy/maintainers
+/bpp/utils/download.py               @Arkalogy/maintainers
+
+# The contributor policy itself.
+/MODEL_POLICY.md                     @Arkalogy/maintainers
+/.github/CODEOWNERS                  @Arkalogy/maintainers
+
+# CI / release plumbing — accidental edits can silently disable a
+# gate or publish an untested build.
+/.github/workflows/                  @Arkalogy/maintainers
+/pyproject.toml                      @Arkalogy/maintainers
