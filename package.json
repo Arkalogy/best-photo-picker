@@ -28,7 +28,7 @@
     "@playwright/test": "^1.59.1",
     "@types/node": "^25.6.0",
     "@vitest/coverage-v8": "^4.1.7",
-    "eslint": "^9.0.0",
+    "eslint": "^10.6.0",
     "globals": "^15.0.0",
     "jsdom": "^25.0.0",
     "prettier": "^3.0.0",
