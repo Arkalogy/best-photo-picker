@@ -15,7 +15,7 @@ from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
 
-SCHEMA_VERSION = 43
+SCHEMA_VERSION = 44
 
 # Resolved once at import time. Module-level dialect singleton means
 # this is stable for the process lifetime.
@@ -427,7 +427,7 @@ CREATE INDEX IF NOT EXISTS idx_photos_aggregate_score ON photos(aggregate_score)
 CREATE INDEX IF NOT EXISTS idx_photos_phash ON photos(phash);
 CREATE INDEX IF NOT EXISTS idx_photos_is_video ON photos(is_video);
 CREATE INDEX IF NOT EXISTS idx_album_photos_album_selected ON album_photos(album_id, selected);
-CREATE INDEX IF NOT EXISTS idx_albums_type_rule ON albums(album_type, rule_json);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_albums_type_rule ON albums(album_type, rule_json); -- v44
 -- v36: partial index on the shadow column. Only rows where the column
 -- is non-NULL get indexed (smart_person albums); everything else is
 -- ignored. Lookup pattern is "find the album for cluster X" which is

@@ -31,7 +31,7 @@ classifiers = [
 ]
 dependencies = [
     "numpy>=1.24",  # used at module-top-level in 40+ files; declare explicitly
-    "opencv-python-headless>=4.8",
+    "opencv-python-headless>=4.8,<5",
     "Pillow>=10.3",  # 10.0-10.2 had CVE-2023-50447 (RCE) + CVE-2023-44271 (DoS)
     "PyYAML>=6.0",
     "tqdm>=4.65",
