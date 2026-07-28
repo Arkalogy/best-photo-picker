@@ -68,7 +68,23 @@ def _ensure_smart_album(
         if not SmartAlbumRegistry.is_user_renameable(album_type):
             conn.execute("UPDATE albums SET name=? WHERE id=?", (name, album_id))
     else:
-        album_id = create_album(conn, name, album_type=album_type, rule=rule)
+        try:
+            album_id = create_album(conn, name, album_type=album_type, rule=rule)
+        except sqlite3.IntegrityError:
+            # A concurrent refresh (e.g. a background phash/clustering worker
+            # racing this call on a separate WAL connection) inserted the same
+            # (album_type, rule_json) between our SELECT above and this INSERT.
+            # The UNIQUE index idx_albums_type_rule (schema v44) makes that a
+            # hard error instead of a silent duplicate; adopt the winner's row
+            # rather than raising. Regression: the test_dismiss_cluster "2 == 1"
+            # flake, where two refreshes each created a "Person 1" album.
+            winner = conn.execute(
+                "SELECT id FROM albums WHERE album_type=? AND rule_json=?",
+                (album_type, rule_json),
+            ).fetchone()
+            if winner is None:
+                raise
+            album_id = winner[0]
 
     # Resolve photo IDs from query if needed
     if photo_ids is None and photo_query:

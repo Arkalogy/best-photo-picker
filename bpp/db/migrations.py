@@ -219,6 +219,7 @@ from bpp.db.migrations_recent import (  # noqa: E402
     _migrate_v41,
     _migrate_v42,
     _migrate_v43,
+    _migrate_v44,
 )
 
 # Gaps in the version sequence (7, 12, 17, 19, 20, 24) are intentional —
@@ -261,4 +262,5 @@ MIGRATIONS: tuple[tuple[int, MigrationFn], ...] = (
     (41, _migrate_v41),
     (42, _migrate_v42),
     (43, _migrate_v43),
+    (44, _migrate_v44),
 )
