@@ -270,6 +270,7 @@ from bpp.db.migrations_latest import (  # noqa: E402, F401
     _migrate_v41,
     _migrate_v42,
     _migrate_v43,
+    _migrate_v44,
 )
 
 

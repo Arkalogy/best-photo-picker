@@ -436,3 +436,50 @@ def _migrate_v43(conn: sqlite3.Connection) -> None:
         "ON photos (nudity_score) WHERE nudity_score > 0 OR sensitive_override IS NOT NULL"
     )
     log.info("Migration v43: added sensitive_override column + index to photos")
+
+
+def _migrate_v44(conn: sqlite3.Connection) -> None:
+    """Enforce UNIQUE(album_type, rule_json) on albums (v44).
+
+    The check-then-insert in _ensure_smart_album had no DB-level guard, so
+    two concurrent smart-album refreshes on separate WAL connections (the
+    dismiss/merge handlers under the face lock vs. an unlocked background
+    phash/clustering refresh) could each pass the existence check and insert
+    the same person album twice — the test_dismiss_cluster "2 == 1" flake.
+
+    Fix: promote the existing non-unique idx_albums_type_rule to UNIQUE.
+    rule_json is NULL for manual albums and SQLite treats NULLs as distinct,
+    so only smart albums (non-null rule_json) are constrained.
+
+    Idempotent: dedupes any pre-existing duplicates (keeping the lowest id,
+    the row name-transfer/rename hooks have always pointed at), drops the old
+    index, and (re)creates the UNIQUE one. Safe to re-run after a partial
+    failure — dedupe is a no-op once unique, and both DDLs are guarded.
+    """
+    if not dialect.column_names(conn, "albums"):
+        log.info("Migration v44: albums table not present yet, skipping")
+        return
+
+    # Cascade cleans album_photos, but only when FKs are enforced — delete the
+    # duplicates' membership rows explicitly so orphans can't linger if the
+    # migration connection has foreign_keys off.
+    dup_ids = [
+        r[0]
+        for r in conn.execute(
+            "SELECT id FROM albums WHERE rule_json IS NOT NULL AND id NOT IN ("
+            "  SELECT MIN(id) FROM albums WHERE rule_json IS NOT NULL "
+            "  GROUP BY album_type, rule_json"
+            ")"
+        ).fetchall()
+    ]
+    if dup_ids:
+        placeholders = ", ".join(["?"] * len(dup_ids))
+        conn.execute(f"DELETE FROM album_photos WHERE album_id IN ({placeholders})", dup_ids)
+        conn.execute(f"DELETE FROM albums WHERE id IN ({placeholders})", dup_ids)
+        log.info("Migration v44: removed %d duplicate smart album(s)", len(dup_ids))
+
+    conn.execute("DROP INDEX IF EXISTS idx_albums_type_rule")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_albums_type_rule ON albums(album_type, rule_json)"
+    )
+    log.info("Migration v44: albums(album_type, rule_json) is now UNIQUE")
