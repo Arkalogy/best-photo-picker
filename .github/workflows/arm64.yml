@@ -30,15 +30,15 @@ jobs:
     name: Test (Linux arm64)
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
       - name: Cache pip packages
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/pip
           # arm64 wheels differ from x86_64 — keep cache keys
@@ -47,7 +47,7 @@ jobs:
           restore-keys: pip-arm64-3.11-
 
       - name: Cache ML models
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/bpp
           key: bpp-models-arm64-${{ hashFiles('bpp/scoring/face*.py', 'bpp/scoring/clip*.py') }}
