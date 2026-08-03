@@ -64,7 +64,7 @@ jobs:
           fi
           echo "OK: tag $TAG_VERSION matches package and tauri.conf"
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11" # pinned — matches the sidecar/CI pin
 
@@ -79,7 +79,7 @@ jobs:
       - name: Build sidecar (PyInstaller)
         run: bash desktop/build-sidecar.sh
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
 
