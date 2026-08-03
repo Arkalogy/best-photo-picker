@@ -64,7 +64,7 @@ raw = ["rawpy>=0.21"]
 #   * 0.1.1 — pillow<11      (forces Pillow downgrade)
 #   * 0.1.2 — pillow<10      (forces Pillow 9.5 → silently breaks HEIC,
 #                             reproduced in bug-fix commit f0dba2e)
-inpaint = ["simple-lama-inpainting==0.1.0"]
+inpaint = ["simple-lama-inpainting==0.1.2"]
 dev = [
     "bppicker[heic,web,faces,nudity,raw]",
     "pytest>=7.4",
@@ -87,7 +87,7 @@ dev = [
     # ruff's formatter rules shift between releases. An unpinned ruff
     # (CI did `pip install ruff`) drifts from whatever devs have locally,
     # silently failing the gate on the next release PR. Bump deliberately.
-    "ruff==0.15.9",
+    "ruff==0.16.1",
     "mypy>=1.8",
     # pre-commit framework runs the .pre-commit-config.yaml hooks
     # before each git commit. Today the only hook is the
