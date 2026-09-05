@@ -6,6 +6,25 @@ this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-09-04
+
+Patch release fixing a broken-on-fresh-install bug. **Schema version: 44.**
+
+### Fixed
+- **Fresh `pip install` was broken by OpenCV 5.** `opencv-python-headless`
+  was unpinned (`>=4.8`), so new installs pulled OpenCV 5.0, which removed
+  the bundled Haar cascade data the face-detection fallback loads. On a
+  fresh install this made the fallback raise, and the analyze worker
+  (which catches per-photo errors) then silently skipped every photo that
+  reached the fallback — i.e. any photo with no face detected by the
+  primary detectors. Now pinned to `>=4.8,<5`. (#21)
+- **Duplicate "Person" smart albums under concurrent refresh.** Two
+  smart-album refreshes running at once (e.g. a face action and a
+  background clustering pass) could each create the same person album.
+  Added a `UNIQUE(album_type, rule_json)` constraint (schema v44, with a
+  self-healing migration that de-dupes existing albums) plus conflict-safe
+  album creation. (#21)
+
 ## [0.1.0] — 2026-06-23
 
 First public release. **Schema version: 34.**
