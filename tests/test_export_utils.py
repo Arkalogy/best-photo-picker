@@ -123,7 +123,9 @@ class TestExportSelectedCopyMode:
         with open(report_path) as f:
             report = json.load(f)
 
-        assert report["version"] == "0.1.0"
+        from bpp import __version__
+
+        assert report["version"] == __version__
         assert report["config"] == {"k": 10}
         assert report["total_analyzed"] == 3
         assert report["total_selected"] == 2

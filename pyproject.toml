@@ -8,7 +8,7 @@ build-backend = "hatchling.build"
 # *import* package stays `bpp` — `pip install bppicker` then
 # `import bpp` is the contract.
 name = "bppicker"
-version = "0.1.0"
+version = "0.1.1"
 description = "Local-first photo curation tool — score, deduplicate, and select the best photos from large collections"
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
