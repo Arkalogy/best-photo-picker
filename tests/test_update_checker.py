@@ -8,6 +8,7 @@ from unittest import mock
 
 import pytest
 
+from bpp import __version__
 from bpp.web import update_checker
 from bpp.web.app import create_app
 
@@ -50,7 +51,7 @@ class TestParseVersion:
 class TestCheckForUpdate:
     def test_no_update_available(self):
         release = {
-            "tag_name": "v0.1.0",
+            "tag_name": f"v{__version__}",
             "html_url": "https://github.com/test/repo/releases/tag/v0.1.0",
             "body": "No changes",
         }
@@ -59,8 +60,8 @@ class TestCheckForUpdate:
 
         assert result["status"] == "ok"
         assert result["available"] is False
-        assert result["current"] == "0.1.0"
-        assert result["latest"] == "0.1.0"
+        assert result["current"] == __version__
+        assert result["latest"] == __version__
 
     def test_update_available(self):
         release = {
@@ -128,7 +129,7 @@ class TestCheckForUpdate:
         assert result["status"] == "error"
         assert result["error"] == "unknown_error"
         assert result["available"] is False
-        assert result["current"] == "0.1.0"
+        assert result["current"] == __version__
 
     def test_empty_response_from_size_cap_reports_error(self):
         """_fetch_latest_release returns {} when the response exceeds the
@@ -181,7 +182,7 @@ class TestVersionEndpoint:
         assert resp.status_code == 200
         data = json.loads(resp.data)
         assert "version" in data
-        assert data["version"] == "0.1.0"
+        assert data["version"] == __version__
 
 
 class TestUpdateCheckEndpoint:

@@ -13,7 +13,7 @@ import os as _os
 
 _os.environ.setdefault("OPENCV_IO_MAX_IMAGE_PIXELS", str(200_000_000))
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 APP_NAME = "Best Photo Picker"
 
 # Eagerly import the model registry so the Batch-3 download chokepoint
