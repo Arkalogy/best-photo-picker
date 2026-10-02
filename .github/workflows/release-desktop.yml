@@ -42,7 +42,7 @@ permissions:
 
 jobs:
   build-macos-app:
-    runs-on: macos-14 # Apple Silicon; arm64-only artifact (Intel deferred)
+    runs-on: macos-15 # Apple Silicon; arm64-only artifact (Intel deferred)
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
