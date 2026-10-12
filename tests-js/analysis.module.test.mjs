@@ -400,6 +400,57 @@ describe("getParams / scheduleRecompute / doRecompute", () => {
     expect(/** @type {any} */ (window).photos[1].aggregate_score).toBe(0.6);
   });
 
+  test("a stale recompute response from a previous scope does not clobber the current selection (BPP-27)", async () => {
+    // Cold load: the Library recompute (album 1) is still in flight when the
+    // user opens a person album (1110). The album's response lands first with
+    // its 13 picks; the slow Library response then arrives with 50
+    // library-wide picks and must be ignored — otherwise the BPP Picks filter
+    // shows only the 1 overlap photo.
+    /** @type {any} */ const win = window;
+    win.photos = [{ filepath: "/mia1" }, { filepath: "/mia2" }];
+    /** @type {Record<string, (v: any) => void>} */
+    const resolvers = {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (/** @type {string} */ url) =>
+          new Promise((resolve) => {
+            resolvers[url.includes("/albums/1110/") ? "album" : "library"] = resolve;
+          })
+      )
+    );
+    win.currentAlbumId = 1;
+    const libraryCall = doRecompute({ delta: true });
+    win.currentAlbumId = 1110;
+    const albumCall = doRecompute({ delta: true });
+
+    resolvers.album(jsonResp({ scores: {}, selected_paths: ["/mia1", "/mia2"], stats: {} }));
+    await albumCall;
+    resolvers.library(jsonResp({ scores: {}, selected_paths: ["/mia1", "/other"], stats: {} }));
+    await libraryCall;
+
+    expect([...win.selectedPaths]).toEqual(["/mia1", "/mia2"]);
+  });
+
+  test("a superseded recompute in the same scope is ignored; the newest wins", async () => {
+    /** @type {any} */ const win = window;
+    win.photos = [{ filepath: "/a" }, { filepath: "/b" }];
+    win.currentAlbumId = 7;
+    /** @type {((v: any) => void)[]} */
+    const resolvers = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise((resolve) => resolvers.push(resolve)))
+    );
+    const first = doRecompute({ delta: true });
+    const second = doRecompute({ delta: true });
+    resolvers[1](jsonResp({ scores: {}, selected_paths: ["/b"], stats: {} }));
+    await second;
+    resolvers[0](jsonResp({ scores: {}, selected_paths: ["/a"], stats: {} }));
+    await first;
+    expect([...win.selectedPaths]).toEqual(["/b"]);
+  });
+
   test("doRecompute aborts on error response", async () => {
     vi.stubGlobal(
       "fetch",
