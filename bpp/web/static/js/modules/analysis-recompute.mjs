@@ -83,6 +83,12 @@ export async function doRecompute(opts) {
   const url = win.currentAlbumId
     ? `/api/v1/albums/${win.currentAlbumId}/recompute`
     : "/api/v1/recompute";
+  // Responses can land out of order: on a cold load the Library recompute is
+  // still in flight when the user opens an album, and its late answer (the
+  // library-wide picks) used to overwrite the album's selection (BPP-27).
+  // Only the newest request for the scope that's still on screen may apply.
+  const _seq = (win._recomputeSeq = (win._recomputeSeq || 0) + 1);
+  const _scope = win.currentAlbumId ?? null;
   const _recomputeT0 = performance.now();
   try {
     const data = await apiFetch(url, {
@@ -90,6 +96,7 @@ export async function doRecompute(opts) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
     });
+    if (_seq !== win._recomputeSeq || (win.currentAlbumId ?? null) !== _scope) return;
     // Surface slow recomputes so the user knows what they're waiting on.
     // Prefer the server's elapsed_ms (excludes network) and fall back to
     // round-trip wall time. Threshold matches "noticeable lag" — sub-300ms
