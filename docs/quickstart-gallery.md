@@ -76,7 +76,7 @@ App-level settings (theme, update check, product tour) and library-level setting
 
 ## Next steps
 
-- **Try the demo** — `pip install "bppicker[web]" && bpp demo` boots a synthetic library and the full UI in about 30 seconds. No photos of yours, no setup, no install of optional ML extras required.
+- **Try the demo** — `pip install "bppicker[web]" && bpp demo` boots a synthetic library and the full UI. No photos of yours, no setup, no install of optional ML extras required. The first run downloads the on-device models once (up to ~650 MB); after that it starts in seconds and runs offline.
 - **Install for real** — `pip install "bppicker[web,faces]"` then `bpp serve --library ~/Pictures/MyLibrary`. See the [README](../README.md) for details on optional extras (HEIC, NSFW filter, RAW, AI inpainting).
 - **Read the architecture** — `docs/adr/` captures the load-bearing decisions; `docs/API.md` covers the HTTP surface for anyone integrating against the local server.
 - **Contribute** — `CONTRIBUTING.md` for the workflow, `docs/plugins.md` for the registered extension points.
