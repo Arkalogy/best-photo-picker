@@ -7,39 +7,49 @@
 
 **Drowning in 15,000 family photos?** Apple Photos and Google Photos bury your best shots in their feed. Best Photo Picker runs entirely on your machine, scores every photo on sharpness, lighting, faces, and composition, and lets you curate the perfect 50 in minutes — no cloud, no subscription, no compromise.
 
-It's the only photo tool that **auto-scores your whole library for curation without uploading anything**, then **clusters near-duplicates** and lets you **boost specific people** so the final pick favors the faces that matter — your kid, for the grandparents.
+It **auto-scores your whole library for curation without uploading anything**, **clusters the near-duplicates**, and lets you **boost specific people** so the final pick favors the faces that matter — your kid, for the grandparents.
 
-> **Try it in 30 seconds — no photos needed:**
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Arkalogy/best-photo-picker/main/docs/screenshots/demo.gif" width="720" alt="Demo: a library of thousands of photos, open one child's photos, BPP Picks narrows them to her best shots, then the top pick opens with its sharpness, exposure, faces and composition scores">
+</p>
+
+> **Try it — no photos needed:**
 > ```bash
 > pip install "bppicker[web]" && bpp demo
 > ```
-> Generates a sample library, runs the full UI locally, and quits cleanly when you close the tab. Nothing leaves your machine.
+> Generates a sample library, runs the full UI locally, and quits cleanly when you close the tab. **The first run downloads the on-device AI models once (up to ~650 MB, mostly the CLIP visual-search model); after that everything runs offline.** Nothing about your photos ever leaves your machine.
 
-*By [Arkalogy](https://arkalogy.com) — a PM-directed, AI-built product; the architectural decisions are captured in [`docs/adr/`](docs/adr/). [Why & how it was built →](#about)*
+*By Arkadiy Birger at [Arkalogy](https://arkalogy.com) — a PM-directed, AI-built product; the architectural decisions are captured in [`docs/adr/`](docs/adr/). [Why & how it was built →](#about)*
 
-| | |
-|---|---|
-| ![Photo grid](https://raw.githubusercontent.com/Arkalogy/best-photo-picker/main/docs/screenshots/tauri/01-grid.png) | ![Lightbox with editor](https://raw.githubusercontent.com/Arkalogy/best-photo-picker/main/docs/screenshots/tauri/08-editor.png) |
-| ![Faces & people](https://raw.githubusercontent.com/Arkalogy/best-photo-picker/main/docs/screenshots/tauri/03-faces.png) | ![BPP Picks](https://raw.githubusercontent.com/Arkalogy/best-photo-picker/main/docs/screenshots/tauri/04-picks.png) |
-| ![Calendar view](https://raw.githubusercontent.com/Arkalogy/best-photo-picker/main/docs/screenshots/tauri/06-calendar.png) | ![Duplicate review](https://raw.githubusercontent.com/Arkalogy/best-photo-picker/main/docs/screenshots/tauri/10-duplicates.png) |
-
-For an annotated walkthrough of the full workflow — import → adjust → pick → export — plus the side surfaces (faces, calendar, map, duplicates), see **[docs/quickstart-gallery.md](docs/quickstart-gallery.md)**.
+More screenshots (faces, calendar, map, duplicates, the editor) and an annotated walkthrough of import → adjust → pick → export: **[docs/quickstart-gallery.md](docs/quickstart-gallery.md)**.
 
 📣 **Found a bug or have a feature idea?** [Open an issue](https://github.com/Arkalogy/best-photo-picker/issues/new/choose) · [Start a discussion](https://github.com/Arkalogy/best-photo-picker/discussions) · [Contributing guide](https://github.com/Arkalogy/best-photo-picker/blob/main/CONTRIBUTING.md). Security issues: please use [private vulnerability reporting](https://github.com/Arkalogy/best-photo-picker/security/advisories/new), not a public issue.
 
 ## Why Best Photo Picker?
 
-| | Best Photo Picker | Apple Photos | Google Photos | Lightroom | digiKam |
-|---|:-:|:-:|:-:|:-:|:-:|
-| Local-first / runs offline | ✅ | ⚠️ iCloud-coupled | ❌ cloud | ⚠️ cloud sync | ✅ |
-| Auto-scores photos for picking | ✅ | ❌ | ⚠️ "Memories" | ⚠️ flags only | ❌ |
-| Boost picks by named person | ✅ | ⚠️ | ⚠️ | ❌ | ❌ |
-| Near-duplicate deduplication | ✅ | ⚠️ | ⚠️ | ❌ | ✅ |
-| Free + open source | ✅ MIT | ❌ | ❌ | ❌ $120/yr | ✅ GPL |
-| No account / no subscription | ✅ | ❌ | ❌ | ❌ | ✅ |
-| Optional LAN sharing w/ device pairing | ✅ | ❌ | ❌ | ❌ | ❌ |
+Where it fits next to what you already use:
+
+- **Apple Photos / Google Photos** are great at storing and browsing. bpp ranks and curates — and runs alongside them.
+- **Lightroom, Aftershoot, Excire** are built for photographers culling a shoot. bpp is built for a family library that spans years — and it's free and open source.
+- **digiKam / Immich** organize and manage your collection. bpp answers one question: which fifty are the best of *this person*?
 
 If you live in the Apple/Google ecosystem and your collection fits their feeds, those tools work great. **bpp exists for the case they're bad at: you have thousands of photos of a specific subject — your kid, your dog, last summer's trip — and you want to find the actual best fifty without uploading anything anywhere.**
+
+## How it's built
+
+Claude writes the code. I own the product and the architecture, and nothing ships without my sign-off. What keeps that honest:
+
+- 4,400+ Python and 1,400+ UI tests run on every merge, plus end-to-end tests that click through the real app
+- Key decisions written up in [`docs/adr/`](docs/adr/)
+- A signed, notarized Mac app and releases on PyPI
+- I use it on my own photo library, and the bugs it finds become tests
+
+## Known limits
+
+- The pip install needs Python 3.11 exactly
+- The Mac app is Apple Silicon only; Windows should work via pip but hasn't been tested end to end
+- The first run downloads about 650 MB of models, once
+- Face detection occasionally finds a face in a dog, a plate of food, or a flower bed. One click on **Not a face** fixes it.
 
 ## Features
 
@@ -48,7 +58,7 @@ If you live in the Apple/Google ecosystem and your collection fits their feeds, 
 - **Temporal diversity** — per-day caps and monthly coverage for balanced selection
 - **Face recognition** — automatic clustering, per-person smart albums, merge, dismiss, reassign, drag-to-fix mis-detected bboxes
 - **Library management** — import by copying to managed library with SHA-256 dedup
-- **Album system** — manual + 19 smart album types (person, time, score, duplicates, pets, etc.)
+- **Album system** — manual + 20 smart album types (person, time, score, duplicates, pets, etc.)
 - **Interactive web UI** — real-time slider tuning, photo grid, lightbox, compare view, batch operations
 - **Desktop app** — native macOS app via Tauri v2 (wraps the web UI in a native window)
 - **Soft delete** — 30-day recovery, Recently Deleted album
@@ -176,7 +186,8 @@ Import → Analyze → Score → Deduplicate → Select → Export
 | `face_weight` | 0.35 | Weight for face detection & framing |
 | `composition_weight` | 0.15 | Weight for composition (rule of thirds) |
 | `max_long_side` | 1024 | Downscale images to this before analysis |
-| `hash_distance_threshold` | 10 | dHash Hamming distance for "same" image |
+| `hash_distance_threshold` | 20 | dHash Hamming distance for "same" image within the burst time window |
+| `global_hash_distance_threshold` | 10 | dHash Hamming distance for duplicates across the whole library |
 | `time_window_seconds` | 15 | Cluster burst photos within this window |
 | `max_per_day` | 3 | Max selected photos per calendar day |
 | `min_per_month` | 1 | Try to include at least 1 per month |
@@ -210,7 +221,7 @@ crashing. Ordering matters — providers are tried in the order listed.
 
 | Surface | Tested in CI | Supported | Notes |
 |---|---|---|---|
-| **macOS arm64** (M1/M2/M3) — CPU | yes (dev box) | yes | Primary dev target. Tauri desktop app ships only this. |
+| **macOS arm64** (M1/M2/M3) — CPU | no (tested locally on the dev Mac) | yes | Primary dev target. Tauri desktop app ships only this. |
 | **Linux x86_64** — CPU | yes (`ubuntu-latest`) | yes | Default for PyPI install. |
 | **Linux arm64** — CPU | no | yes | Docker image builds; runtime not exercised in CI. |
 | **Windows** — CPU | no | yes | Code path exists; never run end-to-end. Reports welcome via GitHub issues. |
@@ -220,7 +231,7 @@ crashing. Ordering matters — providers are tried in the order listed.
 
 "Supported" means the code path accepts the configuration and
 shouldn't crash; report bugs via GitHub Issues if it does. "Tested in
-CI" means we run the full test suite on every push for that surface.
+CI" means we run the full test suite on every pull request to `main` for that surface.
 Anything between the two is on the user's risk surface — your
 hardware, your driver stack, your call. We'd love to expand the
 tested column as users report working setups; PRs welcome that add
@@ -343,9 +354,7 @@ window with the documented default library path. Override via
 
 A `Dockerfile` ships at the repo root for self-hosters who want to
 run bpp behind a reverse proxy. It's a multi-stage build that
-installs the `[web,faces,nudity,heic]` extras; the README's
-"native macOS app" framing applies to the Tauri desktop wrapper,
-not the server. Bind to loopback inside the container and publish
+installs the `[web,faces,nudity,heic]` extras. Bind to loopback inside the container and publish
 via `-p 127.0.0.1:5001:5001` — the LAN-sharing toggle is owner-
 only by design and isn't appropriate for an internet-exposed
 container. Set `BPP_TRUSTED_PROXIES` to your reverse proxy's CIDR
@@ -376,7 +385,7 @@ This tool is **local-first** — your photos never leave your machine
 for analysis, scoring, or selection. There is no telemetry and no
 cloud account.
 
-Network usage is limited to the following — each is independently disclosable, and the ones that fire automatically (update check, map tiles, model downloads on first analyze) can be turned off:
+Network usage is limited to the following — each is independently disclosable, and the ones that can fire without you clicking anything (update check, model downloads on first analyze) can be turned off:
 - **Model downloads** (first-run only) — face detection, CLIP, etc.,
   fetched from public model hosts: HuggingFace (`huggingface.co`),
   Google Storage (`storage.googleapis.com`), the OpenCV opencv_zoo
@@ -467,6 +476,8 @@ npm run build
 
 The sidecar binary lands at `desktop/src-tauri/binaries/bpp-server-{target-triple}` (e.g., `bpp-server-aarch64-apple-darwin`).
 
+> **Note:** A build you make yourself isn't signed with an Apple Developer ID, so Gatekeeper will block it the first time. To open it: right-click → Open → Open (once). The release DMG is signed and notarized and opens normally.
+
 ### 4. Lint and test
 
 ```bash
@@ -512,17 +523,9 @@ desktop/
 
 ## Installing on a New Machine
 
-### Desktop app (`.app` bundle)
+### Desktop app
 
-```bash
-cd desktop
-./build-sidecar.sh   # builds the Python server into a standalone binary
-npm run build         # builds .app + .dmg
-```
-
-The `.dmg` is at `desktop/src-tauri/target/release/bundle/dmg/`. Open it and drag to `/Applications`.
-
-> **Note:** Without an Apple Developer certificate, macOS Gatekeeper will block the app. To open it: right-click → Open → Open. This only needs to be done once.
+Download the signed, notarized [BestPhotoPicker-macOS-arm64.dmg](https://github.com/Arkalogy/best-photo-picker/releases/latest/download/BestPhotoPicker-macOS-arm64.dmg) and drag it to Applications (see [Desktop app](#desktop-app-macos-apple-silicon) above). To build the app yourself instead, see [Development Setup](#3-desktop-app-tauri-v2).
 
 ### Transferring your photo library
 
@@ -608,14 +611,14 @@ User-facing release notes live in [CHANGELOG.md](https://github.com/Arkalogy/bes
 
 If you find this useful, [star the repo](https://github.com/Arkalogy/best-photo-picker) and spread the word. Bug reports and PRs welcome.
 
-- [☕ Buy us a coffee](https://buymeacoffee.com/arkalogy) — covers a model-download CDN bill and a focused afternoon of bug fixes
-- [📬 Hire Arkalogy](mailto:support@arkalogy.com) — custom integrations, AI-assisted product work, or PM consulting
+- [☕ Buy us a coffee](https://buymeacoffee.com/arkalogy) — fuels the bug-fix afternoons
+- [📬 Get in touch](mailto:support@arkalogy.com)
 
 ## About
 
-Built and maintained by [**Arkalogy**](https://arkalogy.com). bpp started as a tool to triage a large family photo library without sending it to anyone's cloud — most existing options either live in someone else's data center or are designed for professional photographers. If you have the same problem and this helps, that's the win.
+I'm **Arkadiy Birger**, and I build at [**Arkalogy**](https://arkalogy.com). I started bpp to triage my own family photo library — thousands of shots of my kid — without sending any of it to someone else's cloud. The options I found either lived in someone's data center or were built for professional photographers, not for "find the 50 best photos of my kid for the grandparents." If you have the same problem and this helps, that's the win.
 
-This codebase was built with **Claude (Anthropic)** — implementation and line-by-line code review are both AI-driven, not human. The maintainer works as the product owner and architect: directing the work, approving every commit, and capturing load-bearing architectural decisions in [`docs/adr/`](docs/adr/). It's a deliberate experiment in how far a PM-led, AI-built product can go while staying disciplined — hence the registries, the test gates, the legal posture in [`MODEL_POLICY.md`](MODEL_POLICY.md), and the ADRs.
+This codebase was built with **Claude (Anthropic)** — implementation and line-by-line code review are both AI-driven, not human. I work as the product owner and architect: directing the work, approving every commit, and capturing load-bearing architectural decisions in [`docs/adr/`](docs/adr/). It's a deliberate test of how far a PM-led, AI-built product can go while staying disciplined — hence the registries, the test gates, the legal posture in [`MODEL_POLICY.md`](MODEL_POLICY.md), and the ADRs. It's also a tool I actually use.
 
 ## License
 
