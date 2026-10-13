@@ -20,7 +20,7 @@ name: Desktop App (macOS)
 # this DMG is the front door for non-technical users.
 #
 # Required repo secrets (maintainer sets these once — see
-# docs/go-live-runbook.md and docs/macos-signing.md):
+# docs/macos-signing.md):
 #   APPLE_CERTIFICATE           base64 of the Developer ID Application .p12
 #   APPLE_CERTIFICATE_PASSWORD  password used when exporting the .p12
 #   APPLE_SIGNING_IDENTITY      "Developer ID Application: NAME (TEAMID)"

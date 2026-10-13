@@ -79,7 +79,7 @@ def _load_primary_key() -> tuple[str, Ed25519PrivateKey]:
     if not key_path.exists():
         sys.exit(
             f"primary signing key not found at {key_path} — generate "
-            "one per docs/key-rotation.md before running the mock"
+            "one (see bpp/registry/trusted_keys.py) before running the mock"
         )
     raw = key_path.read_text(encoding="ascii").strip()
     key_bytes = base64.b64decode(raw)

@@ -1,9 +1,10 @@
 # Adding a new ML model
 
 This guide covers wiring a new model into bpp's code so it loads, gates
-on its license, and shows up correctly in Settings → Models. For the
+on its license, and shows up correctly in Settings → Models. The
 *operational* side (takedowns, status flips, publishing the signed
-registry), see [registry-runbook.md](registry-runbook.md).
+registry) is a maintainer task; the policy behind it is in
+[`MODEL_POLICY.md`](../MODEL_POLICY.md).
 
 ## First: which load path?
 

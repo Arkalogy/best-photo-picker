@@ -134,7 +134,6 @@ exclude = [
   ".pre-commit-config.yaml",
   ".dockerignore",
   ".gitattributes",
-  "scripts/apply_branch_protection.sh",
   # Per-version release notes ship via CHANGELOG.md, not separate files
   "docs/release-notes-*.md",
 ]

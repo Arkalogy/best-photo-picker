@@ -162,9 +162,10 @@ The full reasoning, the signed-remote-registry rules, and the test gates that en
 For schema-level details (GPS columns, Live Photo sidecars, near-duplicate
 clustering) see [`docs/architecture-notes.md`](docs/architecture-notes.md).
 
-Deferred work and known follow-ups live in [`BACKLOG.md`](BACKLOG.md).
-If you're about to start something non-trivial, check there first to
-make sure you're not re-doing planned work.
+Planned work and known follow-ups are tracked in
+[GitHub Issues](https://github.com/Arkalogy/best-photo-picker/issues).
+If you're about to start something non-trivial, open or comment on an
+issue first so nobody duplicates work.
 
 ## UI/JS coding rules
 

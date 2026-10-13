@@ -32,8 +32,7 @@ on its own.
 If you suspect a key compromise: generate a new keypair, replace
 the entry below in a release, bump the BPP version, and publish a
 takedown-status manifest signed by the unaffected key for every
-entry signed under the suspect key. See ``docs/key-rotation.md``
-for the long-form procedure.
+entry signed under the suspect key.
 
 Rotation cadence
 
