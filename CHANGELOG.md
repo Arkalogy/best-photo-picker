@@ -6,6 +6,23 @@ this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.2] — 2026-10-13
+
+Patch release. **Schema version: 44** (unchanged).
+
+### Fixed
+- **BPP Picks could show too few photos on first use.** Right after the app
+  opened, switching to an album or person and turning on BPP Picks could show
+  a stale, too-small set (e.g. 1 photo instead of 13) until a refresh. A slow
+  library-wide recompute was overwriting the album's selection; only the newest
+  result for the view on screen is applied now. (#29)
+
+### Changed
+- README: demo GIF, a clear note that the first run downloads ~650 MB of models
+  once, plus "How it's built" and "Known limits" sections. (#30)
+- The macOS app is now built on GitHub's macos-15 runner (macos-14 is being
+  retired). No change to the app itself. (#31)
+
 ## [0.1.1] — 2026-09-04
 
 Patch release fixing a broken-on-fresh-install bug. **Schema version: 44.**
