@@ -74,7 +74,7 @@ class TestClipEmbeddings:
         np.testing.assert_array_almost_equal(all_embs[1], emb2)
 
     def test_load_refused_above_max_rows(self, db, monkeypatch):
-        """R8-H8: hard ceiling on the load size. Without the cap, a
+        """Hard ceiling on the load size. Without the cap, a
         library with hundreds of thousands of embeddings allocates
         ~500MB-1GB before WebAppState.load_clip_embeddings even gets
         a chance to wrap it in a try/except. With the cap, we raise

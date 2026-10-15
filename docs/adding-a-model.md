@@ -14,7 +14,7 @@ LaMa/NudeNet "Download button vanished" bug.
 
 ```
 Are the weights bundled inside a pip package the user installs
-(e.g. dlib ships inside `face_recognition`)?
+(e.g. dlib's weights ship in `face_recognition_models`)?
 │
 ├─ YES → pip-bundled. No download path of our own. Gate at USE time only
 │         (enforce_load_policy_for in the loader). See "pip-bundled" below.
@@ -22,7 +22,8 @@ Are the weights bundled inside a pip package the user installs
 └─ NO → we fetch the weights ourselves. Two sub-cases:
     │
     ├─ Single file, known URL + SHA, fetched lazily on first use
-    │   (CLIP, YuNet, SCRFD, SFace, YOLO) → MANIFEST path.
+    │   (CLIP, YuNet, SCRFD, SFace, YOLO, BlazeFace, MediaPipe
+    │   landmarkers) → MANIFEST path.
     │
     └─ Fetched on demand via its own flow — multi-file zip, or only
         pulled when a feature is invoked (buffalo_s, NudeNet, LaMa)
@@ -37,10 +38,17 @@ CATALOG.**
 ## Always required (every path)
 
 1. **Registry entry** — add a `ModelEntry` to `bpp/registry/builtins.py`
+   (or `builtins_bundled.py` for a supporting model every analysis runs)
    describing license posture (`requires_explicit_ack`, license class,
-   `kind`, `default_for_kind`, `terms_url`, etc.). This is the legal
-   source of truth. Restricted (non-permissive) models set
-   `requires_explicit_ack=True`.
+   `kind`, `default_for_kind`, `terms_url`, etc.). This is the only place
+   the license is written — never put a license string in a detector,
+   embedder, manifest row or description; labels come from
+   `bpp.registry.labels.license_label_for(<id>)`. Every model needs an
+   entry, supporting ones included (tests fail otherwise). Restricted
+   models and attribution-licensed ones (Apache 2.0 / BSD-style, with
+   `ack_text_kind="permissive_attribution"`) set
+   `requires_explicit_ack=True`; attribution models are then accepted in
+   the combined pre-analysis step automatically.
 2. **Download gate** — the actual fetch MUST go through
    `bpp/utils/download.py::download_file(..., registry_id="<id>")`. Never
    `urlretrieve`/`requests.get`. The `registry_id` makes the policy gate
@@ -53,16 +61,17 @@ CATALOG.**
    `bpp/scoring/nudity.py` / `face_embed_buffalo_s.py` for the pattern.
 4. **`ModelSingleton`** — new models use `ModelSingleton` from
    `bpp/scoring/model_base.py` for thread-safe lazy init (never hand-roll
-   globals + locks).
+   globals + locks). Its `registry_id` is required; `get()` runs the
+   load gate for you, so a model whose license isn't accepted stays off
+   (and starts working as soon as it is, no restart).
 
 ## MANIFEST path checklist
 
 1. Above "always required" steps.
 2. **`bpp/scoring/model_manifest.py`** — add a `ModelEntry` to
    `all_models()` with `path`, `url`, `sha256`, `size_mb`, and
-   **`legal_entry_id="<id>"`** linking it to the registry entry. Missing
-   that link makes the pre-flight dialog treat a restricted model as a
-   free download (the bug fixed in this rollout).
+   **`legal_entry_id="<id>"`** (required) linking it to the registry
+   entry, so the pre-flight dialog reads its license status from there.
 3. That's it — `pending_downloads()`, the pre-flight consent dialog, and
    the Settings picker pick it up automatically.
 
@@ -89,8 +98,8 @@ CATALOG.**
    in the old Settings list — e.g. "Content filter", "AI object
    removal"), it will have a `_build_*` entry in
    `bpp/web/models_status.py` returning `files: []`, and a matching
-   `legacy_label` in `_LEGACY_FEATURE_MAP` in
-   `bpp/web/static/js/modules/modals-face-embedders.mjs`. That's fine —
+   `legacy_label` in `LEGACY_FEATURE_MAP` in
+   `bpp/web/static/js/modules/face-embedders-catalog.mjs`. That's fine —
    the `is_catalog_entry` flag (step 3) is authoritative and overrides
    the fileless legacy row. Do **not** try to infer catalog-ness from the
    absence of a legacy record.
@@ -101,7 +110,8 @@ CATALOG.**
    with the pip package).
 2. **Use gate is mandatory and is the ONLY gate** — call
    `enforce_load_policy_for("<id>")` at the top of the inference function,
-   fail-closed. dlib is the reference: `_enforce_dlib_policy()` in
+   fail-closed. dlib is the reference: `_enforce_dlib_policy()` (an alias
+   for a memoized use-gate's `enforce`) in
    `bpp/scoring/face_embed_extractors.py`. Memoize the passing result if
    the gate is on a per-photo hot path (the acceptance check reads the
    log file each call).

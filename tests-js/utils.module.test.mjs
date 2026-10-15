@@ -147,7 +147,7 @@ describe("doExport", () => {
       document.querySelector("#toast-container .toast.error")
     );
     expect(toast.textContent).toContain("1 photo failed");
-    // Per Bug #8 / activity-log + window-onerror pattern: the toast
+    // Per the activity-log + window-onerror pattern: the toast
     // must carry a 'View log' action so the user can find which
     // photo(s) failed without spelunking through Settings tabs.
     const actionBtn = /** @type {HTMLButtonElement | null} */ (toast.querySelector("button"));

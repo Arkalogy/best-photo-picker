@@ -109,7 +109,7 @@ def propagate_cluster(
     "Alex" doesn't get pulled into a different cluster's propagation
     by virtue of embedding similarity).
     """
-    # P5b: indexed shadow-column lookup.
+    # Indexed shadow-column lookup.
     from bpp.db.albums import get_smart_person_cluster_name_map
 
     protected_clusters: set[Any] = {target_cluster_id}
@@ -136,13 +136,15 @@ def propagate_cluster(
     if not cand_filtered:
         return 0
 
-    # Protection A: filter corrupt embedding BLOBs (wrong size,
+    # Filter corrupt embedding BLOBs (wrong size,
     # non-finite, zero-norm) BEFORE np.stack — a single bad row
     # crashes the whole endpoint with ValueError. The Jun-2 demo lib
     # incident was exactly this.
     ids, embs = decode_embeddings_filtered(
         ((r["id"], r["embedding"]) for r in cand_filtered),
         where="face_cluster_ops.candidate_matrix",
+        # Only rows comparable with the reference vector.
+        dim=int(np.asarray(ref_embedding).shape[0]),
     )
     if not embs:
         return 0
@@ -162,7 +164,7 @@ def cleanup_person_albums(conn: sqlite3.Connection, cluster_ids: list[int]) -> N
     """Remove smart_person albums for the given cluster IDs."""
     if not cluster_ids:
         return
-    # P5b: indexed shadow-column lookup. The prior pattern serialized
+    # Indexed shadow-column lookup. The prior pattern serialized
     # each cluster_id into a rule_json string and matched on equality —
     # works correctly but pays a string-encoding + scan per cluster.
     placeholders = ",".join("?" * len(cluster_ids))

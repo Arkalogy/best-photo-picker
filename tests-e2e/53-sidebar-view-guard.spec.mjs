@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * UAT Test 14: sidebar tabs view-guard.
+ * Sidebar tabs view-guard.
  *
  * Regression: late-arriving fetches used to paint stale data into a
  * view the user had already left. The view-guard (view-guard.mjs)
@@ -17,7 +17,7 @@ import { expect, test } from "@playwright/test";
 
 import { openApp } from "./_helpers.mjs";
 
-test.describe("UAT 14 — sidebar tab view-guard prevents stale paint", () => {
+test.describe("Sidebar tab view-guard prevents stale paint", () => {
   test("rapid sidebar clicks settle on the last-clicked view cleanly", async ({ page }) => {
     /** @type {string[]} */
     const errors = [];

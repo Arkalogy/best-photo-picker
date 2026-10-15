@@ -578,7 +578,7 @@ class TestEmbeddingValidation:
         assert _validate_embedding(emb) is False
 
     def test_zero_vector_rejected(self):
-        """L3: zero-magnitude embeddings poison clustering — every distance
+        """Zero-magnitude embeddings poison clustering — every distance
         collapses to the centroid norm, so threshold-based clustering snaps
         the zero face onto whatever cluster it sees first."""
         from bpp.web.face_worker import _validate_embedding

@@ -256,7 +256,7 @@ class TestProcessPoolDefault:
     """
 
     def test_workers_gt_one_defaults_to_process(self):
-        # P3 → 500-LOC split: the pool-choice logic moved from
+        # 500-LOC split: the pool-choice logic moved from
         # face_extraction_phases.py to face_extraction_phase5.py
         # (phase 5 is the only phase that drives a worker pool).
         source = (REPO_ROOT / "bpp" / "web" / "face_extraction_phase5.py").read_text()

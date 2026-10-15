@@ -9,8 +9,8 @@ alert ("12 photos may be sensitive — review").
 The membership predicate is ``SENSITIVE_PHOTO_SQL`` from
 ``bpp/constants.py`` — the same fragment every other surface uses, and
 the SQL twin of ``is_sensitive_item`` in ``bpp/web/photo_dict.py``.
-Degrades to absent: when nothing qualifies (NudeNet not installed, or a
-clean library) the album is removed, mirroring Duplicates.
+Degrades to absent: when nothing qualifies (NudeNet not accepted /
+downloaded, or a clean library) the album is removed, mirroring Duplicates.
 
 Own module (not ``smart_album_refreshers``) per the domain-module
 pattern set by ``smart_album_people`` / ``smart_album_pets`` — the

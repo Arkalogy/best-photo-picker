@@ -1,4 +1,4 @@
-"""TDD tests for H-5: pre-compute and cache CLIP stacked matrix."""
+"""TDD tests: pre-compute and cache CLIP stacked matrix."""
 
 from __future__ import annotations
 

@@ -43,9 +43,9 @@ class ConfigValidationError(BppError, ValueError):
     """Raised when a value fails the schema's validation contract.
 
     Carries the key + reason so the caller can surface a useful
-    error to the operator (CLI / API). Inherits ``BppError`` (P7)
-    so ``except BppError`` catches it; inherits ``ValueError`` so
-    pre-P7 ``try / except ValueError`` catches still work.
+    error to the operator (CLI / API). Inherits ``BppError`` so
+    ``except BppError`` catches it; inherits ``ValueError`` so
+    existing ``try / except ValueError`` catches still work.
     """
 
     http_status = 400

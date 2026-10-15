@@ -1,4 +1,4 @@
-"""TDD tests for P0-5: GPS / Map view — DB functions and API."""
+"""TDD tests for GPS / Map view — DB functions and API."""
 
 from __future__ import annotations
 

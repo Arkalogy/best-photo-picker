@@ -18,8 +18,6 @@ env/
 .DS_Store
 .idea/
 .vscode/
-.claude/
-CLAUDE.md
 .coverage
 
 # Tauri desktop build artifacts
@@ -39,16 +37,7 @@ playwright/.cache/
 
 # Local-only files (not shipped)
 library/
-reviews/
-# scripts/ directory tracked; individual local-only files excluded by name
-scripts/launch*.sh
-pm.md
-pm-*.md
-user_guide.md
 launch.command
-docs/v0.1.0_release_notes.md
-docs/launch_posts.md
-refactor-plan.md
 
 # Local-only secrets directory — Ed25519 signing keys, etc. NEVER commit.
 .secrets/

@@ -144,7 +144,7 @@ class WebAppState(_LegacyDelegateMixin):
         # connect).
         self.bound_host: str = "127.0.0.1"
         self.face_op_lock = threading.Lock()
-        # T1.3: serializes the entire ``state_lifecycle.switch_library``
+        # Serializes the entire ``state_lifecycle.switch_library``
         # call so two concurrent library switches (Tauri sidecar +
         # Flask endpoint, or two browser tabs) don't interleave their
         # drain / close-hook phases. ``ctx.lock`` is held only briefly
@@ -152,7 +152,7 @@ class WebAppState(_LegacyDelegateMixin):
         # join — so without a dedicated lock the heavy section is
         # unprotected.
         self._switch_library_lock = threading.Lock()
-        # M8: signals when the deferred Phase 5 backfill
+        # Signals when the deferred Phase 5 backfill
         # (assign_near_duplicate_clusters + refresh_smart_albums) has
         # completed. Phase 5 runs in a daemon thread so the photo grid
         # paints immediately; tests / switch_library / shutdown wait
@@ -161,7 +161,7 @@ class WebAppState(_LegacyDelegateMixin):
         # has run) isn't perceived as "pending" by callers that wait.
         self.smart_album_backfill_done: threading.Event = threading.Event()
         self.smart_album_backfill_done.set()
-        # M8 followup: surfaces background Phase 5 failures to
+        # Surfaces background Phase 5 failures to
         # /api/v1/health so the user / operator sees 'smart album
         # counts may be stale' instead of a silent warning buried in
         # server.log. Set True by the daemon's except block; reset to
@@ -172,23 +172,23 @@ class WebAppState(_LegacyDelegateMixin):
         # The registry holds factories (callables → BackgroundWorker)
         # so a future plugin can register its own worker class without
         # touching this constructor — see WorkerRegistry below.
-        # P4: the dict + cancel-and-join-all loops moved into
+        # The dict + cancel-and-join-all loops moved into
         # :class:`WorkerPool`. ``self._workers`` is preserved as a
         # property delegate so existing call sites (bp_health,
         # state_lifecycle, tests) keep working unchanged.
         self.workers: WorkerPool = WorkerPool()
         self.thumbs: ThumbnailCache | None = None
-        # P4: derived-state caches (face cluster map, enhanced ids,
+        # Derived-state caches (face cluster map, enhanced ids,
         # CLIP embeddings) live in :class:`ModelCache`. The bare
         # attributes (``clip_cache``, ``_face_cluster_map``, etc.)
         # are preserved as property delegates so the ~3,800 access
-        # sites the audit counted can migrate gradually.
+        # sites can migrate gradually.
         self.caches: ModelCache = ModelCache()
-        # P4b: phash_ready / _phash_generation / _compute_thread /
+        # Phash_ready / _phash_generation / _compute_thread /
         # _warm_thread / _cancel_warm now live on :class:`AnalysisStore`.
         # Property delegates preserve legacy access paths.
         self.analysis_store: AnalysisStore = AnalysisStore()
-        # P4 finish: LibraryLifecycle facade over state_lifecycle.
+        # LibraryLifecycle facade over state_lifecycle.
         # ``ctx.lifecycle.switch_library(...)`` is the new path;
         # ``ctx.switch_library(...)`` still works via the existing
         # method (which is now a delegate).
@@ -197,7 +197,7 @@ class WebAppState(_LegacyDelegateMixin):
         self.lifecycle: LibraryLifecycle = LibraryLifecycle(self)
         self.serve_mode: bool = library_path is not None
         # _edited_ids / _auto_enhanced_ids now live on caches.enhanced_ids
-        # (P4 ModelCache); property delegates preserve the legacy attribute
+        # (ModelCache); property delegates preserve the legacy attribute
         # access for build_photo_dict + invalidate_enhanced_cache callers.
         # Layered config resolver: walks DB → YAML → DEFAULTS. The
         # legacy `load_config()` returns DEFAULTS+YAML merged into a
@@ -217,7 +217,7 @@ class WebAppState(_LegacyDelegateMixin):
         # survives restarts.
         self.port: int = 5001
 
-        # P4b: warm_thread / compute_thread / cancel_warm now live on
+        # Warm_thread / compute_thread / cancel_warm now live on
         # self.analysis_store. Property delegates below keep the
         # legacy attribute access working unchanged.
 
@@ -308,7 +308,7 @@ class WebAppState(_LegacyDelegateMixin):
         Invalidated by ``invalidate_face_cluster_map()`` which face_worker
         calls after clustering completes. Cache miss cost: one JOIN query.
 
-        P4: delegates to :class:`ModelCache.face_cluster_map`.
+        Delegates to :class:`ModelCache.face_cluster_map`.
         """
         return self.caches.face_cluster_map.get(self.get_conn())
 

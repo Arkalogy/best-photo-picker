@@ -1,6 +1,6 @@
 """Model-removal orchestration.
 
-Batch 7 / item 21 of the legal-posture rollout. One entry point
+One entry point
 (:func:`remove_model_with_derived_choice`) drives the full
 removal flow for both BYOM entries and registered (built-in /
 remote-registry) entries. Couples the optional
@@ -15,11 +15,11 @@ What "remove" means per entry kind
 * **Built-in entries** — Cannot be removed in-process (they are
   Python ModelEntry instances seeded by
   ``bpp.registry.builtins``). The removal flow refuses with a
-  clear error directing the user to use status transitions in the
-  remote registry overlay (Batch 8) when that path lands.
+  clear error: built-in entries are retired through status
+  transitions delivered by the signed remote registry overlay.
 
 The optional derived-data purge fires for both kinds. Purging is
-the default per Q8 ("purge by default, with opt-out"); CLI fails
+the default ("purge by default, with opt-out"); CLI fails
 closed when neither ``--purge-derived`` nor ``--keep-derived`` is
 specified.
 """
@@ -53,8 +53,8 @@ class RemovalResult:
     ``model_id`` — what was removed.
     ``entry_kind`` — ``"byom"`` for BYOM entries, ``"built_in"`` for
         registered entries (the latter currently always errors but
-        the result type allows future Batch-8 remote-overlay
-        entries to be removed cleanly too).
+        the result type allows remote-overlay entries to be
+        removed cleanly too).
     ``derived_summary`` — the count snapshot at the moment of
         removal. ``purged`` reports whether the derived data was
         actually deleted.
@@ -86,8 +86,7 @@ def remove_model_with_derived_choice(
 
     ``purge_derived`` is REQUIRED — there is no default. The CLI
     and Flask wrappers fail closed when the caller does not
-    specify it explicitly. This matches the legal-posture spec's Q8
-    pattern: defaults in the GUI (where the user has just seen the
+    specify it explicitly. The pattern is: defaults in the GUI (where the user has just seen the
     confirmation modal), explicit choice in the headless paths.
 
     Raises :class:`ModelRemovalError` when ``model_id`` is unknown
@@ -134,8 +133,8 @@ def remove_model_with_derived_choice(
     raise ModelRemovalError(
         f"Entry {model_id!r} is a built-in registry entry and cannot "
         "be removed in-process. Built-in entries follow the upstream "
-        "lifecycle (Batch 8's signed remote-registry overlay drives "
-        "status changes when a model is withdrawn). The derived-data "
+        "lifecycle (BPP's signed model registry updates their status "
+        "when a model is withdrawn). The derived-data "
         "purge ran successfully if requested, but the registry entry "
         "remains. To stop using a built-in model, set "
         "face_embedding_method to a different value in Settings."

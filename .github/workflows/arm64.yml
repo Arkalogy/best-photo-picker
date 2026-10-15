@@ -1,16 +1,14 @@
 name: Test on Linux arm64
 
-# arm64 free runners (`ubuntu-24.04-arm`) are public-repo-only. While
-# the repo is private this workflow stays on `workflow_dispatch` only
-# — it neither auto-fires nor burns billed minutes. After the repo
-# flips public:
+# Runs on the `ubuntu-24.04-arm` runners. The workflow is
+# `workflow_dispatch` only — it does not auto-fire on PRs or pushes.
+# Dispatch it manually from the Actions tab to spot-check that nothing
+# broke for arm64 users. To run it on every PR to `main`:
 #
 #   1. Uncomment the `pull_request` and `push` triggers below.
 #   2. Optionally add `linux-arm64` to the README hardware matrix's
 #      "Tested in CI" column.
 #
-# Until then, you can dispatch this workflow manually from the
-# Actions tab to spot-check that nothing broke for arm64 users.
 # (Linux arm64 has different SIMD code paths in ONNX Runtime + cv2
 # than x86_64; a passing x86_64 run does not imply an arm64 run
 # will pass.)
@@ -30,15 +28,18 @@ jobs:
     name: Test (Linux arm64)
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # No token left in .git/config for later steps to read.
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.11"
 
       - name: Cache pip packages
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/pip
           # arm64 wheels differ from x86_64 — keep cache keys
@@ -47,7 +48,7 @@ jobs:
           restore-keys: pip-arm64-3.11-
 
       - name: Cache ML models
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/bpp
           key: bpp-models-arm64-${{ hashFiles('bpp/scoring/face*.py', 'bpp/scoring/clip*.py') }}
@@ -62,7 +63,7 @@ jobs:
         run: |
           pip install --upgrade pip "setuptools<82"
           pip install git+https://github.com/ageitgey/face_recognition_models
-          pip install -e ".[dev,web,faces,nudity,heic,raw]"
+          pip install -e ".[dev,web,faces,heic,raw]"
 
       - name: Run tests (skip slow)
         run: pytest -n auto --dist=loadfile --tb=short -m "not slow"

@@ -3,8 +3,8 @@
 The original BPP_TRUST_PROXY=1 collapsed *every* incoming request
 into "loopback" — so a Docker container published as
 `-p 0.0.0.0:5001:5001` silently promoted any LAN client to owner
-SPA + app-token treatment. Codex flagged this as the blast-radius
-bug. The replacement is BPP_TRUSTED_PROXIES, a comma-separated
+SPA + app-token treatment (the blast-radius
+bug). The replacement is BPP_TRUSTED_PROXIES, a comma-separated
 CIDR list. Only requests whose immediate peer falls inside one of
 those CIDRs get the loopback treatment.
 
@@ -138,8 +138,7 @@ def test_lan_client_outside_cidr_not_promoted(ctx):
     client outside the operator's allowlist must NOT bypass the LAN
     gate, even when trusted-proxy config exists.
 
-    This is the security regression test for the blast-radius bug
-    Codex flagged."""
+    This is the security regression test for the blast-radius bug."""
     from bpp.web.share import AuthDecision
 
     req = FakeRequest(path="/", remote_addr="192.168.1.50")
@@ -167,7 +166,7 @@ def test_public_ip_never_trusted_even_with_match(ctx):
 
 
 def test_zero_zero_cidr_does_not_promote_public_ip(ctx):
-    """Codex's blast-radius scenario: BPP_TRUSTED_PROXIES=0.0.0.0/0
+    """Blast-radius scenario: BPP_TRUSTED_PROXIES=0.0.0.0/0
     is a catastrophic misconfig that, before the fix, made every
     remote IP look like loopback — so `/` rendered the owner SPA
     with the per-boot app token to anyone on the internet.
@@ -430,7 +429,7 @@ def test_empty_cidr_string_means_no_trust(ctx):
 
 
 # ─── index() handler does NOT promote trusted peers to owner SPA
-#     when LAN sharing is on — Codex's specific concern about
+#     when LAN sharing is on — the specific concern is
 #     "trust-proxy as a shortcut for rendering owner/app-token
 #     SPA state". The owner-SPA branch only fires when the LAN gate
 #     wasn't tripped (i.e., loopback or trusted CIDR). With LAN
@@ -458,7 +457,7 @@ def test_trusted_peer_with_lan_sharing_off_gets_owner_spa(ctx):
 
 def test_untrusted_peer_with_lan_sharing_on_hits_pair_page(ctx):
     """When LAN sharing is on, every non-trusted client gets the
-    device-pairing page — never the owner SPA. This is the Codex
+    device-pairing page — never the owner SPA. The
     concern: trust-proxy must not be a shortcut to owner state."""
     from bpp.web.share import set_lan_sharing_enabled
 
@@ -480,7 +479,7 @@ def test_untrusted_peer_with_lan_sharing_on_hits_pair_page(ctx):
     )
 
 
-# ─── R8-H1: behind_proxy gated by BPP_TRUSTED_PROXIES ─────────────
+# ─── behind_proxy gated by BPP_TRUSTED_PROXIES ─────────────
 
 
 class TestBehindProxyGatedByTrustedNetworks:
@@ -488,7 +487,7 @@ class TestBehindProxyGatedByTrustedNetworks:
     upstream-peer check. That made it a privilege-escalation primitive:
     a public-internet client could send `X-Forwarded-For: 127.0.0.1`
     and ProxyFix would rewrite `request.remote_addr` to loopback,
-    promoting the client to LOCAL_APP. R8-H1 ties ProxyFix activation
+    promoting the client to LOCAL_APP. The fix ties ProxyFix activation
     to BPP_TRUSTED_PROXIES being non-empty AND gates the rewrite at
     the WSGI layer to only fire when the raw upstream peer is in the
     trusted set."""

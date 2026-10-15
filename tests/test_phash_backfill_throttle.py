@@ -134,7 +134,7 @@ def test_status_endpoint_exposes_phash_progress(tmp_path):
     assert pp is not None and set(pp) == {"running", "done", "total"}, pp
 
 
-# ── S4 (2026-06-12): ordered derived-recovery pipeline ──
+# ── Ordered derived-recovery pipeline ──
 
 
 def test_recovery_pipeline_runs_steps_in_order(monkeypatch):

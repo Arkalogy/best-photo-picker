@@ -1,29 +1,34 @@
 """Sign + verify the remote model-registry manifest.
 
-Batch 8 / item 23 of the legal-posture rollout. The remote
-registry overlay (item 12) lets BPP fetch updated model metadata
+The remote registry overlay lets BPP fetch updated model metadata
 without shipping a new release — new entries, status changes
 (``available`` → ``withdrawn_no_new_downloads`` → ``legally_blocked``),
 ack-text version bumps. That capability is dangerous unsigned: a
 compromised registry could silently introduce a restricted model
-or relax a restriction class. The signing primitives here close
-that risk with three layered checks.
+or relax a restriction class. The signing primitives here reduce
+that risk with the checks below.
 
 What the verifier enforces
 
 1. **Cryptographic authenticity** — the manifest carries one or
    more Ed25519 signatures over its canonical bytes. The bundled
    public-key set lists every key allowed to sign. At least one
-   signature must verify against a known key.
-2. **Dual-signature for restriction-class downgrades** (Q9) — an
-   entry whose ``commercial_use_restriction_known`` was ``True``
-   in the bundled baseline cannot be relaxed to ``False`` without
-   TWO valid signatures from distinct keys on the same manifest.
-   Same rule for changes that flip ``requires_explicit_ack``
-   from True to False. A single signature can only tighten, never
-   relax. This is the trap-T7 guard at the manifest layer; the
-   runtime guard in :func:`bpp.registry.policy.assert_no_silent_reclassification`
-   is the second line of defence.
+   signature must verify against a known key, and any signature
+   that fails (unknown key id, bad bytes) rejects the whole
+   manifest.
+2. **Distinct-key count for the overlay quorum** — the verifier
+   reports which distinct trusted keys signed the manifest. The
+   overlay merger (:mod:`bpp.registry.overlay`) compares that count
+   with :data:`bpp.registry.overlay.DUAL_SIG_REQUIREMENT` before it
+   relaxes ``commercial_use_restriction_known`` /
+   ``requires_explicit_ack`` / ``bppicker_commercial_default_allowed``
+   or adds a new restricted entry. The quorum is 1 today because one
+   key is trusted, so that key alone can authorize those changes;
+   counting distinct keys (not raw signatures) is what lets the
+   quorum be raised to 2 once a second key is trusted. The runtime
+   guard in
+   :func:`bpp.registry.policy.assert_no_silent_reclassification`
+   is a narrower, in-process check.
 3. **Source-domain allowlist** — see :mod:`bpp.registry.remote_registry`
    for the fetch-side check that the manifest URL itself comes
    from an allowed host.
@@ -48,10 +53,10 @@ distributed file. The canonical form uses :func:`json.dumps` with
 ``sort_keys=True`` and ``separators=(",", ":")`` — same shape the
 rest of BPP uses for hash-stable JSON.
 
-Out of scope for Batch 8
+Out of scope
 
-* Key rotation tooling. Per Q9, rotation is a follow-up post-
-  release minor. The bundled key set is committed; rotating it
+* Key rotation tooling. Rotation tooling is deferred to a later
+  minor release. The bundled key set is committed; rotating it
   ships in a BPP release.
 * Anti-rollback nonces / monotonic timestamps. Today the
   verifier accepts any signed manifest the bundled keys signed.
@@ -132,8 +137,8 @@ class ManifestVerificationResult:
     ``is_valid`` — every authenticity rule passed. The caller may
     apply the manifest's entries.
     ``valid_signatures`` — list of key_ids whose signatures
-    verified. Used by the overlay merger to check whether a
-    restriction downgrade has the dual-signature it needs.
+    verified, one per distinct key. Used by the overlay merger to
+    check a restriction relaxation against the signature quorum.
     ``entries`` — the entries as raw dicts. The overlay merger
     decodes them into :class:`ModelEntry` objects.
     ``errors`` — collected error strings when ``is_valid`` is
@@ -175,8 +180,9 @@ def sign_manifest(
     Used by the maintainer's signing tool (not by BPP at
     runtime). The function takes a list of ``(key_id,
     private_key)`` pairs so the maintainer can stamp multiple
-    signatures in one pass — necessary for restriction-class
-    downgrades, which require two keys.
+    signatures in one pass — needed for restriction-class
+    relaxations whenever the overlay quorum
+    (:data:`bpp.registry.overlay.DUAL_SIG_REQUIREMENT`) is above 1.
     """
     payload_bytes = canonical_manifest_bytes(manifest)
     sigs: list[dict[str, str]] = []
@@ -258,10 +264,9 @@ def verify_manifest(
     ``is_valid`` field tells the caller whether to apply the
     overlay. ``valid_signatures`` is the list of key_ids whose
     signatures verified — the overlay merger uses this to check
-    whether a restriction downgrade has the dual signature it
-    needs.
+    a restriction relaxation against the signature quorum.
 
-    The function does NOT enforce dual-sig here. That check
+    The function does NOT enforce the quorum here. That check
     belongs to the merger, which knows the bundled baseline and
     can tell which entries are restriction downgrades. The
     verifier only confirms the manifest's signatures are

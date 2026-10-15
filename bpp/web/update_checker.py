@@ -78,7 +78,7 @@ def _fetch_latest_release() -> dict[str, Any]:
                 _MAX_RESPONSE_BYTES,
             )
             return {}
-        return safe_json_loads(body, {}, context="GitHub API")
+        return safe_json_loads(body, {}, context="GitHub API", expected_type=dict)
 
 
 def _classify_error(exc: BaseException) -> tuple[str, str]:
@@ -158,7 +158,7 @@ def check_for_update(*, force: bool = False) -> dict[str, Any]:
                 result["available"] = True
 
     except Exception as exc:
-        # Bug #11 (UAT 2026-06-01): the activity-log dropdown surfaces
+        # The activity-log dropdown surfaces
         # the WARNING message verbatim. Dumping a Python traceback there
         # alarms users — they see 50 lines of urllib internals instead
         # of 'check failed, will retry.' The classified human message is

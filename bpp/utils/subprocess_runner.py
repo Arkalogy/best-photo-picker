@@ -1,12 +1,11 @@
-"""Bounded subprocess runner — P2 of refactor-plan.md.
+"""Bounded subprocess runner.
 
-The audit identified that ``run_scoring_subprocess`` and
-``run_face_extraction_subprocess`` reimplement the same machinery from
-scratch: queue setup, sentinel handling, fatal-error path, timeout,
-graceful-then-force join, ``proc.exitcode`` post-mortem, cancel-event
-shape normalization. Drift between the two has already caused real
-bugs (P1's audit found face extraction silently dropping cancel — a
-gap that scoring didn't have).
+``run_scoring_subprocess`` and ``run_face_extraction_subprocess`` used to
+reimplement the same machinery from scratch: queue setup, sentinel
+handling, fatal-error path, timeout, graceful-then-force join,
+``proc.exitcode`` post-mortem, cancel-event shape normalization. Drift
+between the two caused real bugs (face extraction silently dropped
+cancel — a gap that scoring didn't have).
 
 This module hoists that machinery into a generic
 :class:`BoundedSubprocessRunner` parameterized by a
@@ -19,7 +18,7 @@ This module hoists that machinery into a generic
 * a single reducer that turns each queue message into ``(new_state,
   optional_progress_msg_to_forward)``.
 
-The runner owns everything else. Adding a Phase-4 worker becomes "write
+The runner owns everything else. Adding a new subprocess worker becomes "write
 a Phase class," not "duplicate 80 lines of drain-loop machinery."
 
 ADR: docs/adr/0001-subprocess-runner.md.
@@ -132,7 +131,7 @@ class BoundedSubprocessRunner(Generic[I, O]):
       the parent always reaps within a known bound after the drain ends.
     * Cancel-event integration — every runner consults a token; never
       again the situation where one flow ignored cancel and another
-      didn't (the P1 audit's load-bearing bug).
+      didn't (face extraction's dropped-cancel bug).
 
     The runner does NOT bound peak memory inside the child — that's
     each phase's responsibility (e.g. face-extraction chunks for
@@ -180,15 +179,15 @@ class BoundedSubprocessRunner(Generic[I, O]):
         checks. Both are returned even when the child crashes or times out
         so callers can react to partial work without an exception path.
 
-        ``cancel_event`` accepts the unified P1 contract: a
+        ``cancel_event`` accepts the unified cancellation contract: a
         :class:`bpp.utils.cancel.CancellationToken`, a raw
         ``multiprocessing.Event``, a raw ``threading.Event``, or
         ``None``. The runner normalizes it into a picklable mp.Event
         for the child (bridging via mirror thread when needed) so the
         phase doesn't have to know.
         """
-        # P1 cancel-event normalization — one place, all phases.
-        # T1.2: ``bridge_stop`` is the natural-completion hint for any
+        # Cancel-event normalization — one place, all phases.
+        # ``bridge_stop`` is the natural-completion hint for any
         # mirror-bridge thread the normalization spun up. Set after the
         # child has joined so the bridge exits instead of polling
         # forever in this long-lived parent process.
@@ -215,7 +214,7 @@ class BoundedSubprocessRunner(Generic[I, O]):
                 proc.kill()
                 proc.join(timeout=self.force_join_s)
         finally:
-            # T1.2: tell the cancel-bridge thread (if any) the child is
+            # Tell the cancel-bridge thread (if any) the child is
             # done. ``try/finally`` covers the rare drain/kill exception
             # path too — without this, a raise from `_drain` would leak
             # the bridge.
@@ -252,15 +251,15 @@ class BoundedSubprocessRunner(Generic[I, O]):
     ) -> tuple[multiprocessing.synchronize.Event, threading.Event | None]:
         """Normalize the cancel input into a picklable mp.Event.
 
-        See P1's ADR (docs/adr/0002-cancellation-contract.md) for the
-        accepted shapes. The implementation mirrors what each runner
-        used to do inline; centralizing here is the actual P2 win.
+        See docs/adr/0002-cancellation-contract.md for the accepted
+        shapes. The implementation mirrors what each runner used to do
+        inline; centralizing it here is the point of this module.
 
         Returns ``(mp_event, bridge_stop)``. ``bridge_stop`` is ``None``
         when no mirror-bridge thread was spawned (caller already gave
         us a usable mp.Event). When non-``None``, the caller MUST
         ``.set()`` it after the child has joined so the bridge thread
-        exits — see T1.2.
+        exits instead of polling forever.
         """
         from bpp.utils.cancel import (
             ProcessCancellation,

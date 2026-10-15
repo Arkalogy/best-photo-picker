@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import {
+  contentFilterTipText,
   initSliders,
   initTooltips,
   updateContentFilterLabel,
@@ -26,6 +27,7 @@ beforeEach(() => {
   `;
   /** @type {any} */ (window).scheduleRecompute = vi.fn();
   /** @type {any} */ (window).nudenetAvailable = false;
+  /** @type {any} */ (window).nudenetActive = false;
 });
 
 afterEach(() => {
@@ -33,6 +35,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   delete (/** @type {any} */ (window).scheduleRecompute);
   delete (/** @type {any} */ (window).nudenetAvailable);
+  delete (/** @type {any} */ (window).nudenetActive);
 });
 
 describe("initSliders", () => {
@@ -72,19 +75,33 @@ describe("initTooltips", () => {
 describe("updateContentFilterLabel", () => {
   const tipEl = () => /** @type {HTMLElement} */ (document.getElementById("sensitive-filter-tip"));
 
-  test("NudeNet copy + policy explainer when nudenetAvailable is true", () => {
-    /** @type {any} */ (window).nudenetAvailable = true;
+  test("'is on' copy + policy explainer when detection is active", () => {
+    /** @type {any} */ (window).nudenetActive = true;
     updateContentFilterLabel();
-    expect(tipEl().dataset.tip).toContain("NudeNet");
+    expect(tipEl().dataset.tip).toContain("On-device nudity detection (NudeNet) is on");
     expect(tipEl().dataset.tip).toContain("Manual includes always win");
     expect(tipEl().dataset.tip).not.toContain("pip install");
   });
 
-  test("install hint when nudenetAvailable is false", () => {
-    /** @type {any} */ (window).nudenetAvailable = false;
+  test("accept-in-Settings hint when merely available but not active", () => {
+    // Runtime present (available) but not accepted / not downloaded:
+    // must NOT claim detection is on — the old bug.
+    /** @type {any} */ (window).nudenetAvailable = true;
+    /** @type {any} */ (window).nudenetActive = false;
     updateContentFilterLabel();
-    expect(tipEl().dataset.tip).toContain("pip install");
-    expect(tipEl().dataset.tip).toContain("mark sensitive");
+    const tip = tipEl().dataset.tip || "";
+    expect(tip).toContain("Accept and download the NudeNet model in Settings → Models");
+    expect(tip).toContain("only photos you flag manually are treated as sensitive");
+    expect(tip).not.toContain("is on");
+    expect(tip).not.toContain("pip install");
+    expect(tip).not.toContain("[nudity]");
+  });
+
+  test("contentFilterTipText is pure and covers both branches", () => {
+    expect(contentFilterTipText(true)).toMatch(/^On-device nudity detection \(NudeNet\) is on\./);
+    expect(contentFilterTipText(false)).toMatch(
+      /^Accept and download the NudeNet model in Settings → Models/
+    );
   });
 
   test("noop when the sensitive control is missing", () => {

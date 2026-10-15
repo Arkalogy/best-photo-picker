@@ -7,11 +7,12 @@
 #
 # Triggers:
 #   - workflow_dispatch:   manual runs from the Actions tab for branch QA
-#   - push.tags v*.*.*:    release-tag gate. A failed e2e here surfaces a
-#                          regression before publish.yml downloads PyPI
-#                          deps + docker.yml builds an image. Better to
-#                          discover "the lightbox is broken" before the
-#                          installable artifact ships.
+#   - push.tags v*.*.*:    runs the suite against a release tag as soon as
+#                          it's pushed (publishing a release creates it).
+#                          It runs alongside publish.yml and
+#                          release-desktop.yml and does not gate them, so
+#                          a failure here flags a regression in the
+#                          tagged release to fix in a follow-up.
 #
 # Not on PRs: analyze + model downloads + browser fixtures total ~3-5
 # minutes and would burn paid Actions minutes on every push. The main
@@ -42,17 +43,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          # No token left in .git/config for later steps to read.
+          persist-credentials: false
           ref: ${{ inputs.branch || github.ref }}
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.11"
 
       - name: Cache pip packages
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/pip
           key: pip-3.11-${{ hashFiles('pyproject.toml') }}
@@ -67,10 +70,10 @@ jobs:
         run: |
           pip install --upgrade pip "setuptools<82"
           pip install git+https://github.com/ageitgey/face_recognition_models
-          pip install -e ".[dev,web,faces,nudity,clip,heic,raw]"
+          pip install -e ".[dev,web,faces,heic,raw]"
 
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "20"
           cache: npm
@@ -103,7 +106,7 @@ jobs:
 
       - name: Upload server log on failure
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: bpp-server-log
           path: ${{ runner.temp }}/bpp_e2e_server.log
@@ -111,7 +114,7 @@ jobs:
 
       - name: Upload Playwright trace on failure
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: playwright-trace
           path: test-results/

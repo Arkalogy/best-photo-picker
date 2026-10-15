@@ -152,10 +152,10 @@ def test_reset_hooks_clear_the_policy_memo():
     from bpp.scoring import face_embed_sface_runtime as fsr
     from bpp.scoring import face_yunet as fy
 
-    fsr._sface_gate._passed = True
+    fsr._sface_gate._passed_for = ("passed",)
     fsr._reset_sface_cache()
     assert fsr._sface_gate.passed is False, "reset must re-arm the SFace gate"
 
-    fy._yunet_gate._passed = True
+    fy._yunet_gate._passed_for = ("passed",)
     fy.reset_yunet_cache()
     assert fy._yunet_gate.passed is False, "reset must re-arm the YuNet gate"

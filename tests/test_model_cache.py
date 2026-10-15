@@ -1,4 +1,4 @@
-"""P4 — ModelCache collaborator unit tests.
+"""ModelCache collaborator unit tests.
 
 The three caches that ``ModelCache`` bundles (face cluster map,
 enhanced ids, CLIP embeddings) have independent invalidation triggers,
@@ -211,7 +211,7 @@ class TestWebAppStateLegacyAccess:
     """The bare-attribute access sites (``ctx.clip_cache``,
     ``ctx._edited_ids``, ``ctx._face_cluster_map``,
     ``ctx._face_cluster_map_lock``, ``ctx._auto_enhanced_ids``) read
-    + write through to the underlying ModelCache. The audit found
+    + write through to the underlying ModelCache. There are
     ~3,800 such sites; they all keep working unchanged."""
 
     def test_legacy_attributes_route_through_cache(self):

@@ -1,4 +1,4 @@
-"""R8-M13: ssl_context list-from-YAML normalized to tuple.
+"""ssl_context list-from-YAML normalized to tuple.
 
 YAML loads sequences as Python lists, but Werkzeug's BaseWSGIServer
 requires `isinstance(ssl_context, tuple)` to call

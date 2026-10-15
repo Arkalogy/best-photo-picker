@@ -41,7 +41,7 @@ export function updateLightboxExif(p) {
   }
   container.classList.remove("hidden");
   const rows = [];
-  // Panel-cleanup item 3: one "Info" section covers camera + size, with the
+  // One "Info" section covers camera + size, with the
   // location map attached directly below (same section, no second header).
   // Raw GPS coordinates are intentionally NOT listed — the map pin carries
   // them (and updateLightboxMap puts the numbers in the map's tooltip).

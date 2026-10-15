@@ -25,8 +25,8 @@ Same invariant in: bpp/web/face_worker.py (top of file).
 Test that asserts the ordering:
 tests/test_face_thread_safety.py::test_analyze_worker_pins_native_thread_pools.
 
-When P2 lands BoundedSubprocessRunner, it MUST preserve this ordering
-in any spawn target — see refactor-plan.md P2 risk callout.
+``BoundedSubprocessRunner`` MUST preserve this ordering in any spawn
+target — see docs/adr/0001-subprocess-runner.md.
 ──────────────────────────────────────────────────────────────────────
 """
 
@@ -127,7 +127,7 @@ class AnalyzeWorker(BackgroundWorker):
             input_dir = extract_dir
             recursive = True
 
-        # M15: surface a "scanning" phase so a 50k-photo recursive scan
+        # Surface a "scanning" phase so a 50k-photo recursive scan
         # doesn't look like a black-box stall to the user. Progress
         # callback ticks every ~500 files inspected.
         self._emit(
@@ -242,9 +242,9 @@ class AnalyzeWorker(BackgroundWorker):
         # Pre-download ML models so the user sees progress (not silent stalls).
         # Body lives in analyze_model_preflight to keep this file under
         # the 500-LOC cap.
-        from bpp.web.analyze_model_preflight import preflight_models
+        from bpp.web.analyze_model_preflight import preflight_run_config
 
-        preflight_models(self._emit)
+        config = preflight_run_config(self._emit, config)
 
         # ── Phase 1: Scoring in subprocess ──
         # All ML models load in the child process. When the child exits,
@@ -270,9 +270,9 @@ class AnalyzeWorker(BackgroundWorker):
             }
         )
         log.info("Starting scoring subprocess for %d images", total)
-        # P1: pass our threading-side cancel directly. The runner builds
+        # Pass our threading-side cancel directly. The runner builds
         # a ProcessCancellation + bridge so the spawn child sees it
-        # within ~100 ms. Before P1 we created a stub mp.Event and then
+        # within ~100 ms. Previously we created a stub mp.Event and then
         # manually checked + set it AFTER scoring returned — which meant
         # cancel-during-scoring did nothing.
         valid, child_pid = run_scoring_subprocess(

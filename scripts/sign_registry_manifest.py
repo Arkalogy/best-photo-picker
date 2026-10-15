@@ -5,19 +5,17 @@ The companion to the verifier at ``bpp.registry.signed_manifest``.
 Reads an unsigned (or already-signed — we re-sign) manifest JSON,
 attaches one signature per ``--key`` flag, and writes the result.
 
-Single-signature usage (routine status tightening, ack-text bump,
-new permissive entry):
+Usage:
 
     python scripts/sign_registry_manifest.py \\
         --in unsigned.json --out signed.json \\
-        --key ~/.config/bpp/signing-keys/arkalogy-primary-2026-06.private.key
+        --key /path/to/<key-id>.private.key
 
-Dual-signature usage (restriction relaxation, new restricted entry):
-
-    python scripts/sign_registry_manifest.py \\
-        --in unsigned.json --out signed.json \\
-        --key ~/.config/bpp/signing-keys/arkalogy-primary-2026-06.private.key \\
-        --key ~/.config/bpp/signing-keys/arkalogy-secondary-2026-06.private.key
+Pass ``--key`` more than once to add a signature per key. Today one
+key is trusted and the quorum (``DUAL_SIG_REQUIREMENT``) is 1, so a
+single signature covers every change; a second ``--key`` only matters
+once a second key is added to ``bpp/registry/trusted_keys.py`` and
+the quorum is raised.
 
 The key file format is a single base64-encoded raw 32-byte Ed25519
 private key (``priv.private_bytes_raw()`` then base64). The key_id

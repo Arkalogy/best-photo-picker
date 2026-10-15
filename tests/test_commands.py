@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from unittest.mock import patch
 
 import pytest
 
@@ -62,6 +63,34 @@ class TestDoAnalyze:
         monkeypatch.setattr("bpp.scoring.aggregate.analyze_all", _mock_analyze)
         assert commands.do_analyze(ns) == 0
         assert called["analyze"] is False
+
+    def test_a_model_integrity_failure_is_a_clean_error(self, tmp_path, monkeypatch):
+        from bpp.scoring.model_base import ModelIntegrityError
+
+        (tmp_path / "a.jpg").write_bytes(b"\xff\xd8\xff" + b"\x00" * 32)
+        ns = self._ns(input=str(tmp_path), out=str(tmp_path / "out"))
+
+        def _tampered(*a, **k):
+            raise ModelIntegrityError("SHA-256 mismatch for yunet.onnx")
+
+        monkeypatch.setattr("bpp.scoring.aggregate.analyze_all", _tampered)
+        with patch("bpp.commands.analyze.get_logger") as get_logger:
+            assert commands.do_analyze(ns) == 1
+        logged = str(get_logger.return_value.error.call_args)
+        assert "integrity" in logged and "SHA-256 mismatch" in logged
+
+    def test_a_failed_run_is_a_clean_error_not_a_traceback(self, tmp_path, monkeypatch):
+        (tmp_path / "a.jpg").write_bytes(b"\xff\xd8\xff" + b"\x00" * 32)
+        ns = self._ns(input=str(tmp_path), out=str(tmp_path / "out"))
+
+        def _dies(*a, **k):
+            raise RuntimeError("A worker process stopped unexpectedly — re-run to continue")
+
+        monkeypatch.setattr("bpp.scoring.aggregate.analyze_all", _dies)
+        with patch("bpp.commands.analyze.get_logger") as get_logger:
+            assert commands.do_analyze(ns) == 1
+        logged = str(get_logger.return_value.error.call_args)
+        assert "re-run to continue" in logged
 
 
 # ── do_select ────────────────────────────────────────────────────────────

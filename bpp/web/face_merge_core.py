@@ -60,9 +60,14 @@ def _record_merge_feedback(
     ).fetchall()
     if not primary_embs:
         return
-    primary_centroid = np.stack(
-        [np.frombuffer(r["embedding"], dtype=np.float32) for r in primary_embs]
-    ).mean(axis=0)
+    from bpp.db.face_embedding_safety import decode_rows
+
+    primary = decode_rows(
+        conn, ((0, r["embedding"]) for r in primary_embs), where="face_merge_core.primary"
+    )
+    if not primary:
+        return
+    primary_centroid = np.stack([e for _, e in primary]).mean(axis=0)
     # Batch-fetch embeddings for all to-merge clusters in one query.
     placeholders = ",".join("?" for _ in ids_to_merge)
     merge_rows = conn.execute(
@@ -76,10 +81,9 @@ def _record_merge_feedback(
         embs_by_cid[r["cluster_id"]].append(r["embedding"])
     for cid in ids_to_merge:
         merge_embs = embs_by_cid.get(cid, [])
-        if merge_embs:
-            merge_centroid = np.stack(
-                [np.frombuffer(emb, dtype=np.float32) for emb in merge_embs]
-            ).mean(axis=0)
+        merged = decode_rows(conn, ((cid, b) for b in merge_embs), where="face_merge_core.merged")
+        if merged:
+            merge_centroid = np.stack([e for _, e in merged]).mean(axis=0)
             dist = float(np.linalg.norm(primary_centroid - merge_centroid))
             store_face_feedback(
                 conn,

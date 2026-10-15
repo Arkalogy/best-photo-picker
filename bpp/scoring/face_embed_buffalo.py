@@ -1,6 +1,7 @@
-"""buffalo_s face-embedding extractor (YuNet detection + ArcFace 512-d).
+"""Per-face embedding extractors: buffalo_s (ArcFace 512-d) and any
+plugin embedder, sharing one detect → align → embed → quality loop.
 
-The research-only ArcFace recognition pipeline. Split out of
+The buffalo_s path is the research-only ArcFace recognition pipeline. Split out of
 :mod:`bpp.scoring.face_embed_extractors` for the 500-LOC cap;
 ``face_embed_extractors`` re-exports :func:`_extract_buffalo_s` so
 existing callers (``face_embed``) keep their import path.
@@ -30,35 +31,53 @@ def _extract_buffalo_s(
     embedding_confidence: float = DEFAULT_EMBEDDING_CONFIDENCE,
     min_quality: float = MIN_EMBEDDING_QUALITY,
 ) -> list[dict] | None:
-    """Extract face embeddings via YuNet detection + buffalo_s ArcFace
-    recognition.
+    """Extract face embeddings via the full detector pipeline + buffalo_s
+    ArcFace recognition (512-d).
 
-    Mirrors :func:`bpp.scoring.face_embed_sface._extract_sface`
-    structurally — same iterative confidence relaxation, same landmark
-    validation, same quality gate. Only the recognition step differs:
-    SFace's 128-d output is swapped for the 512-d ArcFace output from
-    :func:`bpp.scoring.face_embed_buffalo_s.embed_face`.
+    The runtime policy gate fires inside ``embed_face`` on first use; an
+    unaccepted ``insightface_buffalo_s`` entry raises
+    ``ModelLoadBlockedError``, which :func:`_extract_with_embedder`
+    turns into a skipped face (logged) so one photo can't break a run.
 
-    The runtime policy gate fires inside ``embed_face`` on first
-    use. An unaccepted ``insightface_buffalo_s`` entry raises
-    ``ModelLoadBlockedError`` from inside the embedder; the
-    per-face try/except below converts that into a skipped face so
-    one bad photo doesn't break the entire analyze run. The error
-    is also logged so the user sees what's wrong.
-
-    Returns a list of result dicts or ``None`` when YuNet found no
-    faces (so the caller can decide whether to retry with dlib).
+    Returns ``None`` when no faces were found (so the caller can decide
+    whether to retry with dlib).
     """
     from bpp.scoring import face_embed_buffalo_s
-    from bpp.scoring.face_embed_detect import detect_face_rows, detect_inverted_face
 
     if not face_embed_buffalo_s.is_available():
         return None
 
+    def embed(align_image, bbox, row):
+        # The full YuNet row lets the embedder use 5-point
+        # similarity-transform alignment, matching the upstream reference.
+        return face_embed_buffalo_s.embed_face(align_image, bbox, yunet_row=row)
+
+    return _extract_with_embedder(
+        image, min_confidence, embedding_confidence, min_quality, embed, "buffalo_s"
+    )
+
+
+def _extract_with_embedder(
+    image: np.ndarray,
+    min_confidence: float,
+    embedding_confidence: float,
+    min_quality: float,
+    embed,
+    name: str,
+) -> list[dict] | None:
+    """Shared detect → align → embed → quality loop for every embedder
+    that works per face (buffalo_s, plugin embedders).
+
+    ``embed(align_image, (x, y, w, h), yunet_row)`` returns a vector or
+    ``None``. Mirrors :func:`bpp.scoring.face_embed_sface._extract_sface`
+    structurally — same detection, landmark validation, upside-down
+    handling and quality gate. Returns ``None`` when no faces were found.
+    """
+    from bpp.scoring.face_embed_detect import detect_face_rows, detect_inverted_face
+
     # Full-coverage detection (see face_embed_detect): the whole detector
-    # pipeline plus per-face YuNet landmark recovery, so the ArcFace path
-    # embeds every face scoring found — not just the ones YuNet sees at
-    # full image scale. Mirrors _extract_sface.
+    # pipeline plus per-face YuNet landmark recovery, so every face
+    # scoring found gets embedded. Mirrors _extract_sface.
     all_raw = detect_face_rows(image, min_confidence, embedding_confidence)
 
     if not all_raw:
@@ -88,22 +107,15 @@ def _extract_buffalo_s(
                 rotated_image = np.ascontiguousarray(image[::-1, ::-1])
             align_image, align_row = rotated_image, inverted_row
 
+        bbox = (int(align_row[0]), int(align_row[1]), int(align_row[2]), int(align_row[3]))
         try:
-            # Pass the full YuNet row so the embedder can use
-            # 5-point similarity-transform alignment, producing
-            # embeddings compatible with the upstream reference.
-            emb = face_embed_buffalo_s.embed_face(
-                align_image,
-                (int(align_row[0]), int(align_row[1]), int(align_row[2]), int(align_row[3])),
-                yunet_row=align_row,
-            )
+            emb = embed(align_image, bbox, align_row)
         except Exception:
-            # buffalo_s.embed_face already swallows expected
-            # failures and returns None; this catch is for the
-            # unexpected case where the policy gate raises
-            # ModelLoadBlockedError on first use.
+            # Expected failures return None; this catches the unexpected
+            # ones, e.g. the policy gate raising ModelLoadBlockedError.
             log.warning(
-                "buffalo_s embed raised for bbox=(%d,%d,%d,%d); skipping this face",
+                "%s embed raised for bbox=(%d,%d,%d,%d); skipping this face",
+                name,
                 fx,
                 fy,
                 fw,
@@ -113,10 +125,6 @@ def _extract_buffalo_s(
             continue
         if emb is None:
             continue
-        # buffalo_s already L2-normalizes the output, so use the
-        # vector as-is. The clustering threshold (cosine distance)
-        # is tuned for the 512-d arcface range — see
-        # FACE_CLUSTER_THRESHOLD_FALLBACK and the clusterer.
         # Quality from the orientation-corrected row — the hallucinated
         # upright landmarks on an inverted face fake a frontality score.
         quality = _face_quality_from_landmarks(align_row, align_image)
@@ -125,7 +133,8 @@ def _extract_buffalo_s(
         results.append(
             {
                 "bbox": (fx, fy, fw, fh),
-                "embedding": emb,
+                # float32 is the storage contract for every embedder.
+                "embedding": np.asarray(emb, dtype=np.float32),
                 "quality": quality,
             }
         )

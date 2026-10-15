@@ -418,7 +418,7 @@ def api_library_status() -> tuple[Response, int]:
     """Return library presence + import worker state.
 
     LOCAL_APP gets the absolute library_path + batch folder names.
-    LAN clients get the boolean fields only — D-05: don't leak the
+    LAN clients get the boolean fields only — don't leak the
     owner's filesystem layout (username, drive name, library
     location) to a paired phone."""
     # predicate moved from bp_core to share.py. The

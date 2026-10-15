@@ -1,4 +1,4 @@
-"""TDD tests for M-4: tag rename collision must return 409, not 500."""
+"""TDD tests: tag rename collision must return 409, not 500."""
 
 from __future__ import annotations
 

@@ -22,7 +22,7 @@ test.describe("32 — Thumbnail responses set long Cache-Control headers", () =>
     const resp = await page.request.get(`${url}${sep}_token=${token}`);
     expect(resp.ok()).toBeTruthy();
 
-    // VERACITY: thumbnail cache should be 1-year immutable per pm.md
+    // VERACITY: thumbnail cache should be 1-year immutable
     // ("Cache has 1-year immutable Cache-Control headers"). If anything
     // ever drops below that, the perf regression is silent until users
     // notice slow scrolling.

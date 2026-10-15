@@ -85,7 +85,9 @@ def do_pick(args: argparse.Namespace) -> int:
                 )
                 return 1
             for name in boost_face_names:
-                rule = safe_json_loads(rules_by_name[name], {}, context="face boost rule")
+                rule = safe_json_loads(
+                    rules_by_name[name], {}, context="face boost rule", expected_type=dict
+                )
                 cluster_id = rule.get("cluster_id")
                 if cluster_id is not None:
                     selected_faces.append(cluster_id)

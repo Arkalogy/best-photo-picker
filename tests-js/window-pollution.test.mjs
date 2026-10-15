@@ -1,10 +1,10 @@
 // @ts-check
 /**
- * P8 — window-pollution gate.
+ * Window-pollution gate.
  *
- * The pre-P8 globals.js has 92 lines of `window.X = X` assignments — every
- * handler that the dispatcher needs to find via `window[name]`. The audit
- * counted ~890 effective globals when you include the
+ * The legacy globals.js had 92 lines of `window.X = X` assignments — every
+ * handler that the dispatcher needs to find via `window[name]`. A count
+ * found ~890 effective globals when you include the
  * `Object.assign(window, ...moduleNamespaces)` bridge in index.html.
  *
  * This gate scans globals.js for new `window.<name> = <name>` assignments.
@@ -101,9 +101,9 @@ describe("action registry exists and is loadable", () => {
   });
 });
 
-describe("T0.1 — action-registry is wired into production bootstrap", () => {
-  // The review's H1 finding: the dispatcher in globals.js looks up
-  // window.__bppActionRegistry, but pre-T0.1 nothing imported the registry
+describe("action-registry is wired into production bootstrap", () => {
+  // Regression: the dispatcher in globals.js looks up
+  // window.__bppActionRegistry, but previously nothing imported the registry
   // module, so the global was undefined and the registry-first lookup
   // always fell through to window[name]. This test gates the production
   // bootstrap so the substrate is actually reachable.

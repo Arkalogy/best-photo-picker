@@ -1,4 +1,4 @@
-"""TDD tests for P0-6: Video support — detection, thumbnails, playback API."""
+"""TDD tests for Video support — detection, thumbnails, playback API."""
 
 from __future__ import annotations
 

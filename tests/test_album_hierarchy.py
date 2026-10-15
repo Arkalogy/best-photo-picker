@@ -1,4 +1,4 @@
-"""TDD tests for P1-1: Album hierarchy — nested albums with parent_id."""
+"""TDD tests for album hierarchy — nested albums with parent_id."""
 
 from __future__ import annotations
 

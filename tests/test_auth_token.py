@@ -1,4 +1,4 @@
-"""TDD tests for C-1: session auth token on API endpoints."""
+"""TDD tests for session auth token on API endpoints."""
 
 from __future__ import annotations
 

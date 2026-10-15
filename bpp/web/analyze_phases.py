@@ -49,9 +49,9 @@ def run_face_phase(
         return 0, 0
 
     db_path = dialect.database_path(conn)
-    # P1: thread the worker's threading-side cancel signal into the
+    # Thread the worker's threading-side cancel signal into the
     # subprocess runner. The runner builds a ProcessCancellation + bridge
-    # under the hood (see analyze_face_extract docstring). Before P1 this
+    # under the hood (see analyze_face_extract docstring). Previously this
     # argument didn't exist — face extraction kept running until completion
     # regardless of the Cancel button.
     faces_found, face_clusters, _pid = run_face_extraction_subprocess(
@@ -83,9 +83,12 @@ def run_clip_phase(
         log.info("CLIP model not available, skipping Phase 3")
         return 0
 
+    from bpp.utils.download import announce_downloads
+
     emit({"type": "status", "message": "Checking CLIP model…"})
     try:
-        ensure_model()
+        with announce_downloads(lambda message: emit({"type": "status", "message": message})):
+            ensure_model()
     except ModelIntegrityError:
         # CLIP integrity failure must NOT silently degrade to "skip phase 3".
         # A tampered cached model or MITM'd download is a loud event —

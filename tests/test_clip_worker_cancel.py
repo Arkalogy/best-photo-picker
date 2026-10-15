@@ -1,4 +1,4 @@
-"""TDD tests for H-4: ClipWorker must pass cancellation_check."""
+"""TDD tests: ClipWorker must pass cancellation_check."""
 
 from __future__ import annotations
 

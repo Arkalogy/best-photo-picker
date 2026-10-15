@@ -23,7 +23,7 @@ import { updateToolbarTitle } from "./core.mjs";
 /**
  * Refresh `petClusters` from the server.
  *
- * Protection B: routed through wrapSectionLoader so a /api/v1/pets
+ * Routed through wrapSectionLoader so a /api/v1/pets
  * failure surfaces as a retry pill in the Pets sidebar section
  * instead of silently leaving the cluster list empty. The wrapper
  * never throws; if the call fails, `petClusters` is set to the

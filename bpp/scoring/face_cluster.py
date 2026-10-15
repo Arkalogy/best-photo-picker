@@ -14,7 +14,7 @@ log = get_logger(__name__)
 def _filter_to_majority_shape(embeddings: list[np.ndarray], *, where: str) -> list[np.ndarray]:
     """Defense-in-depth before ``np.stack``.
 
-    Protection A's read-boundary helper (``decode_embedding``) is the
+    The read-boundary helper (``decode_embedding``) is the
     first line; this is the safety net for any caller that bypasses
     it. If embeddings have mixed shapes (the Jun-2 incident: 128-d
     SFace + 256-d corruption mixed in one list), drop the minority

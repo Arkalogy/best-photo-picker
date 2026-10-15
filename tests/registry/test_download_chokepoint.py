@@ -1,12 +1,12 @@
-"""Batch 3 / item 18 — chokepoint that blocks third-party auto-downloads.
+"""Chokepoint that blocks third-party auto-downloads.
 
-The legal-posture rollout specifically called out that the click-through
-dialog (Batch 4) is cosmetic if a transitively-imported package
+The click-through acceptance
+dialog is cosmetic if a transitively-imported package
 (insightface and friends) can silently fetch a restricted model on
 first use behind BPP's back. These tests pin that:
 
 * The exception class :class:`BlockedAutoDownloadError` raises with
-  the package + function-path context plaintiffs would want to see.
+  the package + function-path context a reader would want to see.
 * :func:`install_third_party_interceptions` patches every known
   auto-downloader whose package is importable.
 * :func:`enforce_chokepoint` fails closed (raises) if any expected
@@ -14,7 +14,7 @@ first use behind BPP's back. These tests pin that:
 * Late-imported packages (loaded after :mod:`bpp.registry`) still
   get patched via the meta-path post-import hook.
 * The per-thread registry-bypass mechanism lets BPP's own
-  Batch-4-driven download flow pass through to the underlying
+  acceptance-driven download flow pass through to the underlying
   upstream function without triggering the blocker.
 
 Each test runs against a synthetic "third party" module so the suite
@@ -106,7 +106,7 @@ class TestBlockedAutoDownloadError:
             assert "insightface" in msg
             assert "insightface.utils.download.download" in msg
             assert "research-only weights" in msg
-            assert "Batch 3" in msg  # points the reader to the plan
+            assert "bpp model list" in msg  # points the reader to a remedy
 
     def test_carries_call_args_for_diagnostics(self) -> None:
         try:
@@ -125,7 +125,7 @@ class TestBlockedAutoDownloadError:
 
 
 class TestPatchLoadedModule:
-    """The Batch-3 install runs ``_patch_loaded_module`` on every
+    """The chokepoint install runs ``_patch_loaded_module`` on every
     known auto-downloader whose submodule is already in
     ``sys.modules``. These tests pin the patch shape."""
 
@@ -305,7 +305,7 @@ class TestEnforceChokepoint:
 
 
 class TestRegistryBypass:
-    """Batch-4 will drive registry-coordinated downloads by opening
+    """BPP drives registry-coordinated downloads by opening
     the per-thread bypass. The blocker checks the bypass flag and
     delegates to the original function when it is active."""
 
@@ -382,7 +382,7 @@ class TestRegistryBypass:
 
 
 # ── Sanity: the production KNOWN_AUTO_DOWNLOADERS entries cover the
-# packages the legal-posture spec named ──
+# known auto-downloading packages ──
 
 
 class TestProductionEntries:
@@ -453,8 +453,8 @@ def _insightface_available() -> bool:
     reason="insightface is not installed in this environment",
 )
 class TestRealInsightFaceChokepoint:
-    """When ``insightface`` is installed (developer machines, the
-    spike venv, and the e2e CI run that exercises buffalo_s), the
+    """When ``insightface`` is installed (developer machines and
+    the e2e CI run that exercises buffalo_s), the
     chokepoint must have patched the *real* package — not just our
     synthetic test modules. Catches upstream renames in
     ``insightface.utils.storage``: if a future release renames

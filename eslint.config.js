@@ -58,7 +58,7 @@ export default [
     },
     rules: {
       ...sharedRules,
-      // P8: modules should expose handlers via registerAction or named
+      // Modules should expose handlers via registerAction or named
       // exports, NOT by assigning to window. Allow window reads + the
       // action-registry's own window.__bppActionRegistry bridge; block
       // other window.X = ... writes. Loosen with eslint-disable-next-line
@@ -71,7 +71,7 @@ export default [
             "AssignmentExpression[left.object.name='window'][left.property.name!='__bppActionRegistry']",
           message:
             "Don't write to window.X from a module. Use registerAction() from " +
-            "action-registry.mjs or expose via named exports. See P8.",
+            "action-registry.mjs or expose via named exports.",
         },
       ],
     },

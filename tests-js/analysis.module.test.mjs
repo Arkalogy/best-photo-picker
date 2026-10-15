@@ -264,8 +264,8 @@ describe("startReanalyze", () => {
   });
 
   test("fallback consent prompt surfaces the manifest-fetch error reason", async () => {
-    // M6: when /api/v1/models/pending is unreachable, the fallback
-    // consent prompt used to be a silent generic dialog. After M6 it
+    // When /api/v1/models/pending is unreachable, the fallback
+    // consent prompt used to be a silent generic dialog. Now it
     // still asks consent (preserving the safety gate) but surfaces
     // the fetch failure in a faint footer so a maintainer testing a
     // misconfigured build sees the symptom immediately, and so user
@@ -400,7 +400,7 @@ describe("getParams / scheduleRecompute / doRecompute", () => {
     expect(/** @type {any} */ (window).photos[1].aggregate_score).toBe(0.6);
   });
 
-  test("a stale recompute response from a previous scope does not clobber the current selection (BPP-27)", async () => {
+  test("a stale recompute response from a previous scope does not clobber the current selection", async () => {
     // Cold load: the Library recompute (album 1) is still in flight when the
     // user opens a person album (1110). The album's response lands first with
     // its 13 picks; the slow Library response then arrives with 50
@@ -600,7 +600,7 @@ describe("internal photo count", () => {
   });
 });
 
-describe("M15 — phase-aware SSE handling in listenProgress", () => {
+describe("Phase-aware SSE handling in listenProgress", () => {
   /** @returns {{src: any, capturedHandler: (ev: any) => void}} */
   function captureSseHandler() {
     /** @type {any} */

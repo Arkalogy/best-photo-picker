@@ -4,7 +4,7 @@ extracted from `bp_core` to keep the core blueprint focused
 on app surface (index, status, pick, presets, settings) and put
 liveness / probing concerns in their own module. The endpoints
 themselves are unchanged — same routes, same response shapes,
-same auth / D-05 path-filter contract.
+same auth / path-filter contract.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ def api_storage_health() -> tuple[Response, int]:
 
     Path is included in the response only for LOCAL_APP — LAN
     devices get accessibility flag without the absolute filesystem
-    path (D-05: don't leak owner's username / drive layout)."""
+    path (don't leak owner's username / drive layout)."""
     ctx = get_ctx()
     library_path = ctx.state.get("library_path") or ctx.state.get("workdir")
     if not library_path:
@@ -136,7 +136,7 @@ def api_health() -> tuple[Response, int]:
             db_check["ok"] = True
             db_check["writable"] = True  # WAL is on; if SELECT works writes do too
             db_check["schema_version"] = dialect.get_user_version(conn)
-            # D-05: only LOCAL_APP gets the absolute DB path. LAN clients
+            # Only LOCAL_APP gets the absolute DB path. LAN clients
             # get the boolean health flags but not the filesystem layout
             # (which leaks the owner's username, drive name, library
             # location).
@@ -151,7 +151,7 @@ def api_health() -> tuple[Response, int]:
             db_check["error"] = "Database check failed"
 
     library_path = ctx.state.get("library_path") or ctx.state.get("workdir") or ""
-    # D-05: same filter for the storage block — LOCAL_APP only.
+    # Same filter for the storage block — LOCAL_APP only.
     storage_check: dict[str, Any] = {"path": library_path} if is_owner else {}
     if library_path:
         storage_check.update(check_storage_accessible(library_path))
@@ -184,11 +184,11 @@ def api_health() -> tuple[Response, int]:
     # absent when the worker never ran in this process (no progress
     # events emitted yet).
     #
-    # P4 proof-of-concept consumer: reach through ctx.workers directly
+    # Proof-of-concept consumer: reach through ctx.workers directly
     # instead of the deprecated ctx._workers property delegate. The
     # delegate still works (logs a deprecation warning), but the
     # collaborator surface is what every new endpoint should target;
-    # this one was migrated as proof. See refactor-plan.md P4.
+    # this one was migrated as proof. See docs/architecture-notes.md.
     worker_check: dict[str, dict[str, Any]] = {}
     now = time.time()
     for name, worker in ctx.workers.items():
@@ -211,7 +211,7 @@ def api_health() -> tuple[Response, int]:
             log.warning("health: journals check failed: %s", e)
             journals_check["error"] = "Journals check failed"
 
-    # T4: surface P4 collaborator state. The WorkerPool block already
+    # Surface collaborator state. The WorkerPool block already
     # lives under "workers" above; this adds the cache + store
     # collaborators so on-call can tell whether the phash compute
     # thread is alive, whether CLIP / face-cluster caches are
@@ -250,7 +250,7 @@ def api_health() -> tuple[Response, int]:
             ae = getattr(enhanced, "auto_enhanced", None)
             cache_block["edited_ids_count"] = len(ed) if ed is not None else None
             cache_block["auto_enhanced_ids_count"] = len(ae) if ae is not None else None
-        # Protection A counters — every read site that decodes a face
+        # Corrupt-embedding counters — every read site that decodes a face
         # embedding BLOB increments these. Non-zero "bad" counts mean
         # there's corruption in face_embeddings; the user can spot it
         # without waiting for an endpoint to 500.
@@ -280,6 +280,20 @@ def api_health() -> tuple[Response, int]:
         "in_flight": bool(_backfill_event) and not _backfill_event.is_set(),
     }
 
+    # Every registered model the load gate would refuse right now, by
+    # reason (license not accepted / older terms / commercial use without
+    # the rights assertion / withdrawn). Informational: it includes
+    # optional models nobody switched on. Cached until the license files
+    # or registry entries change.
+    from bpp.web.model_filter import license_blocked_models
+
+    models_check: dict[str, Any]
+    try:
+        models_check = {"license_blocked": license_blocked_models()}
+    except Exception:
+        log.warning("health: license check failed", exc_info=True)
+        models_check = {"error": "License check failed"}
+
     # Aggregate status: ok if everything reports clean, degraded if any
     # individual probe failed. We never return "down" through this code
     # path — if the request was served at all the server is up; the
@@ -290,6 +304,7 @@ def api_health() -> tuple[Response, int]:
         or not storage_check.get("accessible", False)
         or journals_check.get("pending", 0) > 0
         or phase5_check["failed"]
+        or "error" in models_check
     ):
         status = "degraded"
 
@@ -305,6 +320,7 @@ def api_health() -> tuple[Response, int]:
                     "journals": journals_check,
                     "collaborators": collaborators_check,
                     "phase5": phase5_check,
+                    "models": models_check,
                 },
             }
         ),

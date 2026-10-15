@@ -1,4 +1,4 @@
-"""Regression guard for the cv2 decompression-bomb cap (audit finding D1).
+"""Regression guard for the cv2 decompression-bomb cap.
 
 `bpp/__init__.py` sets ``OPENCV_IO_MAX_IMAGE_PIXELS`` before any ``import
 cv2`` so a crafted huge image can't OOM the analyze/phash workers. The PIL

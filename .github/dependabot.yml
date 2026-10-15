@@ -15,10 +15,8 @@ version: 2
 #     existing GitHub label set covers Dependabot PRs without
 #     manual relabeling.
 #
-# Activates the moment Dependabot alerts are enabled in Settings →
-# Code security. On a Free private repo only the alerts UI is
-# available; the auto-PRs require the repo to flip public (or
-# Dependabot updates to be enabled, which is free either way).
+# Takes effect once Dependabot alerts and version updates are
+# enabled in Settings → Code security.
 
 updates:
   # Python — the runtime install + the dev-extra pin live in
@@ -39,9 +37,10 @@ updates:
           - "minor"
           - "patch"
 
-  # GitHub Actions — every workflow uses pinned majors (`@v4`,
-  # `@release/v1`). Dependabot keeps these in sync with upstream
-  # major-version releases. The packaging tests pin the
+  # GitHub Actions — every workflow pins each action to a commit SHA
+  # with its version in a trailing comment (`@<sha> # v7`), so a moved
+  # tag can't swap in different code. Dependabot updates the SHA and
+  # the comment together. The packaging tests pin the
   # no-`@main`/`@master` rule so a Dependabot bump can't
   # accidentally introduce one.
   - package-ecosystem: "github-actions"

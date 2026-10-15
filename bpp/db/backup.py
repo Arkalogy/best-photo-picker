@@ -284,17 +284,12 @@ def read_backup_meta(backup_path: str) -> dict | None:
     """Read the metadata sidecar for `backup_path`. Returns None if
     missing, unparseable, or has the wrong shape — caller falls back
     to filesystem mtime."""
-    import json
+    from bpp.utils.json_utils import load_json_file
 
-    meta_path = backup_path + ".meta.json"
-    if not os.path.isfile(meta_path):
-        return None
-    try:
-        with open(meta_path, encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(data, dict) or "created_at_epoch" not in data:
+    data = load_json_file(
+        backup_path + ".meta.json", None, expected_type=dict, context="backup metadata"
+    )
+    if data is None or "created_at_epoch" not in data:
         return None
     return data
 
@@ -322,7 +317,7 @@ def restore_from_backup_if_corrupt(db_path: str) -> str | None:
 
     Concurrency:
         Primarily intended for startup (before any pool connection
-        exists). As of P-11, the swap goes through a staging file +
+        exists). The swap goes through a staging file +
         atomic ``os.replace`` so ``db_path`` is never absent during
         the operation — a plugin calling this from a non-startup
         context won't observe "file not found." A live pool reader
@@ -368,7 +363,7 @@ def restore_from_backup_if_corrupt(db_path: str) -> str | None:
     corrupt_sidecar = db_path + f".corrupted-{ts}"
     staging_path = db_path + ".restoring"
 
-    # P-11: never leave ``db_path`` absent during the operation.
+    # Never leave ``db_path`` absent during the operation.
     #
     # Old sequence was move(db_path → corrupt) then copy(backup → db_path).
     # Between those two steps ``db_path`` didn't exist; a concurrent

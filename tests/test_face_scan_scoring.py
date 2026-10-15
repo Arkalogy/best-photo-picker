@@ -538,10 +538,9 @@ class TestFaceEmbedAvailability:
         """Simulate missing face_recognition AND SFace unavailable."""
         with (
             patch("bpp.scoring.face_embed._sface_available", return_value=False),
-            patch.dict("sys.modules", {"face_recognition": None}),
             patch(
-                "builtins.__import__",
-                side_effect=ImportError("no face_recognition"),
+                "bpp.scoring.face_recognition_loader.load_face_recognition",
+                return_value=None,
             ),
         ):
             assert is_available() is False

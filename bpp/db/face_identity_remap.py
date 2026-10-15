@@ -73,7 +73,7 @@ def _reconstruct_identities(conn: sqlite3.Connection) -> None:
 
     remapped = 0
     for name, (best_cid, _count) in identity_best.items():
-        # P5b: read the shadow column directly instead of parsing
+        # Read the shadow column directly instead of parsing
         # rule_json. Positional access so this works without
         # sqlite3.Row factory.
         album = conn.execute(
@@ -150,7 +150,7 @@ def _remap_names_and_tags(
     claimed: set[int] = set()
 
     # Collect named albums: old_cid → name.
-    # P5b: indexed shadow-column lookup via the canonical helper.
+    # Indexed shadow-column lookup via the canonical helper.
     named_clusters: dict[int, str] = {}
     try:
         from bpp.db.albums import get_smart_person_cluster_name_map
@@ -237,7 +237,7 @@ def _remap_names_and_tags(
     conn.execute("SAVEPOINT remap_clusters")
     try:
         # Pre-load all smart_person albums keyed by smart_person_cluster_id
-        # for O(1) lookups (P5b: use the v36 shadow column instead of
+        # for O(1) lookups (use the v36 shadow column instead of
         # rule_json as the key — same data, cheaper lookup). Positional
         # access so this works without sqlite3.Row factory.
         person_albums_by_cid: dict[int, tuple[int, str]] = {}

@@ -10,6 +10,7 @@
  */
 
 import { apiFetch } from "./api-client.mjs";
+import { downloadProgressText, waitForDownloadJob } from "./download-jobs.mjs";
 import { appConfirm } from "./dialogs.mjs";
 import { toast, toastError } from "./toast.mjs";
 import { authEventSource } from "./api-client.mjs";
@@ -107,11 +108,13 @@ export async function redownloadFeature(btn, files, label, desc) {
   const detail = desc ? " (" + desc + ")" : "";
   try {
     for (const f of normalized) {
-      await apiFetch("/api/v1/models/redownload", {
+      const started = await apiFetch("/api/v1/models/redownload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: f.name }),
-        signal: AbortSignal.timeout(180000),
+      });
+      await waitForDownloadJob(started?.job, {
+        onProgress: (snap) => (btn.title = downloadProgressText(snap)),
       });
     }
     toast((label || "Model") + " downloaded" + detail);
@@ -123,6 +126,7 @@ export async function redownloadFeature(btn, files, label, desc) {
     btn.disabled = false;
     btn.classList.remove("downloading");
     btn.innerHTML = "&#x21bb;";
+    btn.title = "";
   }
 }
 

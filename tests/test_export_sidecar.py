@@ -308,7 +308,7 @@ class TestWriteJsonManifest:
         assert manifest_path == os.path.join(str(tmp_path), "manifest.json")
 
     def test_manifest_structure(self, tmp_path):
-        """R6-L1: default manifest does NOT include the absolute
+        """Default manifest does NOT include the absolute
         `library` field — it's sanitized away. Pass
         `include_source_paths=True` to get it back."""
         outdir = str(tmp_path)
@@ -338,7 +338,7 @@ class TestWriteJsonManifest:
         assert len(manifest["photos"]) == 1
 
     def test_manifest_photo_entry(self, tmp_path):
-        """R6-L1: default per-photo entry uses `original_filename`
+        """Default per-photo entry uses `original_filename`
         (relative or basename) and omits the absolute
         `original_path`."""
         outdir = str(tmp_path)
@@ -375,7 +375,7 @@ class TestWriteJsonManifest:
         assert photo["scores"]["composition"] == 0.78
 
     def test_manifest_include_source_paths_opt_in(self, tmp_path):
-        """R6-L1: explicit opt-in restores the absolute fields for
+        """Explicit opt-in restores the absolute fields for
         diagnostic / archival workflows that need them."""
         outdir = str(tmp_path)
         photos_data = [
@@ -400,7 +400,7 @@ class TestWriteJsonManifest:
         assert manifest["photos"][0]["original_filename"] == "IMG_1234.jpg"
 
     def test_manifest_source_outside_library_falls_back_to_basename(self, tmp_path):
-        """R6-L1: when the source isn't inside library_path, refuse
+        """When the source isn't inside library_path, refuse
         to emit a `..`-relative path that would still leak parent
         directory names (e.g. `Users/alice`) — fall back to the
         basename only."""
@@ -497,7 +497,7 @@ class TestExportSelectedManifest:
         assert os.path.isfile(manifest_path)
 
     def test_manifest_contains_exported_photos(self, tmp_path):
-        """R6-L1: by default the absolute library path is sanitized
+        """By default the absolute library path is sanitized
         away. The opt-in (`include_source_paths=True`) restores it."""
         selected = _make_selected(tmp_path, n=2)
         analysis = _make_analysis(selected, extra=0)
@@ -570,7 +570,7 @@ class TestExportSelectedManifest:
         assert manifest["count"] == 1  # only the successful one
 
     def test_export_reports_do_not_leak_absolute_source_paths(self, tmp_path):
-        """R6-L1: regression — none of report.json, report.csv, or
+        """Regression — none of report.json, report.csv, or
         manifest.json may contain the owner's absolute source path
         when the user shares the export folder. Use a path that
         looks like a private library (Users/alice/...). The user
@@ -676,7 +676,7 @@ class TestExportSelectedXmp:
 
 
 class TestExportSelectedRegistryWalkCount:
-    """R9-perf-H1: `_iter_weighted_score_pairs()` used to be invoked
+    """`_iter_weighted_score_pairs()` used to be invoked
     once per photo (XMP sidecar) plus once for the manifest plus once
     for the report — N+3 walks of the scorer registry per export run.
     The fix snapshots the registry once at the top of

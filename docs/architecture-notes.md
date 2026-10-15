@@ -12,8 +12,8 @@ A partial index `idx_photos_gps` covers map view and album-stats
 queries against these columns.
 
 - **New writers** populate both the dedicated columns and `exif_json`.
-- **Back-compat**: `_maybe_lift_gps_from_exif()` in `bpp/db/photos.py`
-  promotes coords out of `exif_json` for rows imported before v30.
+- **Back-compat**: `_maybe_lift_gps_from_exif()` in `bpp/db/photos_gps.py`
+  (re-exported from `bpp/db/photos.py`) promotes coords out of `exif_json` for rows imported before v30.
 
 If you add a feature that reads GPS, query the dedicated columns —
 the partial index makes those queries fast even on libraries with
@@ -70,11 +70,12 @@ Migration safety:
 ## Near-duplicate clustering (schema v34)
 
 `assign_near_duplicate_clusters()` in `bpp/db/dedupe.py` groups photos
-by phash + ahash hamming distance ≤ 8 bits using a Union-Find
-algorithm. The result is stored in two columns:
+whose dHash or aHash hamming distance is ≤ 8 bits **and** that were
+taken within 60 seconds of the cluster representative, using a
+Union-Find algorithm. Live Photo sidecars are never clustered. The result is stored in two columns:
 
 - `dup_cluster_id INTEGER` — every photo in a cluster gets the same ID;
-  singletons get a unique ID.
+  singletons get `dup_cluster_id = 0` (with `cluster_size = 1`).
 - `cluster_size INTEGER` — count of photos in the cluster.
 
 The "Duplicates" smart album queries `cluster_size > 1`; the review
@@ -82,7 +83,7 @@ flow groups visible rows by `dup_cluster_id`.
 
 Clustering runs automatically:
 
-- after each import + analyze cycle, and
+- at the end of each import, and
 - on server startup as a backfill pass for any rows that don't have
   cluster info yet.
 
@@ -93,9 +94,11 @@ clusters**.
 
 The CLIP embedding-rows cap in `bpp/db/clip.py`
 (`CLIP_EMBEDDING_MAX_ROWS`, default 200,000) protects against OOM at
-recompute time. Peak runtime footprint is **~3x the embedding dict**:
-the dict itself, the cached search matrix, and one semantic-dedup
-scratch matrix can all be in memory at once (~1.2 GB at the 200K cap).
+recompute time. Peak runtime footprint is **~3x one embedding matrix**
+(~400 MB at the 200K cap): the server's cached search matrix (its
+per-photo lookup is row views into it, not a copy), one semantic-dedup
+scratch matrix, and a standalone load by Moments or a smart-album
+refresh can all be in memory at once (~1.2 GB).
 
 If you change the semantic-dedup pipeline:
 
@@ -109,13 +112,13 @@ If you change the semantic-dedup pipeline:
   machines with more RAM (e.g. 350,000 ≈ 2.1 GB peak, comfortable on
   16 GB; 500,000 ≈ 3 GB, prefer 32 GB). The in-app override lives in
   Settings → CLIP semantic search; the API + UI for it is wired in
-  `bpp/web/bp_core.py` (`api_set_clip_max_override`) and
+  `bpp/web/bp_settings.py` (`api_set_clip_max_override`) and
   `bpp/web/static/js/modules/clip.mjs`.
 
-## WebAppState collaborators (P4)
+## WebAppState collaborators
 
 `WebAppState` (in `bpp/web/state.py`) is a facade over four
-collaborators introduced in refactor-plan.md P4. New endpoints reach
+collaborators. New endpoints reach
 through these directly; legacy attribute access still works via
 deprecation-logged property delegates in `bpp/web/state_compat.py`,
 but every new code site should bind against the collaborator.
@@ -129,11 +132,11 @@ but every new code site should bind against the collaborator.
 
 Deprecation timeline: the property delegates in `state_compat.py` log
 a one-shot WARNING on first access via the deprecated path. They
-remain available for at least the v0.1 → v0.2 window; the audit
-budget closes on them when the migration is complete.
+remain available for at least the v0.1 → v0.2 window and are removed
+once every call site has migrated.
 
 PoC consumer reaching through the canonical collaborator surface:
-`bpp/web/bp_health.py:170` reads `ctx.workers.items()` directly
+`api_health()` in `bpp/web/bp_health.py` reads `ctx.workers.items()` directly
 instead of going through the deprecated `ctx._workers` delegate.
 
 ## Plugin extension surface
@@ -156,7 +159,8 @@ Plugin-target registries (all four conform to `PluginRegistryLike`):
 * `bpp/web/worker_registry.py` :: `WorkerRegistry`
 * `bpp/db/smart_albums.py` :: `SmartAlbumRegistry` (including the
   `undeletable=True` and `ui_metadata_fn=…` registration extras)
-* `bpp/output/export.py` :: `ExportModeRegistry`
+* `bpp/output/export_modes.py` :: `ExportModeRegistry` (re-exported from
+  `bpp/output/export.py`)
 * `bpp/dedupe/strategy.py` :: `DedupeStrategyRegistry`
 
 Plus the in-tree face detector/embedder registries

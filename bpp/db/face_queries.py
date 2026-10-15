@@ -19,7 +19,7 @@ import sqlite3
 from typing import Any
 
 from bpp.constants import active_photo_sql
-from bpp.db.face_embedding_safety import decode_embedding
+from bpp.db.face_embedding_safety import active_embedding_dim, decode_embedding
 from bpp.errors import ResourceExhaustedError as _ResourceExhaustedError
 from bpp.scoring.face_cluster import pick_representative
 from bpp.utils.logging import get_logger
@@ -71,8 +71,8 @@ class FaceEmbeddingsTooLarge(_ResourceExhaustedError, RuntimeError):
     (typically 503 + descriptive message → in-app toast) instead of
     OOM-killing the server.
 
-    P7: inherits :class:`ResourceExhaustedError` so the 503 envelope
-    is automatic; also inherits ``RuntimeError`` so pre-P7
+    Inherits :class:`ResourceExhaustedError` so the 503 envelope is
+    automatic; also inherits ``RuntimeError`` so existing
     ``except RuntimeError`` catches keep working.
     """
 
@@ -92,7 +92,7 @@ class FaceEmbeddingsTooLarge(_ResourceExhaustedError, RuntimeError):
         )
 
     def __reduce__(self) -> tuple:
-        """T1.5: make this subclass survive pickle across the
+        """Make this subclass survive pickle across the
         subprocess boundary.
 
         Default ``Exception.__reduce__`` invokes ``cls(*self.args)``
@@ -157,12 +157,13 @@ def load_face_clusters(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         return []
 
     clusters: dict[int, list[dict]] = {}
+    dim = active_embedding_dim(conn)
     for fp, fi, bx, by, bw, bh, emb_blob, cid, quality in rows:
-        # Protection A: skip rows whose stored BLOB is corrupt (wrong
+        # Read-side decode defense: skip rows whose stored BLOB is corrupt (wrong
         # size, non-finite, zero-norm). Without this guard a single
         # bad row propagated into np.stack callers and crashed the
         # whole faces/clusters endpoint (Jun-2 demo lib incident).
-        emb = decode_embedding(emb_blob, where="face_queries.fetch_clusters")
+        emb = decode_embedding(emb_blob, where="face_queries.fetch_clusters", dim=dim)
         if emb is None:
             continue
         clusters.setdefault(cid, []).append(

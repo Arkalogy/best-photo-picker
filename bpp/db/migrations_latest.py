@@ -2,10 +2,10 @@
 
 Extracted from :mod:`bpp.db.migrations_recent` so both files stay
 under the 500-LOC soft cap. The split is by version range and
-keeps the most recent migrations together — they share the
-Phase-3.5 / Phase-5 audit context that motivated them (the
-smart_person_cluster_id shadow column and the face_extraction_journal
-table). v40 hardens face_embeddings against the Bug #9 class —
+keeps the most recent migrations together — they share the context
+that motivated them (the smart_person_cluster_id shadow column and the
+face_extraction_journal table). v40 hardens face_embeddings against
+stale bbox coordinates —
 self-describing detector input size per row so a config change can't
 silently invalidate stored coords.
 
@@ -26,12 +26,12 @@ log = get_logger(__name__)
 def _migrate_v38(conn: sqlite3.Connection) -> None:
     """Add auto-sync triggers for smart_person_cluster_id (schema v38).
 
-    P5b refinement on v36. Until v38, every writer of a smart_person
+    Refinement on v36. Until v38, every writer of a smart_person
     album had to remember to also set the ``smart_person_cluster_id``
     shadow column. ``create_album`` did this correctly; raw INSERTs
     (test fixtures + a couple of legacy paths) did not, leaving the
     shadow column NULL on those rows and breaking the indexed reader
-    sites that P5b migrated.
+    sites that use it.
 
     v38 makes the shadow column self-maintaining via two triggers:
 
@@ -114,22 +114,20 @@ def _migrate_v38(conn: sqlite3.Connection) -> None:
 def _migrate_v41(conn: sqlite3.Connection) -> None:
     """Add ``producing_model_id`` column to face_embeddings (v41).
 
-    Batch 7 / item 21 of the legal-posture rollout. The column tags
-    every face_embeddings row with the registry id of the model that
-    produced it (``sface_yunet``, ``dlib_face_recognition_resnet_v1``,
-    or a ``byom_<hash>`` user-supplied entry). The
-    derived-data-purge flow at model-removal time reads this column
-    to find every embedding produced by a specific model and delete
-    them as a single batch, strengthening the biometric-privacy
-    posture (Colorado HB24-1130, Texas CUBI) the legal-posture spec
-    flagged in item 13.
+    The column tags every face_embeddings row with the registry id of
+    the model that produced it (``sface_yunet``,
+    ``dlib_face_recognition_resnet_v1``, or a ``byom_<hash>``
+    user-supplied entry). The derived-data-purge flow at model-removal
+    time reads this column to find every embedding produced by a
+    specific model and delete them as a single batch, strengthening the
+    biometric-privacy posture (Colorado HB24-1130, Texas CUBI).
 
     Idempotent: skips when the column already exists. Default value
     NULL for existing rows is intentional — pre-v41 rows have no
     recorded producing model, and the purge flow treats NULL as
     "unknown producing model" (skipped by the purge so existing
     rows are not lost on first run after the migration). New writes
-    (Batch 7 wires ``face_extraction_phase5.py``) populate the
+    (``face_extraction_phase5.py``) populate the
     column based on the resolved
     :func:`bpp.scoring.face_embed.embedding_method` value.
     """
@@ -141,8 +139,8 @@ def _migrate_v41(conn: sqlite3.Connection) -> None:
         log.info("Migration v41: producing_model_id column already present, no-op")
         return
     conn.execute("ALTER TABLE face_embeddings ADD COLUMN producing_model_id TEXT")
-    # Cheap covering index for the purge query (Batch 7's
-    # count_derived_for_model / purge_derived_for_model both filter
+    # Cheap covering index for the purge query
+    # (count_derived_for_model / purge_derived_for_model both filter
     # on producing_model_id). Without an index, the purge does a
     # full-table scan, which is fine for a small library but
     # noticeable at 50k+ rows.
@@ -156,7 +154,7 @@ def _migrate_v41(conn: sqlite3.Connection) -> None:
 def _migrate_v40(conn: sqlite3.Connection) -> None:
     """Add ``extraction_max_long_side`` column to face_embeddings (v40).
 
-    Bug #9 hardening. Before v40, the bbox_x/y/w/h coordinates in
+    Coordinate-space hardening. Before v40, the bbox_x/y/w/h coordinates in
     face_embeddings were stored in detector-input pixel space (the
     image after ``load_and_downscale(filepath, max_long_side)``), but
     the read sites (``bp_faces_photo.py:_compute_bbox_pct`` etc.)
@@ -164,7 +162,7 @@ def _migrate_v40(conn: sqlite3.Connection) -> None:
     If the user changed Settings → Max scoring resolution between
     extraction and read, every stored bbox would render at the wrong
     coordinates — exactly the systematic upper-left-corner overlay
-    Bug #9 documented (3,705 face rows stored at ~320 px detector
+    seen in testing (face rows stored at ~320 px detector
     space, then re-interpreted at 1024 → bboxes appeared as tiny
     upper-left boxes, false-positive clusters formed from background
     crops).
@@ -182,7 +180,7 @@ def _migrate_v40(conn: sqlite3.Connection) -> None:
     Idempotent: skips when the column already exists. Default value
     NULL for existing rows is intentional — the migration deliberately
     does NOT guess at historical max_long_side, because guessing wrong
-    is exactly what produced Bug #9. The read path's fallback uses
+    is exactly what produced the misplaced bboxes. The read path's fallback uses
     the current setting, which is what callers already do today; v40
     just gives correct rows a way to opt out of that guess.
     """
@@ -198,7 +196,7 @@ def _migrate_v40(conn: sqlite3.Connection) -> None:
 
 
 def _migrate_v39(conn: sqlite3.Connection) -> None:
-    """Add ``retry_count`` column to face_extraction_journal (T0.4 schema v39).
+    """Add ``retry_count`` column to face_extraction_journal (schema v39).
 
     Before v39 a deterministic phase-7 failure (or any post-snapshot
     crash that the resume couldn't get past) would leave the row
@@ -230,8 +228,8 @@ def _migrate_v39(conn: sqlite3.Connection) -> None:
 def _migrate_v37(conn: sqlite3.Connection) -> None:
     """Add face_extraction_journal table for per-phase resume (schema v37).
 
-    P3 of refactor-plan.md. Pre-v37 a SIGKILL during ``extract_and_cluster_faces``
-    forced a full re-run from phase 1 on next startup. v37 introduces a
+    Pre-v37 a SIGKILL during ``extract_and_cluster_faces`` forced a
+    full re-run from phase 1 on next startup. v37 introduces a
     per-run journal so the orchestrator can pick up at the next
     incomplete phase, with the pre-extract snapshot rehydrated from the
     journal row.
@@ -278,16 +276,15 @@ def _migrate_v37(conn: sqlite3.Connection) -> None:
 def _migrate_v36(conn: sqlite3.Connection) -> None:
     """Add smart_person_cluster_id shadow column to albums (schema v36).
 
-    P5 of refactor-plan.md. Until v36 the cluster→album lookup ran via:
+    Until v36 the cluster→album lookup ran via:
 
         SELECT id, name FROM albums
         WHERE album_type='smart_person' AND json_extract(rule_json,'$.cluster_id') = ?
 
     On SQLite that is a full-table scan + JSON parse per row — at
     50k photos with hundreds of person clusters and dozens of
-    refreshes per day the cost is real. The audit measured ~30% of
-    the post-cluster smart-album refresh time on a representative
-    library.
+    refreshes per day the cost is real — it measured ~30% of the
+    post-cluster smart-album refresh time on a representative library.
 
     v36 promotes the per-row ``cluster_id`` from inside ``rule_json``
     to a top-level ``smart_person_cluster_id`` column on the same row.
@@ -303,8 +300,8 @@ def _migrate_v36(conn: sqlite3.Connection) -> None:
     * Backfill is a single ``UPDATE`` driven by SQLite's
       ``json_extract`` / ``typeof`` — no Python loop, no per-row
       commits, atomic with respect to other writers under the
-      surrounding SAVEPOINT. Pre-T4 the loop did N round-trips and N
-      WARN lines for malformed rows; the single-statement form is
+      surrounding SAVEPOINT. A per-row loop would do N round-trips
+      and N WARN lines for malformed rows; the single-statement form is
       both faster and friendlier to the SAVEPOINT contract. Malformed
       / non-integer rows are summarized in one WARN line instead of
       a per-row stream.

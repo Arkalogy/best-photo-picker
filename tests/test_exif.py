@@ -321,7 +321,7 @@ class TestBuildPhotoDictExif:
             "aggregate_score": 0.8,
         }
 
-        # Mock a minimal WebAppState. P4: enhanced-ids cache lives on
+        # Mock a minimal WebAppState. The enhanced-ids cache lives on
         # `state.caches.enhanced_ids` so pre-populate it instead of the
         # legacy `_edited_ids` / `_auto_enhanced_ids` attributes.
         import threading

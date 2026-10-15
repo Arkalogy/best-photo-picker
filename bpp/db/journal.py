@@ -175,9 +175,9 @@ def pending_journals(conn: sqlite3.Connection, kind: str | None = None) -> list[
         ).fetchall()
     out: list[dict[str, Any]] = []
     for r in rows:
-        payload = safe_json_loads(r[2], {}, context=f"operation_journal id={r[0]} kind={r[1]}")
-        if not isinstance(payload, dict):
-            payload = {}
+        payload = safe_json_loads(
+            r[2], {}, context=f"operation_journal id={r[0]} kind={r[1]}", expected_type=dict
+        )
         out.append(
             {
                 "id": int(r[0]),

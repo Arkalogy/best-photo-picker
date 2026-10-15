@@ -1,49 +1,41 @@
 """Bundled Ed25519 public keys that BPP trusts for remote-registry
 manifest signatures.
 
-Batch 8 / item 23 of the legal-posture rollout. The keys here are
+The keys here are
 what :func:`bpp.registry.signed_manifest.verify_manifest` checks
 remote-manifest signatures against. Rotating a key means shipping
-a BPP release with a new entry in this list (per Q9 — rotation
-tooling is deferred to a follow-up minor; for v1 the trust set
-is committed source).
+a BPP release with a new entry in this list (rotation tooling is
+deferred to a later minor release; for now the trust set is
+committed source).
 
-Why two keys
+How many keys
 
-The dual-signature requirement on restriction-class downgrades
-(see :data:`bpp.registry.overlay.DUAL_SIG_REQUIREMENT`) presumes
-at least two distinct keys are available for the maintainer to
-sign with. Even on a solo-maintainer project, the second key
-should be held separately (hardware key, sealed-envelope
-airgap) per Q9's recommendation, so a single device compromise
-cannot forge a downgrade-signed manifest.
+One key is trusted today (``arkalogy-primary-2026-06``), and the
+overlay quorum (:data:`bpp.registry.overlay.DUAL_SIG_REQUIREMENT`)
+is 1 to match. That key alone can therefore sign every kind of
+manifest change, including restriction-class relaxations and new
+restricted entries. The verifier counts distinct keys, so adding a
+second key here and raising the quorum to 2 in the same release is
+what would make a single-key compromise insufficient for those
+changes.
 
 Key custody
 
-The matching private keys live OUTSIDE the repo, at
-``~/.config/bpp/signing-keys/<slug>.private.key`` (mode 0600).
-The maintainer is expected to move the secondary key to physically
-separate storage (USB stick in a drawer, sealed envelope) and only
-bring it out for restriction-class relaxations or new restricted-
-entry additions. The primary key signs every other manifest
-(status tightening, ack-text version bumps, new permissive entries)
-on its own.
+The matching private key is kept outside the repository and is
+never shipped in a release.
 
 If you suspect a key compromise: generate a new keypair, replace
-the entry below in a release, bump the BPP version, and publish a
-takedown-status manifest signed by the unaffected key for every
-entry signed under the suspect key.
+the entry below, and ship a BPP release. With a single trusted
+key there is no second key to sign an interim takedown manifest,
+so until the release ships the remote overlay can be switched off
+per install with ``BPP_DISABLE_REMOTE_REGISTRY=1``.
 
-Rotation cadence
+Rotation
 
-Calendar-rotate the primary key every 12 months even without a
-suspected compromise; the secondary key may rotate less often if
-it has remained in cold storage. Each rotation appends a new
-``TrustedKey`` to the tuple below and ships in a BPP release;
-older entries stay in the tuple for one release after rotation so
-manifests still signed under the old keys verify during the cut-
-over window. After that window, the old entry is removed in the
-following release.
+Each rotation appends a new ``TrustedKey`` to the tuple below and
+ships in a BPP release. Older entries can stay in the tuple for
+one release so manifests signed under the old key still verify
+during the cut-over, then are removed in the following release.
 """
 
 from __future__ import annotations
@@ -62,7 +54,7 @@ from bpp.registry.signed_manifest import TrustedKey
 #: existing signature.
 #:
 #: First real keypair shipped 2026-06-03. The placeholder keys that
-#: shipped earlier in Batch 8 are GONE — any manifest still signed
+#: shipped before it are GONE — any manifest still signed
 #: under the placeholder key_ids ("dev-placeholder-key-1" / -2)
 #: will fail verification, which is the desired behaviour (no
 #: published manifests existed under the placeholder keys).
@@ -72,16 +64,13 @@ TRUSTED_KEYS: tuple[TrustedKey, ...] = (
         public_key_b64="Z/rvh66dX1lz1PR3HrsbL+/w6wnOTYBsu1GZytuMW6g=",
         maintainer_label="Arkalogy primary signing key (single-sig overlay)",
     ),
-    # Secondary slot reserved for the dual-sig downgrade key. The
-    # previous placeholder was orphaned (no matching private key) and
-    # was removed 2026-06-05. Until a real secondary keypair is
-    # generated and the private key escrowed (cold storage / co-signer
-    # device / hardware token), the overlay quorum
-    # (overlay.DUAL_SIG_REQUIREMENT) is 1, so the primary key alone can
-    # authorize restriction relaxations / new restricted entries. Raise
-    # the quorum back to 2 the moment a real secondary key lands here —
-    # the verifier counts DISTINCT keys, so the primary signing twice
-    # can never satisfy a quorum above 1 on its own.
+    # Only one key is trusted. While that is the case the overlay
+    # quorum (overlay.DUAL_SIG_REQUIREMENT) is 1, so this key alone can
+    # authorize restriction relaxations and new restricted entries.
+    # To require two keys: add a second TrustedKey here and raise the
+    # quorum to 2 in the same release. The verifier counts DISTINCT
+    # keys, so this key signing twice can never satisfy a quorum
+    # above 1 on its own.
 )
 
 

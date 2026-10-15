@@ -1,6 +1,21 @@
 # ADR 0003 — Plugin protocol
 
-**Status.** Proposed (P0). Locks the shape that P5 implements.
+**Status.** Accepted; partially implemented. The `Plugin` protocol and
+its `fire_*` helpers live in `bpp/plugin_protocol.py` (not
+`bpp/plugin_protocol.py` as sketched below), with one extra hook,
+`on_db_restore`, that fires after an automatic DB restore. The reference
+plugin is `bpp/plugins/example.py`, and the registry conformance gate is
+`bpp/plugins/registry_protocol.py`. Not implemented: discovery via the
+`BPP_PLUGINS` env var and the `--plugin` CLI flag — plugins load only
+through the `bpp.plugins` entry-point group, and only when
+`BPP_ENABLE_PLUGINS=1` is set. The registries kept their own
+registration calls rather than the `register_*` wrappers sketched
+below: `WorkerRegistry.register(...)`, `SmartAlbumRegistry.register(...)`,
+`register_export_mode(...)` (`bpp/output/export_modes.py`),
+`register_dedupe_strategy(...)`, and the hook lists in
+`bpp/db/photo_hooks.py` (`register_photo_deletion_hook`) and
+`bpp/db/event_hooks.py` (post-analyze / post-cluster / post-import).
+`docs/plugins.md` is the current plugin-author guide.
 
 **Context.** Today bpp extends through **seven** different registries
 with seven different shapes:
@@ -20,8 +35,8 @@ when their entry point fires relative to WebAppState construction.
 There's no place to put a "set up DB tables when a library opens"
 hook because there's no library-lifecycle event.
 
-**Decision.** P5 ships a single `Plugin` protocol in
-`bpp/plugins/protocol.py` with these lifecycle hooks:
+**Decision.** Ship a single `Plugin` protocol in
+`bpp/plugin_protocol.py` with these lifecycle hooks:
 
 ```python
 class Plugin(Protocol):
@@ -51,7 +66,7 @@ Hook semantics:
 **Migration of existing registries.** Four migrate onto the protocol:
 - `WorkerRegistry` — plugins call `register_worker(...)` from `on_register`.
 - `SmartAlbumRegistry` — plugins call `register_smart_album(...)` from
-  `on_register`. The "indexed-column" extension (P5 schema fix) takes a
+  `on_register`. The "indexed-column" extension (a schema fix) takes a
   column-spec arg so plugin-registered album types get their own
   indexed columns instead of substring-matching JSON.
 - `ExportModeRegistry` — plugins call `register_export_mode(...)` from
@@ -69,21 +84,32 @@ Hook semantics:
 - `photo_hooks` — event-bus semantics. Stays as-is; plugins subscribe
   via `register_photo_hook(...)` from `on_register`.
 
-**Plugin discovery.** Plugins are discovered via `entry_points` in
-`pyproject.toml` (group: `bpp.plugins`) and via `BPP_PLUGINS=...` env
-var (semicolon-separated module names) for dev. CLI also accepts
-`--plugin path/to/module.py`. The `load_plugin_entry_points` call
-(already wired in `bpp/commands/{analyze,pick,serve}.py`) becomes the
-single load path.
+**Plugin discovery.** As shipped, the only discovery mechanism is the
+`bpp.plugins` entry-point group declared in a plugin package's
+`pyproject.toml`:
+
+```toml
+[project.entry-points."bpp.plugins"]
+my_plugin = "my_pkg.bpp_plugin:setup"
+```
+
+`load_plugin_entry_points()` (`bpp/plugins/__init__.py`) is the single
+load path. It is called from `create_app()` in `bpp/web/app.py` (so
+`bpp serve` and the desktop app) and from `bpp/commands/analyze.py` and
+`bpp/commands/pick.py`, and it is a no-op unless the operator sets
+`BPP_ENABLE_PLUGINS=1` (also accepts `true` / `yes` / `on`). The
+`BPP_PLUGINS` env var and `--plugin path/to/module.py` CLI flag
+originally proposed here were never built; neither exists in bpp.
 
 **Consequences.**
 - Plugin authors learn one protocol, not seven.
 - The migration shim period keeps the old `register_*` free functions
   working — they're rewritten as thin wrappers that build a Plugin
   with just that one hook implemented.
-- New tests: `test_plugin_lifecycle_hooks_fire_in_order`,
-  `test_plugin_library_open_called_on_switch`, etc. P5 ships a trivial
-  example plugin in `bpp/plugins/example/` as a smoke test.
+- New tests: `tests/test_plugin_protocol.py` and
+  `tests/test_plugin_lifecycle_and_indexed_smart_person.py` (e.g.
+  `test_plugin_lifecycle_hooks_fire_in_order`). A trivial example
+  plugin ships as a smoke test (`bpp/plugins/example.py`).
 
 **Out of scope.**
 - Async plugin hooks.

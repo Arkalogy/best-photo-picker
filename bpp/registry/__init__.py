@@ -17,15 +17,13 @@ Why it's a package rather than a flat module:
   registry can use precise non-warranty field names without
   surfacing them in the picker).
 
-The registry replaces the earlier ad-hoc license_id field on
-:class:`bpp.scoring.face_embedder_registry.FaceEmbedder` (kept for
-back-compat). Embedder registration eventually plumbs through here
-so the legal posture is enforced at the data-model layer rather than
-per UI surface.
+The registry is the only place a model's license is written. Face
+detectors, embedders and every ``ModelSingleton`` name their entry by
+``registry_id``, and every license label is derived from the entry
+(:func:`bpp.registry.labels.license_label_for`).
 
-Established by Batch 1 of the face-embedder legal-posture rollout —
-see ``pm-face-embedder-spike.md`` for the 24-item plan this
-implements.
+The policy this package enforces is described in ``MODEL_POLICY.md``
+and ``docs/adr/0005-legal-posture-and-model-registry.md``.
 """
 
 from __future__ import annotations
@@ -169,7 +167,7 @@ from bpp.registry.use_context_store import (
 
 register_builtins()
 
-# Install the Batch 3 download chokepoint as soon as the registry
+# Install the download chokepoint as soon as the registry
 # package loads. Any package already imported by this point gets
 # patched; later imports of known auto-downloaders are caught by the
 # meta-path post-import hook. Re-imports of bpp.registry are no-ops.
@@ -177,8 +175,7 @@ install_third_party_interceptions()
 
 
 def _try_apply_remote_overlay() -> None:
-    """Batch 8 / item 12 + 23 — attempt to fetch + verify + apply
-    the remote registry manifest.
+    """Attempt to fetch + verify + apply the remote registry manifest.
 
     Best-effort: every failure (network, verification, decoder)
     logs at WARNING and falls back to the bundled baseline. The

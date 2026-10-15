@@ -1,6 +1,6 @@
-"""P4 — WebAppState collaborator: the worker pool.
+"""WebAppState collaborator: the worker pool.
 
-Until P4 the live workers lived as a bare ``dict[str, BackgroundWorker]``
+Originally the live workers lived as a bare ``dict[str, BackgroundWorker]``
 hanging off ``WebAppState._workers``. Two separate loops in
 ``state_lifecycle`` iterated it for cancel+join (one in
 ``switch_library``, one in ``shutdown``) — a classic shape where
@@ -23,7 +23,7 @@ This module owns:
 ``state_lifecycle``, ``test_worker_registry``, ``test_media_state``)
 keep working unchanged during the deprecation window.
 
-See ``docs/architecture-notes.md`` for the P4 collaborator surface
+See ``docs/architecture-notes.md`` for the collaborator surface
 (WorkerPool, ModelCache, AnalysisStore, LibraryLifecycle).
 """
 

@@ -343,3 +343,32 @@ def _reset_for_tests() -> None:
     with _loaded_lock:
         _loaded.clear()
         _disabled_log_emitted = False
+
+
+_loaded_once = False
+_ensure_lock = threading.Lock()
+# Set while this thread runs the loader: a plugin's setup() that calls
+# back into ensure_loaded_once returns at once instead of deadlocking.
+_loading = threading.local()
+
+
+def ensure_loaded_once() -> None:
+    """Load plugin entry points in this process, once.
+
+    Analysis runs in spawned child processes (scoring, face extraction,
+    their process pools), which never ran the server's plugin load — so
+    plugin detectors and embedders were unknown there. Cheap after the
+    first call; a no-op unless plugins are enabled.
+    """
+    global _loaded_once
+    if _loaded_once or getattr(_loading, "active", False):
+        return  # done, or re-entered from a plugin's setup() on this thread
+    with _ensure_lock:
+        if _loaded_once:
+            return
+        _loading.active = True
+        try:
+            load_plugin_entry_points()
+        finally:
+            _loading.active = False
+        _loaded_once = True

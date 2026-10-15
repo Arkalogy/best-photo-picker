@@ -1,4 +1,4 @@
-"""Bug #10: score columns stay NULL when bpp analyze runs after bpp serve.
+"""Regression: score columns stayed NULL when bpp analyze ran after bpp serve.
 
 The root cause: WebAppState._load_analysis() guarded import_from_analysis_json
 behind `if get_photo_count(conn) == 0`. When the DB already had photos (imported
@@ -72,7 +72,7 @@ class TestScoresSyncOnStartup:
             )
 
     def test_null_scores_backfilled_when_analysis_json_exists(self, tmp_path):
-        """Bug #10: photos already in DB with NULL scores get backfilled on boot."""
+        """Photos already in the DB with NULL scores get backfilled on boot."""
         import sqlite3
 
         from bpp.db.connection import init_db
@@ -115,7 +115,7 @@ class TestScoresSyncOnStartup:
             resp = client.get("/api/v1/photos", environ_base={"REMOTE_ADDR": "127.0.0.1"})
             photos = resp.get_json()["photos"]
             assert all(p["aggregate_score"] is not None for p in photos), (
-                "Bug #10: scores must be backfilled from analysis.json even "
+                "the NULL-scores bug: scores must be backfilled from analysis.json even "
                 "when DB already has photos with NULL score columns"
             )
 

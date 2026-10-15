@@ -19,7 +19,7 @@ try:
 except ImportError:
     pass
 
-# Decompression-bomb ceiling, made explicit + owned (release-audit hardening).
+# Decompression-bomb ceiling, made explicit + owned.
 # PIL ships a ~89MP default that already blocks billion-pixel images, but
 # pinning it here (a) documents the decision so a future "support huge
 # panoramas" change can't silently set it to None and reopen the hole, and
@@ -42,7 +42,7 @@ from bpp.scoring.composition import score_composition
 from bpp.scoring.exposure import score_exposure
 from bpp.scoring.face import detect_faces, score_face
 from bpp.scoring.skin import score_skin_exposure
-from bpp.utils.concurrency import get_worker_count, parallel_map
+from bpp.utils.concurrency import parallel_map
 from bpp.utils.json_utils import safe_json_loads
 from bpp.utils.logging import get_logger
 
@@ -85,7 +85,7 @@ def _get_cached(db_path: str, filepath: str, size: int, mtime: float) -> dict | 
         (filepath, size, mtime),
     ).fetchone()
     if row:
-        return safe_json_loads(row[0], context="analysis cache")
+        return safe_json_loads(row[0], context="analysis cache", expected_type=dict)
     return None
 
 
@@ -99,25 +99,32 @@ def _save_cached(db_path: str, filepath: str, size: int, mtime: float, result: d
     conn.commit()
 
 
-def read_image_for_scoring(filepath: str) -> np.ndarray | None:
-    """Load an image as a BGR ndarray for downstream scoring / embedding.
+def load_image_for_scoring(filepath: str, *, raw_half_size: bool = False) -> np.ndarray:
+    """Load an image as a full-size BGR ndarray, raising on failure.
 
-    Tries cv2.imread first (fast, ignores EXIF). Falls back to PIL with
-    EXIF transpose for formats cv2 doesn't grok (HEIC, etc.). Wraps the
-    whole thing in retry_io so transient NAS / network-FS flakes get
-    exponential-backoff retries instead of an immediate failure
-    (project rule: retry_io must wrap any flaky-FS read).
+    Tries cv2.imread first (fast; applies EXIF orientation). Falls back to
+    PIL with EXIF transpose for formats cv2 doesn't grok (HEIC, etc.),
+    wrapped in retry_io so transient NAS / network-FS flakes get
+    exponential-backoff retries (project rule: retry_io must wrap any
+    flaky-FS read). Camera RAW goes through the shared RAW decoder (cv2
+    and PIL can't open it); *raw_half_size* trades resolution for a 4x
+    cheaper decode when the consumer's input is small.
 
-    Returns None on persistent failure with a log.warning. Use this as
-    the canonical entry-point for any scoring / embedding code that
-    needs full-resolution pixels — do NOT call cv2.imread or
-    Image.open directly.
+    Raises :class:`bpp.utils.raw.RawSupportMissing` when RAW support isn't
+    available, otherwise the read/decode error itself.
     """
+    from bpp.media_types import MediaKind, media_kind_from_path
+
+    if media_kind_from_path(filepath) is MediaKind.RAW:
+        from bpp.utils.raw import decode_raw_rgb
+
+        return decode_raw_rgb(filepath, half_size=raw_half_size)[:, :, ::-1]  # RGB -> BGR
+
     from PIL import Image, ImageOps
 
     from bpp.utils.retry import retry_io
 
-    def _load() -> np.ndarray | None:
+    def _load() -> np.ndarray:
         img = cv2.imread(filepath)
         if img is not None:
             return img
@@ -127,13 +134,21 @@ def read_image_for_scoring(filepath: str) -> np.ndarray | None:
             transposed = ImageOps.exif_transpose(pil_img).convert("RGB")
             return np.array(transposed)[:, :, ::-1]  # RGB → BGR
 
+    return retry_io(_load, label="read_image_for_scoring")
+
+
+def read_image_for_scoring(filepath: str, *, raw_half_size: bool = False) -> np.ndarray | None:
+    """:func:`load_image_for_scoring`, or None (with a log.warning) when
+    the image can't be read. Use this (or the raising variant) as the
+    canonical entry-point for any scoring / embedding code that needs
+    full-resolution pixels — do NOT call cv2.imread or Image.open
+    directly."""
+    from bpp.utils.raw import RawSupportMissing
+
     try:
-        # OSError is handled inside retry_io (transient → backoff +
-        # retry, persistent → re-raise). Non-OSError exceptions (PIL
-        # decode failures on a corrupt file, ValueError from a 0-byte
-        # input, etc.) propagate out — we want both treated the same:
-        # log + return None.
-        return retry_io(_load, label="read_image_for_scoring")
+        return load_image_for_scoring(filepath, raw_half_size=raw_half_size)
+    except RawSupportMissing:
+        return None  # already warned once
     except Exception as e:
         log.warning("Failed to load %s for scoring: %s", filepath, e)
         return None
@@ -273,6 +288,11 @@ def analyze_single_image(
 def process_one(args: tuple) -> dict[str, Any] | None:
     """Worker: (filepath, max_long_side, db_path[, face_confidence[, model_toggles[, config]]])."""
     from bpp.media_types import MediaKind, media_kind_from_path
+    from bpp.plugins import ensure_loaded_once
+
+    # Runs in a spawned scoring process: plugin face detectors must be
+    # known here, or photos only they can see are scored as faceless.
+    ensure_loaded_once()
 
     if len(args) >= 6:
         filepath, max_long_side, db_path, face_confidence, model_toggles, config = args
@@ -384,16 +404,18 @@ def analyze_all(
 
     args_list = [(fp, max_long_side, db_path, face_confidence) for fp in image_paths]
 
-    n_workers = get_worker_count(workers)
-    results: list[dict[str, Any] | None] = []
-    skipped = 0
+    from bpp.scoring.model_base import ModelIntegrityError
 
-    if n_workers <= 1 or len(image_paths) <= 2:
-        for args in tqdm(args_list, desc="Analyzing", unit="img"):
-            r = process_one(args)
-            results.append(r)
-    else:
-        results = parallel_map(process_one, args_list, workers=workers)
+    # One path for any worker count. A model failing its integrity check
+    # must stop the run (not turn every photo into a skip).
+    with tqdm(total=len(args_list), desc="Analyzing", unit="img") as bar:
+        results: list[dict[str, Any] | None] = parallel_map(
+            process_one,
+            args_list,
+            workers=workers,
+            on_done=lambda: bar.update(1),
+            fatal_exceptions=(ModelIntegrityError,),
+        )
 
     valid = [r for r in results if r is not None]
     skipped = len(results) - len(valid)
@@ -426,6 +448,6 @@ def load_analysis(workdir: str) -> list[dict[str, Any]]:
     def _read():
         with open(results_path) as f:
             data = f.read()
-        return safe_json_loads(data, [], context="analysis.json")
+        return safe_json_loads(data, [], context="analysis.json", expected_type=list)
 
     return retry_io(_read, label="load_analysis_json")

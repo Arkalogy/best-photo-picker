@@ -46,7 +46,7 @@ _MODEL_DIR = str(_models_dir())
 # Why this one: float16 quantised "latest" lite hand landmarker —
 #         MediaPipe ships heavier models for AR/skeletal tracking
 #         that bpp doesn't need.
-# License: Apache 2.0 (MediaPipe).
+# License: see the bpp.registry entry ``mediapipe_hand_landmarker``.
 # To bump: Google's `/latest/` pattern means the URL stays stable
 #         across releases. SHA pin still detects when the artifact
 #         is rotated.
@@ -82,7 +82,7 @@ _hand_landmarker = ModelSingleton(
     model_url=_HAND_MODEL_URL,
     model_sha256=_HAND_MODEL_SHA256,
     create_fn=_create_hand_detector,
-    registry_id=None,  # ancillary mediapipe model, no licensing concern
+    registry_id="mediapipe_hand_landmarker",
     import_check=lambda: __import__("mediapipe"),
 )
 # Inference lock: MediaPipe detectors are NOT thread-safe — serialize .detect() calls.

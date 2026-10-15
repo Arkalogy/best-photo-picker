@@ -2,7 +2,7 @@
 
 Background: `_require_local_app()` in `bpp/web/bp_core.py` blocks
 non-LOCAL_APP principals from owner-mutating endpoints (device
-approve/revoke). The audit caught three high-value endpoints that
+approve/revoke). Three high-value endpoints once
 forgot to call it:
 
   * PUT /api/settings           (rewrite scoring weights / token / theme)
@@ -135,7 +135,7 @@ class TestShareTogglOwnerOnly:
             assert is_lan_sharing_enabled(app.extensions["bpp"].get_conn())
 
     def test_loopback_owner_allowed(self, app):
-        # R11-M2: bound_host defaults to loopback now; pretend the
+        # bound_host defaults to loopback now; pretend the
         # server bound a LAN interface so the restart-required gate
         # doesn't intercept this owner-allowed test.
         app.extensions["bpp"].bound_host = "0.0.0.0"
@@ -234,7 +234,7 @@ class TestSettingsGetSensitiveFilter:
         )
 
     def test_pattern_match_on_future_token_keys(self, app, lan_device):
-        """D-08: defense in depth on top of the denylist. A future
+        """Defense in depth on top of the denylist. A future
         token-shaped key (`oauth_secret`, `api_key`, etc.) added to
         settings without remembering to extend _SENSITIVE_SETTING_KEYS
         must still be filtered. The regex catches the common shapes
@@ -267,7 +267,7 @@ class TestSettingsGetSensitiveFilter:
         body = r.get_data(as_text=True)
         for key in ("oauth_client_secret", "db_encryption_key", "user_api_key", "session_password"):
             assert key not in data, (
-                f"Token-shaped key {key!r} leaked to LAN — D-08 pattern filter broken"
+                f"Token-shaped key {key!r} leaked to LAN — token-key pattern filter broken"
             )
         for value in ("secret-A", "secret-B", "secret-C", "secret-D"):
             assert value not in body, f"Sensitive value {value!r} appears in LAN response body"
@@ -349,7 +349,7 @@ class TestShareDevicesOwnerOnly:
         )
 
 
-# ─── Admin/install endpoints owner-only (D-01) ─────────────────────
+# ─── Admin/install endpoints owner-only ─────────────────────
 
 
 class TestAdminEndpointsOwnerOnly:
@@ -359,8 +359,8 @@ class TestAdminEndpointsOwnerOnly:
     toggles (could disable owner-mandated detection like NSFW
     filter), or library wipe (most destructive endpoint).
 
-    Codex D-01: these were missed in the initial @requires_local_app
-    sweep. The fix audit-grepped for `@bp.post|put|delete` decorators
+    These were missed in the initial @requires_local_app
+    sweep. The fix grepped for `@bp.post|put|delete` decorators
     against the admin surface and added the decorator to each.
     """
 
@@ -415,7 +415,7 @@ class TestAdminEndpointsOwnerOnly:
         assert r.status_code == 403
 
     def test_install_progress_get_blocks_lan(self, app, lan_device):
-        """Codex D-07 fold-in: GET /install/<key>/progress runs the
+        """GET /install/<key>/progress runs the
         actual pip subprocess inside its generator. Without owner-only
         gate, opening the URL alone could start pip — bypassing the
         POST start-gate."""
@@ -465,11 +465,11 @@ class TestAdminEndpointsOwnerOnly:
         )
 
 
-# ─── Filesystem path filtering for LAN clients (D-05) ──────────────
+# ─── Filesystem path filtering for LAN clients ──────────────
 
 
 class TestPathFilteringForLAN:
-    """D-05: read-only health/status endpoints used to leak absolute
+    """Read-only health/status endpoints used to leak absolute
     filesystem paths (DB path, library_path, batch folder names)
     to authenticated LAN devices. A paired phone could learn the
     owner's username, drive layout, library location.
@@ -500,7 +500,7 @@ class TestPathFilteringForLAN:
         data = r.get_json()
         checks = data["checks"]
         assert "path" not in checks["db"], (
-            "LAN device must not see absolute DB path — D-05 filter broken"
+            "LAN device must not see absolute DB path — path filter broken"
         )
         # And the storage block's path is also gone
         assert "path" not in checks["storage"], "LAN must not see library_path"
@@ -547,11 +547,11 @@ class TestPathFilteringForLAN:
         assert "path" not in data
 
 
-# ─── Library / analyze / import endpoints owner-only (R4-H1) ───────
+# ─── Library / analyze / import endpoints owner-only ───────
 
 
 class TestLibraryAndIngestOwnerOnly:
-    """R4-H1: library registry mutation, library switching, analyze,
+    """Library registry mutation, library switching, analyze,
     and import are admin/host operations. A paired LAN device must
     not be able to:
       - register or remove libraries (registry mutation)
@@ -560,7 +560,7 @@ class TestLibraryAndIngestOwnerOnly:
       - start an analyze run against an arbitrary host folder
       - start an import from a host filesystem path
 
-    These were missed in the D-01 sweep."""
+    These were missed in the first owner-only sweep."""
 
     def _lan_request(self, app, lan_device, method, path, **kw):
         client = app.test_client()
@@ -613,11 +613,11 @@ class TestLibraryAndIngestOwnerOnly:
         assert r.status_code == 403
 
 
-# ─── Native host UI endpoints owner-only (R4-H2) ───────────────────
+# ─── Native host UI endpoints owner-only ───────────────────
 
 
 class TestHostUIOwnerOnly:
-    """R4-H2: endpoints that spawn native host processes / OS file
+    """Endpoints that spawn native host processes / OS file
     manager UI. Even a paired LAN device must not be able to pop
     UI on the owner's desktop or drive Finder/Explorer."""
 
@@ -650,11 +650,11 @@ class TestHostUIOwnerOnly:
         assert r.status_code == 403
 
 
-# ─── R4-M2: status / library registry path leaks ──────────────────
+# ─── Status / library registry path leaks ──────────────────
 
 
 class TestStatusAndRegistryPathLeaks:
-    """R4-M2: D-05 filtered /api/v1/health and /api/v1/library/status,
+    """The path filter covered /api/v1/health and /api/v1/library/status,
     but missed three more endpoints that leak owner filesystem state
     to LAN clients:
       - /api/v1/status: workdir, input_dir, library_path
@@ -724,11 +724,11 @@ class TestStatusAndRegistryPathLeaks:
         assert r2.status_code == 200
 
 
-# ─── R5-H2: more host-mutation endpoints owner-only ────────────────
+# ─── More host-mutation endpoints owner-only ────────────────
 
 
 class TestMoreAdminEndpointsOwnerOnly:
-    """R5-H2: the R4-H1/H2 sweep was incomplete. The pattern is
+    """The earlier owner-only sweeps were incomplete. The pattern is
     'filesystem mutation, host process, model state, registry
     mutation, audit-log erasure = LOCAL_APP-only.' These endpoints
     fall into that bucket but were missed:
@@ -802,15 +802,15 @@ class TestMoreAdminEndpointsOwnerOnly:
         assert r.status_code == 403
 
 
-# ─── Round-9 sweep ───────────────────────────────────────────────────
+# ─── Host-mutation sweep ───────────────────────────────────────────────────
 
 
-class TestRound9HostMutationsBlocked:
-    """Round-9 audit: ~55 host-mutation endpoints across 11 blueprints
+class TestHostMutationsBlocked:
+    """~55 host-mutation endpoints across 11 blueprints
     were missing `@requires_local_app`. The CSP-style closed-list
     invariant ("every mutation gated") had drifted away from reality.
     These tests sweep the new gates so a future endpoint that forgets
-    the decorator gets caught at PR time, not in another audit round.
+    the decorator gets caught at PR time, not in a later review.
 
     Each endpoint asserts a 403 from a paired LAN device. Some
     endpoints validate input shape and short-circuit to 400 if the
@@ -912,11 +912,11 @@ class TestRound9HostMutationsBlocked:
         )
 
 
-# ─── R10-H1: auth must run BEFORE @with_face_lock ────────────────────
+# ─── Auth must run BEFORE @with_face_lock ────────────────────
 
 
 class TestFaceLockNotAcquiredOnAuthFailure:
-    """R10-H1: face-mutating endpoints stack `@requires_local_app` and
+    """Face-mutating endpoints stack `@requires_local_app` and
     `@with_face_lock`. Decorators apply bottom-up so the order
     matters: pre-fix the inner decorator was `@requires_local_app`
     and the outer was `@with_face_lock`, meaning the lock was

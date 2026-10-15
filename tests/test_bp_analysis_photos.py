@@ -521,7 +521,7 @@ class TestApiExport:
             assert os.path.isdir(outdir)
 
     def test_export_into_existing_outdir_merges(self, app_with_photos):
-        """UAT: an existing destination must be merged into, not wiped.
+        """An existing destination must be merged into, not wiped.
         Files the user already had in the folder must survive."""
         app, d = app_with_photos
         outdir = os.path.join(d, "existing_export")
@@ -598,7 +598,7 @@ class TestApiExportEnrichedResponse:
         photo_path = os.path.join(d, "photo_0.jpg")
         with app.test_client() as c:
             c.get("/api/v1/photos")
-            # The H1 release-audit fix changed export_selected's return
+            # A disk-error fix changed export_selected's return
             # type from a plain tuple to ExportResult so the UI can
             # categorise disk_error. Patch with the new shape; the
             # endpoint reads .exported / .failed by name now.
@@ -1101,7 +1101,7 @@ class TestApiRecompute:
             assert sensitive_fp in allow
 
     def test_recompute_413_when_full_payload_too_large(self, app_with_photos, monkeypatch):
-        """R5-M1 + R6-M1: the cap on /api/v1/recompute fires BEFORE
+        """The cap on /api/v1/recompute fires BEFORE
         recompute() runs. Previously the check was post-recompute, so
         a 50k-photo library still paid the full CPU/RAM cost just to
         be 413'd. Inject 5001 fake analysis entries and assert

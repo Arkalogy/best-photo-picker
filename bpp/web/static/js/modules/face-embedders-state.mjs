@@ -22,9 +22,13 @@
  * @property {string} activeFaceMethod     Active face_embedding_method.
  * @property {Map<string, object>} installState  registry id → /api/v1/models install state.
  * @property {Set<string>} requiresAckIds   Ids needing click-through before use.
- * @property {Set<string>} acceptedIds      Ids the user has accepted.
+ * @property {Set<string>} acceptedIds      Ids accepted under the CURRENT license text.
+ * @property {Set<string>} reacceptIds      Ids accepted under an OLDER text — need re-accepting.
  * @property {Set<string>} catalogEntryIds  Ids fetched via the catalog endpoint.
  * @property {Set<string>} busyRowIds       Ids mid-operation (download/uninstall).
+ * @property {Map<string, string>} loadStates  Id → the server's load-gate decision
+ *   (``ok`` / ``needs_license`` / ``needs_reaccept`` /
+ *   ``needs_commercial_rights`` / ``blocked``).
  * @property {number | null} pendingScrollRestore  Parent scroll to restore post-render.
  */
 
@@ -36,8 +40,10 @@ export const feState = {
   installState: new Map(),
   requiresAckIds: new Set(),
   acceptedIds: new Set(),
+  reacceptIds: new Set(),
   catalogEntryIds: new Set(),
   busyRowIds: new Set(),
+  loadStates: new Map(),
   pendingScrollRestore: null,
 };
 
@@ -78,31 +84,89 @@ export function _collectCatalogEntryIds(groups) {
 }
 
 /**
+ * Latest row per model from the ``/acceptance/list`` payload. The log
+ * is append-only and oldest-first, so the LAST row per model decides
+ * current status.
+ *
+ * @param {{acceptances?: Array<{model_id?: string, event?: string, current?: boolean, needs_reaccept?: boolean}>} | null} payload
+ * @returns {Map<string, {event: string, current: boolean, reaccept: boolean}>}
+ */
+function _latestRowByModel(payload) {
+  /** @type {Map<string, {event: string, current: boolean, reaccept: boolean}>} */
+  const latest = new Map();
+  const rows = (payload && payload.acceptances) || [];
+  for (const a of rows) {
+    if (!a || !a.model_id) continue;
+    // ``current`` is the server's version-aware verdict (acceptance of
+    // the CURRENT license text). Absent (older server) → trust the
+    // event, matching the previous behaviour.
+    const stale = a.current === false || a.needs_reaccept === true;
+    // ``needs_reaccept`` is the server's verdict that an OLDER text was
+    // accepted. Not current but not stale-text either (e.g. a damaged log
+    // line after it) is "no license", not "re-accept".
+    const reaccept = a.needs_reaccept === undefined ? stale : a.needs_reaccept === true;
+    latest.set(a.model_id, { event: a.event || "accept", current: !stale, reaccept });
+  }
+  return latest;
+}
+
+/**
  * Build the accepted-ids set from the ``/acceptance/list`` payload.
  * Treats a missing or malformed payload as "no acceptances on file"
  * — the pre-gate then redirects the user to the dialog, which is
  * the safe failure mode.
  *
- * The log is append-only and oldest-first, so for each model the LATEST
- * row decides current status: an ``event === "revoke"`` withdrawal
- * supersedes an earlier acceptance (legacy rows have no ``event`` and
- * default to "accept").
+ * Only a latest row that is an ``accept`` of the CURRENT license text
+ * counts: a ``revoke`` withdrawal supersedes an earlier acceptance
+ * (legacy rows have no ``event`` and default to "accept"), and an
+ * acceptance of an older text (``current: false``) is NOT accepted —
+ * the server's load gate refuses it, so showing it as accepted would
+ * hide a feature that has silently stopped.
  *
- * @param {{acceptances?: Array<{model_id?: string, event?: string}>} | null} payload
+ * @param {{acceptances?: Array<{model_id?: string, event?: string, current?: boolean, needs_reaccept?: boolean}>} | null} payload
  * @returns {Set<string>}
  */
 export function _collectAcceptedIds(payload) {
-  /** @type {Map<string, string>} */
-  const latestEvent = new Map();
-  const rows = (payload && payload.acceptances) || [];
-  for (const a of rows) {
-    if (a && a.model_id) latestEvent.set(a.model_id, a.event || "accept");
-  }
   const out = new Set();
-  for (const [modelId, event] of latestEvent) {
-    if (event === "accept") out.add(modelId);
+  for (const [modelId, row] of _latestRowByModel(payload)) {
+    if (row.event === "accept" && row.current) out.add(modelId);
   }
   return out;
+}
+
+/**
+ * Ids whose latest row is an acceptance of an OLDER license text —
+ * the picker shows these as "Re-accept needed".
+ *
+ * @param {{acceptances?: Array<{model_id?: string, event?: string, current?: boolean, needs_reaccept?: boolean}>} | null} payload
+ * @returns {Set<string>}
+ */
+export function _collectReacceptIds(payload) {
+  const out = new Set();
+  for (const [modelId, row] of _latestRowByModel(payload)) {
+    if (row.event === "accept" && row.reaccept) out.add(modelId);
+  }
+  return out;
+}
+
+/**
+ * A notice for Settings → Models when a damaged line in the license
+ * record (e.g. after a power cut) made earlier acceptances read as
+ * withdrawn — otherwise those models would just flip to "needs license"
+ * with no reason given.
+ *
+ * @param {{withdrawn_by_damage?: unknown} | null} payload
+ * @returns {string}
+ */
+export function damagedLogNoticeHTML(payload) {
+  const ids = payload && Array.isArray(payload.withdrawn_by_damage) ? payload.withdrawn_by_damage : [];
+  if (ids.length === 0) return "";
+  const n = ids.length === 1 ? "1 model" : `${ids.length} models`;
+  return (
+    `<p class="setting-muted fe-damaged-log-notice" role="status">Part of your license record ` +
+    `couldn't be read (for example after a power cut), so ${n} you accepted before it ` +
+    `now need${ids.length === 1 ? "s" : ""} to be accepted again.</p>`
+  );
 }
 
 /**
@@ -112,9 +176,11 @@ export function _collectAcceptedIds(payload) {
 export function _resetFaceEmbedderStateForTests() {
   feState.requiresAckIds = new Set();
   feState.acceptedIds = new Set();
+  feState.reacceptIds = new Set();
   feState.catalogEntryIds = new Set();
   feState.installState = new Map();
   feState.busyRowIds = new Set();
+  feState.loadStates = new Map();
   feState.currentUseContext = "unspecified";
   feState.activeFaceMethod = "sface";
   feState.currentDraft = null;
@@ -126,13 +192,14 @@ export function _resetFaceEmbedderStateForTests() {
  * the picker without standing up the network sequence.
  *
  * @param {{requiresAckIds?: string[], acceptedIds?: string[],
- *          catalogEntryIds?: string[],
+ *          reacceptIds?: string[], catalogEntryIds?: string[],
  *          installState?: Record<string, object>, activeFaceMethod?: string,
  *          useContext?: string}} state
  */
 export function _seedFaceEmbedderStateForTests(state) {
   feState.requiresAckIds = new Set(state.requiresAckIds || []);
   feState.acceptedIds = new Set(state.acceptedIds || []);
+  feState.reacceptIds = new Set(state.reacceptIds || []);
   feState.catalogEntryIds = new Set(state.catalogEntryIds || []);
   if (state.installState) {
     feState.installState = new Map(Object.entries(state.installState));

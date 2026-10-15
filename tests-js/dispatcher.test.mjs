@@ -229,9 +229,9 @@ describe("_bppBackdropClose", () => {
   });
 });
 
-// ── T0.1: dispatcher must prefer the action registry over window[name] ──
+// ── Dispatcher must prefer the action registry over window[name] ──
 
-describe("dispatcher registry-first lookup (T0.1)", () => {
+describe("dispatcher registry-first lookup", () => {
   // The action-registry's purpose is to replace the string-lookup-against-
   // window pattern. The dispatcher reads window.__bppActionRegistry and
   // calls .get() before falling back to window[name]. These tests pin
@@ -297,7 +297,7 @@ describe("dispatcher registry-first lookup (T0.1)", () => {
   });
 
   test("dispatcher handles a registry that's not yet defined (defensive path)", () => {
-    // Simulate the pre-T0.1 production state where __bppActionRegistry
+    // Simulate the legacy production state where __bppActionRegistry
     // didn't exist. The window[name] fallback must still work.
     delete (/** @type {any} */ (window).__bppActionRegistry);
     const fromWindow = vi.fn();
@@ -316,12 +316,12 @@ describe("dispatcher registry-first lookup (T0.1)", () => {
   });
 });
 
-// ── Bug #3 (UAT 2026-06-01): dispatchers must not throw on non-Element targets ──
+// ── Dispatchers must not throw on non-Element targets ──
 //
 // The dispatcher pattern reads `e.target.closest(...)` to find a
 // data-action ancestor. If e.target is a Text node, the document
 // itself, or a window/event-emitter target, .closest is undefined
-// and the dispatcher throws TypeError. Today's UAT saw a spam of
+// and the dispatcher throws TypeError. Manual testing saw a spam of
 // 'globals.js?v=...: Uncaught TypeError: e.target.closest is not a
 // function' toasts after filtering the photo grid — every dispatcher
 // (click/keydown/input/change/mousedown/mouseup/mouseleave/touchstart/
@@ -346,7 +346,7 @@ describe("dispatcher resilience: non-Element targets must not throw", () => {
     expect(() => document.dispatchEvent(ev)).not.toThrow();
   });
 
-  test("click on Text node INSIDE a data-action element still fires the action (UAT Bug #6)", () => {
+  test("click on Text node INSIDE a data-action element still fires the action", () => {
     // The real-world case: <div data-action="foo">Enhanced</div> renders
     // a Text node child. A click whose e.target is the text node — which
     // can happen depending on hit-testing precision — must still resolve

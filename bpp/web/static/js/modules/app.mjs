@@ -197,6 +197,7 @@ async function _bootstrap() {
     win.faceRecognitionAvailable = !!st.face_recognition_available;
     win.faceInstallable = !!st.face_installable;
     win.nudenetAvailable = !!st.nudenet_available;
+    win.nudenetActive = !!st.nudenet_active;
     win.petsAvailable = !!st.pets_available;
     updateContentFilterLabel();
     updateClipStatusFromAppStatus(st);

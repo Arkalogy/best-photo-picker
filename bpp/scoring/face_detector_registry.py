@@ -21,18 +21,17 @@ RetinaFace ONNX runner — via:
     register_detector(FaceDetector(
         name="retinaface",
         detect=my_retinaface_detect,
+        registry_id="my_retinaface",  # a ModelEntry you register_entry()'d
         toggle_key="model_retinaface",
-        license_id="MIT",
         description="RetinaFace ONNX detector for tiny faces",
     ))
 
-Note that the orchestrator (``_collect_detections``) still
-has detector-specific early-exit logic — SCRFD short-circuits
-when it finds a confident face, YuNet runs as the fast first
-pass, etc. That ordering captures real performance properties
-that aren't generalizable. A plugin's detector runs through
-``run_optional_detector(name, image, min_confidence)`` as an
-additional pass; it doesn't replace the built-in pipeline.
+The orchestrator (``_collect_detections``) keeps its built-in
+detector ordering and early exits (SCRFD short-circuits on a
+confident face, YuNet runs as the fast first pass, …). Every
+registered plugin detector then runs on each photo via
+:func:`run_plugin_detectors`, and its boxes join the same NMS
+merge; it adds to the built-in pipeline rather than replacing it.
 """
 
 from __future__ import annotations
@@ -76,30 +75,52 @@ class FaceDetector:
         detector if ``model_toggles[toggle_key]`` is False. Use
         ``None`` for always-on detectors (e.g. the Haar fallback).
 
-    ``license_id``: SPDX-style identifier for the detector's model
-        weights / code (``"BSD-2-Clause"``, ``"Apache-2.0"``,
-        ``"MIT"``, ``"AGPL-3.0"``). Surfaces in the model registry
-        UI so users can see what licences govern their pipeline.
+    ``registry_id``: id of the :mod:`bpp.registry` entry for the
+        detector's weights. The license is read from that entry —
+        it is never written here — so labels can't drift from the
+        terms the user accepted.
 
     ``description``: one-line tooltip text. Optional.
     """
 
     name: str
     detect: DetectFn
+    registry_id: str
     toggle_key: str | None = None
-    license_id: str = ""
     description: str = ""
+
+    @property
+    def license_label(self) -> str:
+        """Plain-English license, derived from the registry entry."""
+        from bpp.registry.labels import license_label_for
+
+        return license_label_for(self.registry_id)
 
 
 _REGISTRY: _ScoringRegistry[FaceDetector] = _ScoringRegistry("face detector", _log)
 
 
-def register_detector(detector: FaceDetector) -> None:
-    """Add a detector to the registry. Idempotent — replaces on same name."""
+#: Names of the built-in detectors. A plugin can't register under one of
+#: them: the pipeline would ignore it (or, for an embedder, tag the
+#: built-in's stored rows with the plugin's registry id).
+BUILTIN_NAMES: set[str] = set()
+
+
+def register_detector(detector: FaceDetector, *, builtin: bool = False) -> None:
+    """Add an detector to the registry. Re-registering a name replaces it,
+    except that only built-in code (``builtin=True``) may use a
+    built-in name."""
+    if builtin:
+        BUILTIN_NAMES.add(detector.name)
+    elif detector.name in BUILTIN_NAMES:
+        raise ValueError(
+            f"{detector.name!r} is a built-in face detector name; register the "
+            "plugin under its own name."
+        )
     _log.debug(
-        "Registered face detector %r (license=%s, toggle_key=%s)",
+        "Registered face detector %r (registry_id=%s, toggle_key=%s)",
         detector.name,
-        detector.license_id or "unspecified",
+        detector.registry_id,
         detector.toggle_key or "always-on",
     )
     _REGISTRY.register(detector, detector.name)
@@ -118,6 +139,59 @@ def list_detectors() -> list[FaceDetector]:
 def iter_detectors() -> Iterator[FaceDetector]:
     """Iterator alternative to ``list_detectors``."""
     return _REGISTRY.iter_all()
+
+
+#: Plugin detectors that already logged a failure this process.
+_plugin_warned: set[str] = set()
+
+
+def _reset_plugin_warnings_for_tests() -> None:
+    _plugin_warned.clear()
+
+
+def run_plugin_detectors(
+    image: np.ndarray,
+    min_confidence: float,
+    model_toggles: dict[str, bool],
+    *,
+    max_detections: int,
+) -> list[tuple[int, int, int, int, float]]:
+    """Run every registered detector that isn't a built-in.
+
+    Called by the face pipeline once per photo, after the built-in
+    detectors; the returned boxes join the same NMS merge. A detector
+    is skipped while its ``toggle_key`` setting is off or its registry
+    entry's license isn't accepted (logged once). Boxes below
+    ``min_confidence`` or outside the image are dropped and at most
+    ``max_detections`` (the highest-confidence ones) are kept — the
+    same cap the built-ins get. A detector that raises is logged once
+    at WARNING and skipped, so a plugin bug never breaks analysis.
+    """
+    from bpp.scoring.model_load_gate import license_allows
+
+    h, w = image.shape[:2]
+    faces: list[tuple[int, int, int, int, float]] = []
+    for det in _REGISTRY.iter_all():
+        if det.name in BUILTIN_NAMES:
+            continue
+        if det.toggle_key and not model_toggles.get(det.toggle_key, True):
+            continue
+        if not license_allows(det.registry_id, feature=f"Face detector {det.name}"):
+            continue
+        try:
+            boxes = det.detect(image, min_confidence)
+            for x, y, bw, bh, conf in boxes:
+                # Clamp to the image; drop boxes with nothing left inside.
+                x0, y0 = max(0, int(x)), max(0, int(y))
+                x1, y1 = min(w, int(x + bw)), min(h, int(y + bh))
+                if conf >= min_confidence and x1 > x0 and y1 > y0:
+                    faces.append((x0, y0, x1 - x0, y1 - y0, float(conf)))
+        except Exception:
+            if det.name not in _plugin_warned:
+                _plugin_warned.add(det.name)
+                _log.warning("Plugin detector %r failed; skipping it", det.name, exc_info=True)
+    faces.sort(key=lambda f: f[4], reverse=True)
+    return faces[:max_detections]
 
 
 def run_optional_detector(

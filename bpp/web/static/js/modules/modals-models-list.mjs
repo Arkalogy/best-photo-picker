@@ -9,8 +9,10 @@
  */
 
 import { apiFetch } from "./api-client.mjs";
+import { downloadProgressText, waitForDownloadJob } from "./download-jobs.mjs";
 import { _formatBytes } from "./format-helpers.mjs";
 import { loadFaceEmbedderPicker } from "./modals-face-embedders.mjs";
+import { esc, escapeAttr } from "./text-format.mjs";
 import { toast, toastError } from "./toast.mjs";
 
 export async function loadModelsList() {
@@ -60,17 +62,21 @@ export async function loadModelsList() {
         }
       }
       if (f.install_hint) tipLines.push("Install: " + f.install_hint);
-      const tipText = tipLines.join("\n").replace(/"/g, "&quot;");
+      if (f.no_download && f.download_hint) tipLines.push("Download: " + f.download_hint);
+      // Labels / names may come from plugins: escape everything rendered.
+      const tipText = escapeAttr(tipLines.join("\n"));
       const tip =
         '<span class="setting-info model-info" role="button" tabindex="0" title="' +
         tipText +
         '">?</span>';
       const isLibOnly = f.lib_only;
-      const safeLabel = f.label.replace(/'/g, "\\'");
-      const safeDesc = f.description.replace(/'/g, "\\'");
+      const safeLabel = escapeAttr(f.label);
+      const safeDesc = escapeAttr(f.description);
       const ready = f.status === "ready";
       const canPipInstall = !ready && f.install_key && (isNoLib || isLibOnly);
-      const canDownload = (!ready || isFallback) && !isLibOnly && !isNoLib;
+      // no_download: bpp can't fetch it (a plugin manages the file) —
+      // no Download, but Uninstall still frees the space.
+      const canDownload = (!ready || isFallback) && !isLibOnly && !isNoLib && !f.no_download;
       const hasAnyOnDisk = f.files.some((/** @type {any} */ x) => x.exists);
       const canUninstall = hasAnyOnDisk && !isLibOnly && !isNoLib;
       let btnInner;
@@ -79,12 +85,12 @@ export async function loadModelsList() {
           '<button class="model-redownload model-install-btn" title="Install ' +
           safeLabel +
           '" data-action="installPackage" data-arg0="' +
-          f.install_key +
+          escapeAttr(f.install_key) +
           '" data-arg1="' +
           safeLabel +
           '">Install</button>';
       } else {
-        const filesJson = JSON.stringify(f.files).replace(/"/g, "&quot;");
+        const filesJson = escapeAttr(JSON.stringify(f.files));
         const btnTitle = ready ? "Already up to date" : "Download";
         const btnDisabled = !canDownload ? " disabled" : "";
         btnInner =
@@ -101,7 +107,7 @@ export async function loadModelsList() {
           ">&#x21bb;</button>";
       }
       if (canUninstall) {
-        const filesJson = JSON.stringify(f.files).replace(/"/g, "&quot;");
+        const filesJson = escapeAttr(JSON.stringify(f.files));
         btnInner +=
           '<button class="model-redownload model-uninstall" title="Delete from disk"' +
           ' data-action="uninstallFeature" data-files="' +
@@ -119,7 +125,9 @@ export async function loadModelsList() {
           ? f.install_key
             ? "Not installed"
             : f.install_hint || "not installed"
-          : size || statusLabel.toLowerCase();
+          : f.no_download && !ready
+            ? f.download_hint || "not downloadable here"
+            : size || statusLabel.toLowerCase();
 
       let toggleHtml = "";
       if (f.toggle_key) {
@@ -162,14 +170,14 @@ export async function loadModelsList() {
         statusLabel +
         '"></span>' +
         '<span class="model-name">' +
-        f.label +
+        esc(f.label) +
         badge +
         " " +
         tip +
         "</span>" +
         '<span class="model-spacer"></span>' +
         '<span class="model-size">' +
-        sizeText +
+        esc(sizeText) +
         "</span>" +
         btnHtml;
 
@@ -186,6 +194,7 @@ export async function loadModelsList() {
       (/** @type {any} */ f) =>
         f.status !== "ready" &&
         !f.lib_only &&
+        !f.no_download &&
         f.status !== "no_library" &&
         f.files.some((/** @type {any} */ x) => !x.exists)
     );
@@ -202,11 +211,14 @@ export async function loadModelsList() {
               .filter((/** @type {any} */ x) => !x.exists)
               .map((/** @type {any} */ x) => x.name);
             for (const name of names) {
-              await apiFetch("/api/v1/models/redownload", {
+              const started = await apiFetch("/api/v1/models/redownload", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ name }),
-                signal: AbortSignal.timeout(180000),
+              });
+              await waitForDownloadJob(started?.job, {
+                onProgress: (snap) =>
+                  (allBtn.textContent = `${name}: ${downloadProgressText(snap)}`),
               });
             }
           }

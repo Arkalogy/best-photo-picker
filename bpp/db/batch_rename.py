@@ -64,19 +64,26 @@ def recover_interrupted_rename(conn: sqlite3.Connection, library_path: str) -> l
     if not os.path.exists(jp):
         return []
 
+    from bpp.utils.json_utils import load_for_rewrite, move_aside
+
     try:
-        with open(jp) as f:
-            entries: list[dict[str, Any]] = json.load(f)
-    except (json.JSONDecodeError, OSError):
-        logger.warning("Corrupt rename journal at %s — removing", jp)
-        _remove_journal(jp)
+        # A corrupt or wrong-shape journal is kept as a .corrupt copy.
+        entries = load_for_rewrite(jp, None, expected_type=list, context="rename journal")
+    except OSError as exc:
+        # Unreadable for now (permission, locked, offline volume): keep it
+        # for the next start rather than lose the recovery record.
+        logger.warning("Can't read rename journal %s (%s); will retry next start", jp, exc)
+        return []
+    if entries is None:
         return []
 
     reverted: list[dict[str, Any]] = []
+    malformed = retry = False
     for entry in entries:
-        old_path = entry.get("old")
-        new_path = entry.get("new")
-        if not old_path or not new_path:
+        old_path = entry.get("old") if isinstance(entry, dict) else None
+        new_path = entry.get("new") if isinstance(entry, dict) else None
+        if not (isinstance(old_path, str) and old_path and isinstance(new_path, str) and new_path):
+            malformed = True
             continue
         # If new_path exists on disk but old_path does not, revert.
         if os.path.exists(new_path) and not os.path.exists(old_path):
@@ -86,8 +93,20 @@ def recover_interrupted_rename(conn: sqlite3.Connection, library_path: str) -> l
                 logger.info("Reverted interrupted rename: %s -> %s", new_path, old_path)
             except OSError as e:
                 logger.error("Failed to revert rename %s -> %s: %s", new_path, old_path, e)
+                retry = True
 
-    _remove_journal(jp)
+    if retry:
+        # A revert failed (locked file, offline volume): keep the record
+        # in place so the next start tries again.
+        logger.warning("Kept rename journal %s to retry the failed reverts", jp)
+    elif malformed:
+        # Some entries couldn't be read: keep the journal for a manual fix.
+        try:
+            move_aside(jp, context="rename journal")
+        except OSError as exc:
+            logger.warning("Couldn't set aside rename journal %s (%s); left in place", jp, exc)
+    else:
+        _remove_journal(jp)
     if reverted:
         logger.info("Recovered %d interrupted renames from journal", len(reverted))
     return reverted

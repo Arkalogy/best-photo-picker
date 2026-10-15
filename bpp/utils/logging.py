@@ -155,7 +155,7 @@ class InMemoryHandler(logging.Handler):
         # needs to see in Activity, not just buried in server.log.
         if record.name.startswith(self._UI_NOISE_LOGGERS) and record.levelno < logging.ERROR:
             return
-        # Bug #11 (UAT 2026-06-01): the activity-log dropdown surfaces
+        # The activity-log dropdown surfaces
         # the formatted message verbatim. Python's standard formatter
         # appends the traceback to the message when record.exc_info is
         # set — dumping 50+ lines of urllib internals into the user-

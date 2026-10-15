@@ -162,7 +162,7 @@ def register_permanent_delete_recovery(ctx: object, library_path: str | None = N
     re-running with a different ctx during library switch picks up
     the new ctx via closure).
 
-    P1 — ``library_path`` (optional, but passed by the state lifecycle):
+    ``library_path`` (optional, but passed by the state lifecycle):
     when provided, the handler is wrapped with
     :func:`bpp.db.journal.library_bound_recovery` so a switch_library
     between registration and recovery refuses to delete files in the

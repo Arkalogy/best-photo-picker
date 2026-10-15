@@ -85,6 +85,37 @@ def parse_create_inputs(
     return path_hash, cluster_id, new_person_name, parse_bbox_pct(bbox_pct)
 
 
+def require_hand_drawn_faces_supported(conn) -> None:
+    """Hand-drawn and hand-adjusted faces are embedded with SFace. They
+    can only be compared with the library's other faces when those came
+    from SFace too, so refuse in any other library (dlib, buffalo_s, a
+    plugin — loaded or not) with a clear message."""
+    from bpp.db.face_embedding_safety import active_embedding_dim
+
+    row = conn.execute(
+        "SELECT value FROM settings WHERE key='face_embedding_method_extracted'"
+    ).fetchone()
+    picked = conn.execute("SELECT value FROM settings WHERE key='face_embedding_method'").fetchone()
+    if row and row[0]:
+        ok = row[0] == "sface"
+    elif picked and picked[0] == "dlib":
+        # Older libraries left dlib rows untagged; the setting says dlib.
+        ok = False
+    else:
+        # Never recorded (older library): SFace-sized rows tagged SFace
+        # or untagged, and no rows from another model.
+        other = conn.execute(
+            "SELECT 1 FROM face_embeddings WHERE producing_model_id IS NOT NULL "
+            "AND producing_model_id NOT IN ('sface', 'sface_yunet') LIMIT 1"
+        ).fetchone()
+        ok = other is None and active_embedding_dim(conn) == 128
+    if not ok:
+        raise ValidationError(
+            "Drawing or adjusting faces by hand works only with the default face "
+            "model (SFace). Switch to SFace in Settings → Models to use it."
+        )
+
+
 def extract_embedding_at_region(
     image: Any, bbox_pct_tuple: tuple[float, float, float, float]
 ) -> dict:
@@ -142,12 +173,13 @@ def detect_duplicate_face(
         iou = _bbox_iou(ex_bbox, tuple(int(v) for v in new_bbox[:4]))
         if iou < IOU_DUP_THRESH:
             continue
-        # Protection A: a corrupt existing row can't tell us anything
+        # A corrupt existing row can't tell us anything
         # useful about duplicates — skip it (safer than crashing the
         # user's drag-to-create flow on a single bad neighbor).
         ex_emb = decode_embedding(
             r["embedding"],
             where="face_create_helpers.dup_guard",
+            dim=int(np.asarray(new_emb).shape[0]),
         )
         if ex_emb is None:
             continue
@@ -203,7 +235,7 @@ def insert_face_and_optional_album(
     forcing a behaviour change here.
 
     ``extraction_max_long_side`` is the detector-input size that
-    produced ``new_bbox`` (v40 / Bug #9 hardening). Should always be
+    produced ``new_bbox`` (v40 coordinate-space hardening). Should always be
     passed by new callers; default None preserves the contract for
     pre-v40 test fixtures.
     """

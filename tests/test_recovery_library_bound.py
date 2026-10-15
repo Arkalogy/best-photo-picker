@@ -1,6 +1,6 @@
-"""P1.5 — recovery handlers refuse to fire after a library switch.
+"""Recovery handlers refuse to fire after a library switch.
 
-The audit identified a data-corruption window: ``WebAppState`` is mutated
+This guards a data-corruption window: ``WebAppState`` is mutated
 in place by ``switch_library``; recovery handlers that close over ``ctx``
 would happily fire with the new library's resolved paths even though the
 pending journal entry described work for the old library.

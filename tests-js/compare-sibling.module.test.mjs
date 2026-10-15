@@ -27,7 +27,7 @@ import {
   openCompareWithSibling,
 } from "../bpp/web/static/js/modules/compare-sibling.mjs";
 
-describe("_siblingDelete — recoverable prune (Item 1)", () => {
+describe("_siblingDelete — recoverable prune", () => {
   let keeper, s1, s2;
   beforeEach(() => {
     vi.mocked(apiFetch).mockClear();

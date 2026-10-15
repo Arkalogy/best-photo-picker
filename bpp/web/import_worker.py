@@ -57,7 +57,7 @@ class ImportWorker(BackgroundWorker):
         batch_name: str | None,
         import_live_photo_sidecars: bool,
     ) -> None:
-        # Server-log breadcrumbs — same pattern as the M10/M11 + Phase 5
+        # Server-log breadcrumbs — same pattern as the face-worker + Phase 5
         # daemon bookends. Import is a 5-10 minute run on large
         # libraries; without these, an operator debugging a stuck or
         # slow run sees no anchor in server.log tying the attempt to a

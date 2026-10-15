@@ -1,7 +1,7 @@
-"""P3.5 — face_extraction_journal per-phase resume tests.
+"""face_extraction_journal per-phase resume tests.
 
-The plan calls out three named integration tests; this file delivers
-them plus unit coverage for the journal module itself.
+Three named integration tests, plus unit coverage for the journal module
+itself.
 
 * ``test_extraction_resumes_after_sigkill_at_phase_N`` for N in {2..7}
 * ``test_dismissed_slots_preserved_across_method_change``
@@ -40,7 +40,7 @@ def _build_schema(c: sqlite3.Connection) -> None:
         " snapshot_json TEXT,"
         " started_at INTEGER NOT NULL,"
         " completed_at INTEGER,"
-        # T0.4 v39 column.
+        # v39 retry_count column.
         " retry_count INTEGER NOT NULL DEFAULT 0"
         ")"
     )
@@ -53,8 +53,8 @@ def _build_schema(c: sqlite3.Connection) -> None:
         " embedding BLOB,"
         " quality REAL,"
         f" cluster_id INTEGER NOT NULL DEFAULT {CLUSTER_UNASSIGNED},"
-        " extraction_max_long_side INTEGER,"  # v40 / Bug #9 hardening
-        " producing_model_id TEXT,"  # v41 / Batch 7 derived-data purge
+        " extraction_max_long_side INTEGER,"  # v40 bbox-scale hardening
+        " producing_model_id TEXT,"  # v41 derived-data purge
         " UNIQUE(photo_id, face_index)"
         ")"
     )
@@ -162,11 +162,11 @@ class TestJournalModule:
         assert loaded.dismissed_slots == frozenset({(1, 0), (2, 3)})
 
 
-# ── T0.4 — bounded recovery retries ──
+# ── Bounded recovery retries ──
 
 
 class TestBoundedRecoveryRetries:
-    """T0.4: a deterministic failure must not loop on every server
+    """A deterministic failure must not loop on every server
     restart forever. The journal carries a ``retry_count`` that the
     recovery handler increments before each attempt; once it exceeds
     ``MAX_RECOVERY_RETRIES`` the row is force-completed with
@@ -224,7 +224,7 @@ class TestBoundedRecoveryRetries:
 
 
 class TestMigrationV39:
-    """T0.4 schema v39 — add retry_count column to face_extraction_journal."""
+    """Schema v39 — add retry_count column to face_extraction_journal."""
 
     def _build_v37_schema(self):
         """Build the journal table as it existed at v37 (no retry_count)."""
@@ -334,7 +334,7 @@ class TestRecoveryHandlerBoundedRetries:
 
 
 class TestResumeAfterSigkill:
-    """The plan's load-bearing test: simulate a SIGKILL between
+    """The load-bearing test: simulate a SIGKILL between
     phases N and N+1 by stopping the orchestrator mid-run, then
     invoking it again with ``resume_run_id``. Phases 1..N must not
     re-run; phase N+1 onwards must execute.
@@ -425,7 +425,7 @@ class TestResumeAfterSigkill:
 
 
 class TestOrchestratorResume:
-    """The plan's load-bearing claim: a SIGKILL between phases resumes
+    """The load-bearing claim: a SIGKILL between phases resumes
     at the next incomplete phase, NOT phase 1.
 
     This is the real integration test: we actually call
@@ -547,14 +547,14 @@ class TestOrchestratorResume:
         assert row["completed_at"] is not None
 
     def test_phase_7_raise_leaves_journal_pending_for_recovery(self, conn, monkeypatch):
-        """T0.3: when reconstruct_identities raises, the orchestrator
+        """When reconstruct_identities raises, the orchestrator
         must leave the journal row PENDING so the recovery handler can
-        retry on next startup. Pre-T0.3 the orchestrator caught the
+        retry on next startup. Previously the orchestrator caught the
         exception, marked PHASE_BIT_IDENTITY, and called complete_run —
         which made recovery skip the run forever, leaving album state
         permanently out of sync.
 
-        T0.4 adds bounded retries on top of this, so an infinite-retry
+        Bounded retries sit on top of this, so an infinite-retry
         loop on a deterministic failure is still bounded — but the
         first layer of defense is "don't silently swallow partial
         failures."
@@ -666,8 +666,8 @@ class TestOrchestratorResume:
             " bbox_x INTEGER, bbox_y INTEGER, bbox_w INTEGER, bbox_h INTEGER,"
             " embedding BLOB, quality REAL,"
             f" cluster_id INTEGER NOT NULL DEFAULT {CLUSTER_UNASSIGNED},"
-            " extraction_max_long_side INTEGER,"  # v40 / Bug #9 hardening
-            " producing_model_id TEXT,"  # v41 / Batch 7 derived-data purge
+            " extraction_max_long_side INTEGER,"  # v40 bbox-scale hardening
+            " producing_model_id TEXT,"  # v41 derived-data purge
             " UNIQUE(photo_id, face_index)"
             ")"
         )
@@ -710,11 +710,11 @@ class TestOrchestratorResume:
         journal._reset_table_cache()  # cleanup for other tests
 
 
-# ── T1.1: dismissed_slots freshness on resume ──
+# ── dismissed_slots freshness on resume ──
 
 
 class TestResumeRecapturesDismissedSlots:
-    """T1.1: when the orchestrator resumes a crashed run, phase 4.5
+    """When the orchestrator resumes a crashed run, phase 4.5
     (``capture_dismissed_slots``) MUST re-read the current DB state
     instead of trusting the journal-stored snapshot's
     ``dismissed_slots`` field. Otherwise a face the user dismissed
@@ -730,7 +730,7 @@ class TestResumeRecapturesDismissedSlots:
       4. After the resumed run completes, face ``(1, 0)`` is still
          ``CLUSTER_DISMISSED``.
 
-    Pre-T1.1 the worry was that the orchestrator could be refactored
+    The worry was that the orchestrator could be refactored
     to reuse the rehydrated snapshot's ``dismissed_slots`` — this test
     is the regression gate.
     """
@@ -959,7 +959,7 @@ class TestResumeRecapturesDismissedSlots:
 
 
 class TestDismissedSlotsPreservedAcrossMethodChange:
-    """The audit's main P3 risk callout: when the embedding method
+    """The main risk: when the embedding method
     swaps (sface ↔ dlib), the reconcile phase wipes face_embeddings,
     BUT user-dismissed slots are a separate intentional state that
     must survive the wipe — otherwise the user has to re-dismiss them
@@ -1122,7 +1122,7 @@ class TestConcurrentReclusterSerializes:
 
 
 class TestShipCriterion6kSignalInjection:
-    """P3 plan ship criterion: 6,000-photo library face extraction killed
+    """Ship criterion: 6,000-photo library face extraction killed
     at 60% resumes on next startup and completes the remaining 40%
     without re-running the already-extracted photos.
 
@@ -1364,7 +1364,7 @@ class TestShipCriterion6kSignalInjection:
 
 
 class TestClusteringJournalClosedOnResume:
-    """H1 / review 2026-05-31 — when ClusterPhase is journal-complete on
+    """When ClusterPhase is journal-complete on
     resume, the original face_clustering operation_journal row left
     PENDING by the prior run must be closed by the resumed run.
 
@@ -1448,7 +1448,7 @@ class TestClusteringJournalClosedOnResume:
 
             # Resume — empty with_faces so phase 5 / 6 / 7 do trivial
             # work, but the journal-complete bits drive the orchestrator
-            # through the rehydrate path the H1 fix touched.
+            # through the rehydrate path the fix touched.
             _faces_found, _n_clusters = extract_and_cluster_faces(
                 c,
                 with_faces=[],
@@ -1461,7 +1461,7 @@ class TestClusteringJournalClosedOnResume:
 
             # journal_complete deletes the row (see bpp/db/journal.py
             # :journal_complete — DELETE keeps the table small). So
-            # the H1 fix manifests as row absence, not completed_at!=NULL.
+            # the fix manifests as row absence, not completed_at!=NULL.
             row = c.execute(
                 "SELECT id FROM operation_journal WHERE id = ?",
                 (orphan_id,),
@@ -1481,7 +1481,7 @@ class TestClusteringJournalClosedOnResume:
 
     def test_fresh_run_no_orphan_row(self, monkeypatch):
         """Sanity inverse: a fresh run that completes phase 6
-        normally still closes its own row (the H1 fix didn't break
+        normally still closes its own row (the fix didn't break
         the happy path)."""
         from bpp.scoring.face_embed import embedding_method
         from bpp.web import face_worker

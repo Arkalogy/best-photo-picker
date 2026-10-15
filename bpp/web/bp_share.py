@@ -28,7 +28,7 @@ def api_share_info() -> tuple[Response, int]:
     The share URL embeds the *persistent* share token (not the app
     session token), so URLs handed to phones survive server restarts.
 
-    L6: the response body contains the share token as part of the URL
+    The response body contains the share token as part of the URL
     query string. This is *necessary* for the URL to function when
     pasted/scanned, but we set ``Cache-Control: no-store`` so the
     response isn't cached by any intermediary or shown in browser back-
@@ -144,7 +144,7 @@ def api_share_revoke() -> tuple[Response, int]:
         else None
     )
     resp = jsonify({"share_url": share_url})
-    resp.headers["Cache-Control"] = "no-store"  # L6: token embedded in URL
+    resp.headers["Cache-Control"] = "no-store"  # token embedded in URL
     return resp, 200
 
 

@@ -29,7 +29,7 @@ _MODEL_DIR = str(_models_dir())
 #         heavier "_full" and "_heavy" models exist with more
 #         precision but the lite is sufficient for "is the body in
 #         frame" composition heuristics.
-# License: Apache 2.0 (MediaPipe).
+# License: see the bpp.registry entry ``mediapipe_pose_landmarker_lite``.
 # To bump: same `/latest/` pattern — URL stays stable, just refresh
 #         SHA when Google rotates the artifact.
 _POSE_MODEL_PATH = os.path.join(_MODEL_DIR, "pose_landmarker_lite.task")
@@ -59,7 +59,7 @@ _pose_model = ModelSingleton(
     model_url=_POSE_MODEL_URL,
     model_sha256=_POSE_MODEL_SHA256,
     create_fn=_create_pose_detector,
-    registry_id=None,  # ancillary mediapipe pose model, no licensing concern
+    registry_id="mediapipe_pose_landmarker_lite",
     import_check=lambda: __import__("mediapipe"),
 )
 
@@ -80,7 +80,7 @@ _RIGHT_WRIST = 16
 def ensure_pose_model() -> list[str]:
     """Pre-download pose model. Returns list of warnings."""
     warnings: list[str] = []
-    if _pose_model.ensure_model() is None:
+    if _pose_model.ensure_model() is None and not _pose_model.license_blocked():
         warnings.append("PoseLandmarker unavailable — pose detection disabled")
     return warnings
 

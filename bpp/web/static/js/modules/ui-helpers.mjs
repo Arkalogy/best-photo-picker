@@ -6,13 +6,17 @@
  *  - `initTooltips()` creates a `.tooltip` overlay and binds mouseenter
  *    listeners to every `.tip[data-tip]` element.
  *  - `updateContentFilterLabel()` updates the sensitive-photo control's
- *    tooltip depending on whether `nudenetAvailable` is true.
+ *    tooltip depending on whether automatic detection is active
+ *    (`nudenetActive`: NudeNet accepted with the current license text
+ *    AND its weights on disk).
  *
- * Reads `state.nudenetAvailable` (still classic) and calls
+ * Reads `window.nudenetActive` and calls
  * `scheduleRecompute()` (now in analysis.mjs, window-bridged).
  */
 
+import { apiFetch } from "./api-client.mjs";
 import { formatVal } from "./format-helpers.mjs";
+import { MODELS_CHANGED_EVENT } from "./models-changed.mjs";
 import { state } from "./state.mjs";
 import { scheduleRecompute } from "./analysis.mjs";
 
@@ -61,6 +65,29 @@ export function initTooltips() {
   });
 }
 
+/**
+ * Pure: the sensitive-photo control's tooltip text. ``active`` means
+ * automatic detection actually runs (NudeNet accepted with the current
+ * license text AND its weights on disk) — not merely that it could be
+ * enabled.
+ *
+ * @param {boolean} active
+ * @returns {string}
+ */
+export function contentFilterTipText(active) {
+  const policy =
+    "Allow = sensitive photos compete for picks; Exclude = kept out of auto-picks " +
+    "(still in your library). Manual includes always win.";
+  if (active) {
+    return `On-device nudity detection (NudeNet) is on. ${policy}`;
+  }
+  return (
+    "Accept and download the NudeNet model in Settings → Models to turn on automatic " +
+    "detection; until then only photos you flag manually are treated as " +
+    `sensitive. ${policy}`
+  );
+}
+
 export function updateContentFilterLabel() {
   /** @type {any} */
   const win = window;
@@ -68,14 +95,32 @@ export function updateContentFilterLabel() {
     document.getElementById("sensitive-filter-tip")
   );
   if (!tip) return;
-  const policy =
-    "Allow = sensitive photos compete for picks; Exclude = kept out of auto-picks " +
-    "(still in your library). Manual includes always win.";
-  if (win.nudenetAvailable) {
-    tip.dataset.tip = `On-device nudity detection (NudeNet). ${policy}`;
-  } else {
-    tip.dataset.tip =
-      "Install nudenet for on-device detection: pip install bppicker[nudity]. " +
-      `Until then only photos you mark sensitive are flagged. ${policy}`;
+  tip.dataset.tip = contentFilterTipText(!!win.nudenetActive);
+}
+
+/**
+ * Re-read whether the content filter is active (after its license or
+ * weights changed) and update the hint. A failed fetch keeps the old one.
+ */
+let _contentFilterRefreshSeq = 0;
+
+export async function refreshContentFilterStatus() {
+  // Changes can fire back to back (accept, then the download finishing):
+  // only the newest request's answer may update the hint.
+  const seq = ++_contentFilterRefreshSeq;
+  try {
+    // The small endpoint, not the whole /api/v1/status snapshot.
+    const st = await apiFetch("/api/v1/models/content-filter");
+    if (seq !== _contentFilterRefreshSeq) return;
+    /** @type {any} */
+    const win = window; // same global app.mjs sets at startup
+    win.nudenetActive = !!st?.active;
+    updateContentFilterLabel();
+  } catch (err) {
+    console.warn("[content filter] couldn't refresh its status:", err);
   }
+}
+
+if (typeof document !== "undefined") {
+  document.addEventListener(MODELS_CHANGED_EVENT, () => void refreshContentFilterStatus());
 }

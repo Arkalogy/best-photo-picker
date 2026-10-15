@@ -18,6 +18,7 @@ from typing import Any
 from flask import Blueprint, jsonify, request
 
 from bpp.errors import BppError, ValidationError
+from bpp.utils.download import plain_reason
 from bpp.utils.logging import get_logger
 from bpp.web.share import requires_local_app
 
@@ -131,28 +132,38 @@ def api_ensure_face_embedder_weights() -> tuple[Any, int]:
         )
     _, ensure_fn, _ = loaders[registry_id]
 
-    try:
-        path = ensure_fn()
-    except Exception as exc:
-        # Surface the underlying reason — could be a ModelLoadBlockedError
-        # (policy refusal), a ModelIntegrityError (SHA mismatch on the
-        # zip or extracted file), or a network OSError. All three need
-        # to reach the picker so the toast says what actually went wrong.
-        raise BppError(
-            "Failed to download catalog model weights",
-            user_message=f"Couldn't download {registry_id}: {exc!s}",
-            diagnostic_message=(f"ensure-weights failed for {registry_id}: {exc!s}"),
-            registry_id=registry_id,
-        ) from exc
-    log.info(
-        "Catalog weights ensured: id=%s path=%s",
-        registry_id,
-        path,
+    # Refusals (withdrawn status, license not accepted / out of date)
+    # answer immediately; only the fetch itself runs in the background.
+    from bpp.web.bp_models import (
+        _enforce_download_license_gate,
+        _enforce_download_status_gate,
     )
-    return (
-        jsonify({"ok": True, "size_bytes": os.path.getsize(path)}),
-        200,
-    )
+
+    _enforce_download_status_gate(registry_id, registry_id)
+    _enforce_download_license_gate(registry_id, registry_id)
+
+    def _work() -> dict[str, Any]:
+        try:
+            path = ensure_fn()
+        except Exception as exc:
+            # Surface the underlying reason — a ModelLoadBlockedError,
+            # a ModelIntegrityError (SHA mismatch) or a network OSError —
+            # so the picker's toast says what actually went wrong.
+            raise BppError(
+                "Failed to download catalog model weights",
+                # Model + reason; the picker's toast adds "Couldn't
+                # download …" and the recovery hint.
+                user_message=f"{_display_name(registry_id)}: {plain_reason(exc)}",
+                diagnostic_message=(f"ensure-weights failed for {registry_id}: {exc!s}"),
+                registry_id=registry_id,
+            ) from exc
+        log.info("Catalog weights ensured: id=%s path=%s", registry_id, path)
+        return {"ok": True, "size_bytes": os.path.getsize(path)}
+
+    from bpp.web import model_download_jobs
+
+    job, _started = model_download_jobs.start(f"catalog:{registry_id}", registry_id, _work)
+    return jsonify(job.to_dict()), 202
 
 
 @bp.post("/api/v1/face-embedders/uninstall-weights")
@@ -189,7 +200,7 @@ def api_uninstall_face_embedder_weights() -> tuple[Any, int]:
     except Exception as exc:
         raise BppError(
             "Failed to uninstall catalog model weights",
-            user_message=f"Couldn't uninstall {registry_id}: {exc!s}",
+            user_message=f"Couldn't uninstall {_display_name(registry_id)}: {plain_reason(exc)}",
             diagnostic_message=(f"uninstall-weights failed for {registry_id}: {exc!s}"),
             registry_id=registry_id,
         ) from exc
@@ -199,3 +210,10 @@ def api_uninstall_face_embedder_weights() -> tuple[Any, int]:
         bytes_freed,
     )
     return jsonify({"ok": True, "bytes_freed": bytes_freed}), 200
+
+
+def _display_name(registry_id: str) -> str:
+    from bpp.registry.model_registry import get_entry
+
+    entry = get_entry(registry_id)
+    return entry.display_name if entry is not None else registry_id

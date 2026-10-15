@@ -468,7 +468,7 @@ class TestTiledDetection:
 
         # Patch the detector registry entries directly. The orchestrator
         # calls _DETECTORS[name](image, conf) — patching the bare function
-        # symbol no longer takes effect since F-12 introduced the
+        # symbol no longer takes effect since a later change introduced the
         # registry indirection.
         with (
             patch.dict(

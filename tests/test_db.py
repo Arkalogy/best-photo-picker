@@ -274,7 +274,7 @@ class TestAlbums:
         assert len(selected) == 2
 
     def test_set_album_selection_clears_then_sets_atomically(self, conn, sample_photos):
-        """R8-H6: a fresh selection must replace the prior one — every
+        """A fresh selection must replace the prior one — every
         photo in the album ends up selected iff its id is in the new
         set. Locks the contract that "set selection" is a complete
         replacement, not an additive merge."""
@@ -295,7 +295,7 @@ class TestAlbums:
         )
 
     def test_set_album_selection_uses_single_update_statement(self, conn, sample_photos):
-        """R8-H6: the implementation must collapse "clear then set"
+        """The implementation must collapse "clear then set"
         into ONE statement so two concurrent recompute writers can't
         interleave between the clear and the set. Use sqlite3's
         `set_trace_callback` to capture every executed SQL statement
@@ -318,7 +318,7 @@ class TestAlbums:
 
         update_calls = [s for s in captured if s.lstrip().upper().startswith("UPDATE ALBUM_PHOTOS")]
         assert len(update_calls) == 1, (
-            f"R8-H6: expected ONE UPDATE statement to avoid the clear-then-set "
+            f"Expected ONE UPDATE statement to avoid the clear-then-set "
             f"race, got {len(update_calls)}: {update_calls}"
         )
         # The single statement must use a CASE expression to express

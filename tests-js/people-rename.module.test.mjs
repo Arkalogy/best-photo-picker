@@ -162,7 +162,7 @@ describe("renamePerson merge-on-duplicate", () => {
   });
 });
 
-describe("renamePerson — success contract + optimistic revert (review CR)", () => {
+describe("renamePerson — success contract + optimistic revert", () => {
   beforeEach(() => {
     /** @type {any} */ (state).albumList = [
       { id: 50, album_type: "smart_person", name: "", rule: { cluster_id: 6 } },

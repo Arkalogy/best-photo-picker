@@ -1,7 +1,6 @@
 """Translate precise registry field values into user-facing plain English.
 
-Q10 of the legal-posture rollout: the registry uses non-warranty
-field names (``commercial_use_restriction_known``,
+The registry uses non-warranty field names (``commercial_use_restriction_known``,
 ``upstream_claimed_license_class``, etc.) so the data model does not
 read like a legal opinion. But users still need a readable picker
 entry — surfacing raw enum values like
@@ -33,7 +32,7 @@ the enum
   property) would re-couple the data model and the presentation
   layer that the rename intended to separate. Keeping translations
   in this module preserves the data-model-is-not-an-opinion
-  property of item 24 while still giving the UI one place to look.
+  property while still giving the UI one place to look.
 """
 
 from __future__ import annotations
@@ -41,7 +40,7 @@ from __future__ import annotations
 from bpp.registry.model_registry import LicenseClass, ModelEntry, ModelStatus
 
 #: Subtitle displayed under the "Restricted-license models" group
-#: header in the picker (item 4 + Q1). Same text shipped from one
+#: header in the picker. Same text shipped from one
 #: place so the GUI picker, the CLI `bpp model list` output, and the
 #: Settings → Models panel render identical wording.
 RESTRICTED_GROUP_SUBTITLE = "Research-only / non-commercial unless you have separate rights"
@@ -51,7 +50,7 @@ RESTRICTED_GROUP_TITLE = "Restricted-license models"
 
 #: Title + subtitle for the permissive group. Plain so the picker
 #: groups permissive entries under a neutral header rather than
-#: implying anything is "recommended" or "best" (trap T3).
+#: implying anything is "recommended" or "best".
 PERMISSIVE_GROUP_TITLE = "Permissively-licensed models"
 PERMISSIVE_GROUP_SUBTITLE = "Free for commercial and personal use"
 
@@ -77,11 +76,27 @@ def plain_english_license_label(license_class: LicenseClass) -> str:
     return _LICENSE_LABELS[license_class]
 
 
+def license_label_for(registry_id: str) -> str:
+    """Plain-English license of the registry entry ``registry_id``.
+
+    The one way code outside the registry gets a license string, so a
+    label can never disagree with the entry the user accepted. An
+    unregistered id reads "license unknown" rather than raising —
+    callers use this for display.
+    """
+    from bpp.registry.model_registry import get_entry
+
+    entry = get_entry(registry_id)
+    if entry is None:
+        return _LICENSE_LABELS[LicenseClass.UNKNOWN]
+    return plain_english_license_label(entry.upstream_claimed_license_class)
+
+
 def group_for_entry(entry: ModelEntry) -> tuple[str, str]:
     """Return ``(group_title, group_subtitle)`` for the picker group
     that ``entry`` belongs to.
 
-    Item 4: the restricted-license group must always be labelled
+    The restricted-license group must always be labelled
     as such (not "experimental," not "recommended"), so the picker
     cannot accidentally read like a quality endorsement of
     restricted models. Pairs with :func:`ui_label_for_entry` for

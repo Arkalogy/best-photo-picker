@@ -66,7 +66,7 @@ def _refresh_tag_albums(conn: sqlite3.Connection) -> None:
     ).fetchall()
     stale_album_ids: list[int] = []
     for album_id, rule_json in existing:
-        rule = safe_json_loads(rule_json, {}, context="smart_tag album rule")
+        rule = safe_json_loads(rule_json, {}, context="smart_tag album rule", expected_type=dict)
         tid = rule.get("tag_id")
         if tid is not None and (tid not in active_tag_ids or not tag_photos.get(tid)):
             stale_album_ids.append(album_id)

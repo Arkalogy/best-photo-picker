@@ -17,7 +17,7 @@ HandLandmarker. Two execution architectures are supported:
 
 Imported from ``analyze_worker.py``; not part of the public API.
 
-P2: queue / sentinel / drain / join machinery moved to
+Queue / sentinel / drain / join machinery moved to
 :class:`bpp.utils.subprocess_runner.BoundedSubprocessRunner`. This
 module keeps the face-extraction-specific bits:
 
@@ -80,7 +80,10 @@ def _face_extraction_worker(
     try:
         from bpp.db.connection import init_db
         from bpp.db.photos import get_photo_id_map_by_paths
+        from bpp.web.analyze_model_preflight import apply_run_download_skips
         from bpp.web.face_worker import extract_and_cluster_faces
+
+        apply_run_download_skips(config)
 
         conn = init_db(db_path)
         photo_map = get_photo_id_map_by_paths(
@@ -118,7 +121,8 @@ def _face_extraction_worker(
         result_queue.put(
             {
                 "type": "fatal_error",
-                "error": str(e),
+                # A BppError carries words written for the user.
+                "error": getattr(e, "user_message", None) or str(e),
                 "traceback": traceback.format_exc(),
             }
         )
@@ -335,7 +339,7 @@ def run_face_extraction_subprocess(
     before the crash are kept (incremental commit pattern), so
     retrying picks up where it stopped.
 
-    Cancellation (P1): ``cancel_event`` accepts the unified token
+    Cancellation: ``cancel_event`` accepts the unified token
     contract. The chunk loop polls between chunks so a cancel signal
     halts at the next chunk boundary (≤ one chunk of work). The child
     also gets a picklable mp.Event so its inner detect/embed loop and
@@ -350,7 +354,7 @@ def run_face_extraction_subprocess(
     # See _snapshot_config docstring for the mappingproxy gotcha.
     config_snapshot = _snapshot_config(config)
 
-    # P1 cancel token — kept here in the orchestrator (not delegated to
+    # Cancel token — kept here in the orchestrator (not delegated to
     # the runner) because the between-chunk poll needs the parent-side
     # token, not the picklable mp.Event the runner would build.
     # ``parent_token`` is what we poll between chunks; the runner re-
@@ -389,7 +393,7 @@ def run_face_extraction_subprocess(
     last_pid: int | None = None
 
     for start in range(0, total, chunk_size):
-        # Between-chunk cancel check (P1). Without this, a 5,000-photo
+        # Between-chunk cancel check. Without this, a 5,000-photo
         # run would have to grind through every remaining chunk before
         # the parent could stop it. Bound is ≤ one chunk of work.
         if parent_token is not None and parent_token.is_set():

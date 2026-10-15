@@ -140,7 +140,7 @@ describe("_phaseLabel", () => {
   });
 });
 
-describe("listenImportProgress — status/warning are not silent (release audit P-01)", () => {
+describe("listenImportProgress — status/warning are not silent", () => {
   /** @param {object} msg */
   function emit(msg) {
     h.es.onmessage({ data: JSON.stringify(msg) });

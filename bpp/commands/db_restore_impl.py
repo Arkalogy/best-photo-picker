@@ -145,7 +145,7 @@ def _do_restore_locked(args, db_path: str, backup_path: str, check_integrity) ->
 
     if meta is not None and "created_at_epoch" in meta:
         meta_epoch = float(meta["created_at_epoch"])
-        # Reject future-dated sidecars (D-04). A forged or corrupt
+        # Reject future-dated sidecars. A forged or corrupt
         # `created_at_epoch` set in the future would otherwise produce
         # age=0 (max(0.0, ...) clamp) and bypass the staleness guard.
         if meta_epoch > now + _SKEW_TOLERANCE_S:

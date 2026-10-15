@@ -245,7 +245,7 @@ def api_album_delete(album_id: int) -> tuple[Response, int]:
     album = get_album(conn, album_id)
     if not album:
         raise NotFoundError("Album not found", album_id=album_id)
-    # L1 / review 2026-05-31: registry-driven undeletable check so
+    # Registry-driven undeletable check so
     # plugins can mark their own album types undeletable without
     # editing this site. SmartAlbumRegistry.is_undeletable("all")
     # returns True for the built-in.
@@ -297,7 +297,7 @@ def api_album_photos(album_id: int) -> tuple[Response, int]:
         photo["override"] = raw.get("override")
         photo["favorite"] = bool(raw.get("favorite"))
 
-    # M6 / review 2026-05-31: registry-driven UI metadata. The
+    # Registry-driven UI metadata. The
     # Duplicates album registered _smart_duplicates_ui_metadata which
     # delegates to _attach_cluster_siblings_from_db; plugins can ship
     # their own ``ui_metadata_fn`` for new types without editing here.

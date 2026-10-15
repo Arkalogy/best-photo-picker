@@ -190,7 +190,7 @@ class TestPickCommand:
         assert rc != 0
 
     def test_pick_resolves_canonical_db_path(self, tmp_path):
-        """Regression for round-9: `bpp pick` must look for the DB at
+        """Regression: `bpp pick` must look for the DB at
         `<library>/data/photopicker.db` to match the layout that
         `bpp serve` (and every other write path) uses. A pre-fix run
         looked for `<library>/photopicker.db` and erroneously errored

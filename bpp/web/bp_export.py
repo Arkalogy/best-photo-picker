@@ -76,7 +76,7 @@ def api_export() -> tuple[Response, int]:
     )
     if not is_path_under_any(outdir, allowed):
         # ValidationError (400) rather than ForbiddenError (403) to
-        # preserve the historical 400 status — pre-T2 callers and
+        # preserve the historical 400 status — existing callers and
         # tests pin this as a 'bad input' check, not an 'auth
         # denied' one.
         raise ValidationError(
@@ -187,7 +187,7 @@ def api_export() -> tuple[Response, int]:
 
 def _validate_export_params(ctx, params):
     """Validation shared between /api/v1/export (sync) and
-    /api/v1/export/start (streaming worker, L-S3). Returns the tuple
+    /api/v1/export/start (streaming worker). Returns the tuple
     ``(selected, outdir, fmt, max_size, quality)`` or raises
     ValidationError. Pulled out so both endpoints stay in sync and a
     later schema change lands in one place.
@@ -268,7 +268,7 @@ def _validate_export_params(ctx, params):
 @bp.post("/api/v1/export/start")
 @requires_local_app
 def api_export_start() -> tuple[Response, int]:
-    """L-S3: spawn the streaming export worker, return 202 immediately.
+    """Spawn the streaming export worker, return 202 immediately.
 
     Same param schema as /api/v1/export. The browser then opens
     /api/v1/export/progress (SSE) to receive per-photo events and the
@@ -351,7 +351,7 @@ def api_export_progress() -> Response:
 @bp.post("/api/v1/export/cancel")
 @requires_local_app
 def api_export_cancel() -> tuple[Response, int]:
-    """L-S3: signal the streaming export worker to stop after its
+    """Signal the streaming export worker to stop after its
     current photo. The progress stream then emits a ``cancelled``
     event and closes."""
     ctx = get_ctx()

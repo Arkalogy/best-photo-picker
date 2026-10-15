@@ -35,13 +35,16 @@ _install_running = False
 # Whitelist of pip packages that can be installed at runtime.
 # Maps short key → list of pip install specs. Using direct package names
 # (instead of `bppicker[extra]`) so this works for users running from a
-# local editable install (`pip install -e .`) — extras only resolve when
-# bppicker is itself reachable on PyPI, which it isn't yet.
+# local editable install (`pip install -e .`), where bppicker's extras
+# don't resolve against PyPI.
 _INSTALLABLE_PACKAGES: dict[str, list[str]] = {
-    "faces": ["face_recognition>=1.3", "scipy>=1.10", "mediapipe>=0.10"],
-    # Match the [nudity] extra in pyproject.toml — pinned tight so
-    # the SHA-256 verifier in bpp/scoring/nudity.py stays accurate.
-    "nudity": ["nudenet>=3.3,<4"],
+    "faces": [
+        "face_recognition>=1.3",
+        "scipy>=1.10",
+        "mediapipe>=0.10",
+        "setuptools<81",
+        "ai-edge-litert>=2.1; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    ],
     "onnxruntime": ["onnxruntime"],
     # Pin to 0.1.0 (matches the pyproject extra). 0.1.1 pins
     # pillow<11; 0.1.2 pins pillow<10 (breaks HEIC). 0.1.0 has no
@@ -56,6 +59,8 @@ _INSTALLABLE_PACKAGES: dict[str, list[str]] = {
 
 def _pip_available() -> bool:
     """Return True if pip is callable from the current Python."""
+    if getattr(sys, "frozen", False):
+        return False  # frozen desktop app: sys.executable is the server, not Python
     return shutil.which(sys.executable) is not None
 
 

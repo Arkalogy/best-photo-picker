@@ -28,7 +28,7 @@ def scan_images(
     Skips symlinks unless follow_symlinks is True.
     When recursive is True, walks subdirectories as well.
 
-    M15: ``on_progress(scanned_so_far, matched_so_far)`` is invoked
+    ``on_progress(scanned_so_far, matched_so_far)`` is invoked
     every ~500 files inspected during recursive walks so callers can
     surface scan progress on libraries with tens of thousands of files
     instead of presenting a black box. Non-recursive mode is fast

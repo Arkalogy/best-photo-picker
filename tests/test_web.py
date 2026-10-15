@@ -243,6 +243,9 @@ class TestRoutes:
         # Dep availability flags are always present
         assert "face_recognition_available" in data
         assert "nudenet_available" in data
+        # Active = accepted with the current license text AND weights on
+        # disk; the test library has neither, so detection is NOT on.
+        assert data["nudenet_active"] is False
         assert "clip_available" in data
         assert "heic_available" in data
         assert isinstance(data["heic_available"], bool)
@@ -650,8 +653,8 @@ def face_web_client(tmp_path):
     # teardown should have handled this, but the Analysis worker is
     # known to occasionally exceed WORKER_JOIN_TIMEOUT_S — if it
     # holds a connection past shutdown, the pool can be in a state
-    # that pollutes the next face-route test (observed once during the
-    # 2026-05-29 release audit under randomized seed 119532108).
+    # that pollutes the next face-route test (observed once under
+    # randomized seed 119532108).
     close_all_connections()
 
     workdir = str(tmp_path / "workdir")

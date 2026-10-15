@@ -375,7 +375,7 @@
         </div>
         <div class="lb-exif hidden" id="lb-exif"></div>
         <div class="lb-exif hidden" id="lb-video-info"></div>
-        <!-- Map belongs to the Info section above it (panel-cleanup item 3):
+        <!-- Map belongs to the Info section above it:
              no LOCATION header of its own, just the Expand affordance. -->
         <!-- Expand wires via data-action (delegation): a direct listener
              dies whenever the editor rebuilds the panel's innerHTML. -->
@@ -844,20 +844,20 @@
             <div class="slider-row">
               <label>Sensitivity</label>
               <span class="tip" data-tip="How similar two photos must be to count as duplicates. Lower = only near-identical, higher = catches more variations.">i</span>
-              <input type="range" min="0" max="30" step="1" value="10" data-param="hash_distance_threshold">
-              <span class="val">10</span>
+              <input type="range" min="0" max="30" step="1" value="20" data-param="hash_distance_threshold">
+              <span class="val">20</span>
             </div>
             <div class="slider-row">
               <label>Burst gap</label>
               <span class="tip" data-tip="Photos taken within this many seconds are grouped as a burst. Only the best from each burst is kept.">i</span>
-              <input type="range" min="0" max="120" step="1" value="15" data-param="time_window_seconds">
-              <span class="val">15</span>
+              <input type="range" min="0" max="120" step="1" value="30" data-param="time_window_seconds">
+              <span class="val">30</span>
             </div>
             <div class="slider-row">
               <label>Across dates</label>
               <span class="tip" data-tip="Also remove near-identical photos taken on different days (e.g. same pose, different occasion). 0 = same-day only.">i</span>
-              <input type="range" min="0" max="15" step="1" value="5" data-param="global_hash_distance_threshold">
-              <span class="val">5</span>
+              <input type="range" min="0" max="15" step="1" value="10" data-param="global_hash_distance_threshold">
+              <span class="val">10</span>
             </div>
           </div>
         </div>
@@ -1121,7 +1121,7 @@
      non-module file's classic copy for synchronous availability.
      See docs/js-modules-migration.md. -->
 <script type="module" nonce="{{ csp_nonce }}">
-  // T0.1: action registry must load FIRST so window.__bppActionRegistry
+  // Action registry must load FIRST so window.__bppActionRegistry
   // is set before any other module calls registerAction(). Import is
   // side-effect-only — the module exposes itself on window for the
   // click dispatcher in globals.js.

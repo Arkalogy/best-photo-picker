@@ -20,7 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CAP = 500
 
-# Baselines measured 2026-06-12 (the 7-agent review's scale gate).
+# Baselines measured 2026-06-12 (scale gate).
 # Shrink-only: lower a number when a split lands; never raise one.
 GRANDFATHERED: dict[str, int] = {
     "bpp/db/schema.py": 530,

@@ -115,7 +115,7 @@ def _collect_orphan_albums(
     ``user_named_orphans`` is the subset whose name isn't a default
     "Person N" — those need name-transfer treatment in step 2.
     """
-    # P5b: read the shadow column directly. The previous load-and-parse
+    # Read the shadow column directly. The previous load-and-parse
     # pattern hit every row's rule_json text; the shadow column gives
     # the same data via the indexed lookup path.
     existing = conn.execute(
@@ -201,7 +201,7 @@ def _transfer_orphan_names(
         if best_cid is not None and best_overlap > 0:
             claimed_cids.add(best_cid)
             transferred.add(album_id)
-            # P5b: indexed shadow-column lookup.
+            # Indexed shadow-column lookup.
             conn.execute(
                 "UPDATE albums SET name=? WHERE album_type='smart_person' "
                 "AND smart_person_cluster_id=?",
@@ -243,7 +243,7 @@ def _create_tag_only_clusters(conn: sqlite3.Connection, embedding_cluster_ids: s
 def _refresh_person_albums(conn: sqlite3.Connection) -> None:
     """Create smart albums per face cluster, clean up stale ones.
 
-    M12.d: split into named phases (load → step 1 create → step 2
+    Split into named phases (load → step 1 create → step 2
     orphan/transfer → step 3 tag-only). The orchestrator stays in
     this function so the order + commit boundary are obvious.
     """

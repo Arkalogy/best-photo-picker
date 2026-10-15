@@ -265,7 +265,7 @@ class TestExportAPI:
         assert os.path.isdir(os.path.join(outdir, "selected"))
 
     def test_existing_outdir_merges_preserving_unrelated_files(self, export_client):
-        """UAT: pointing at an existing folder must merge (not wipe) — the
+        """Pointing at an existing folder must merge (not wipe) — the
         previous 'force=true wipes the dir' contract destroyed user data
         when they picked ~/Downloads or any other shared folder."""
         client, analysis, tmp_path = export_client

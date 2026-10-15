@@ -11,11 +11,11 @@ build/
 .ruff_cache/
 .pytest_cache/
 .git/
+node_modules/
+desktop/
 library/
 reviews/
 scripts/
 tests/
-pm.md
-CLAUDE.md
 *.db
 *.sqlite

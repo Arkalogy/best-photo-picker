@@ -87,7 +87,8 @@ def _clip_cap_status(conn, clip_count: int) -> dict[str, Any]:
         state = "enabled_override"
     else:
         state = "disabled_too_large"
-    # 3x dict for dict + search matrix + dedup scratch (see ClipEmbeddingsTooLarge).
+    # 3x one matrix: search matrix + dedup scratch + a concurrent
+    # Moments/smart-album load (see ClipEmbeddingsTooLarge).
     peak_mb = (clip_count * CLIP_EMBEDDING_BYTES / (1024 * 1024)) * 3
     return {
         "clip_cap": cap,
@@ -198,7 +199,7 @@ _SENSITIVE_SETTING_KEYS: frozenset[str] = frozenset(
     }
 )
 
-# D-08: defense in depth on top of the explicit denylist. set_settings()
+# Defense in depth on top of the explicit denylist. set_settings()
 # accepts arbitrary owner-supplied keys, so a future contributor adding
 # a new token-shaped setting (e.g., `oauth_client_secret`,
 # `db_encryption_key`) would silently leak it to LAN unless they

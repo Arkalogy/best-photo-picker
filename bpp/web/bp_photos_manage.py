@@ -267,6 +267,15 @@ def api_save_edits() -> tuple[Response, int]:
             allowed=sorted(_VALID_ROTATIONS),
         )
 
+    from bpp.db.edits import valid_redeye_points
+
+    points = edits.get("redeye_points")
+    if points is not None and valid_redeye_points(points) != points:
+        raise ValidationError(
+            "redeye_points must be a list of {x, y, radius?} with finite numbers",
+            field="redeye_points",
+        )
+
     photo = get_photo_by_path(conn, filepath)
     if not photo:
         raise NotFoundError("Photo not found", filepath=filepath)

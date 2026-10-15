@@ -1565,7 +1565,7 @@
   .nav-item.active {
     background: var(--accent-dim); color: var(--accent); font-weight: 500;
   }
-  /* Protection B: per-section error pill in the sidebar. Inline in
+  /* Per-section error pill in the sidebar. Inline in
      the affected section (Faces / Albums / etc.) so a single endpoint
      failure can't blank the whole nav. */
   .nav-item.nav-item-error {
@@ -2339,7 +2339,7 @@
     font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
     color: var(--text3); font-weight: 600; margin-bottom: 6px;
   }
-  /* Moment mode (panel-cleanup item 6): one-line header with a Review
+  /* Moment mode: one-line header with a Review
      action, then a single compact horizontally-scrollable strip of ALL
      the burst's shots — current photo first + highlighted, no badges. */
   .lb-moment-head {
@@ -2675,7 +2675,7 @@
     background: var(--surface);
     border-radius: var(--radius-md); padding: 10px 12px;
   }
-  /* Aggregate verdict leading the Quality section (panel-cleanup item 2):
+  /* Aggregate verdict leading the Quality section:
      big tier-colored number + tier word, the four bars right under it. */
   .lb-quality-headline {
     display: flex; align-items: baseline; gap: 6px; margin-bottom: 6px;
@@ -2804,7 +2804,7 @@
     color: var(--text3); font-weight: 600;
   }
   .lb-tags-loading { font-size: 11px; color: var(--text3); }
-  /* Quiet add-tag affordance (panel-cleanup item 4): labeled button when the
+  /* Quiet add-tag affordance: labeled button when the
      photo has no tags, compact "+" chip alongside existing chips. */
   .lb-tag-add-btn {
     align-self: flex-start; background: none; cursor: pointer;
@@ -6646,7 +6646,7 @@
 @keyframes server-down-spin { to { transform: rotate(360deg); } }
 
 /* ── Face-embedder registry picker + acceptance dialog ──
-   Post-Batch-10 UI wiring (item 5: GUI parity for the click-through).
+   GUI parity for the CLI click-through.
    The picker lives in Settings → Models below the legacy feature
    list; the dialog is a standalone modal-overlay reusing the
    modal-btn primitives. */
@@ -6801,6 +6801,27 @@
   font-size: 13px;
   margin-bottom: 4px;
 }
+/* A notice that needs attention (withdrawn model, commercial rights missing). */
+.fe-notice-banner {
+  background: rgba(230, 170, 60, 0.12);
+  border: 1px solid rgba(230, 170, 60, 0.35);
+  color: rgb(240, 200, 130);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+/* Inline link-style button inside a banner (e.g. "withdraw your acceptance"). */
+.fe-link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .fe-acceptance-body p {
   margin: 0;
   line-height: 1.55;
@@ -7364,6 +7385,7 @@
   text-align: right;
 }
 .fe-license-permissive,
+.fe-license-attribution,
 .fe-license-restricted {
   font-weight: 500;
   display: inline-flex;
@@ -7371,6 +7393,7 @@
   gap: 4px;
 }
 .fe-license-permissive { color: rgb(140, 220, 160); }
+.fe-license-attribution { color: rgb(150, 190, 235); }
 .fe-license-restricted { color: rgb(240, 180, 100); }
 .fe-license-tip {
   appearance: none;

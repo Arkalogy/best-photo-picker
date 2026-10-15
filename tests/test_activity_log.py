@@ -32,7 +32,7 @@ class TestInMemoryHandler:
             logger.removeHandler(h)
 
     def test_exc_info_traceback_stripped_from_ui_message(self):
-        """Bug #11 (UAT 2026-06-01): when a log call passes exc_info=True,
+        """When a log call passes exc_info=True,
         Python's default formatter appends the full traceback to the
         message. The in-memory handler powers /api/v1/logs which feeds
         the Activity Log dropdown — surfacing a raw Python traceback

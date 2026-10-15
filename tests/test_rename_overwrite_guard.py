@@ -1,4 +1,4 @@
-"""TDD tests for H-7: batch rename must not overwrite pre-existing files."""
+"""TDD tests: batch rename must not overwrite pre-existing files."""
 
 from __future__ import annotations
 

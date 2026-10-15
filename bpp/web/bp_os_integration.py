@@ -65,7 +65,7 @@ def api_open_folder() -> tuple[Response, int]:
         # _launch_os_handler returns a (str, int) where int is the
         # HTTP status. Preserve the original status via instance-level
         # ``http_status`` override on the BppError so the response
-        # stays equivalent to the pre-T2 behavior.
+        # stays equivalent to the earlier behavior.
         exc = BppError(
             err,
             user_message=err,

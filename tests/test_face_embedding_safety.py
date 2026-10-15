@@ -1,4 +1,4 @@
-"""Tests for Protection A — defense against corrupt face embedding BLOBs.
+"""Tests for the embedding-size check — defense against corrupt face embedding BLOBs.
 
 What this pins
 --------------
@@ -101,7 +101,7 @@ class TestDecodeEmbedding:
 
 
 class TestSkipWarningLogging:
-    """P-03: skip warnings carry the row_id on first occurrence per
+    """Skip warnings carry the row_id on first occurrence per
     (where, reason) pair, and are rate-limited so a library with
     thousands of bad rows doesn't drown the server log."""
 

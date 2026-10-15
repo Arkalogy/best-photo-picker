@@ -1,7 +1,7 @@
 """Status-gate enforcement on the redownload endpoint.
 
-Item 12 (upstream-takedown disable path) + item 20 (multi-status
-lifecycle): when a model entry's status flips to
+Upstream-takedown disable path + multi-status
+lifecycle: when a model entry's status flips to
 ``WITHDRAWN_NO_NEW_DOWNLOADS`` or ``LEGALLY_BLOCKED`` via the signed
 remote-registry overlay, the Redownload button in Settings → Models
 must honor that — it cannot silently re-fetch a model the world has
@@ -81,14 +81,10 @@ class TestDownloadStatusGate:
             _redownload_model("SFace recognition")
             mock_download.assert_called_once()
 
-    def test_unmapped_legacy_name_does_not_block(self) -> None:
-        """``BlazeFace short-range`` has no legal-registry counterpart
-        (it's an ancillary detector with no licensing concern). The
-        status gate must NOT manufacture a block on a name it can't
-        map — it falls through to the normal download path. This is a
-        defensive test: a future model added to the scoring registry
-        without a legal-registry entry stays unrestricted until
-        someone classifies it."""
+    def test_available_accepted_model_is_not_blocked(self) -> None:
+        """``BlazeFace short-range`` links to an AVAILABLE attribution
+        entry that is accepted here, so the status gate lets the normal
+        download path run."""
         with (
             patch("bpp.utils.download.download_file") as mock_download,
             patch("bpp.web.bp_models._reset_model_cache"),

@@ -491,7 +491,7 @@ class TestNewPerson:
         assert resp.status_code == 409, resp.get_json()
         body = resp.get_json()
         assert "Noah" in body["error"], body
-        # P7: the duplicate_face_id kwarg now rides inside the BppError
+        # The duplicate_face_id kwarg now rides inside the BppError
         # envelope's structured ``context`` block, not at the top level.
         assert body.get("context", {}).get("duplicate_face_id"), body
 
@@ -578,7 +578,7 @@ class TestNewPerson:
 
 # ──────────────────────────────────────────────────────────────────
 # Unit tests for the helpers extracted from api_faces_create
-# (review followup 2026-05-31 — handler decomposed from 261 LOC into
+# (handler decomposed from 261 LOC into
 # four named helpers; per-helper coverage below).
 # ──────────────────────────────────────────────────────────────────
 

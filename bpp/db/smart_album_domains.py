@@ -62,7 +62,7 @@ def register_album_domain(
     *,
     extend: bool = False,
 ) -> None:
-    """T3 — open the domain → album_types mapping to plugins.
+    """Open the domain → album_types mapping to plugins.
 
     A plugin that introduces a new smart-album type can call this so
     its album refreshes alongside the built-ins when the relevant

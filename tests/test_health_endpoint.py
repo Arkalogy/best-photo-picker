@@ -63,7 +63,7 @@ class TestShape:
         )
 
     def test_collaborators_surface_analysis_store_and_caches(self, client):
-        """T4: the new ``collaborators`` block must expose the P4
+        """The ``collaborators`` block must expose the
         AnalysisStore + ModelCache state so on-call can tell whether
         the phash compute thread is alive, whether CLIP / face-cluster
         caches are populated, and the analysis-store generation
@@ -113,7 +113,7 @@ class TestDbCheck:
         assert data["checks"]["db"]["path"].endswith(".db")
 
     def test_db_connection_failure_does_not_leak_path(self, app, client, monkeypatch):
-        """R6-M2: when ctx.get_conn() raises, the response must NOT
+        """When ctx.get_conn() raises, the response must NOT
         echo the exception text — OSError / sqlite3.Error strings
         often include the absolute DB path, the owner's username,
         mount labels, or SQLite-internal hints. The endpoint reports
@@ -340,7 +340,7 @@ class TestE2EFixtureSentinel:
             )
 
 
-# ── Phase 5 background-backfill health surface (M8 followup) ─────────
+# ── Phase 5 background-backfill health surface ─────────
 
 
 class TestPhase5HealthCheck:

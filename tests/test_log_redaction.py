@@ -61,7 +61,7 @@ class TestRedactSecrets:
         """Pin the bare `app_token=` form explicitly. Covered today by
         the `*_token` family regex via the `arbitrary_prefix` test, but
         easy to lose on a future regex tightening that requires a
-        non-empty prefix. R12 audit (Secrets F2)."""
+        non-empty prefix."""
         out = redact_secrets(f"app_token={_TOKEN}")
         assert _TOKEN not in out
         assert "[REDACTED]" in out
@@ -117,7 +117,7 @@ class TestRedactSecrets:
         assert out.count("[REDACTED]") == 2
 
     def test_redacts_bare_token_assignment_in_traceback_locals(self):
-        """R9-fr-secrets-H1: when a subprocess crashes, the parent
+        """When a subprocess crashes, the parent
         re-emits `traceback.format_exc()` which can include a frame's
         local variables (Python ≥3.11 in some configurations). A bare
         `token = "<64hex>"` line was NOT matched by the `*_token=`
@@ -155,7 +155,7 @@ class TestRedactSecrets:
             assert redact_secrets(benign) == benign, f"false-positive on {benign!r}"
 
     def test_redacts_macos_home_path(self):
-        """R11-L3: absolute paths like /Users/<name>/... leak the
+        """Absolute paths like /Users/<name>/... leak the
         OS username into log lines. Backup / library / workdir log
         emissions all carry these. Replace the username segment
         with `~/` so the path stays useful for diagnosis without
@@ -464,7 +464,7 @@ class TestWerkzeugRedaction:
 
         bpp_logging._CONFIGURED = False
         bpp_logging._memory_handler = None
-        # R11-L4: setup_logging now attaches handlers to the ROOT
+        # setup_logging now attaches handlers to the ROOT
         # logger so plugin / third-party records also pass through
         # RedactingFormatter. Strip handlers from root, bpp, and
         # werkzeug so a re-init starts clean.
@@ -474,7 +474,7 @@ class TestWerkzeugRedaction:
             lg.propagate = True
 
     def test_werkzeug_logger_redacts_token_in_url(self):
-        """R11-L4: handlers now live on root. werkzeug propagates up
+        """Handlers now live on root. werkzeug propagates up
         and the root-level RedactingFormatter scrubs the token before
         emit."""
         from bpp.utils.logging import setup_logging
@@ -491,7 +491,7 @@ class TestWerkzeugRedaction:
         ), "root must have a RedactingFormatter-wrapped handler"
 
         werkzeug = logging.getLogger("werkzeug")
-        # werkzeug propagates to root (default after R11-L4); a
+        # werkzeug propagates to root (the default); a
         # separate StringIO handler attached to root captures the
         # output for inspection.
         buf = io.StringIO()
@@ -510,7 +510,7 @@ class TestWerkzeugRedaction:
             root.removeHandler(capture)
 
     def test_third_party_logger_also_redacts(self):
-        """R11-L4: a plugin emitting through its own logger namespace
+        """A plugin emitting through its own logger namespace
         (e.g. `logging.getLogger("my_plugin")`) propagates to root.
         Pre-fix, root had no redacting handlers, so plugin output
         bypassed the scrub. Now root carries the redacting chain so
@@ -584,7 +584,7 @@ class TestWerkzeugRedaction:
         )
 
 
-# ─── R8-H3: in-place scrub of historical (pre-redaction) log files ──
+# ─── In-place scrub of historical (pre-redaction) log files ──
 
 
 class TestHistoricalLogScrub:

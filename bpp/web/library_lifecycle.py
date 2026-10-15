@@ -1,10 +1,10 @@
-"""P4 — WebAppState collaborator: library lifecycle.
+"""WebAppState collaborator: library lifecycle.
 
 The functions in :mod:`bpp.web.state_lifecycle` (``startup``,
 ``shutdown``, ``switch_library``, plus the per-step helpers) are
 already cohesive — each one operates against a ``WebAppState`` and
-moves the lifecycle forward. P4's plan called for promoting them into
-a class so:
+moves the lifecycle forward. This module promotes them into a class
+so:
 
 * Tests can construct a ``LibraryLifecycle`` against a fake ctx
   instead of having to mock out the module-level functions.
@@ -17,7 +17,7 @@ method delegates to the existing module-level function. WebAppState's
 existing thin wrappers (``ctx.startup() / shutdown() / switch_library()``)
 keep working unchanged.
 
-See ``docs/architecture-notes.md`` for the P4 collaborator surface.
+See ``docs/architecture-notes.md`` for the collaborator surface.
 """
 
 from __future__ import annotations

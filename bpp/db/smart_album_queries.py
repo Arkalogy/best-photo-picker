@@ -246,21 +246,18 @@ def _get_no_faces_ids(conn: sqlite3.Connection, _rule: dict) -> list[int]:
 
 
 def _get_document_ids(conn: sqlite3.Connection, _rule: dict) -> list[int]:
-    import numpy as np
 
     try:
-        from bpp.db.clip import get_all_clip_embeddings
+        from bpp.db.clip import load_clip_matrix
         from bpp.scoring.clip_embed import compute_text_embedding
     except ImportError:
         return []
-    embeddings = get_all_clip_embeddings(conn)
-    if not embeddings:
+    photo_ids_list, emb_matrix = load_clip_matrix(conn)  # one copy, no per-photo dict
+    if not photo_ids_list:
         return []
     text_emb = compute_text_embedding(DOCUMENT_PROMPT)
     if text_emb is None:
         return []
-    photo_ids_list = list(embeddings.keys())
-    emb_matrix = np.stack([embeddings[pid] for pid in photo_ids_list])
     similarities = emb_matrix @ text_emb
     matching = [
         photo_ids_list[i]

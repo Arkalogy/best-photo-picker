@@ -53,7 +53,7 @@ def create_app(
     app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
     app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB
 
-    # P7: single error handler that translates any uncaught BppError
+    # Single error handler that translates any uncaught BppError
     # into a structured response envelope. Replaces the historical
     # 47 ad-hoc ``return jsonify({"error": ...}), 500`` sites; endpoints
     # can now just ``raise ValidationError(...)`` and the handler does
@@ -72,7 +72,7 @@ def create_app(
         # exception" frame is different. Equivalent to exc_info=True
         # when called inside an except block, but more explicit.
         #
-        # T4: include exc.context in the log when non-empty so on-call
+        # Include exc.context in the log when non-empty so on-call
         # has the actionable details (photo_id, missing field, count
         # over cap, etc.) in the same line as the diagnostic. Without
         # this they'd have to cross-reference the HTTP request log
@@ -118,7 +118,7 @@ def create_app(
 
     load_plugin_entry_points()
 
-    # P5b: now that the loader has called every plugin's setup()
+    # Now that the loader has called every plugin's setup()
     # callable (which has had a chance to call register_plugin), fire
     # the on_register lifecycle hook so plugins can do app-aware
     # registration (blueprints, CLI commands, etc.).
@@ -129,7 +129,7 @@ def create_app(
         )
 
         fire_on_register(app)
-        # P-08: drain the deferred Protection C restore signal.
+        # Drain the deferred startup DB-restore signal.
         # serve.py noted the corrupt-sidecar path before plugins were
         # loaded; now that fire_on_register has run, plugins exist
         # and can flush stale caches before on_library_open primes
@@ -151,6 +151,7 @@ def create_app(
     from bpp.web.bp_album_overrides import bp as album_overrides_bp
     from bpp.web.bp_albums import bp as albums_bp
     from bpp.web.bp_analysis import bp as analysis_bp
+    from bpp.web.bp_attribution import bp as attribution_bp
     from bpp.web.bp_calendar import bp as calendar_bp
     from bpp.web.bp_catalog import bp as catalog_bp
     from bpp.web.bp_clip import bp as clip_bp
@@ -191,6 +192,7 @@ def create_app(
     app.register_blueprint(install_bp)
     app.register_blueprint(model_registry_bp)
     app.register_blueprint(model_admin_bp)
+    app.register_blueprint(attribution_bp)
     app.register_blueprint(catalog_bp)
     app.register_blueprint(photos_bp)
     app.register_blueprint(export_bp)

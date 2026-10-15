@@ -152,7 +152,7 @@ class TestSplitScanForConfirmedSidecars:
 
     def test_missing_hash_stays_in_scoring(self, tmp_path):
         """If the parent can't be hashed, can't confirm → keep visible, and
-        don't waste a decode on the candidate (P-05)."""
+        don't waste a decode on the candidate."""
         from bpp.db.live_photo import split_scan_for_confirmed_sidecars
 
         parent = self._touch(tmp_path, "IMG_1.HEIC")
@@ -174,7 +174,7 @@ class TestSplitScanForConfirmedSidecars:
 
     def test_one_hash_match_not_enough(self, tmp_path):
         """dHash identical but aHash far apart → not a duplicate, stays in
-        scoring. Strict both-hashes guard (P-01)."""
+        scoring. Strict both-hashes guard."""
         from bpp.db.live_photo import split_scan_for_confirmed_sidecars
 
         parent = self._touch(tmp_path, "IMG_1.HEIC")
@@ -282,7 +282,7 @@ class TestSplitScanForConfirmedSidecars:
     def test_low_confirm_rate_aborts_after_probe(self, tmp_path):
         """On a burst-style library (many '_N' files, none real duplicates),
         the pre-scan must abort after the probe slice instead of decoding the
-        whole library for no payoff (P-02). Worst-case decode work is bounded
+        whole library for no payoff. Worst-case decode work is bounded
         to ~one probe slice."""
         from bpp.db import live_photo
         from bpp.db.live_photo import split_scan_for_confirmed_sidecars
@@ -340,7 +340,7 @@ class TestSplitScanForConfirmedSidecars:
         assert len(records) == n_pairs, "every twin confirmed, none lost to early-abort"
 
     def test_every_record_has_parent_in_to_score(self, tmp_path):
-        """LOAD-BEARING INVARIANT (P-03): every stored sidecar row must be
+        """LOAD-BEARING INVARIANT: every stored sidecar row must be
         accompanied by a parent that gets scored. Stored sidecars are tagged
         ONLY by the phash thread, which runs only because the parent's phash is
         NULL after scoring. If a confirmed sidecar's parent were ever absent
@@ -522,7 +522,7 @@ class TestDetectAndLink:
         """Both dHash AND aHash must be within budget to hide a photo. A '_N'
         file that matches its parent on ONE fingerprint but diverges wildly on
         the other is NOT a duplicate and must stay visible — guards against the
-        lenient min()-of-two-distances direction (P-01)."""
+        lenient min()-of-two-distances direction."""
         from bpp.db.live_photo import detect_and_link_live_photo_sidecars
 
         parent_id = self._insert_photo(db, "/lib/IMG_5.HEIC", "IMG_5.HEIC")

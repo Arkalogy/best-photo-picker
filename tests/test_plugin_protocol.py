@@ -212,7 +212,7 @@ class TestErrorIsolation:
         assert labels == ["c", "a"]
 
     def test_failure_log_uses_qualified_class_name(self, caplog):
-        """T4: ``_safe_fire`` used to log ``plugin`` directly, which
+        """``_safe_fire`` used to log ``plugin`` directly, which
         falls back to ``__repr__``. Plugins that don't override
         ``__repr__`` (most don't) render as
         ``<tests.test_plugin_protocol._RaisingPlugin object at 0x...>``
@@ -240,11 +240,11 @@ class TestErrorIsolation:
         )
 
 
-# ── on_db_restore (P-08) ──
+# ── on_db_restore ──
 
 
 class TestOnDbRestore:
-    """Protection C's auto-restore fires a deferred signal because
+    """The startup integrity gate's auto-restore fires a deferred signal because
     plugins aren't loaded yet at the time serve.py runs the restore.
     note_db_restore() stashes the corrupt-sidecar path;
     fire_on_db_restore_if_pending() drains and dispatches it after

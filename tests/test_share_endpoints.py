@@ -76,7 +76,7 @@ class TestShareInfoEndpoint:
 
 class TestShareToggleEndpoint:
     def test_toggle_on(self, share_app):
-        # R11-M2: simulate a server bound to a LAN interface so the
+        # Simulate a server bound to a LAN interface so the
         # restart-required gate doesn't fire. The default bound_host
         # is now "127.0.0.1" (fail-closed); these tests target the
         # happy path where sharing was on at startup.
@@ -109,12 +109,12 @@ class TestShareToggleEndpoint:
         assert r.status_code == 400
 
 
-# ─── R10-M1: refuse enable while loopback-bound ──────────────────────
+# ─── Refuse enable while loopback-bound ──────────────────────
 
 
 class TestShareToggleBoundHostGate:
-    """R9-P3 made `bpp serve --host` default to 127.0.0.1 when LAN
-    sharing is off. Without R10-M1, a user who started the server
+    """`bpp serve --host` defaults to 127.0.0.1 when LAN
+    sharing is off. Without this gate, a user who started the server
     with sharing off and then toggled it ON via Settings would
     persist the flag and see a LAN URL in the UI — but the bind
     address is fixed at startup, so phones could not actually
@@ -163,7 +163,7 @@ class TestShareToggleBoundHostGate:
         assert r.status_code == 409
 
     def test_default_bound_host_is_loopback_sentinel(self, share_app):
-        """R11-M2: WebAppState defaults bound_host to '127.0.0.1'
+        """WebAppState defaults bound_host to '127.0.0.1'
         instead of None. A test build that didn't go through do_serve
         therefore inherits the fail-closed posture and the toggle gate
         fires. Pre-fix, None silently bypassed the gate — a footgun
@@ -179,7 +179,7 @@ class TestShareToggleBoundHostGate:
         )
 
     def test_uppercase_localhost_blocked(self, share_app):
-        """R11-M1: an operator passing `--host=LOCALHOST` should also
+        """An operator passing `--host=LOCALHOST` should also
         trip the gate. Pre-fix, the case-sensitive `.startswith` check
         accepted LOCALHOST as non-loopback and let the toggle through."""
         share_app.extensions["bpp"].bound_host = "LOCALHOST"
@@ -222,11 +222,11 @@ class TestShareRevokeEndpoint:
         assert old != new
 
 
-# ─── L6: token-bearing responses must not be cached ─────────────────
+# ─── Token-bearing responses must not be cached ─────────────────
 
 
 class TestShareCacheControl:
-    """L6: /api/share/info and /api/share/revoke responses contain a
+    """/api/share/info and /api/share/revoke responses contain a
     URL whose query string carries the share token. Both must set
     Cache-Control: no-store so intermediaries / browser BFCache don't
     persist the token any longer than necessary."""

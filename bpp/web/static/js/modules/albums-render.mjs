@@ -31,7 +31,7 @@ import {
 
 
 export function renderAlbumNav() {
-  // Protection B: last line of defense. If anything inside _doRender
+  // Sidebar isolation: last line of defense. If anything inside _doRender
   // throws (data shape mismatch, missing window global, plugin
   // rendering a broken section), substitute an inline error pill
   // with a Reload button instead of leaving the sidebar empty.
@@ -128,7 +128,7 @@ function _doRender() {
   html += `<div class="nav-item${peopleActive}" data-action="navigateToPeople">
     <span><span class="nav-icon-svg">${ICONS.people || ""}</span>Faces</span>
   </div>`;
-  // Protection B: render an inline error pill if the faces loader
+  // Render an inline error pill if the faces loader
   // failed. The nav-item above stays clickable; this pill is the
   // "couldn't load, retry" affordance.
   const facesErr = getSectionError("faces");

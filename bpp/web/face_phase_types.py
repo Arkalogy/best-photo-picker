@@ -119,7 +119,7 @@ class FacePhase(Protocol):
     A phase with ``journal_bit < 0`` is intentionally never skipped
     on resume — e.g. Phase 4.5 captures the *current* dismissed-slot
     set, which must reflect the user's between-crash-and-resume
-    dismissals (T1.1).
+    dismissals.
     """
 
     name: str

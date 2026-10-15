@@ -6,7 +6,7 @@
  * The verdict (`p.is_sensitive`) is derived SERVER-side in
  * build_photo_dict from the NudeNet score + the user's per-photo
  * override — this module never re-derives it with its own threshold.
- * Copy rules (pm.md spec): neutral language ("may be sensitive",
+ * Copy rules: neutral language ("may be sensitive",
  * never "NSFW"), always note detection is local-only, and the user
  * can always correct the model.
  */
@@ -100,7 +100,7 @@ export function readReviewSelections(flagged, root) {
 }
 
 /**
- * Export review gate (P0 of the sensitive-photo spec): when the
+ * Export review gate: when the
  * selection about to be exported contains flagged photos, show a
  * review dialog with per-photo keep/remove checkboxes. The ONE
  * decision point, exactly where accidental sharing happens.

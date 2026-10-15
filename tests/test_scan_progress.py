@@ -1,4 +1,4 @@
-"""Tests for the M15 scan-progress callback in scan_images."""
+"""Tests for the scan-progress callback in scan_images."""
 
 from __future__ import annotations
 

@@ -34,6 +34,7 @@ from bpp.scoring.clip_embed import (
     is_available as clip_is_available,
 )
 from bpp.scoring.face_embed import is_available as face_recognition_available
+from bpp.scoring.nudity import is_active as nudenet_active
 from bpp.scoring.nudity import is_available as nudenet_available
 from bpp.scoring.pets import is_available as pets_available
 from bpp.utils.logging import get_logger
@@ -60,7 +61,7 @@ log = get_logger(__name__)
 
 
 def _bpp_posture_statement() -> str:
-    """Surface the Batch 9 / item 9 posture banner into the SPA.
+    """Surface the canonical posture banner into the SPA.
 
     Importing :mod:`bpp.registry` at module-import time would create a
     cycle (registry imports bpp.utils, which can pull in web bits in
@@ -90,6 +91,8 @@ def _pip_available() -> bool:
     full pip-install machinery lives in `bp_models`; this
     predicate is too small to share-import for one bool.
     """
+    if getattr(sys, "frozen", False):
+        return False  # frozen desktop app: sys.executable is the server, not Python
     return shutil.which(sys.executable) is not None
 
 
@@ -230,7 +233,7 @@ def api_status() -> Response:
 
     Reports first-run state, photo counts, worker activity (analyze,
     import, face, CLIP), feature availability flags (face/pets/CLIP/
-    HEIC/nudenet), CLIP embedding count, default config, and face
+    HEIC/NudeNet), CLIP embedding count, default config, and face
     cluster threshold. Cheap by design: a single COUNT() rather than
     a full analysis load."""
     ctx = get_ctx()
@@ -279,7 +282,11 @@ def api_status() -> Response:
         "defaults": DEFAULTS,
         "face_recognition_available": face_recognition_available(),
         "face_installable": not face_recognition_available() and _pip_available(),
+        # ``nudenet_available``: detection CAN be enabled (runtime
+        # present). ``nudenet_active``: it actually runs — accepted with
+        # the current license text AND weights on disk.
         "nudenet_available": nudenet_available(),
+        "nudenet_active": nudenet_active(),
         "pets_available": pets_available(),
         "face_extraction_done": has_face_data(conn) if conn else False,
         "face_needs_clustering": needs_face_clustering(conn) if conn else False,
@@ -464,7 +471,9 @@ def api_models_pending() -> tuple[Response, int]:
     confusing "blocked_needs_ack" toast instead of a clean route to
     the acceptance dialog. With the filter, the prompt shows only
     downloadable models, and the frontend can surface a hint pointing
-    the user to Settings → Models for the blocked ones.
+    the user to Settings → Models for the blocked ones. Attribution-
+    licensed models (Apache / BSD-style) not yet accepted come back as
+    ``attribution``: the dialog accepts them in one combined step.
 
     The eligibility rules live in :func:`bpp.web.model_filter.
     compute_pending_and_blocked` (pure, unit-tested); this endpoint is a
@@ -473,5 +482,19 @@ def api_models_pending() -> tuple[Response, int]:
     from bpp.web.model_filter import compute_pending_and_blocked
 
     items, blocked = compute_pending_and_blocked()
-    total_mb = sum(item["size_mb"] for item in items)
-    return jsonify({"models": items, "total_mb": total_mb, "blocked": blocked}), 200
+    free = [i for i in items if not i.get("needs_acceptance")]
+    attribution = [i for i in items if i.get("needs_acceptance")]
+    return (
+        jsonify(
+            {
+                "models": free,
+                "total_mb": sum(i["size_mb"] for i in free),
+                # Downloads that happen only if the user accepts the
+                # attribution licenses in the pre-analysis dialog.
+                "attribution": attribution,
+                "attribution_mb": sum(i["size_mb"] for i in attribution),
+                "blocked": blocked,
+            }
+        ),
+        200,
+    )

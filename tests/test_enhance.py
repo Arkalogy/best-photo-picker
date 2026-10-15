@@ -382,7 +382,7 @@ class TestEnhanceAPI:
         assert data["edits"] is None
 
     def test_enhance_failure_does_not_leak_path_in_error(self, client, tmp_path, monkeypatch):
-        """R8-H2: when `auto_enhance` raises, the API response must
+        """When `auto_enhance` raises, the API response must
         emit a generic message — NOT `str(e)`. PIL exceptions
         typically include the absolute file path, which would leak
         the owner's library layout to any LAN client holding a valid

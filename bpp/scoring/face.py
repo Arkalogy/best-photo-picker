@@ -28,6 +28,8 @@ from the same path via the re-exports below.
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 
 from bpp.constants import FACE_GOOD_CONFIDENCE, MIN_FACE_AREA_FRAC, MIN_FACE_IMAGE_PX
@@ -60,10 +62,8 @@ from bpp.scoring.face_expression import (  # noqa: E402, F401
 )
 from bpp.scoring.face_fallback import (  # noqa: E402, F401
     _CASCADE,
-    _USE_DLIB,
     _cascade_lock,
     _dlib_detect,
-    _dlib_lock,
     _get_cascade,
     _haar_detect,
     _has_face_recognition,
@@ -144,24 +144,57 @@ from bpp.scoring.face_yunet import (  # noqa: E402
     reset_yunet_cache as _reset_yunet_cache,
 )
 
+#: Face models with a Settings toggle: (toggle key, loader, warning when
+#: the model can't be fetched).
+OPTIONAL_FACE_MODELS = (
+    (
+        "model_blazeface_fr",
+        _fr_detector,
+        "BlazeFace full-range model unavailable — profile detection degraded",
+    ),
+    (
+        "model_face_landmarker",
+        _face_landmarker,
+        "FaceLandmarker model unavailable — expression quality scoring disabled",
+    ),
+    (
+        "model_hand_landmarker",
+        _hand_landmarker,
+        "HandLandmarker model unavailable — hand FP suppression disabled",
+    ),
+)
 
-def ensure_face_models() -> list[str]:
-    """Pre-download all face models.
 
-    Downloads: YuNet, BlazeFace short-range, BlazeFace full-range,
-    FaceLandmarker, HandLandmarker.
-    Returns list of warnings for unavailable models.
-    """
-    warnings = []
-    if not _ensure_yunet_model():
-        warnings.append("YuNet model unavailable — primary face detection degraded")
-    warnings.extend(ensure_mediapipe_models())
-    if _fr_detector.ensure_model() is None:
-        warnings.append("BlazeFace full-range model unavailable — profile detection degraded")
-    if _face_landmarker.ensure_model() is None:
-        warnings.append("FaceLandmarker model unavailable — expression quality scoring disabled")
-    if _hand_landmarker.ensure_model() is None:
-        warnings.append("HandLandmarker model unavailable — hand FP suppression disabled")
+def core_face_model_failures() -> dict[str, str]:
+    """Pre-download YuNet, the always-on downloaded detector. Returns
+    ``{toggle key: warning}`` when it can't be fetched; the analysis
+    turns that key off for its run so scoring doesn't retry it."""
+    from bpp.registry.policy import is_load_blocked
+
+    # A model whose license isn't accepted yet is "off", not failed —
+    # the preflight reports those once, together.
+    if not _ensure_yunet_model() and not is_load_blocked("opencv_yunet"):
+        return {"model_yunet": "YuNet model unavailable — primary face detection degraded"}
+    return {}
+
+
+def ensure_core_face_models() -> list[str]:
+    """Pre-download the always-on face detectors (YuNet, BlazeFace
+    short-range — shipped with bpp). Returns warnings."""
+    return [*core_face_model_failures().values(), *ensure_mediapipe_models()]
+
+
+def ensure_face_models(model_toggles: dict[str, Any] | None = None) -> list[str]:
+    """Pre-download the face models: the core detectors plus each of
+    :data:`OPTIONAL_FACE_MODELS` that *model_toggles* leaves on.
+    Returns warnings for unavailable models."""
+    toggles = model_toggles or {}
+    warnings = ensure_core_face_models()
+    for key, model, warning in OPTIONAL_FACE_MODELS:
+        if not toggles.get(key, True):
+            continue
+        if model.ensure_model() is None and not model.license_blocked():
+            warnings.append(warning)
     return warnings
 
 
@@ -273,5 +306,6 @@ ModelRegistry.register(
         url=_YUNET_MODEL_URL,
         sha256=_YUNET_MODEL_SHA256,
         reset=_reset_yunet_cache,
+        legal_id="opencv_yunet",
     )
 )

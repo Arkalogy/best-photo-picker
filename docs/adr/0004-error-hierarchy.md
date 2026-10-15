@@ -1,19 +1,30 @@
 # ADR 0004 — Error & result types
 
-**Status.** Proposed (P0). Locks the shape that P7 implements.
+**Status.** Accepted; implemented with a revised class set.
+`bpp/errors.py` defines `BppError` (user-safe `user_message`, separate
+`diagnostic_message`, `http_status`, `code`, `context`, `to_dict()`) with
+`ValidationError`, `NotFoundError`, `ForbiddenError`, `ConflictError`,
+`ResourceExhaustedError`, `FeatureUnavailableError` and `IntegrityError`
+subclasses. The pre-existing exceptions (`ModelIntegrityError`,
+`ServingLockError`, …) inherit `BppError` while keeping their original
+parents. A single `errorhandler(BppError)` in `bpp/web/app.py` renders
+the envelope and logs the diagnostic. The `TransientError` /
+`ConfigError` / `UserError` / `SystemError` split and `retry_after_s`
+sketched below were not adopted; a handful of endpoints still return
+ad-hoc error JSON.
 
-**Context.** Today bpp has exactly two custom exceptions:
+**Context.** Before this ADR, bpp had exactly two custom exceptions:
 - `ModelIntegrityError` (`bpp/scoring/model_base.py:36`) — SHA mismatch
   on a cached ML model; must NOT silently degrade.
 - `ServingLockError` (`bpp/utils/serving_lock.py:36`) — couldn't acquire
   the per-library serving lock at startup.
 
-Everywhere else, failures bubble through plain `Exception`,
-`RuntimeError`, `sqlite3.Error`, etc. Endpoints catch broadly with
+Everywhere else, failures bubbled through plain `Exception`,
+`RuntimeError`, `sqlite3.Error`, etc. Endpoints caught broadly with
 ~47 hand-rolled `return jsonify({"error": ...}), 500` sites. The UI
-gets a string that mixes user-actionable messages
+got a string that mixed user-actionable messages
 (`"Photos folder doesn't exist"`) with internal noise
-(`"Database error during merge"`). On-call gets the same string in
+(`"Database error during merge"`). On-call got the same string in
 `server.log` with no category tag.
 
 `BackgroundWorker._safe_run` (`base_worker.py:164–179`) already
@@ -21,7 +32,7 @@ strips filesystem paths from error messages before they reach the
 client — this is a security-relevant defense. Any error-hierarchy
 refactor must integrate with that defense, not replace it.
 
-**Decision.** P7 ships `bpp/errors.py`:
+**Decision.** Ship `bpp/errors.py`:
 
 ```python
 class BppError(Exception):
@@ -79,7 +90,7 @@ goes through `err.user_message` (already sanitized) instead of the
 generic-Exception path-strip — the defense applies to plain Exception
 subclasses (legacy) AND to BppError (new code) uniformly.
 
-**Migration.** P7 migrates the top 10 highest-traffic endpoints first
+**Migration.** Migrate the top 10 highest-traffic endpoints first
 to prove the contract works. The 37+ remaining ad-hoc error returns
 get migrated as a separate cleanup PR (or whenever each endpoint is
 touched next — opportunistic).
@@ -91,11 +102,16 @@ touched next — opportunistic).
 - `IntegrityError` from ModelIntegrityError propagates instead of being
   caught — the "tampered cache silently downgrades to dlib" failure mode
   becomes impossible.
-- Tests: `test_transient_error_carries_retry_after`,
+- Tests (as shipped): `tests/test_errors.py` (class hierarchy, status
+  codes, envelope shape, pickle round-trips, legacy exceptions caught as
+  `BppError`) and `tests/test_errors_flask_handler.py` (the
+  `errorhandler(BppError)` response + logging). The three tests
+  originally named here (`test_transient_error_carries_retry_after`,
   `test_error_handler_strips_filesystem_paths`,
-  `test_integrity_error_propagates_not_caught`.
+  `test_integrity_error_propagates_not_caught`) were never written,
+  since the classes they covered were not adopted.
 
 **Out of scope.**
-- Replacing `toast()` in JS — that's P8.
+- Replacing `toast()` in JS.
 - Sentry / external error-reporting integration.
 - Localizing user-facing messages.

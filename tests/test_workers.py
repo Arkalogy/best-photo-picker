@@ -178,7 +178,7 @@ class TestImportWorkerLifecycle:
         assert "done" in types
 
     def test_pet_save_uses_batched_lookup_not_per_item(self):
-        """R8-H7: import_worker must batch the filepath→photo_id
+        """import_worker must batch the filepath→photo_id
         lookup with `get_photo_id_map_by_paths` instead of calling
         `get_photo_by_path` per item. With 1000+ photos imported in
         one batch, the per-item version is 1000 extra DB round-trips
@@ -201,7 +201,7 @@ class TestImportWorkerLifecycle:
         )
 
     def test_pet_clustering_refreshes_smart_pet_album(self):
-        """R8-M9: after clustering pets in import, the pet smart
+        """After clustering pets in import, the pet smart
         album must be refreshed so the UI sidebar reflects the new
         clusters immediately. Source-scan: assert the refresh call
         is wired alongside `assign_pet_clusters`."""
@@ -218,7 +218,7 @@ class TestImportWorkerLifecycle:
         # without hardcoding the literal in import_worker.
         assert 'get_affected_album_types("import")' in worker_src, (
             "import_worker must scope the refresh via get_affected_album_types('import') "
-            "(R4-M / cheaper than the full sweep)"
+            "(cheaper than the full sweep)"
         )
         from bpp.db.smart_albums import ALBUM_PET, get_affected_album_types
 

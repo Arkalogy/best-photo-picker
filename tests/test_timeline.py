@@ -1,4 +1,4 @@
-"""TDD tests for date range browsing (P0-3): timeline DB functions and API."""
+"""TDD tests for date range browsing: timeline DB functions and API."""
 
 from __future__ import annotations
 

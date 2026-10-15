@@ -1,6 +1,6 @@
-"""Regression coverage for the cache-invalidation audit (2026-06).
+"""Regression coverage for cache-invalidation gaps.
 
-Findings the audit surfaced:
+Gaps covered:
 
 * ``with_face_lock`` decorated 13 face-mutation endpoints but never
   invalidated ``face_cluster_map``. Mutations between background-worker
@@ -114,7 +114,7 @@ class TestWithFaceLockInvalidatesClusterMap:
         ]
 
     def test_every_face_mutation_endpoint_still_carries_the_decorator(self):
-        """Source-scan: the 13 endpoints the audit identified all
+        """Source-scan: the 13 face-mutation endpoints all
         decorate with @with_face_lock. A future refactor that removes
         the decorator from any of them loses the cache fix silently
         — this test fails loud instead.

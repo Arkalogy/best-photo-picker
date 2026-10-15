@@ -1,6 +1,6 @@
 """Bring Your Own Model (BYOM) — user-supplied face-embedder files.
 
-Batch 6 / item 11 of the legal-posture rollout. Commercial users
+Commercial users
 who do not want to run under Arkalogy's restricted-license picker
 (or hobbyists who happen to have a licensed face model file)
 register their own ONNX file here. BPP records the file path, a
@@ -11,18 +11,18 @@ user is responsible for ensuring they have rights to the file.
 
 Why BYOM is not a quality differentiator surfaced in marketing
 
-The legal-posture spec's editorial rule (item 14) forbids naming
-restricted models (AdaFace, buffalo_*) in commercial-targeted
+BPP's editorial rule (enforced by the surface-parity tests) forbids
+naming restricted models (AdaFace, buffalo_*) in commercial-targeted
 copy. The BYOM docs and CLI help follow the same rule: they
 describe the mechanism without naming any specific upstream the
 user could "just download." That phrasing would recreate the
-inducement risk Batch 4's click-through gate exists to close.
+inducement risk the click-through gate exists to close.
 
 Why BYOM entries are commercial_use_restriction_known=False
 
 Arkalogy is not in the BYOM rights chain. The user is asserting
 they have rights to the file they supplied. The policy layer
-(Batch 5) reads that flag and lets the load proceed without the
+(:mod:`bpp.registry.policy`) reads that flag and lets the load proceed without the
 commercial-mode hard-block — the BYOM acknowledgment is the only
 gate that fires.
 
@@ -34,7 +34,7 @@ acceptance log:
 JSONL — BYOM entries are current-state (a small bounded set of
 files the user has registered), not an audit trail. The
 acceptance row for each BYOM entry lives in the existing
-``model-acceptance.jsonl`` so the evidentiary record stays in one
+``model-acceptance.jsonl`` so the audit record stays in one
 place.
 
 Path can be overridden by ``BPP_BYOM_PATH`` for tests / dev.
@@ -157,49 +157,88 @@ def _utc_now_iso() -> str:
     return datetime.datetime.now(datetime.UTC).isoformat()
 
 
-def _read_store(*, path: Path | None = None) -> _StoreContents:
-    target = path or get_byom_store_path()
-    if not target.exists():
-        return _StoreContents()
+#: Every stored BYOM field is non-empty text (ids are dict keys downstream),
+#: except ``kind``: a blank one means the default, as when it's added.
+_BYOM_TEXT_FIELDS = (
+    "id",
+    "display_name",
+    "kind",
+    "file_path",
+    "weight_sha256",
+    "added_at",
+    "ack_text_version",
+    "ack_text_sha256",
+)
+
+
+def _int_or(value: object, default: int) -> int:
     try:
-        raw = json.loads(target.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        _log.warning(
-            "BYOM store at %s is unreadable (%s); treating as empty",
-            target,
-            exc,
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
+def _parse_entry(raw_entry: object) -> BYOMEntry | None:
+    """The stored entry as a :class:`BYOMEntry`, or ``None`` if a field is
+    missing or not text."""
+    if not isinstance(raw_entry, dict) or not all(
+        isinstance(raw_entry.get(k), str) and (raw_entry[k] or k == "kind")
+        for k in _BYOM_TEXT_FIELDS
+    ):
+        return None
+    fields = {k: raw_entry[k] for k in _BYOM_TEXT_FIELDS}
+    fields["kind"] = fields["kind"].strip() or "face_embedder"
+    return BYOMEntry(**fields)
+
+
+def _store_is_intact(raw: dict) -> bool:
+    """True when :func:`_read_store` keeps every entry of *raw*. A save
+    over a store it doesn't sets the file aside first, so an entry the
+    reader skipped is kept on disk instead of erased."""
+    entries = raw.get("entries", [])
+    return (
+        type(raw.get("schema_version", SCHEMA_VERSION)) is int
+        and isinstance(entries, list)
+        and all(
+            (parsed := _parse_entry(e)) is not None and parsed.kind == (e["kind"] or parsed.kind)
+            for e in entries
         )
+    )
+
+
+def _read_store(*, path: Path | None = None) -> _StoreContents:
+    from bpp.utils.json_utils import load_json_file
+
+    target = path or get_byom_store_path()
+    # Missing, unreadable, corrupt or not an object: an empty store.
+    raw = load_json_file(target, {}, expected_type=dict, context="BYOM store")
+    raw_entries = raw.get("entries", [])
+    if not isinstance(raw_entries, list):
+        _log.warning("BYOM store at %s has the wrong shape; treating as empty", target)
         return _StoreContents()
     entries: list[BYOMEntry] = []
-    for raw_entry in raw.get("entries", []):
-        try:
-            entries.append(
-                BYOMEntry(
-                    id=raw_entry["id"],
-                    display_name=raw_entry["display_name"],
-                    kind=raw_entry["kind"],
-                    file_path=raw_entry["file_path"],
-                    weight_sha256=raw_entry["weight_sha256"],
-                    added_at=raw_entry["added_at"],
-                    ack_text_version=raw_entry["ack_text_version"],
-                    ack_text_sha256=raw_entry["ack_text_sha256"],
-                )
-            )
-        except KeyError as exc:
-            _log.warning(
-                "Skipping malformed BYOM entry (missing %s): %s",
-                exc,
-                raw_entry,
-            )
+    for raw_entry in raw_entries:
+        entry = _parse_entry(raw_entry)
+        if entry is None:
+            _log.warning("Skipping a malformed BYOM entry in %s", target)
+            continue
+        entries.append(entry)
     return _StoreContents(
-        schema_version=int(raw.get("schema_version", SCHEMA_VERSION)),
+        schema_version=_int_or(raw.get("schema_version"), SCHEMA_VERSION),
         entries=tuple(entries),
     )
 
 
 def _write_store(store: _StoreContents, *, path: Path | None = None) -> None:
+    from bpp.utils.json_utils import set_aside_if_unreadable
+
     target = path or get_byom_store_path()
     target.parent.mkdir(parents=True, exist_ok=True)
+    # A damaged store (or entry) the reader skipped: keep it rather than
+    # overwrite the user's model list without it.
+    set_aside_if_unreadable(
+        target, expected_type=dict, is_valid=_store_is_intact, context="BYOM store"
+    )
     payload = {
         "schema_version": store.schema_version,
         "entries": [
@@ -279,7 +318,8 @@ def add_byom_entry(
     entry = BYOMEntry(
         id=entry_id,
         display_name=display_name.strip() or fp.name,
-        kind=kind,
+        # Every stored field must be non-empty text, or the reader drops it.
+        kind=kind.strip() or "face_embedder",
         file_path=str(fp),
         weight_sha256=weight_sha256,
         added_at=_utc_now_iso(),

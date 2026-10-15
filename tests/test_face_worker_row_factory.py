@@ -1,4 +1,4 @@
-"""TDD test for H-3: face worker connection must use init_db (sets row_factory)."""
+"""TDD test: face worker connection must use init_db (sets row_factory)."""
 
 from __future__ import annotations
 

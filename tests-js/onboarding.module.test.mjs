@@ -258,7 +258,7 @@ describe("_onboardingFinish", () => {
     _onboardingNext();
     _onboardingNext();
     await _onboardingFinish(false);
-    // The audited bug: skipping import used to leave the user on a
+    // The bug: skipping import used to leave the user on a
     // bare hidden grid with no next-step affordance. Now we reveal
     // the welcome panel (icon + Import CTA + 4-step graphic) so they
     // have something actionable to click.

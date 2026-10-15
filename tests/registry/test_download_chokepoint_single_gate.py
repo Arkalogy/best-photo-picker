@@ -3,8 +3,8 @@
 The contract enforced here:
 
 1. ``bpp.utils.download.download_file`` requires ``registry_id`` —
-   callers cannot omit it. The argument has no default; passing
-   ``None`` is an explicit opt-out for ancillary downloads.
+   callers cannot omit it, and ``None`` is refused (there is no
+   ungated download).
 
 2. When ``registry_id`` names an unknown entry, the call raises
    ``ValueError`` before any network activity — a typo or a fresh
@@ -136,22 +136,22 @@ class TestPermissiveEntryPassesThrough:
     def test_mit_entry_downloads_normally(self, tmp_path):
         from bpp.utils.download import download_file
 
-        # insightface_scrfd_25g is registered as MIT — the gate
+        # openai_clip_vit_b32_onnx is registered as MIT — the gate
         # short-circuits to ALLOW without any acceptance row.
         # (opencv_yunet is also permissive but Apache 2.0, so it
-        # now requires acceptance and would fail this test on a
-        # fresh acceptance log.)
-        content = b"scrfd model bytes"
+        # requires acceptance and would fail this test on a fresh
+        # acceptance log.)
+        content = b"clip model bytes"
         resp = io.BytesIO(content)
         resp.__enter__ = lambda self: self
         resp.__exit__ = lambda self, *a: None
 
-        dest = str(tmp_path / "scrfd.onnx")
+        dest = str(tmp_path / "clip.onnx")
         with patch("urllib.request.urlopen", return_value=resp):
             download_file(
-                "https://example.com/scrfd.onnx",
+                "https://example.com/clip.onnx",
                 dest,
-                registry_id="insightface_scrfd_25g",
+                registry_id="openai_clip_vit_b32_onnx",
             )
 
         assert pathlib.Path(dest).read_bytes() == content
@@ -185,7 +185,7 @@ class TestBypassWindowDuringFetch:
             download_file(
                 "https://example.com/x",
                 str(tmp_path / "x"),
-                registry_id=None,
+                registry_id="openai_clip_vit_b32_onnx",
             )
 
         assert observed.get("during") is True, (

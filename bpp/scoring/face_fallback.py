@@ -13,6 +13,11 @@ These are the last-resort detectors in the orchestrator's priority chain:
 
 The cascade is lazily loaded behind a lock so concurrent FaceWorker
 threads share a single classifier instance.
+
+Both are license-gated like every other model: the Haar cascade by its
+own registry entry here, the HOG detector by the dlib entry inside
+:func:`~bpp.scoring.face_recognition_loader.load_face_recognition`.
+Until accepted, each returns no faces.
 """
 
 from __future__ import annotations
@@ -29,27 +34,30 @@ from bpp.constants import (
     HAAR_MIN_NEIGHBORS,
     HAAR_SCALE_FACTOR,
 )
+from bpp.scoring.model_load_gate import MemoizedLoadGate
+
+_haar_gate = MemoizedLoadGate("opencv_haar_frontalface")
+
+
+def _license_allows(gate: MemoizedLoadGate) -> bool:
+    from bpp.registry.policy import ModelLoadBlockedError
+
+    try:
+        gate.enforce()
+    except ModelLoadBlockedError:
+        return False
+    return True
+
 
 # ── dlib HOG (secondary — good for embeddings, adults) ──
 
-_USE_DLIB: bool | None = None
-_dlib_lock = threading.Lock()
-
 
 def _has_face_recognition() -> bool:
-    global _USE_DLIB
-    if _USE_DLIB is not None:
-        return _USE_DLIB
-    with _dlib_lock:
-        if _USE_DLIB is not None:
-            return _USE_DLIB
-        try:
-            import face_recognition  # noqa: F401
+    # The loader caches the import and applies the dlib license gate
+    # (uncached, so a later acceptance takes effect).
+    from bpp.scoring.face_recognition_loader import load_face_recognition
 
-            _USE_DLIB = True
-        except ImportError:
-            _USE_DLIB = False
-    return _USE_DLIB
+    return load_face_recognition() is not None
 
 
 def _dlib_detect(image: np.ndarray) -> list[tuple[int, int, int, int, float]]:
@@ -59,7 +67,11 @@ def _dlib_detect(image: np.ndarray) -> list[tuple[int, int, int, int, float]]:
     a fixed synthetic confidence (DLIB_DEFAULT_CONFIDENCE).  This ranks
     dlib detections below high-confidence MediaPipe hits during NMS.
     """
-    import face_recognition
+    from bpp.scoring.face_recognition_loader import load_face_recognition
+
+    face_recognition = load_face_recognition()
+    if face_recognition is None:
+        return []
 
     rgb = np.ascontiguousarray(
         image[:, :, ::-1] if len(image.shape) == 3 and image.shape[2] == 3 else image
@@ -95,6 +107,8 @@ def _get_cascade() -> cv2.CascadeClassifier:
 
 def _haar_detect(image: np.ndarray) -> list[tuple[int, int, int, int, float]]:
     """Haar cascade fallback detection. Returns (x, y, w, h, confidence)."""
+    if not _license_allows(_haar_gate):
+        return []
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
     cascade = _get_cascade()
     faces = cascade.detectMultiScale(

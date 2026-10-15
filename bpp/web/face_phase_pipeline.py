@@ -211,14 +211,14 @@ def run_face_pipeline(ctx: FacePhaseContext) -> None:
             return
 
         if phase.should_skip(ctx):
-            # H4 / review 2026-05-31: log skipped phases too so server.log
+            # Log skipped phases too so server.log
             # explains what the orchestrator did across a resume without
             # forcing on-call to query the journal table.
             log.info("Face pipeline: skipping %s (journal-complete)", phase.name)
             phase.rehydrate(ctx)
             continue
 
-        # M1 / review 2026-05-31: PreloadCachedEmbeddingsPhase has a
+        # PreloadCachedEmbeddingsPhase has a
         # journal bit but intentionally re-runs on resume (the output
         # isn't snapshotted; it's recomputed from current DB state).
         # Surface that in the log so a reader can tell the journal bit

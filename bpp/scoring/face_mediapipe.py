@@ -33,7 +33,7 @@ _MODEL_DIR = str(_models_dir())
 # Why this one: Float16-quantised short-range model is the smallest
 #         BlazeFace variant Google ships; balances accuracy vs the
 #         per-photo CPU budget when paired with YuNet.
-# License: Apache 2.0 (MediaPipe).
+# License: see the bpp.registry entry ``mediapipe_blazeface_short_range``.
 # Pinned:  via /float16/latest/ — Google guarantees this URL
 #         resolves to whatever the current "latest" build is. SHA
 #         pin still detects when Google rotates the artifact.
@@ -68,7 +68,7 @@ _mp_blazeface = ModelSingleton(
     model_url=_MODEL_URL,
     model_sha256=_MODEL_SHA256,
     create_fn=_create_mediapipe_detector,
-    registry_id=None,  # ancillary mediapipe BlazeFace, no licensing concern
+    registry_id="mediapipe_blazeface_short_range",
     import_check=lambda: __import__("mediapipe"),
     bundled_path=os.path.join(_BUNDLED_DIR, "blaze_face_short_range.tflite"),
 )
@@ -84,7 +84,7 @@ def ensure_mediapipe_models() -> list[str]:
     """Pre-download BlazeFace models. Returns list of warnings for unavailable models."""
     warnings = []
     path = _mp_blazeface.ensure_model()
-    if path is None:
+    if path is None and not _mp_blazeface.license_blocked():
         warnings.append("BlazeFace short-range model unavailable — face detection degraded")
     return warnings
 

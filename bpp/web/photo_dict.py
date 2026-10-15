@@ -1,6 +1,6 @@
 """Serialize a DB photo row into an API-friendly dict.
 
-P6 adds :class:`PhotoDict` as the typed contract for the canonical
+Defines :class:`PhotoDict` as the typed contract for the canonical
 photo response shape. Endpoint handlers that build per-photo dicts
 by hand can switch to :class:`PhotoDict` for static type-checking
 without changing the wire format — every field is the same string
@@ -115,7 +115,7 @@ def build_photo_dict(
     ctx.build_photo_dict wrapper injects the configured value), no shared
     state.
 
-    P6: return type is :class:`PhotoDict` for static type-checking.
+    Return type is :class:`PhotoDict` for static type-checking.
     Wire-shape is unchanged.
     """
     fp = item["filepath"]
@@ -181,7 +181,7 @@ def build_photo_dict(
     elif "_exif_parsed" in item:
         photo["exif"] = item["_exif_parsed"]
     else:
-        parsed = safe_json_loads(exif_raw, context="exif")
+        parsed = safe_json_loads(exif_raw, context="exif", expected_type=dict)
         # Stash the parsed result for next time. Not part of the
         # response shape — keys with leading underscore are
         # filtered out by build_photo_dict callers if needed

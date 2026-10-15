@@ -39,22 +39,21 @@ class ModelEntry:
     sha256: str
     size_mb: float
     host: str
+    #: The ``bpp.registry`` entry for these weights — the only place
+    #: their license is written. ``/api/v1/models/pending`` reads the
+    #: license status from it so the dialog never offers a model the
+    #: load gate would refuse. Required: every download has an entry.
+    legal_entry_id: str
     bundled_path: str | None = None
-    #: Optional cross-reference into ``bpp.registry.model_registry``.
-    #: Set for entries that have a legal-registry counterpart so the
-    #: ``/api/v1/models/pending`` endpoint can check restriction +
-    #: acceptance status and filter out models the user can't actually
-    #: download (the runtime gate would refuse, surfacing a confusing
-    #: "blocked_needs_ack" toast). ``None`` for ancillary models with
-    #: no licensing concern.
-    legal_entry_id: str | None = None
+    #: Registered by a plugin (shown in the prompt whatever its kind).
+    from_plugin: bool = False
 
     def is_present(self) -> bool:
         """True when the model is already on disk (cached or bundled)
         and so won't trigger a download."""
-        if self.path.exists():
-            return True
-        return self.bundled_path is not None and Path(self.bundled_path).exists()
+        from bpp.scoring.model_lifecycle import file_present
+
+        return file_present(str(self.path), self.bundled_path)
 
 
 def _host_of(url: str) -> str:
@@ -131,6 +130,7 @@ def all_models() -> list[ModelEntry]:
             size_mb=0.2,
             host=_host_of(_face._MODEL_URL),
             bundled_path=str(Path(_face._BUNDLED_DIR) / "blaze_face_short_range.tflite"),
+            legal_entry_id="mediapipe_blazeface_short_range",
         ),
         ModelEntry(
             name="BlazeFace full-range face detection",
@@ -139,6 +139,7 @@ def all_models() -> list[ModelEntry]:
             sha256=_ffr._FR_MODEL_SHA256,
             size_mb=0.6,
             host=_host_of(_ffr._FR_MODEL_URL),
+            legal_entry_id="mediapipe_blazeface_full_range",
         ),
         ModelEntry(
             name="YuNet face detection",
@@ -158,10 +159,12 @@ def all_models() -> list[ModelEntry]:
             path=Path(_fsc._SCRFD_MODEL_PATH),
             url=_fsc._SCRFD_MODEL_URL,
             sha256=_fsc._SCRFD_MODEL_SHA256,
-            size_mb=16,
+            # 3,291,737 bytes (registry expected_download_size_bytes).
+            size_mb=3.1,
             host=_host_of(_fsc._SCRFD_MODEL_URL),
-            # MIT — permissive; linked for parity so the dialog reads
-            # its legal status from the registry rather than guessing.
+            # Research-only weights (non-commercial), opt-in. Linked so
+            # the dialog reads its legal status from the registry and
+            # never offers it as a free download before acceptance.
             legal_entry_id="insightface_scrfd_25g",
         ),
         # Face features
@@ -184,6 +187,7 @@ def all_models() -> list[ModelEntry]:
             sha256=_fex._LANDMARKER_SHA256,
             size_mb=4,
             host=_host_of(_fex._LANDMARKER_URL),
+            legal_entry_id="mediapipe_face_landmarker",
         ),
         ModelEntry(
             name="Hand landmarker (occlusion filter)",
@@ -192,6 +196,7 @@ def all_models() -> list[ModelEntry]:
             sha256=_fhf._HAND_MODEL_SHA256,
             size_mb=5,
             host=_host_of(_fhf._HAND_MODEL_URL),
+            legal_entry_id="mediapipe_hand_landmarker",
         ),
         # Pose / composition
         ModelEntry(
@@ -201,6 +206,7 @@ def all_models() -> list[ModelEntry]:
             sha256=_POSE_MODEL_SHA256,
             size_mb=5,
             host=_host_of(_POSE_MODEL_URL),
+            legal_entry_id="mediapipe_pose_landmarker_lite",
         ),
         ModelEntry(
             name="Selfie segmenter",
@@ -209,6 +215,7 @@ def all_models() -> list[ModelEntry]:
             sha256=_SEGMENTER_SHA256,
             size_mb=0.3,
             host=_host_of(_SEGMENTER_URL),
+            legal_entry_id="mediapipe_selfie_segmenter",
         ),
         # Pets
         ModelEntry(
@@ -229,6 +236,7 @@ def all_models() -> list[ModelEntry]:
             sha256=_CLIP_VISUAL_SHA,
             size_mb=336,
             host=_host_of(_CLIP_VISUAL_URL),
+            legal_entry_id="openai_clip_vit_b32_onnx",
         ),
         ModelEntry(
             name="CLIP text encoder",
@@ -237,6 +245,7 @@ def all_models() -> list[ModelEntry]:
             sha256=_CLIP_TEXT_SHA,
             size_mb=242,
             host=_host_of(_CLIP_TEXT_URL),
+            legal_entry_id="openai_clip_vit_b32_onnx",
         ),
         ModelEntry(
             name="CLIP BPE vocabulary",
@@ -245,11 +254,46 @@ def all_models() -> list[ModelEntry]:
             sha256=_VOCAB_SHA256,
             size_mb=1.3,
             host=_host_of(_VOCAB_URL),
+            legal_entry_id="openai_clip_vit_b32_onnx",
         ),
     ]
 
 
+def plugin_models() -> list[ModelEntry]:
+    """Model files registered by plugins that bpp can download
+    (:func:`bpp.scoring.model_lifecycle.fetchable_legal_id`). The size
+    comes from the legal entry's ``expected_download_size_bytes`` when it
+    declares one (else 0 = unknown)."""
+    from bpp.registry.model_registry import get_entry
+    from bpp.scoring.model_lifecycle import (
+        bundled_path_of,
+        fetchable_legal_id,
+        plugin_model_entries,
+    )
+
+    out: list[ModelEntry] = []
+    for e in plugin_model_entries():
+        legal_id = fetchable_legal_id(e)
+        if legal_id is None or e.url is None:
+            continue
+        size_bytes = getattr(get_entry(legal_id), "expected_download_size_bytes", 0) or 0
+        out.append(
+            ModelEntry(
+                name=e.name,
+                path=Path(e.path).expanduser(),
+                url=e.url,
+                sha256=e.sha256 or "",
+                size_mb=round(size_bytes / (1024 * 1024), 1),
+                host=_host_of(e.url),
+                legal_entry_id=legal_id,
+                bundled_path=bundled_path_of(e),
+                from_plugin=True,
+            )
+        )
+    return out
+
+
 def pending_downloads() -> list[ModelEntry]:
-    """Subset of :func:`all_models` that aren't on disk yet — i.e. the
+    """Built-in and plugin models that aren't on disk yet — i.e. the
     set of downloads the next analyze run would actually trigger."""
-    return [m for m in all_models() if not m.is_present()]
+    return [m for m in [*all_models(), *plugin_models()] if not m.is_present()]

@@ -1,4 +1,4 @@
-"""R8-M8: build_photo_dict caches the parsed EXIF on the item dict.
+"""build_photo_dict caches the parsed EXIF on the item dict.
 
 The `WebAppState.state["analysis"]` list is held across requests,
 so `build_photo_dict` is invoked against the SAME item dicts on
@@ -34,9 +34,9 @@ def test_first_call_parses_subsequent_calls_skip(monkeypatch):
     parse_count = [0]
     real_loads = pd.safe_json_loads
 
-    def _spy(text, default=None, *, context=""):
+    def _spy(text, default=None, *, context="", **kw):
         parse_count[0] += 1
-        return real_loads(text, default, context=context)
+        return real_loads(text, default, context=context, **kw)
 
     monkeypatch.setattr(pd, "safe_json_loads", _spy)
 
@@ -76,9 +76,9 @@ def test_cache_is_per_item_not_shared(monkeypatch):
     parse_count = [0]
     real_loads = pd.safe_json_loads
 
-    def _spy(text, default=None, *, context=""):
+    def _spy(text, default=None, *, context="", **kw):
         parse_count[0] += 1
-        return real_loads(text, default, context=context)
+        return real_loads(text, default, context=context, **kw)
 
     monkeypatch.setattr(pd, "safe_json_loads", _spy)
 
@@ -107,9 +107,9 @@ def test_already_dict_exif_skips_parse_and_cache(monkeypatch):
     parse_count = [0]
     real_loads = pd.safe_json_loads
 
-    def _spy(text, default=None, *, context=""):
+    def _spy(text, default=None, *, context="", **kw):
         parse_count[0] += 1
-        return real_loads(text, default, context=context)
+        return real_loads(text, default, context=context, **kw)
 
     monkeypatch.setattr(pd, "safe_json_loads", _spy)
 

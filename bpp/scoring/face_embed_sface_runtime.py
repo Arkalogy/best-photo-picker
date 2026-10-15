@@ -71,7 +71,7 @@ _SFACE_MODEL_PATH = str(_sface_models_dir() / "face_recognition_sface_2021dec.on
 #         and faster than dlib's face_recognition while delivering
 #         comparable cluster purity on personal libraries (~5-50k
 #         photos).
-# License: Apache 2.0 (opencv_zoo).
+# License: see the bpp.registry entry ``sface_yunet``.
 # Pinned:  2021dec — long-term-stable tag, no newer dated release
 #         in opencv_zoo's main as of bpp's pin.
 # To bump: replace 2021dec with a newer tag; the 128-dim output
@@ -95,7 +95,7 @@ def _ensure_sface_model() -> bool:
     """
     from bpp.registry import ModelLoadBlockedError
     from bpp.scoring.model_base import ModelIntegrityError
-    from bpp.utils.download import download_file, verify_existing
+    from bpp.utils.download import announce, download_file, download_temp_path, verify_existing
 
     # Load-time license gate — MUST run before the cache-hit early return
     # below, which would otherwise bypass the download-time gate for
@@ -110,9 +110,10 @@ def _ensure_sface_model() -> bool:
     if os.path.exists(_SFACE_MODEL_PATH):
         verify_existing(_SFACE_MODEL_PATH, sha256=_SFACE_MODEL_SHA256)
         return True
+    tmp = download_temp_path(_SFACE_MODEL_PATH)
+    announce("Downloading SFace face recognition model…")
     try:
         os.makedirs(os.path.dirname(_SFACE_MODEL_PATH), exist_ok=True)
-        tmp = _SFACE_MODEL_PATH + ".tmp"
         download_file(
             _SFACE_MODEL_URL,
             tmp,
@@ -123,13 +124,11 @@ def _ensure_sface_model() -> bool:
         log.info("Downloaded SFace model to %s", _SFACE_MODEL_PATH)
         return True
     except ModelIntegrityError:
-        tmp = _SFACE_MODEL_PATH + ".tmp"
         if os.path.exists(tmp):
             os.remove(tmp)
         log.error("SFace model integrity failure", exc_info=True)
         raise
     except Exception as exc:
-        tmp = _SFACE_MODEL_PATH + ".tmp"
         if os.path.exists(tmp):
             os.remove(tmp)
         log.warning("SFace model unavailable: %s", exc)
@@ -180,8 +179,10 @@ def _get_sface_recognizer() -> cv2.FaceRecognizerSF | None:
 
 def ensure_sface_model() -> list[str]:
     """Pre-download SFace model. Returns list of warnings."""
+    from bpp.registry.policy import is_load_blocked
+
     warnings = []
-    if not _ensure_sface_model():
+    if not _ensure_sface_model() and not is_load_blocked("sface_yunet"):
         warnings.append("SFace model unavailable — face recognition will use dlib fallback")
     return warnings
 
@@ -355,5 +356,6 @@ ModelRegistry.register(
         url=_SFACE_MODEL_URL,
         sha256=_SFACE_MODEL_SHA256,
         reset=_reset_sface_cache,
+        legal_id="sface_yunet",
     )
 )

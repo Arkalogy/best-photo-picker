@@ -1,7 +1,7 @@
 """Unit tests for the init_app_db phase helpers.
 
 The handler was decomposed from a 185-LOC body into five named helpers
-during the post-review refactor pass (2026-05-31). These tests cover
+during a refactor pass. These tests cover
 the boundary behaviour of each helper in isolation so a future change
 to one phase doesn't silently break another.
 """
@@ -293,11 +293,11 @@ class TestBackfillDupClustersAndRefresh:
 
 
 # ──────────────────────────────────────────────────────────────────
-# M8 — init_app_db defers Phase 5 to a daemon thread
+# init_app_db defers Phase 5 to a daemon thread
 # ──────────────────────────────────────────────────────────────────
 #
 # At 200K-photo scale the synchronous backfill blocked /api/v1/photos
-# for 5-10s during startup. M8 moves Phase 5 onto a daemon thread so
+# for 5-10s during startup. Phase 5 moved onto a daemon thread so
 # the HTTP server can answer the photo grid immediately; the daemon
 # sets ctx.smart_album_backfill_done when it finishes so tests +
 # switch_library + shutdown still have a deterministic wait point.

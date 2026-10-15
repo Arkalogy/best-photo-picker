@@ -1,4 +1,6 @@
-"""Regression tests for Round 7 hardening fixes."""
+"""Hardening regression tests: malformed CLIP embedding blobs, zip-bomb
+rejection, and the Tauri desktop shell config (plugins, targets,
+command registration, schema, CSP)."""
 
 from __future__ import annotations
 
@@ -98,7 +100,7 @@ def test_tauri_webview_does_not_expose_shell_plugin_to_js():
 
 
 def test_tauri_conf_targets_match_advertised_platform():
-    """R9-claims-M1: README:18 advertises a "native macOS app" but
+    """README:18 advertises a "native macOS app" but
     tauri.conf.json bundle.targets used to be "all" (mac/win/linux).
     The sidecar binary is macOS-only (`bpp-server-aarch64-apple-darwin`),
     the build instructions are macOS-only, and the signing notes are
@@ -127,7 +129,7 @@ def test_tauri_conf_targets_match_advertised_platform():
 
 
 def test_tauri_invoked_commands_are_registered():
-    """R10-L1: every command name the webview invokes must appear in
+    """Every command name the webview invokes must appear in
     `tauri::generate_handler!` on the Rust side. Pre-fix the injected
     disconnect-overlay called `__TAURI__?.invoke('exit_app')` against
     a command that was never registered — the Quit button was a
@@ -175,7 +177,7 @@ def test_tauri_invoked_commands_are_registered():
 
 
 def test_tauri_conf_uses_official_schema():
-    """R9-fr-H3: the `$schema` reference must point at the official
+    """The `$schema` reference must point at the official
     Tauri schema (`https://schema.tauri.app/config/2`) so IDE schema
     completion and pre-commit JSON validators flag bad keys.
 
@@ -198,7 +200,7 @@ def test_tauri_conf_uses_official_schema():
 
 
 def test_tauri_conf_sets_explicit_csp():
-    """R8-M2: defense-in-depth CSP. Flask sets the canonical
+    """Defense-in-depth CSP. Flask sets the canonical
     Content-Security-Policy via HTTP header on every HTML response,
     but Tauri also injects a meta-CSP for paths where Flask isn't
     serving (Rust-side error screens, future bundled-assets mode).

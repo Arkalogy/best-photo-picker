@@ -147,6 +147,7 @@ def test_redownload_model_expands_tilde_path(monkeypatch, tmp_path):
             url="https://example.invalid/fake.onnx",
             sha256="0" * 64,
             reset=lambda: None,
+            legal_id="openai_clip_vit_b32_onnx",
         ),
         replace=True,
     )

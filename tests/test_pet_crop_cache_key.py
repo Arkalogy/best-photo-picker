@@ -1,4 +1,4 @@
-"""TDD tests for H-12: pet crop cache must include bbox in the key."""
+"""TDD tests: pet crop cache must include bbox in the key."""
 
 from __future__ import annotations
 

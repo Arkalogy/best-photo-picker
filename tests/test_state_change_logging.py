@@ -1,7 +1,7 @@
-"""R8-H14: critical state changes must leave a breadcrumb in
+"""Critical state changes must leave a breadcrumb in
 server.log.
 
-The audit found three operations that mutated user-visible state
+Three operations used to mutate user-visible state
 without any log evidence on the success path:
 
   1. `share.approve_device` / `share.revoke_device` — only the
@@ -150,7 +150,7 @@ class TestMigrationLogging:
 
     def test_no_op_migration_does_not_spam_logs(self, tmp_path, caplog):
         """Inverse: when the DB is already at SCHEMA_VERSION, none
-        of the new R8-H14 lines should fire — they're for upgrade
+        of the new migration log lines should fire — they're for upgrade
         events only."""
         from bpp.db.connection import close_all_connections, init_db
 

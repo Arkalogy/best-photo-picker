@@ -1,4 +1,4 @@
-"""Batch 8 — Ed25519 manifest verifier tests.
+"""Ed25519 manifest verifier tests.
 
 Pins:
 
@@ -12,7 +12,7 @@ Pins:
 * :func:`verify_manifest` rejects an unsigned, partially signed,
   or wrong-key-signed manifest, and accepts a correctly-signed
   manifest with the right key in the trust set.
-* Trap-T7 rule at the merge layer: a remote manifest cannot relax
+* Reclassification rule at the merge layer: a remote manifest cannot relax
   ``commercial_use_restriction_known`` from True to False without
   two valid signatures.
 """
@@ -195,7 +195,7 @@ class TestSignAndVerifyRoundTrip:
         )
 
 
-# ── Trap T7: dual-sig enforcement at the merge layer ──
+# ── Dual-sig enforcement at the merge layer ──
 
 
 class TestOverlayDualSigEnforcement:

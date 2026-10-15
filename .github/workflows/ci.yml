@@ -36,10 +36,13 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # No token left in .git/config for later steps to read.
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.11"
 
@@ -72,13 +75,17 @@ jobs:
       - name: Format check
         run: ruff format --check .
 
-      # Batch 2 / item 2 of the legal-posture rollout: no ML model
-      # weight file may ship in any Arkalogy artifact. The guard
-      # scans the bpp/ source tree first (catches a PR that drops a
-      # weight into the repo), then builds the wheel and scans its
-      # contents (catches a PR that hides a weight behind packaging
-      # tricks). A non-zero exit is a release blocker. The allowlist
-      # of legitimate non-restricted bundles lives in the script.
+      # No ML model weight file may ship in the source tree or the
+      # wheel except the allowlisted, permissively licensed ones
+      # (today only the Apache-2.0 BlazeFace detector; see
+      # MODEL_POLICY.md and docs/adr/0005). The guard scans the bpp/
+      # source tree first (catches a PR that drops a weight into the
+      # repo), then builds the wheel and scans its contents (catches a
+      # PR that hides a weight behind packaging tricks). A non-zero
+      # exit is a release blocker. The allowlist lives in the script.
+      # It doesn't inspect the desktop DMG, whose extra files come from
+      # third-party wheels (listed in NOTICE.txt and each release's
+      # third-party inventory).
       - name: No bundled model weights (source tree)
         run: python3 scripts/check_no_bundled_weights.py
 
@@ -102,7 +109,7 @@ jobs:
           done
 
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "20"
           cache: npm
@@ -132,15 +139,18 @@ jobs:
     needs: lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # No token left in .git/config for later steps to read.
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.11"
 
       - name: Cache pip packages
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/pip
           key: pip-3.11-${{ hashFiles('pyproject.toml') }}
@@ -152,7 +162,7 @@ jobs:
       # 1-2 min before tests can start. Keyed on the file paths in
       # bpp/scoring/face*.py so a model URL change invalidates the cache.
       - name: Cache ML models
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/bpp
           key: bpp-models-${{ hashFiles('bpp/scoring/face*.py', 'bpp/scoring/clip*.py') }}
@@ -167,7 +177,7 @@ jobs:
         run: |
           pip install --upgrade pip "setuptools<82"
           pip install git+https://github.com/ageitgey/face_recognition_models
-          pip install -e ".[dev,web,faces,nudity,heic,raw]"
+          pip install -e ".[dev,web,faces,heic,raw]"
 
       # `-n auto`: pytest-xdist parallel workers (one per CPU).
       # `--dist=loadfile`: tests in the same file run in the same worker,
@@ -193,19 +203,22 @@ jobs:
     needs: lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # No token left in .git/config for later steps to read.
+          persist-credentials: false
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.11"
       - name: Cache pip packages
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/pip
           key: pip-3.11-${{ hashFiles('pyproject.toml') }}
           restore-keys: pip-3.11-
       - name: Cache ML models
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/bpp
           key: bpp-models-${{ hashFiles('bpp/scoring/face*.py', 'bpp/scoring/clip*.py') }}
@@ -218,7 +231,7 @@ jobs:
         run: |
           pip install --upgrade pip "setuptools<82"
           pip install git+https://github.com/ageitgey/face_recognition_models
-          pip install -e ".[dev,web,faces,nudity,heic,raw]"
+          pip install -e ".[dev,web,faces,heic,raw]"
       - name: Run slow tests
         run: pytest -m slow --tb=short
 
@@ -229,7 +242,7 @@ jobs:
   # downgrade Pillow and break HEIC). This job runs in parallel with
   # `test`; failure here means the documented install path is broken.
   base-clean-install:
-    # R12-OSS-4: verify the standard user-facing install combo resolves
+    # Verify the standard user-facing install combo resolves
     # cleanly on a FRESH pip cache. The main `test` job restores cached
     # deps, which can hide transitive conflicts introduced by a dep bump
     # (pip doesn't re-solve constraints against the full tree if everything
@@ -238,10 +251,13 @@ jobs:
     needs: lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # No token left in .git/config for later steps to read.
+          persist-credentials: false
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.11"
 
@@ -257,7 +273,7 @@ jobs:
         run: |
           pip install --upgrade pip "setuptools<82"
           pip install git+https://github.com/ageitgey/face_recognition_models
-          pip install -e ".[web,faces,nudity,raw]"
+          pip install -e ".[web,faces,raw]"
 
       - name: pip check (no broken requirements)
         run: pip check
@@ -272,10 +288,13 @@ jobs:
     needs: lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # No token left in .git/config for later steps to read.
+          persist-credentials: false
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.11"
 

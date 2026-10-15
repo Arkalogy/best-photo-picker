@@ -43,7 +43,7 @@ class ServingLockError(BppError):
     refuses to start instead of fail-opening into the same
     silent-corruption path the lock was supposed to prevent.
 
-    P7: inherits :class:`BppError` so ``except BppError`` catches it.
+    Inherits :class:`BppError` so ``except BppError`` catches it.
     """
 
     http_status = 503
@@ -165,7 +165,7 @@ def acquire_lock(workdir: str) -> int | None:
                     os.remove(tmp)
                 continue  # Try again
 
-            # D-03: os.replace is atomic but cannot fail if a third
+            # os.replace is atomic but cannot fail if a third
             # process raced us — both contenders' replaces succeed,
             # last writer wins. Verify the lockfile now contains
             # OUR pid before returning success. If a different pid

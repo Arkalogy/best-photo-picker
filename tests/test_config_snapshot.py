@@ -1,6 +1,6 @@
 """Picklability gate for ``ConfigSnapshot`` under ``multiprocessing.spawn``.
 
-P0 of refactor-plan.md. The whole point of ``ConfigSnapshot`` is that the
+The whole point of ``ConfigSnapshot`` is that the
 parent flattens a live :class:`Config` (which holds a bound method that
 drags a ``mappingproxy`` through pickle) into a plain-dict-backed
 dataclass *before* the spawn child sees it. If a future contributor

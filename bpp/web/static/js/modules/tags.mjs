@@ -55,7 +55,7 @@ export function _setPhotoTagsCache(cache) {
 /**
  * Refresh `allTags` from the server.
  *
- * Protection B: routed through wrapSectionLoader so a /api/v1/tags
+ * Routed through wrapSectionLoader so a /api/v1/tags
  * failure surfaces as a retry pill in the Tags sidebar section
  * instead of silently leaving the list empty (a silent stall, per
  * project convention). The wrapper never throws.
@@ -101,7 +101,7 @@ export async function updateLightboxTags(p) {
 }
 
 /**
- * Panel-cleanup item 4: no always-open input. Empty state is one quiet
+ * No always-open input. Empty state is one quiet
  * labeled button ("+ Add tag" — labeled so users know the section exists);
  * with tags, a proper Tags section with chips + a small "+" to add more.
  * Clicking either swaps in the input (lbShowTagInput).

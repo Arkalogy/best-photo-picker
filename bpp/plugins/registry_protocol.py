@@ -1,4 +1,4 @@
-"""P5 — structural protocol every plugin-target registry conforms to.
+"""Structural protocol every plugin-target registry conforms to.
 
 The plan called for "unifying" the four plugin-target registries
 (``WorkerRegistry``, ``SmartAlbumRegistry``, ``ExportModeRegistry``,
@@ -13,7 +13,7 @@ This module:
   conforms to from a plugin author's POV (the four ``classmethod``
   surface: ``register``, ``get``, ``keys``, ``_reset_for_tests``).
 * Exposes :data:`PLUGIN_TARGET_REGISTRIES` — the canonical tuple of
-  registries plugins target. ``tests/test_p5_registry_protocol.py``
+  registries plugins target. ``tests/test_registry_protocol.py``
   iterates this tuple to enforce the protocol for new registries.
 * Provides :func:`each_registry` for callers (test code, future
   plugin tooling) that want to walk the surface uniformly.

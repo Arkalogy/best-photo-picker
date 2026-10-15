@@ -24,6 +24,10 @@ log = get_logger(__name__)
 bp = Blueprint("media", __name__)
 
 
+#: What to check when a photo's file can't be read (shown in the viewer's toast).
+_MISSING_FILE_RECOVERY = "check that the file still exists and its drive is connected"
+
+
 def _safe_send_file(path: str, **kwargs) -> Response | tuple[Response, int]:
     """send_file but turn FileNotFoundError / OSError into a 404 instead
     of a 500. The pre-flight `os.path.isfile()` checks elsewhere in this
@@ -33,7 +37,13 @@ def _safe_send_file(path: str, **kwargs) -> Response | tuple[Response, int]:
     try:
         return send_file(path, **kwargs)
     except (FileNotFoundError, OSError) as e:
-        raise NotFoundError("File missing", path=path) from e
+        # The path stays in the log; the response (seen by paired phones
+        # too) gets the reason and what to check.
+        raise NotFoundError(
+            "File missing",
+            diagnostic_message=f"File missing: {path}",
+            recovery=_MISSING_FILE_RECOVERY,
+        ) from e
 
 
 @bp.get("/thumb/<path_hash>")
@@ -123,7 +133,7 @@ def serve_full_photo(path_hash: str) -> Response | tuple[Response, int]:
 
     filepath = ctx.thumbs.get_filepath(path_hash)
     if filepath is None or not os.path.isfile(filepath):
-        raise NotFoundError("Photo not found", path_hash=path_hash)
+        raise NotFoundError("Photo not found", path_hash=path_hash, recovery=_MISSING_FILE_RECOVERY)
 
     # Skip edits when ?raw=1 (editor needs the original for CSS live preview)
     edits = None if request.args.get("raw") else _get_edits_for_path(ctx, filepath)
@@ -163,12 +173,7 @@ def serve_full_photo(path_hash: str) -> Response | tuple[Response, int]:
 
             result = convert_raw_to_jpeg(filepath, jpeg_path)
             if result is None:
-                raise BppError(
-                    "Cannot convert RAW image",
-                    user_message="Cannot convert RAW image",
-                    diagnostic_message=f"rawpy conversion failed for {filepath}",
-                    path_hash=path_hash,
-                )
+                raise _raw_preview_error(path_hash, filepath)
         return _safe_send_file(jpeg_path, mimetype="image/jpeg")
 
     return _safe_send_file(filepath, mimetype="image/jpeg")
@@ -309,7 +314,7 @@ def api_video_trim() -> tuple[Response, int]:
         )
         conn.commit()
 
-    # Cache-invalidation audit (2026-06): the trim overwrites the
+    # The trim overwrites the
     # underlying file but the cached sprite + thumbnail are content-
     # addressed against the OLD bytes. Without the invalidate, the
     # next /video/sprite or /thumb request serves a sprite generated
@@ -342,3 +347,19 @@ from bpp.web.photo_edits import (  # noqa: E402, F401
     _get_edits_for_path,
     _perspective_coefficients,
 )
+
+
+def _raw_preview_error(path_hash: str, filepath: str = "") -> BppError:
+    """The RAW-preview failure as an error the viewer can explain: the
+    reason as the message, the fix as ``context.recovery`` (the viewer
+    toasts both; see ``explainPhotoFailure`` in api-client.mjs)."""
+    from bpp.utils.raw import preview_failure
+
+    reason, recovery = preview_failure()
+    return BppError(
+        "Cannot convert RAW image",
+        user_message=reason,
+        diagnostic_message=f"RAW conversion failed for {filepath}",
+        path_hash=path_hash,
+        recovery=recovery,
+    )

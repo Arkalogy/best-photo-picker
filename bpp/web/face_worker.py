@@ -42,20 +42,36 @@ def _validate_bbox(bx: int, by: int, bw: int, bh: int) -> tuple[int, int, int, i
     return (bx, by, bw, bh)
 
 
+def ensure_plugins_loaded() -> None:
+    """Load plugin entry points in this process, once.
+
+    Face extraction runs in a spawned child process (and, with several
+    workers, in a process pool), which never ran the server's plugin
+    load — so a plugin embedder the user picked was unknown there and
+    the run fell back to SFace. Cheap after the first call.
+    """
+    from bpp.plugins import ensure_loaded_once
+
+    ensure_loaded_once()
+
+
 _MIN_EMBEDDING_NORM = 1e-6  # below this we treat the vector as effectively zero
 
 
-def _validate_embedding(emb: np.ndarray) -> bool:
-    """Validate that an embedding is a 128-dim float array with no NaN/Inf
-    and a non-degenerate magnitude.
+def _validate_embedding(emb: np.ndarray, method: str | None = None) -> bool:
+    """Validate that an embedding has the size ``method``'s embedder
+    declares (128 for SFace / dlib, 512 for buffalo_s, a plugin's own),
+    no NaN/Inf, and a non-degenerate magnitude.
 
-    L3: a zero-vector embedding sails through the shape + finiteness checks
+    A zero-vector embedding sails through the shape + finiteness checks
     but poisons clustering — its distance to every centroid is identical
     (the centroid's own norm), so dlib's threshold-based clustering snaps
     it onto whatever cluster it sees first. The magnitude check rejects
     the degenerate case before it can pollute downstream state.
     """
-    if emb.shape != (128,):
+    from bpp.scoring.face_embedder_registry import embedding_dim_for
+
+    if emb.shape != (embedding_dim_for(method),):
         return False
     if not bool(np.isfinite(emb).all()):
         return False
@@ -86,6 +102,7 @@ def _extract_one(
     """
     from bpp.scoring.model_base import ModelIntegrityError
 
+    ensure_plugins_loaded()
     try:
         img = load_and_downscale(filepath, max_long_side)
         if img is None:
@@ -222,13 +239,7 @@ class FaceWorker(BackgroundWorker):
         # (cheap — just files-on-disk checks). Spinning model files into
         # the cache before the child starts means the child doesn't pay
         # cold-start latency hidden behind a "starting…" status.
-        from bpp.scoring.face import ensure_face_models
-        from bpp.scoring.face_embed import ensure_sface_model
-
-        for warn in ensure_face_models():
-            self._emit({"type": "warning", "message": warn})
-        for warn in ensure_sface_model():
-            self._emit({"type": "warning", "message": warn})
+        config = prepare_face_models(self._emit, config)
 
         # Subprocess isolation. extract_and_cluster_faces loads SCRFD +
         # BlazeFace + dlib + SFace + HandLandmarker — collectively ~600-
@@ -240,7 +251,7 @@ class FaceWorker(BackgroundWorker):
         # see run_face_extraction_subprocess for the full rationale.
         from bpp.web.analyze_face_extract import run_face_extraction_subprocess
 
-        # P1: thread the FaceWorker's threading-side cancel into the
+        # Thread the FaceWorker's threading-side cancel into the
         # subprocess runner — same plumbing as AnalyzeWorker.
         faces_found, n_clusters, _pid = run_face_extraction_subprocess(
             with_faces,
@@ -285,3 +296,23 @@ class FaceWorker(BackgroundWorker):
                 "clusters": n_clusters,
             }
         )
+
+
+def prepare_face_models(emit: Any, config: dict[str, Any]) -> dict[str, Any]:
+    """Fetch the face models the extraction will use (the ones switched
+    on), with their warnings. Returns the config to extract with: a YuNet
+    that couldn't be fetched is off for this run, so the extraction
+    subprocess doesn't silently try the same download again."""
+    from bpp.constants import MODEL_TOGGLE_KEYS
+    from bpp.scoring import face, face_yunet
+    from bpp.scoring.face_embed import ensure_sface_model
+    from bpp.utils.download import announce_downloads
+
+    toggles = {k: config.get(k, True) for k in MODEL_TOGGLE_KEYS}
+    with announce_downloads(lambda message: emit({"type": "status", "message": message})):
+        warnings = [*face.ensure_face_models(toggles), *ensure_sface_model()]
+    for warn in warnings:
+        emit({"type": "warning", "message": warn})
+    if not _os.path.exists(face_yunet._YUNET_MODEL_PATH):
+        return {**config, "model_yunet": False}
+    return config

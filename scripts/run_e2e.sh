@@ -52,6 +52,16 @@ if [ -z "${BPP_ACCEPTANCE_LOG_PATH:-}" ]; then
   BPP_ACCEPTANCE_LOG_PATH="$(mktemp -t bpp_e2e_accept.XXXXXX)"
 fi
 export BPP_ACCEPTANCE_LOG_PATH
+
+# Isolate the rest of ~/.config/bpp too (library registry, use context):
+# e2e servers register their temp libraries and the picker tests change
+# the use context, which must never touch a developer's real config.
+# BPP_E2E_CONFIG_DIR pins the directory; BPP_E2E_REAL_CONFIG=1 opts out.
+if [ "${BPP_E2E_REAL_CONFIG:-}" != "1" ]; then
+  XDG_CONFIG_HOME="${BPP_E2E_CONFIG_DIR:-$(mktemp -d -t bpp_e2e_config.XXXXXX)}"
+fi
+export XDG_CONFIG_HOME
+echo "Config dir: $XDG_CONFIG_HOME"
 echo "Acceptance log: $BPP_ACCEPTANCE_LOG_PATH"
 
 # Server log: honor BPP_E2E_SERVER_LOG if set (CI pins it to a known path

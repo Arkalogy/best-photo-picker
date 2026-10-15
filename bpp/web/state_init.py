@@ -17,10 +17,8 @@ import os
 import threading
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
-
 from bpp.db.albums import ensure_all_photos_album, sync_all_photos_album
-from bpp.db.clip import get_all_clip_embeddings
+from bpp.db.clip import load_clip_matrix
 from bpp.db.connection import get_db, init_db
 from bpp.db.photos import bulk_upsert_photos, get_photo_count
 from bpp.db.photos import get_all_photos as db_get_all_photos
@@ -127,7 +125,7 @@ def init_app_db(ctx: WebAppState) -> None:
     db_path_at_spawn = db_p  # captured workdir/photopicker.db at this exact init
 
     def _phase5_background() -> None:
-        # Server-log breadcrumbs — same pattern as the M10/M11 bookends
+        # Server-log breadcrumbs — same pattern as the bookend logs
         # on face_worker._run and semantic_deduplicate. Phase 5 runs
         # silently in the background for 5-10s at large-library scale;
         # without these, a maintainer can't grep server.log to see
@@ -199,10 +197,11 @@ def load_clip_embeddings(ctx: WebAppState) -> dict[int, Any]:
     Lock discipline:
     - First "is ready?" check under lock — fast short-circuit.
     - DB read outside lock — slow, doesn't need to block readers.
-    - Matrix build (np.stack of ~20MB on a 10k-photo library) is
-      done outside lock, then swapped into the cache atomically
-      under lock. Other threads that hit `load_clip_embeddings`
-      during the build wait only for the dict-set, not the stack.
+    - The matrix is loaded outside the lock, then swapped into the
+      cache atomically under lock.
+
+    Memory: the data is held once — the matrix (~410 MB at the 200K
+    cap); the per-photo dict values are row views into it, not copies.
     """
     with ctx.lock:
         if ctx.caches.clip_cache["ready"]:
@@ -210,7 +209,7 @@ def load_clip_embeddings(ctx: WebAppState) -> dict[int, Any]:
     # DB read outside lock to avoid blocking concurrent requests
     try:
         conn = ctx.get_conn()
-        embs = get_all_clip_embeddings(conn)
+        ids, matrix = load_clip_matrix(conn)
     except Exception as e:
         # explicitly surface the size-cap path with a
         # clearer message so the user sees "library too big for
@@ -227,28 +226,10 @@ def load_clip_embeddings(ctx: WebAppState) -> dict[int, Any]:
             log.warning("Failed to load CLIP embeddings", exc_info=True)
         return {}
 
-    # Build the stacked matrix OUTSIDE the lock — it's pure
-    # numpy compute on a snapshot of the embeddings dict, doesn't
-    # touch any shared state. A concurrent loader doing the same
-    # work just produces a duplicate (same content); whichever
-    # commit wins below is fine.
-    ids: list[int] = []
-    matrix = None
-    if embs:
-        try:
-            ids = list(embs.keys())
-            # np.stack(list(...)) briefly holds dict values + the list +
-            # the matrix; drop the intermediate list immediately so peak
-            # stays at the documented dict+matrix (2x), not 3x, at the
-            # 200K-row cap (~400 MB per copy).
-            values = list(embs.values())
-            matrix = np.stack(values)
-            del values
-        except ValueError:
-            log.warning("Failed to build CLIP embedding matrix", exc_info=True)
-            embs = {}
-            ids = []
-            matrix = None
+    # Per-photo lookups are row views into the matrix (no copies).
+    embs: dict[int, Any] = dict(zip(ids, matrix, strict=True)) if ids else {}
+    if not embs:
+        matrix = None
 
     # Atomic swap: every cache field is updated together so a
     # reader can't observe `ready=True` with a stale matrix or

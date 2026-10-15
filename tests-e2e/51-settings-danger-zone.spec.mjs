@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * UAT Test 12 (M-S4): Danger zone wipe-count + 'type delete' guard.
+ * Danger zone wipe-count + 'type delete' guard.
  *
  * Verifies in a real browser (the only thing the user trusts after the
  * last bug):
@@ -17,7 +17,7 @@ import { expect, test } from "@playwright/test";
 
 import { openApp } from "./_helpers.mjs";
 
-test.describe("UAT 12 — wipe-count + delete guard (read-only)", () => {
+test.describe("Settings danger zone — wipe-count + delete guard (read-only)", () => {
   test("danger zone shows real count, guard enables only on exact 'delete'", async ({ page }) => {
     await openApp(page);
 
@@ -94,7 +94,7 @@ test.describe("UAT 12 — wipe-count + delete guard (read-only)", () => {
     });
     expect(
       after,
-      `library count changed (${before} → ${after}) — UAT 12 spec must be non-destructive`
+      `library count changed (${before} → ${after}) — this spec must be non-destructive`
     ).toBe(before);
   });
 });

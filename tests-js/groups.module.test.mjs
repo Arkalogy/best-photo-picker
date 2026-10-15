@@ -243,7 +243,7 @@ describe("loadGroups", () => {
   });
 
   test("on failure, preserves prior list and surfaces a sidebar sentinel", async () => {
-    // P-06: loadGroups now routes through wrapSectionLoader. The
+    // loadGroups now routes through wrapSectionLoader. The
     // previous behavior was to silently reset faceGroups to [] on
     // any failure — that blanked the Groups sidebar section without
     // telling the user why. The new behavior keeps the previous

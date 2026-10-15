@@ -14,7 +14,7 @@
  * Moment-specific keeper score. Within near-identical shots the scene and
  * composition are ~constant, so the global pick score adds noise; what
  * actually differs frame-to-frame is sharpness and face quality. (Eyes-open /
- * expression is a Phase-4 refinement once it's surfaced per photo.)
+ * expression could be added once it's surfaced per photo.)
  * @param {any} p
  * @returns {number}
  */

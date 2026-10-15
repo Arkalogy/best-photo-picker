@@ -1,6 +1,6 @@
 """Background export worker — streams per-photo progress over SSE.
 
-L-S3 release-audit followup. Before, the /api/v1/export endpoint ran
+Before this worker existed, the /api/v1/export endpoint ran
 the full export loop synchronously inside the Flask request, holding
 the HTTP connection open for the entire job. A parent exporting 100
 best photos to JPEG at "high" quality saw no UI feedback for 30-60s
@@ -88,7 +88,7 @@ class ExportWorker(BackgroundWorker):
         library_path: str,
         strip_metadata: bool,
     ) -> None:
-        # Bookend logs — same pattern as M10 / M11 / Phase 5.
+        # Bookend logs — same pattern as the face worker / Phase 5.
         import time as _time
 
         from bpp.output.export import export_selected

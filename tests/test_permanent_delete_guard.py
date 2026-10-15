@@ -1,4 +1,4 @@
-"""TDD tests for H-6: permanent delete must require prior soft-delete."""
+"""TDD tests: permanent delete must require prior soft-delete."""
 
 from __future__ import annotations
 

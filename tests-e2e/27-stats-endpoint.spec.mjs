@@ -9,8 +9,8 @@ test.describe("27 — /api/stats returns the documented shape", () => {
 
     const stats = await api(page, "/api/v1/stats");
 
-    // Schema sanity — count, total_size, format_counts are documented
-    // in pm.md "Storage info / library stats" feature.
+    // Schema sanity — count, total_size, format_counts are the
+    // documented "Storage info / library stats" fields.
     expect(typeof stats).toBe("object");
     // photo_count should be a number; allow 0 for empty libs but most
     // likely positive

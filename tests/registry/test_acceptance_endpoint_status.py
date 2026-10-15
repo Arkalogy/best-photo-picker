@@ -1,6 +1,6 @@
 """HTTP status correctness on the acceptance/confirm endpoint.
 
-Pinpoints item P-06 of the comprehensive review: when
+Pins this behavior: when
 ``confirm_acceptance`` raises ``AcceptanceError`` (missing checkbox,
 unchecked required box, empty timestamp, missing permalink), the
 HTTP layer must surface the failure as **400 Bad Request** — these

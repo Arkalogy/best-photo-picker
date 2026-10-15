@@ -12,7 +12,7 @@ from bpp.constants import (
     ACTIVE_PHOTO_SQL,
     CLUSTER_DISMISSED,
 )
-from bpp.db.face_embedding_safety import decode_embedding
+from bpp.db.face_embedding_safety import active_embedding_dim, decode_embedding
 from bpp.db.settings import delete_setting, set_setting
 from bpp.errors import ValidationError
 from bpp.utils.json_utils import safe_json_loads
@@ -65,10 +65,12 @@ def api_faces_clusters() -> tuple[Response, int]:
         for row in override_rows:
             try:
                 cid = int(row["key"].removeprefix("person_avatar_"))
-                avatar_overrides[cid] = safe_json_loads(row["value"], {})
-            except (ValueError, json.JSONDecodeError):
-                # Malformed settings row (non-numeric suffix, corrupted
-                # value). User would otherwise see their avatar silently
+                avatar_overrides[cid] = safe_json_loads(
+                    row["value"], {}, expected_type=dict, context=f"settings {row['key']}"
+                )
+            except ValueError:  # a non-numeric key suffix
+                # Malformed settings row (a corrupted value reads as {}
+                # above). User would otherwise see their avatar silently
                 # revert to auto-pick — log so support can diagnose.
                 log.warning(
                     "Skipping malformed avatar override: key=%r value=%r",
@@ -111,7 +113,7 @@ def api_faces_clusters() -> tuple[Response, int]:
                 rep["face_index"] = ov_fi
             else:
                 # Stale override — clear it so it doesn't keep failing.
-                # Protection D: best-effort lazy cleanup write inside a
+                # Best-effort lazy cleanup write inside a
                 # GET handler. If the write fails (disk I/O error, etc.)
                 # the read MUST still return its data — letting a stale
                 # cosmetic-cleanup failure 500 the People panel is the
@@ -121,7 +123,7 @@ def api_faces_clusters() -> tuple[Response, int]:
                     delete_setting(conn, f"person_avatar_{cid}")
                     log.info("Cleared stale avatar override for cluster %d", cid)
                 except (sqlite3.Error, OSError):
-                    # Narrow on purpose: Protection D was added for
+                    # Narrow on purpose: this guard exists for
                     # disk / DB write failures during the cosmetic
                     # cleanup, not for arbitrary bugs. A blanket
                     # ``except Exception`` would also swallow a
@@ -176,7 +178,7 @@ def api_faces_review() -> tuple[Response, int]:
         return jsonify({"unreviewed": [], "total": 0, "reviewed": 0}), 200
 
     # Find which cluster_ids have a named smart_person album.
-    # P5b: indexed lookup via get_smart_person_cluster_name_map (uses
+    # Indexed lookup via get_smart_person_cluster_name_map (uses
     # the v36 smart_person_cluster_id shadow column).
     named_cids: dict[int, str] = {}  # cid -> name
     person_n_re = re.compile(r"^Person \d+$")
@@ -209,14 +211,15 @@ def api_faces_review() -> tuple[Response, int]:
             f"WHERE cluster_id IN ({placeholders})",
             list(named_cids.keys()),
         ).fetchall()
-        # Protection A: route through decode_embedding so a corrupt
+        # Route through decode_embedding so a corrupt
         # row can't crash the People-review screen the way the
         # Jun-2 incident crashed /faces/clusters. Bad rows are
         # skipped; the centroid is computed from whatever remains.
         cluster_embs: dict[int, list[np.ndarray]] = {}
+        dim = active_embedding_dim(conn)
         for r in emb_rows:
             cid = r["cluster_id"]
-            emb = decode_embedding(r["embedding"], where="bp_faces.review.named_centroids")
+            emb = decode_embedding(r["embedding"], where="bp_faces.review.named_centroids", dim=dim)
             if emb is None:
                 continue
             cluster_embs.setdefault(cid, []).append(emb)
@@ -233,13 +236,16 @@ def api_faces_review() -> tuple[Response, int]:
             f"WHERE cluster_id IN ({placeholders})",
             unreviewed_cids,
         ).fetchall()
-        # Protection A: same defense as the named-centroids loop above.
+        # Same defense as the named-centroids loop above.
         # A single bad row used to crash this whole endpoint; now bad
         # rows are skipped and the centroid is built from what's left.
         cluster_embs2: dict[int, list[np.ndarray]] = {}
+        dim = active_embedding_dim(conn)
         for r in emb_rows:
             cid = r["cluster_id"]
-            emb = decode_embedding(r["embedding"], where="bp_faces.review.unreviewed_centroids")
+            emb = decode_embedding(
+                r["embedding"], where="bp_faces.review.unreviewed_centroids", dim=dim
+            )
             if emb is None:
                 continue
             cluster_embs2.setdefault(cid, []).append(emb)

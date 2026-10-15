@@ -28,12 +28,10 @@ loader:
 4. **Timeout safety** — 120 s connect/read deadline so a flaky
    network can't hang the app indefinitely.
 
-The ``registry_id`` keyword argument is REQUIRED with no default.
-Callers must either name a registered legal entry or pass ``None``
-to explicitly mark the download as "ancillary, no licensing
-concern" (logs a warning so the gap is visible to auditors). This
-forces every new download path to confront the gate question
-rather than silently bypassing it.
+The ``registry_id`` keyword argument is REQUIRED with no default and
+must name a registered legal entry — every model BPP downloads has
+one, supporting models included. There is no "ancillary, ungated"
+opt-out: a download with no entry is refused before any network call.
 """
 
 from __future__ import annotations
@@ -42,11 +40,116 @@ import contextlib
 import hashlib
 import logging
 import os
-import shutil
+import threading
 import urllib.request
+from collections.abc import Callable, Iterator
 
 _DOWNLOAD_TIMEOUT = 120  # seconds
+_CHUNK = 256 * 1024
 log = logging.getLogger(__name__)
+
+#: Per-thread progress callback ``(bytes_done, bytes_total | None)`` set by
+#: :func:`report_progress`. Thread-local so a background download job sees
+#: the bytes of the downloads it triggers — including ones made deep inside
+#: a model's own ensure helper — without every helper growing a parameter.
+_progress = threading.local()
+
+
+@contextlib.contextmanager
+def report_progress(callback: Callable[[int, int | None], None]) -> Iterator[None]:
+    """Report bytes for every :func:`download_file` call on this thread."""
+    previous = getattr(_progress, "callback", None)
+    _progress.callback = callback
+    try:
+        yield
+    finally:
+        _progress.callback = previous
+
+
+#: Per-thread "a download is starting" callback set by
+#: :func:`announce_downloads`, so a long-running job can show a status
+#: line for downloads made deep inside a model loader.
+_announcer = threading.local()
+
+
+@contextlib.contextmanager
+def announce_downloads(callback: Callable[[str], None]) -> Iterator[None]:
+    """Show a status line (``callback(message)``) for every model
+    download started on this thread."""
+    previous = getattr(_announcer, "callback", None)
+    _announcer.callback = callback
+    try:
+        yield
+    finally:
+        _announcer.callback = previous
+
+
+def announce(message: str) -> None:
+    """Pass a download status line to the active announcer, if any."""
+    callback = getattr(_announcer, "callback", None)
+    if callback is not None:
+        callback(message)
+
+
+def plain_reason(exc: BaseException) -> str:
+    """A download failure in words a user can act on. Never the raw
+    text of a file error: it carries local paths, and these reasons
+    reach the UI (and paired devices)."""
+    import http.client
+    import socket
+    import ssl
+
+    if isinstance(exc, urllib.error.HTTPError):
+        return f"the download site returned HTTP {exc.code}"
+    cause = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+    if isinstance(cause, TimeoutError | socket.timeout):
+        return "the download timed out"
+    if isinstance(cause, ssl.SSLCertVerificationError):
+        return "the download site's security certificate couldn't be verified"
+    if isinstance(cause, ssl.SSLError):
+        return "a secure connection to the download site failed"
+    if isinstance(cause, ConnectionRefusedError) or isinstance(exc, urllib.error.URLError):
+        return "no internet connection, or the download site is unreachable"
+    if isinstance(cause, ConnectionError | http.client.IncompleteRead):
+        return "the connection dropped"
+    if isinstance(exc, OSError):
+        return (
+            "a file couldn't be written or deleted — check free disk space and folder permissions"
+        )
+    return str(exc) or type(exc).__name__
+
+
+class DownloadSkippedError(RuntimeError):
+    """This model's download already failed earlier in the same run."""
+
+
+#: Registry ids whose download failed earlier in this analysis run. An
+#: environment variable, so subprocesses (and their worker pools) inherit
+#: it and don't silently try the same download again.
+_SKIP_ENV = "BPP_SKIP_DOWNLOADS"
+
+
+def skip_downloads_in_this_process(registry_ids: list[str]) -> None:
+    """Refuse further downloads of *registry_ids* in this process and the
+    processes it starts. Call it only in a run's own subprocess."""
+    if registry_ids:
+        os.environ[_SKIP_ENV] = ",".join(sorted(_skipped_downloads() | set(registry_ids)))
+
+
+def _skipped_downloads() -> set[str]:
+    return {i for i in os.environ.get(_SKIP_ENV, "").split(",") if i}
+
+
+def _copy_with_progress(resp, f) -> None:
+    callback = getattr(_progress, "callback", None)
+    total_header = getattr(resp, "headers", {}).get("Content-Length")
+    total = int(total_header) if total_header and str(total_header).isdigit() else None
+    done = 0
+    while chunk := resp.read(_CHUNK):
+        f.write(chunk)
+        done += len(chunk)
+        if callback is not None:
+            callback(done, total)
 
 
 def _file_sha256(path: str) -> str:
@@ -58,21 +161,18 @@ def _file_sha256(path: str) -> str:
     return h.hexdigest()
 
 
-def _run_policy_gate(registry_id: str | None) -> None:
+def _run_policy_gate(registry_id: str) -> None:
     """Run the per-entry policy gate.
 
-    ``registry_id`` of ``None`` is an explicit opt-out (ancillary
-    detector with no legal-registry entry). Logs a warning so the
-    gap is visible. A string id is looked up; unknown ids raise
-    ``ValueError`` (programmer error — register the entry first).
+    A missing or unknown id raises ``ValueError`` (programmer error —
+    register the entry first); there is no ungated download.
     """
-    if registry_id is None:
-        log.warning(
-            "download_file: registry_id=None — ancillary download "
-            "with no policy gate. If this model has any licensing "
-            "concern, register it in bpp/registry/builtins.py."
+    if not registry_id:
+        raise ValueError(
+            "download_file: registry_id is required. Every model download "
+            "must name its bpp.registry entry — register one in "
+            "bpp/registry/builtins.py first."
         )
-        return
 
     # Late import: bpp.registry pulls in policy machinery; importing
     # it at module load would create a circular path through
@@ -94,7 +194,7 @@ def download_file(
     url: str,
     dest: str,
     *,
-    registry_id: str | None,
+    registry_id: str,
     timeout: int = _DOWNLOAD_TIMEOUT,
     sha256: str | None = None,
 ) -> None:
@@ -117,13 +217,13 @@ def download_file(
     Removes the dest file on any failure (network, integrity) so a
     partial / corrupt / unverified file never lingers in the cache.
 
-    ``registry_id`` is keyword-only and REQUIRED — pass either a
-    registered entry id or ``None`` (explicit opt-out for an
-    ancillary detector). Callers cannot omit this argument; the
-    point of the chokepoint is that every download confronts the
-    gate question explicitly.
+    ``registry_id`` is keyword-only and REQUIRED — the registered entry
+    for the weights. The point of the chokepoint is that every download
+    runs the gate.
     """
     _run_policy_gate(registry_id)
+    if registry_id in _skipped_downloads():
+        raise DownloadSkippedError(f"{registry_id}: its download failed earlier in this run")
 
     # Late import for the same circular-import reason as in
     # _run_policy_gate above.
@@ -140,7 +240,7 @@ def download_file(
     try:
         try:
             with urllib.request.urlopen(url, timeout=timeout) as resp, open(dest, "wb") as f:
-                shutil.copyfileobj(resp, f)
+                _copy_with_progress(resp, f)
         except Exception:
             log.warning("Download failed for %s", url, exc_info=True)
             with contextlib.suppress(OSError):
@@ -170,6 +270,42 @@ def download_file(
         log.info("Downloaded %s", dest)
 
 
+#: A temp file untouched this long belongs to a crashed run, not to a
+#: download in progress (an active one is written to every few seconds).
+_STALE_TEMP_SECONDS = 3600
+
+
+def _partial_download_paths(dest: str) -> list[str]:
+    import glob
+
+    return [dest + ".tmp", *glob.glob(glob.escape(dest) + ".*.tmp")]
+
+
+def download_temp_path(dest: str) -> str:
+    """Temp file for one writer's download of ``dest``.
+
+    Unique per process and thread, so parallel workers fetching the same
+    model never write into one shared file. Also deletes this file's
+    temp leftovers from crashed runs (but not another writer's
+    in-progress download).
+    """
+    import time
+
+    cutoff = time.time() - _STALE_TEMP_SECONDS
+    for leftover in _partial_download_paths(dest):
+        with contextlib.suppress(OSError):
+            if os.path.getmtime(leftover) < cutoff:
+                os.remove(leftover)
+    return f"{dest}.{os.getpid()}.{threading.get_ident()}.tmp"
+
+
+def remove_partial_downloads(dest: str) -> None:
+    """Delete every temp leftover of downloads of ``dest`` (uninstall)."""
+    for leftover in _partial_download_paths(dest):
+        with contextlib.suppress(OSError):
+            os.remove(leftover)
+
+
 def verify_existing(path: str, *, sha256: str) -> None:
     """Verify an already-on-disk model file matches the pinned SHA-256.
 
@@ -182,7 +318,7 @@ def verify_existing(path: str, *, sha256: str) -> None:
     Raises ModelIntegrityError on mismatch. Removes the bad file so
     the next caller can re-download cleanly.
 
-    D-02: ModelSingleton.ensure_model previously returned existing
+    ModelSingleton.ensure_model previously returned existing
     files unconditionally — only the first download was verified.
     This helper closes that gap.
     """

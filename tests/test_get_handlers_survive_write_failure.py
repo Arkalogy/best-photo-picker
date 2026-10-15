@@ -1,4 +1,4 @@
-"""Protection D — GET handlers must survive side-effect write failures.
+"""GET handlers must survive side-effect write failures.
 
 The Jun-2 demo lib incident: ``GET /api/v1/faces/clusters`` did a lazy
 ``delete_setting`` cleanup of stale avatar overrides inside the read
@@ -6,7 +6,7 @@ path. A transient ``sqlite3.OperationalError: disk I/O error`` from
 that write propagated up and turned the read into a 500. The People
 panel — and the sidebar — disappeared.
 
-Protection D wraps the lazy cleanup in a try/except so the GET
+The GET-handler write-failure guard wraps the lazy cleanup in a try/except so the GET
 returns successfully (with the stale data) instead of crashing. This
 test pins that contract: ``delete_setting`` patched to raise, the
 endpoint must still return 200.
@@ -111,7 +111,7 @@ def test_clusters_endpoint_succeeds_when_lazy_cleanup_write_fails(
 
     assert resp.status_code == 200, (
         f"GET /api/v1/faces/clusters must survive lazy-cleanup write "
-        f"failures (Protection D). Got {resp.status_code}: "
+        f"failures (the GET-handler write-failure guard). Got {resp.status_code}: "
         f"{resp.data[:300]!r}"
     )
     payload = resp.get_json()
@@ -122,7 +122,7 @@ def test_clusters_endpoint_succeeds_when_lazy_cleanup_write_fails(
 def test_lazy_cleanup_does_not_swallow_programmer_errors(
     app_with_stale_avatar,
 ) -> None:
-    """P-09: Protection D's catch used to be a blanket
+    """The GET-handler write-failure guard's catch used to be a blanket
     ``except Exception``. That would also swallow a NameError
     introduced by a future refactor and leave the bug hiding in the
     log while the endpoint kept working. The narrowed
@@ -141,7 +141,7 @@ def test_lazy_cleanup_does_not_swallow_programmer_errors(
     # In TESTING mode Flask propagates unhandled exceptions through
     # the test client — exactly what we want to assert. Under
     # production config the same NameError would become a 500; the
-    # point is that Protection D does NOT silently swallow it.
+    # point is that the GET-handler write-failure guard does NOT silently swallow it.
     with (
         patch.object(bp_faces, "delete_setting", side_effect=raise_name_error),
         pytest.raises(NameError),

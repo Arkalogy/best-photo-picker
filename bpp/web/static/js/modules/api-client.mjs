@@ -13,6 +13,8 @@
  * keep working unchanged.
  */
 
+import { toastError } from "./toast.mjs";
+
 /**
  * Read the auth token at module-load time. The meta tag is rendered
  * server-side into the shell HTML, so it's already in the DOM by the
@@ -118,7 +120,7 @@ let _lastMediaProbeAt = 0;
 /**
  * @param {Event} event
  */
-function _onMediaError(event) {
+export function _onMediaError(event) {
   if (_sessionLostHandled) return;
   const target = /** @type {any} */ (event.target);
   if (!target || !target.src) return;
@@ -126,12 +128,56 @@ function _onMediaError(event) {
   if (tag !== "IMG" && tag !== "VIDEO") return;
   const url = String(target.src);
   if (!/\/(thumb|photo|video)\//.test(url)) return;
+  if (tag === "IMG" && /\/photo\//.test(url)) explainPhotoFailure(url);
   const now = Date.now();
   if (now - _lastMediaProbeAt < 5000) return;
   _lastMediaProbeAt = now;
   // apiFetch will throw on 403 — and side-effect the reload handler.
   // Swallow any error since we only care about the side effect.
   apiFetch("/api/v1/status").catch(() => {});
+}
+
+/** Full-size photos whose load failure was already explained this session. */
+const _explainedPhotos = new Set();
+
+/**
+ * Explain why a full-size photo failed to load, once per photo: an
+ * `<img>` can't show the server's error body, so ask again and toast its
+ * reason + recovery (e.g. "RAW support isn't available — reinstall the
+ * desktop app"). Silent when the second try works (a network blip — the
+ * image isn't downloaded again, and a later real failure still gets
+ * explained) or when trust was lost (the status probe's reload handles it).
+ *
+ * @param {string} url - the failed `<img>` src
+ */
+export async function explainPhotoFailure(url) {
+  const base = typeof location !== "undefined" && location.origin ? location.origin : "http://localhost";
+  const u = new URL(url, base);
+  if (_explainedPhotos.has(u.pathname)) return;
+  _explainedPhotos.add(u.pathname);
+  let resp;
+  try {
+    resp = await fetch(u.pathname + u.search, {
+      headers: { "X-Auth-Token": _authToken },
+      signal: AbortSignal.timeout(30000),
+    });
+  } catch {
+    _explainedPhotos.delete(u.pathname); // offline / timed out: nothing to explain yet
+    return;
+  }
+  if (resp.ok) {
+    _explainedPhotos.delete(u.pathname);
+    resp.body?.cancel().catch(() => {});
+    return;
+  }
+  if (resp.status === 403) return;
+  const body = await resp.json().catch(() => ({}));
+  const err = /** @type {Error & {status?: number, body?: any}} */ (
+    new Error(body.error || `HTTP ${resp.status}`)
+  );
+  err.status = resp.status;
+  err.body = body;
+  toastError("show this photo", err, body.context?.recovery || "try again");
 }
 
 if (typeof document !== "undefined") {

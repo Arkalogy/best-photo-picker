@@ -1,6 +1,6 @@
 """Atomicity gate for the recompute + analyze persist paths.
 
-Release-audit H3 flagged these write paths as potentially non-atomic:
+A review flagged these write paths as potentially non-atomic:
 the abstract concern was 'multiple row updates outside an explicit
 transaction'. Reading the code showed the bug doesn't exist —
 ``set_album_selection`` is a single ``UPDATE ... CASE`` and
@@ -9,7 +9,7 @@ which SQLite guarantees as atomic against a worker crash.
 
 These tests pin those guarantees so a future refactor that splits
 either into per-row execute+commit trips the gate instead of silently
-introducing the bug the audit was worried about.
+introducing a non-atomic write.
 """
 
 from __future__ import annotations
@@ -148,7 +148,7 @@ class TestBulkUpsertPhotosAtomicity:
     def test_no_partial_persistence_when_commit_fails(self, conn, tmp_path) -> None:
         """If commit raises after executemany, no rows must be visible.
 
-        This is the actual crash semantic from the original audit
+        This is the actual crash semantic behind the original
         concern: a worker that dies between ``executemany`` and
         ``commit`` should leave the table untouched. SQLite gives us
         this for free because ``executemany`` is an implicit
@@ -193,7 +193,7 @@ class TestBulkUpsertPhotosAtomicity:
         assert n == 4
 
     def test_transient_io_error_is_retried_and_succeeds(self, conn, tmp_path) -> None:
-        """M9: a transient OSError (NAS jitter) on the first executemany
+        """A transient OSError (NAS jitter) on the first executemany
         attempt must be retried — the second clean attempt should land
         the rows. Local-disk users see no overhead because is_transient
         returns False for everything they'd hit; this test simulates

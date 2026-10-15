@@ -50,7 +50,7 @@ export async function refreshSmartAlbums() {
  * @param {boolean} [afterExtraction]
  */
 export async function loadFaceClusters(afterExtraction) {
-  // Protection B: wrap the actual loader so a /api/v1/faces/clusters
+  // Wrap the actual loader so a /api/v1/faces/clusters
   // 500 (Jun-2 incident) can't take down the whole sidebar by
   // throwing out of the orchestrator. wrapSectionLoader catches +
   // logs + renders an error pill in the People section + leaves

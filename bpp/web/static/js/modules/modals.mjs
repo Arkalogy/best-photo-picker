@@ -138,7 +138,7 @@ export function showSettings() {
     document.getElementById("check-updates-toggle")
   );
   if (updToggle) updToggle.checked = localStorage.getItem("bpp_check_updates") !== "false";
-  // M-S4 — Danger zone: fetch the library photo count so the wipe
+  // Danger zone: fetch the library photo count so the wipe
   // confirmation surfaces the actual blast radius BEFORE the user
   // types 'delete'. Today the toast tells them the count post-delete;
   // by then it's too late. Fail-soft: if the count fetch errors,
@@ -191,6 +191,12 @@ export function showSettings() {
 
 export function hideSettings() {
   document.getElementById("settings-overlay")?.classList.remove("visible");
+  // A picker ⋯ menu / ⓘ popover left open would reappear next time.
+  for (const el of document.querySelectorAll(
+    "#settings-overlay .fe-overflow-menu.open, #settings-overlay .fe-license-popover.open",
+  )) {
+    el.classList.remove("open", "fe-overflow-menu--up");
+  }
 }
 
 /**
@@ -373,7 +379,7 @@ export function showExportModal() {
       scopeEl.value = "picks";
       scopeEl.disabled = false;
     }
-    // UAT Bug #13: hide the entire 'What to export' field when in
+    // Hide the entire 'What to export' field when in
     // batch mode — there's only one option ('Selected photos'),
     // showing it as a disabled dropdown reads as broken UI when in
     // reality the choice is forced by how the user opened the modal.
@@ -454,7 +460,7 @@ export function batchExport() {
   // Silent guard: the batch bar (which hosts the Export button) is only
   // .visible when multiSelected.size > 0 (see photos-select.updateMultiSelectUI),
   // so this is unreachable with an empty selection — the hidden bar is the
-  // disabled affordance, no toast. (Toast-noise audit item 10.)
+  // disabled affordance, no toast.
   if (!ms.size) return;
   _exportBatchPaths = new Set(ms);
   showExportModal();

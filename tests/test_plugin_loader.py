@@ -1,6 +1,6 @@
-"""R10-M4: third-party plugin packages auto-load via entry-points.
+"""Third-party plugin packages auto-load via entry-points.
 
-Rounds 8-9 added public registries (FaceDetectorRegistry,
+The project added public registries (FaceDetectorRegistry,
 FaceEmbedderRegistry, ConfigSchema, etc.) for plugin authors. But
 nothing IMPORTED a third-party plugin package — registration is an
 import side effect, so a plugin wheel installed in the venv stayed
@@ -35,7 +35,7 @@ def _reset_loaded():
 
 @pytest.fixture
 def plugins_enabled(monkeypatch):
-    """R11-H1: plugins are off by default. Tests that exercise the
+    """Plugins are off by default. Tests that exercise the
     happy path opt in via env var so they're representative of a
     user who said `BPP_ENABLE_PLUGINS=1`."""
     monkeypatch.setenv("BPP_ENABLE_PLUGINS", "1")
@@ -196,7 +196,7 @@ class TestLoadPluginEntryPoints:
 
 
 class TestPluginsDisabledByDefault:
-    """R11-H1: third-party plugins must be opt-in via
+    """Third-party plugins must be opt-in via
     BPP_ENABLE_PLUGINS=1. Default-on lets any pip-installed package
     declaring `bpp.plugins` execute arbitrary `setup()` code at
     process start — strictly worse for an OSS distribution where
@@ -288,7 +288,7 @@ class TestPluginsDisabledByDefault:
 
 
 class TestLockReleasedDuringSetup:
-    """R11-M3: `_loaded_lock` must NOT cover plugin `target()`
+    """`_loaded_lock` must NOT cover plugin `target()`
     invocation. A plugin whose setup function takes 5 seconds would
     otherwise serialize every other concurrent loader call for the
     full duration."""
@@ -324,7 +324,7 @@ class TestLockReleasedDuringSetup:
 
 
 class TestNonCallableTargetLog:
-    """R11-L8: a plugin whose target isn't a callable (relying on
+    """A plugin whose target isn't a callable (relying on
     import-time side effects) used to log only at DEBUG. Promote to
     INFO so plugin authors trying to debug "did my entry land?" see
     a breadcrumb without --debug."""

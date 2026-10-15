@@ -45,6 +45,7 @@ import {
   setFaceEmbedderUseContext,
   uninstallFaceEmbedderEntry,
 } from "./face-embedders-actions.mjs";
+import { KIND_LABELS, KIND_ORDER, LEGACY_FEATURE_MAP } from "./face-embedders-catalog.mjs";
 import {
   _feInstallGlobalHandlers,
   _feLicenseInfoToggle,
@@ -56,18 +57,20 @@ import {
   _buildMenuFromState,
   _deriveRowState,
   _renderMenuItem,
-  _sizeCell,
-  _statusCell,
 } from "./face-embedders-rowstate.mjs";
+import { _sizeCell, _statusCell, licenseBadge } from "./face-embedders-cells.mjs";
 import {
   _collectAcceptedIds,
   _collectCatalogEntryIds,
+  _collectReacceptIds,
+  damagedLogNoticeHTML,
   _collectRequiresAckIds,
   _resetFaceEmbedderStateForTests,
   _seedFaceEmbedderStateForTests,
   feState,
 } from "./face-embedders-state.mjs";
 import { _formatBytes } from "./format-helpers.mjs";
+import { MODELS_CHANGED_EVENT } from "./models-changed.mjs";
 import { escapeAttr, esc } from "./text-format.mjs";
 import { toast } from "./toast.mjs";
 import { USE_CONTEXT_OPTIONS } from "./use-context-options.mjs";
@@ -91,61 +94,6 @@ export {
   _deriveRowState,
   _feOverflowToggle,
   _feLicenseInfoToggle,
-};
-
-/**
- * Join table: registry id → legacy feature label and per-feature
- * toggle key (when applicable). Used to overlay install state on the
- * registry picker. Transitional — when each model's file-install
- * logic lands in the registry layer this mapping goes away.
- *
- * Keys NOT in this map render without install controls (registry-
- * catalog-only entries). Values without a ``toggle_key`` render
- * without an enable toggle.
- */
-const _LEGACY_FEATURE_MAP = {
-  // Face embedders
-  sface_yunet: { legacy_label: "Face recognition", toggle_key: null },
-  dlib_face_recognition_resnet_v1: {
-    legacy_label: "Face recognition",
-    toggle_key: null,
-  },
-  insightface_buffalo_s: { legacy_label: null, toggle_key: null },
-  // Face detectors
-  insightface_scrfd_25g: {
-    legacy_label: "SCRFD face detection",
-    toggle_key: "model_scrfd",
-  },
-  opencv_yunet: {
-    legacy_label: "Face detection (fallback)",
-    toggle_key: null,
-  },
-  // Semantic search
-  openai_clip_vit_b32_onnx: {
-    legacy_label: "Smart search & dedup",
-    toggle_key: null,
-  },
-  // Pet detection
-  ultralytics_yolov11n_pets: {
-    legacy_label: "Pet detection",
-    toggle_key: null,
-  },
-  // Nudity classifier
-  nudenet_320n: { legacy_label: "Content filter", toggle_key: null },
-  // Inpainting
-  lama_inpaint_research: {
-    legacy_label: "AI object removal",
-    toggle_key: null,
-  },
-};
-
-const _KIND_LABELS = {
-  face_embedder: "Face embedders",
-  face_detector: "Face detectors",
-  semantic_search: "Semantic search",
-  pet_detector: "Pet detection",
-  nudity_classifier: "Content filter",
-  inpainter: "AI object removal",
 };
 
 /**
@@ -173,11 +121,21 @@ export async function loadFaceEmbedderPicker() {
     feState.installState = _buildInstallStateMap(legacy);
     feState.requiresAckIds = _collectRequiresAckIds(registry.groups || []);
     feState.acceptedIds = _collectAcceptedIds(acceptances);
+    // The server's load-gate decision per row: picks the acceptance
+    // dialog's mode (e.g. ask for commercial-use rights).
+    feState.loadStates = new Map();
+    for (const group of registry.groups || []) {
+      for (const e of group.entries || []) {
+        if (e.load_state) feState.loadStates.set(e.id, e.load_state);
+      }
+    }
+    feState.reacceptIds = _collectReacceptIds(acceptances);
     feState.catalogEntryIds = _collectCatalogEntryIds(registry.groups || []);
     // The reload reflects post-operation truth; clear the busy gate so
     // freshly-completed operations don't keep their row locked out.
     feState.busyRowIds = new Set();
-    container.innerHTML = _renderUnifiedPickerHTML(registry.groups || []);
+    container.innerHTML =
+      damagedLogNoticeHTML(acceptances) + _renderUnifiedPickerHTML(registry.groups || []);
   } catch (err) {
     container.innerHTML = `<p class="setting-muted">Could not load model registry: ${esc(err.message || String(err))}</p>`;
   }
@@ -185,7 +143,7 @@ export async function loadFaceEmbedderPicker() {
 
 /**
  * Build registry-id → install-state map by joining the legacy
- * /api/v1/models feature list against ``_LEGACY_FEATURE_MAP``.
+ * /api/v1/models feature list against ``LEGACY_FEATURE_MAP``.
  *
  * @param {Array<object> | null} legacyFeatures
  * @returns {Map<string, object>}
@@ -198,7 +156,7 @@ function _buildInstallStateMap(legacyFeatures) {
   for (const f of legacyFeatures) {
     if (f && f.label) byLabel.set(f.label, f);
   }
-  for (const [registryId, link] of Object.entries(_LEGACY_FEATURE_MAP)) {
+  for (const [registryId, link] of Object.entries(LEGACY_FEATURE_MAP)) {
     if (link.legacy_label && byLabel.has(link.legacy_label)) {
       map.set(registryId, byLabel.get(link.legacy_label));
     }
@@ -251,24 +209,15 @@ function _renderUnifiedPickerHTML(groups) {
       <strong>active</strong> model (highlighted) is chosen per library.
     </p>`;
 
-  // Stable kind ordering for the UI.
-  const kindOrder = [
-    "face_embedder",
-    "face_detector",
-    "semantic_search",
-    "pet_detector",
-    "nudity_classifier",
-    "inpainter",
-  ];
   const orderedKinds = [
-    ...kindOrder.filter((k) => byKind.has(k)),
-    ...[...byKind.keys()].filter((k) => !kindOrder.includes(k)),
+    ...KIND_ORDER.filter((k) => byKind.has(k)),
+    ...[...byKind.keys()].filter((k) => !KIND_ORDER.includes(k)),
   ];
 
   for (const kind of orderedKinds) {
     const bucket = byKind.get(kind);
     if (!bucket) continue;
-    const label = _KIND_LABELS[kind] || kind;
+    const label = KIND_LABELS[kind] || kind;
     const rows = [...bucket.permissive, ...bucket.restricted]
       .map((e) => _renderRow(e))
       .join("");
@@ -297,7 +246,6 @@ function _renderUnifiedPickerHTML(groups) {
  * @param {object} entry
  */
 function _renderRow(entry) {
-  const isRestricted = entry.requires_explicit_ack === true;
   const isDefault = entry.default_for_kind === true;
   const install = feState.installState.get(entry.id);
 
@@ -307,8 +255,7 @@ function _renderRow(entry) {
   // per cell, no chance of the halves disagreeing.
   const state = _deriveRowState(entry, install);
 
-  const licenseText = isRestricted ? "Restricted" : "Permissive";
-  const licenseClass = isRestricted ? "fe-license-restricted" : "fe-license-permissive";
+  const { text: licenseText, cls: licenseClass } = licenseBadge(entry);
   const licenseDetail = entry.license_summary
     ? `<button class="fe-license-tip"
               data-action="_feLicenseInfoToggle"
@@ -494,3 +441,13 @@ registerAction("setFaceEmbedderUseContext", setFaceEmbedderUseContext);
 registerAction("setActiveFaceEmbedder", setActiveFaceEmbedder);
 registerAction("_feOverflowToggle", _feOverflowToggle);
 registerAction("_feLicenseInfoToggle", _feLicenseInfoToggle);
+
+if (typeof document !== "undefined") {
+  // A license, use context or model file changed: re-render the picker
+  // if it's on screen (it reloads anyway each time Settings opens).
+  document.addEventListener(MODELS_CHANGED_EVENT, () => {
+    if (document.getElementById("settings-overlay")?.classList.contains("visible")) {
+      void loadFaceEmbedderPicker();
+    }
+  });
+}

@@ -118,6 +118,45 @@ function _feCloseAllPopovers(keepOpen) {
   }
 }
 
+/**
+ * ESC for the picker's foreground layers: the acceptance dialog first,
+ * then any open ⋯ menu / ⓘ popover. Runs in the capture phase and stops
+ * the event outright, so app-wide ESC handlers (the lightbox's closes
+ * the whole Settings overlay) never see a key that only meant "close
+ * this menu". Focus returns to the menu's ⋯ trigger.
+ *
+ * @param {KeyboardEvent} e
+ */
+function _feEscapeKeydown(e) {
+  if (e.key !== "Escape") return;
+  const overlay = document.getElementById("fe-acceptance-overlay");
+  if (overlay && overlay.classList.contains("visible")) {
+    closeFaceEmbedderAcceptance();
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    return;
+  }
+  const openMenu = document.querySelector(".fe-overflow-menu.open");
+  const any = openMenu || document.querySelector(".fe-license-popover.open");
+  if (!any) return;
+  _feCloseAllPopovers();
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  const entryId = openMenu?.id.replace(/^fe-ovr-/, "");
+  if (entryId) {
+    const trigger = [...document.querySelectorAll(".fe-overflow-trigger")].find(
+      (el) => /** @type {HTMLElement} */ (el).dataset.arg0 === entryId,
+    );
+    /** @type {HTMLElement | undefined} */ (trigger)?.focus();
+  }
+}
+
+/** Close every open picker menu / popover (e.g. when Settings closes,
+ *  so a menu left open doesn't reappear on the next visit). */
+export function closeFePopovers() {
+  _feCloseAllPopovers();
+}
+
 /** Document-level handlers: ESC closes the dialog AND any open
  *  popover; click outside any open popover closes it too; click on
  *  the acceptance dialog's overlay backdrop dismisses the dialog.
@@ -125,24 +164,7 @@ function _feCloseAllPopovers(keepOpen) {
 export function _feInstallGlobalHandlers() {
   if (/** @type {any} */ (window).__feGlobalHandlersInstalled) return;
   /** @type {any} */ (window).__feGlobalHandlersInstalled = true;
-  document.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape") return;
-    // Acceptance dialog takes precedence over popovers — it's the
-    // foreground modal when both are open.
-    const overlay = document.getElementById("fe-acceptance-overlay");
-    if (overlay && overlay.classList.contains("visible")) {
-      closeFaceEmbedderAcceptance();
-      e.stopPropagation();
-      return;
-    }
-    const any = document.querySelector(
-      ".fe-overflow-menu.open, .fe-license-popover.open",
-    );
-    if (any) {
-      _feCloseAllPopovers();
-      e.stopPropagation();
-    }
-  });
+  document.addEventListener("keydown", _feEscapeKeydown, true);
   document.addEventListener("click", (e) => {
     const target = /** @type {HTMLElement} */ (e.target);
     if (!target) return;

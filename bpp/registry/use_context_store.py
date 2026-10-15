@@ -1,15 +1,14 @@
 """Local-only file-backed storage for the user's declared use context.
 
-Batch 5 / item 15 of the legal-posture rollout. The user answers the
-commercial-use gate exactly once per machine and the answer is
-persisted in a tiny JSON file in the same per-user config directory
+The user answers the commercial-use gate exactly once per machine and
+the answer is persisted in a tiny JSON file in the same per-user config directory
 that already houses :data:`bpp.registry.acceptance_log`. The
 acceptance row records what the user *was* declaring at the moment
 of an acceptance; this store records what they currently are.
 
 Why this lives outside the library DB
 
-Same reason the acceptance log does (see Q3): the gate is a
+Same reason the acceptance log does: the gate is a
 declaration between the user and Arkalogy, not a per-library
 artifact. A user who maintains multiple libraries should only
 answer the gate once.
@@ -55,6 +54,7 @@ import os
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from bpp.registry.use_context import UseContext
 from bpp.utils.logging import get_logger
@@ -92,12 +92,51 @@ class UseContextRecord:
     use_context: UseContext = UseContext.UNSPECIFIED
     set_at: str = ""
     set_via: str = ""
-    history: tuple[dict[str, str], ...] = field(default_factory=tuple)
+    history: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     schema_version: int = SCHEMA_VERSION
 
 
 def _utc_now_iso() -> str:
     return datetime.datetime.now(datetime.UTC).isoformat()
+
+
+def _record_from(raw: dict | None) -> UseContextRecord:
+    if raw is None:
+        return UseContextRecord()
+    try:
+        ctx = UseContext(raw.get("use_context", UseContext.UNSPECIFIED.value))
+    except (ValueError, TypeError):
+        ctx = UseContext.UNSPECIFIED
+    history = raw.get("history", [])
+    try:
+        schema_version = int(raw.get("schema_version", 1))
+    except (TypeError, ValueError):
+        schema_version = 1
+    return UseContextRecord(
+        use_context=ctx,
+        set_at=str(raw.get("set_at") or ""),
+        set_via=str(raw.get("set_via") or ""),
+        # Kept verbatim: it's the declaration record, not ours to reword.
+        history=tuple(
+            h for h in (history if isinstance(history, list) else []) if isinstance(h, dict)
+        ),
+        schema_version=schema_version,
+    )
+
+
+def _is_intact(raw: dict) -> bool:
+    """True when :func:`read_record` keeps everything *raw* holds. A save
+    over a file it doesn't sets the file aside first, so the original
+    declaration record is never reworded or trimmed on disk."""
+    history = raw.get("history", [])
+    return (
+        isinstance(ctx := raw.get("use_context", UseContext.UNSPECIFIED.value), str)
+        and ctx in {c.value for c in UseContext}
+        and all(isinstance(raw.get(k, ""), str) for k in ("set_at", "set_via"))
+        and type(raw.get("schema_version", 1)) is int
+        and isinstance(history, list)
+        and all(isinstance(h, dict) for h in history)
+    )
 
 
 def read_record(*, path: Path | None = None) -> UseContextRecord:
@@ -106,29 +145,13 @@ def read_record(*, path: Path | None = None) -> UseContextRecord:
     unparseable — the policy layer treats UNSPECIFIED as "user has
     not answered yet" and prompts.
     """
+    from bpp.utils.json_utils import load_json_file
+
     target = path or get_use_context_path()
-    if not target.exists():
-        return UseContextRecord()
-    try:
-        raw = json.loads(target.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        _log.warning(
-            "use-context store at %s is unreadable (%s); treating as "
-            "UNSPECIFIED so the gate re-prompts.",
-            target,
-            exc,
-        )
-        return UseContextRecord()
-    try:
-        ctx = UseContext(raw.get("use_context", UseContext.UNSPECIFIED.value))
-    except ValueError:
-        ctx = UseContext.UNSPECIFIED
-    return UseContextRecord(
-        use_context=ctx,
-        set_at=str(raw.get("set_at", "")),
-        set_via=str(raw.get("set_via", "")),
-        history=tuple(raw.get("history", [])),
-        schema_version=int(raw.get("schema_version", 1)),
+    # Missing, unreadable, corrupt or not an object: the empty record, so
+    # the gate re-prompts instead of every license check crashing.
+    return _record_from(
+        load_json_file(target, None, expected_type=dict, context="use-context store")
     )
 
 
@@ -172,12 +195,20 @@ def set_use_context(
     user who changes their declaration 50 times is operating well
     outside the intended flow.
     """
+    from bpp.utils.json_utils import load_for_rewrite
+
     target = path or get_use_context_path()
     target.parent.mkdir(parents=True, exist_ok=True)
-    prior = read_record(path=target)
+    # Keep a damaged file (it may still hold the declaration history)
+    # instead of overwriting it with a fresh, history-less record.
+    prior = _record_from(
+        load_for_rewrite(
+            target, None, expected_type=dict, is_valid=_is_intact, context="use-context store"
+        )
+    )
     now = _utc_now_iso()
 
-    new_history: list[dict[str, str]] = list(prior.history)
+    new_history: list[dict[str, Any]] = list(prior.history)
     if prior.use_context is not UseContext.UNSPECIFIED:
         new_history.append(
             {

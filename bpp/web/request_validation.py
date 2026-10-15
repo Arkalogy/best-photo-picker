@@ -29,7 +29,7 @@ arguments to the handler. Endpoints that opt in get:
 
 Adoption is incremental. Existing endpoints keep working until
 their owner migrates them — there's no big-bang shape change in
-this commit. The (future) response-envelope half of M6 lives in
+this module. The (future) response-envelope half lives in
 the same module so callers can migrate both halves together.
 """
 
@@ -113,7 +113,7 @@ def validate_json(**schema: JsonField) -> Callable[[Callable[..., Any]], Callabl
             ...
 
     The decorator does NOT alter response shapes — that's the
-    second half of M6 and lives separately so endpoints can
+    second half of the contract and lives separately so endpoints can
     migrate validation and response shape independently.
     """
 

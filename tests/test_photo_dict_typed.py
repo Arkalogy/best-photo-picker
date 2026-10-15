@@ -1,4 +1,4 @@
-"""P6 — :class:`PhotoDict` TypedDict contract tests.
+""":class:`PhotoDict` TypedDict contract tests.
 
 The TypedDict pins the canonical shape of the photo API response.
 Tests verify:

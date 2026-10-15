@@ -214,20 +214,34 @@ def _wire_optional_scorers() -> None:
     if _SCORER_REGISTRY["nudity"].is_available_fn is not None:
         return
 
+    from bpp.scoring.model_load_gate import log_blocked_once
     from bpp.scoring.nudity import is_available as _nudity_avail
     from bpp.scoring.nudity import score_nudity as _score_nudity_raw
     from bpp.scoring.pets import detect_pets as _detect_pets
     from bpp.scoring.pets import is_available as _pets_avail
 
     def _nudity_score_fn(img: Any, filepath: str, config: dict[str, Any]) -> dict[str, Any]:
-        # NudeNet runs on the file directly (it does its own decode).
-        return {"nudity_score": _score_nudity_raw(filepath)}
+        from bpp.registry import ModelLoadBlockedError
+
+        try:
+            return {"nudity_score": _score_nudity_raw(filepath)}
+        except ModelLoadBlockedError as exc:
+            # Not accepted (or accepted under an older license text) —
+            # skip this photo, but say so once at INFO so the stop is
+            # visible; the picker shows the matching re-accept state.
+            log_blocked_once("Content filter (NudeNet)", exc)
+            return {}
 
     def _pets_score_fn(img: Any, filepath: str, config: dict[str, Any]) -> dict[str, Any]:
+        from bpp.registry import ModelLoadBlockedError
+
         pet_conf = config.get("pet_detection_confidence", 0.2)
         pet_size = int(config.get("pet_input_size", 1024))
         try:
             r = _detect_pets(img, input_size=pet_size, conf_threshold=pet_conf)
+        except ModelLoadBlockedError as exc:
+            log_blocked_once("Pet detection (YOLO)", exc)
+            return {}
         except Exception:
             log.debug("Pet detection unavailable for %s", filepath, exc_info=True)
             return {}

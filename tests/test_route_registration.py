@@ -20,7 +20,7 @@ def app():
     return create_app()
 
 
-# ── H7: Route registration ──────────────────────────────────────────────────
+# ── Route registration ──────────────────────────────────────────────────
 
 
 # All routes that must exist in the app — if any are missing after refactoring,
@@ -138,7 +138,7 @@ def test_all_share_routes_registered(app):
     assert not missing, f"Missing share routes: {missing}"
 
 
-# ── H8: EventSource onerror ──────────────────────────────────────────────────
+# ── EventSource onerror ──────────────────────────────────────────────────
 
 
 _JS_DIR = os.path.join(os.path.dirname(__file__), "..", "bpp", "web", "static", "js")
@@ -195,7 +195,7 @@ def _files_with_eventsource() -> list[str]:
     return out
 
 
-# D-09: factory files that legitimately wrap/return an EventSource
+# Factory files that legitimately wrap/return an EventSource
 # without binding it to a local variable. The CALLER of the factory
 # is responsible for the .onerror handler; nothing the factory file
 # does affects the contract. New entries here MUST be reviewed.
@@ -221,7 +221,7 @@ def test_every_eventsource_has_onerror():
     stale after the ES-module migration). Files that contain
     `new EventSource(` but where the var-binding regex finds NOTHING
     are flagged as scanner blind spots unless they're in the
-    factory allowlist (D-09)."""
+    factory allowlist."""
     files = _files_with_eventsource()
     assert files, (
         "No EventSource usages found anywhere in the JS tree — the "

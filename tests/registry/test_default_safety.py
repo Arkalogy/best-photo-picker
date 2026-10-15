@@ -1,9 +1,9 @@
-"""Pin the Batch-2 default-safety guarantees.
+"""Pin the default-safety guarantees.
 
-Two pieces of Batch 2:
+Two pieces:
 
-* Item 1 — lock SFace as the default face embedder via the registry.
-* Item 2 — fail the build if any model weight file ships in an
+* Lock SFace as the default face embedder via the registry.
+* Fail the build if any model weight file ships in an
   Arkalogy artifact.
 
 These tests pin both pieces at the unit level so a refactor cannot
@@ -38,7 +38,7 @@ def _seed_registry() -> None:
     register_builtins()
 
 
-# ── Item 1: registry-driven default ──
+# ── Registry-driven default ──
 
 
 class TestRegistryDefaultIsSFace:
@@ -89,7 +89,7 @@ class TestDefaultForKindInvariant:
             get_default_for_kind("face_embedder")
 
     def test_no_restricted_entry_is_marked_default(self) -> None:
-        """Core legal-posture guarantee: a restricted model cannot
+        """Core guarantee: a restricted model cannot
         be a default. Catches a future seed entry that mismatches
         commercial_use_restriction_known=True with
         default_for_kind=True."""
@@ -101,7 +101,7 @@ class TestDefaultForKindInvariant:
                 )
 
 
-# ── Item 1 dispatch wiring ──
+# ── Default dispatch wiring ──
 
 
 class TestEmbeddingMethodReadsRegistryDefault:
@@ -131,7 +131,7 @@ class TestEmbeddingMethodReadsRegistryDefault:
             assert face_embed.embedding_method() == "sface"
 
 
-# ── Item 2: bundled-weights guard ──
+# ── Bundled-weights guard ──
 
 
 def _import_guard_script() -> object:
@@ -218,8 +218,7 @@ class TestBundledWeightsGuard:
         )
 
     def test_blocklist_covers_known_restricted_bundles(self) -> None:
-        """The legal-posture rollout specifically named these as restricted
-        bundles that must never ship."""
+        """These are known restricted bundles that must never ship."""
         guard = _import_guard_script()
         names = {pattern for pattern, _ in guard.RESTRICTED_BLOCKLIST}
         for required in (
@@ -231,6 +230,5 @@ class TestBundledWeightsGuard:
             "w600k_",
         ):
             assert required in names, (
-                f"Blocklist missing {required!r} — the legal-posture spec "
-                f"identified this as a restricted bundle."
+                f"Blocklist missing {required!r} — this is a known restricted bundle."
             )

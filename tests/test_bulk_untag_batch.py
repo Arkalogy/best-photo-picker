@@ -1,4 +1,4 @@
-"""TDD tests for M-5: bulk_untag_photos must batch the IN clause."""
+"""TDD tests: bulk_untag_photos must batch the IN clause."""
 
 from __future__ import annotations
 

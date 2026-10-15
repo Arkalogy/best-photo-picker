@@ -1,4 +1,4 @@
-"""Batch 10 — contributor-policy gates (item 22).
+"""Contributor-policy gates.
 
 Pins:
 
@@ -140,7 +140,7 @@ ALLOWED_BANNED_EXTENSION_PATH_PREFIXES = (
 
 
 class TestNoBinaryModelWeights:
-    """Catches the canonical Item-22 mistake: a contributor adds a
+    """Catches the canonical contributor mistake: a contributor adds a
     `.onnx` or `.pt` to the repo so the model 'just works for the
     grader.' The git ls-files scan is the cheapest possible enforcer."""
 

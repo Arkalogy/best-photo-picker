@@ -156,7 +156,7 @@ class TestMultiStepMigration:
         assert _read_user_version(backup_path) == SCHEMA_VERSION
 
     def test_multistep_pins_backup_prev_to_pre_migration_snapshot(self, tmp_path):
-        """R8-H4: across a multi-step migration run, `.backup.prev`
+        """Across a multi-step migration run, `.backup.prev`
         must remain pinned to the PRE-UPGRADE snapshot — NOT rotate
         forward to v(N-1). `bpp db restore-backup --previous` is the
         user's "undo this whole upgrade" path; if `.backup.prev` is
@@ -184,7 +184,7 @@ class TestMultiStepMigration:
 
         assert os.path.exists(backup_path), ".backup must exist after multi-step"
         assert os.path.exists(prev_path), (
-            "`.backup.prev` should still exist — R8-H4 pins the "
+            "`.backup.prev` should still exist — the rotation pins the "
             "pre-upgrade snapshot for the whole `_migrate()` run"
         )
 
@@ -194,7 +194,7 @@ class TestMultiStepMigration:
             f".backup must roll forward to current schema; got v{backup_v}"
         )
         assert prev_v == 18, (
-            f"R8-H4: `.backup.prev` must be pinned to the pre-upgrade snapshot "
+            f"`.backup.prev` must be pinned to the pre-upgrade snapshot "
             f"(v18), not rotated forward across migration steps. Got v{prev_v}."
         )
 
@@ -257,7 +257,7 @@ class TestMultiStepMigration:
         )
 
 
-# ─── R8-H4: backup rotation hardening ──────────────────────────────
+# ─── Backup rotation hardening ──────────────────────────────
 
 
 class TestR8H4BackupPrevPinning:
@@ -266,7 +266,7 @@ class TestR8H4BackupPrevPinning:
     used to rotate it forward on every step, so a 6-step upgrade
     overwrote it on step 2 — by the time step 5 fails, the user's
     `--previous` recovery target is the partial-migration v25 state,
-    not the pre-upgrade v23 state. R8-H4 pins `.backup.prev` for the
+    not the pre-upgrade v23 state. The rotation pins `.backup.prev` for the
     duration of one `_migrate()` run; only the FIRST step's backup
     rotates."""
 
@@ -308,7 +308,7 @@ class TestR8H4BackupPrevPinning:
         assert os.path.exists(prev_path), ".backup.prev must still exist"
         prev_v = _read_user_version(prev_path)
         assert prev_v == 18, (
-            f"R8-H4: `.backup.prev` must be pinned to pre-upgrade v18 across "
+            f"`.backup.prev` must be pinned to pre-upgrade v18 across "
             f"the partial multi-step run; got v{prev_v}. Without this guard, "
             f"`bpp db restore-backup --previous` would land the user on a "
             f"partial-migration intermediate state instead of the pre-upgrade "
@@ -390,7 +390,7 @@ class TestR8H4RestoreUserVersionGuard:
             check_integrity,
         )
         assert rc == 4, (
-            f"R8-H4c: `_do_restore_locked` must refuse a backup with user_version "
+            f"`_do_restore_locked` must refuse a backup with user_version "
             f"> SCHEMA_VERSION; got exit code {rc}"
         )
 

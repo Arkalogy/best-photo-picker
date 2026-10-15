@@ -40,18 +40,16 @@ from bpp.registry import (
 #: Adding a new restricted entry means adding its id here.
 RESTRICTED_ENTRY_IDS = (
     "insightface_buffalo_s",
+    "insightface_scrfd_25g",
+    "dlib_face_recognition_resnet_v1",
     "ultralytics_yolov11n_pets",
     "nudenet_320n",
     "lama_inpaint_research",
 )
 
 #: MIT-permissive entries — bypass the click-through entirely
-#: (Option B from the legal-posture discussion: only literal MIT
-#: skips the acceptance dialog).
-MIT_PERMISSIVE_ENTRY_IDS = (
-    "insightface_scrfd_25g",
-    "openai_clip_vit_b32_onnx",
-)
+#: (only literal MIT skips the acceptance dialog).
+MIT_PERMISSIVE_ENTRY_IDS = ("openai_clip_vit_b32_onnx",)
 
 #: Permissive-attribution entries — Apache 2.0, BSD, Boost. Still
 #: permissive (commercial use allowed, no commercial-use
@@ -60,7 +58,6 @@ MIT_PERMISSIVE_ENTRY_IDS = (
 #: copyright preservation, license-text preservation).
 ATTRIBUTION_PERMISSIVE_ENTRY_IDS = (
     "sface_yunet",
-    "dlib_face_recognition_resnet_v1",
     "opencv_yunet",
 )
 
@@ -229,8 +226,8 @@ class TestPermissiveFlags:
 
 @pytest.mark.parametrize("entry_id", MIT_PERMISSIVE_ENTRY_IDS)
 class TestMitPermissiveFlags:
-    """MIT-licensed entries bypass the click-through entirely. Option
-    B from the legal-posture discussion: only literal MIT is exempt."""
+    """MIT-licensed entries bypass the click-through entirely. Only
+    literal MIT is exempt."""
 
     def test_does_not_require_explicit_ack(self, entry_id: str) -> None:
         entry = get_entry(entry_id)

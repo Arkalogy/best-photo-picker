@@ -81,7 +81,7 @@ _YUNET_MODEL_PATH = str(_yunet_models_dir() / "face_detection_yunet_2023mar.onnx
 #         tilted / partially-occluded faces. The 2023mar release is
 #         the long-term-stable build; later experimental releases
 #         exist but haven't been promoted to opencv_zoo's main.
-# License: Apache 2.0 (opencv_zoo).
+# License: see the bpp.registry entry ``opencv_yunet``.
 # To bump: replace 2023mar with a newer dated release; YuNet's
 #         output tensor shape is stable across the 2023 series so
 #         no caller-side changes are needed.
@@ -103,7 +103,7 @@ def _ensure_yunet_model() -> bool:
     """
     from bpp.registry import ModelLoadBlockedError
     from bpp.scoring.model_base import ModelIntegrityError
-    from bpp.utils.download import download_file, verify_existing
+    from bpp.utils.download import announce, download_file, download_temp_path, verify_existing
 
     # Load-time license gate — MUST run before the cache-hit early return
     # below, which would otherwise bypass the download-time gate for
@@ -119,9 +119,10 @@ def _ensure_yunet_model() -> bool:
         # Verify cached bytes — propagate ModelIntegrityError
         verify_existing(_YUNET_MODEL_PATH, sha256=_YUNET_MODEL_SHA256)
         return True
+    tmp = download_temp_path(_YUNET_MODEL_PATH)
+    announce("Downloading YuNet face detector…")
     try:
         os.makedirs(os.path.dirname(_YUNET_MODEL_PATH), exist_ok=True)
-        tmp = _YUNET_MODEL_PATH + ".tmp"
         download_file(
             _YUNET_MODEL_URL,
             tmp,
@@ -134,13 +135,11 @@ def _ensure_yunet_model() -> bool:
     except ModelIntegrityError:
         # Loud failure — propagate so the caller sees the integrity
         # mismatch instead of treating it as a benign network error.
-        tmp = _YUNET_MODEL_PATH + ".tmp"
         if os.path.exists(tmp):
             os.remove(tmp)
         log.error("YuNet model integrity failure", exc_info=True)
         raise
     except Exception as exc:
-        tmp = _YUNET_MODEL_PATH + ".tmp"
         if os.path.exists(tmp):
             os.remove(tmp)
         log.warning("YuNet model unavailable: %s", exc)

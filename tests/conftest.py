@@ -8,7 +8,7 @@ import os
 
 import pytest
 
-# Disable the Batch 8 remote-registry fetch for every test run. The
+# Disable the signed remote-registry fetch for every test run. The
 # placeholder URL doesn't exist yet, and even once it does, tests that
 # rely on a stable in-process registry should not depend on a live
 # network call. Set in the module's import-time scope so the fetch
@@ -95,11 +95,34 @@ def _close_db_connections():
 
 
 @pytest.fixture(autouse=True)
-def _preaccept_permissive_attribution_entries(request, tmp_path, monkeypatch):
-    """Pre-accept the permissive-attribution entries (SFace, YuNet, dlib).
+def _reset_license_gate_state():
+    """Forget cached license-gate passes and the face_recognition import.
 
-    Under the Option B legal posture (only MIT bypasses the
-    click-through), these Apache-2.0 / Boost models require an
+    Some tests put a fake ``face_recognition`` in ``sys.modules``. The
+    loader caches whatever it imports first, and since it only imports
+    once the dlib license is accepted, that first import can happen
+    inside such a test — the fake would then leak into later tests.
+    """
+    yield
+    from bpp.scoring import face_recognition_loader, model_load_gate
+
+    face_recognition_loader._reset_for_tests()
+    # Each test has its own acceptance log; a gate pass memoized under
+    # one test's log must not carry into the next.
+    for gate in model_load_gate._ALL_GATES:
+        gate.reset()
+    from bpp.web import model_filter
+
+    model_filter._license_blocked_cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def _preaccept_permissive_attribution_entries(request, tmp_path, monkeypatch):
+    """Pre-accept every attribution-licensed model plus dlib.
+
+    Because only MIT-licensed models bypass the
+    click-through, these models (Apache-2.0 attribution; dlib is
+    restricted for commercial use) require an
     acceptance row before the runtime gate lets them load. Most
     integration tests aren't intentionally exercising the gate —
     they're testing scoring behaviour that happens to use these
@@ -122,22 +145,18 @@ def _preaccept_permissive_attribution_entries(request, tmp_path, monkeypatch):
     log_path = tmp_path / "preaccept-acceptance.jsonl"
     monkeypatch.setenv("BPP_ACCEPTANCE_LOG_PATH", str(log_path))
     from bpp.registry.acceptance_log import AcceptanceRow, append_row
-    from bpp.registry.disclaimers import (
-        PERMISSIVE_ATTRIBUTION_DISCLAIMER_VERSION,
-        permissive_attribution_disclaimer_sha256,
-    )
-    from bpp.registry.model_registry import get_entry
+    from bpp.registry.attribution_bundle import is_attribution_entry
+    from bpp.registry.model_registry import get_entry, iter_entries
 
-    # Use the real disclaimer hash so ``is_acceptance_valid_for``
-    # accepts the row. Without this the row writes but the gate
-    # still rejects because the ack_text_sha256 mismatches the
-    # entry's current value.
-    ack_sha = permissive_attribution_disclaimer_sha256()
-    for entry_id in (
-        "sface_yunet",
-        "dlib_face_recognition_resnet_v1",
-        "opencv_yunet",
-    ):
+    # Use each entry's own current ack text version + hash so
+    # ``is_acceptance_valid_for`` accepts the row. Without this the row
+    # writes but the gate still rejects because the ack_text_sha256
+    # mismatches the entry's current value.
+    # Every model a default analysis loads (SFace, YuNet, MediaPipe, the
+    # Haar cascade), derived from the registry so a new attribution
+    # model is covered automatically; plus dlib, which many face tests use.
+    preaccepted = [e.id for e in iter_entries() if is_attribution_entry(e)]
+    for entry_id in [*preaccepted, "dlib_face_recognition_resnet_v1"]:
         entry = get_entry(entry_id)
         # Defensive: if a future test runner imports a registry that
         # doesn't have one of these entries, skip rather than fail.
@@ -147,8 +166,8 @@ def _preaccept_permissive_attribution_entries(request, tmp_path, monkeypatch):
             AcceptanceRow(
                 model_id=entry_id,
                 model_sha256="",
-                ack_text_version=PERMISSIVE_ATTRIBUTION_DISCLAIMER_VERSION,
-                ack_text_sha256=ack_sha,
+                ack_text_version=entry.ack_text_version,
+                ack_text_sha256=entry.ack_text_sha256,
                 use_context_text_version="",
                 use_context_text_sha256="",
                 use_context_at_acceptance="personal",
@@ -163,3 +182,25 @@ def _preaccept_permissive_attribution_entries(request, tmp_path, monkeypatch):
             ),
             path=log_path,
         )
+
+
+@pytest.fixture(autouse=True)
+def _restore_face_backend_registries():
+    """Undo face detectors / embedders a test registered.
+
+    Registered detectors run on every photo, so one left behind by a
+    test (a spy that returns a box) would change later tests' results.
+    """
+    # Register the built-ins before the snapshot, so a first import
+    # during a test can't be "undone" afterwards.
+    import bpp.scoring.face_embed
+    import bpp.scoring.face_pipeline  # noqa: F401
+    from bpp.scoring.face_detector_registry import _REGISTRY as detectors
+    from bpp.scoring.face_embedder_registry import _REGISTRY as embedders
+
+    saved = (dict(detectors._store), dict(embedders._store))
+    yield
+    detectors._store.clear()
+    detectors._store.update(saved[0])
+    embedders._store.clear()
+    embedders._store.update(saved[1])

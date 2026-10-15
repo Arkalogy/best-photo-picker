@@ -87,7 +87,7 @@ export function updateLightboxScores(p) {
  * @param {boolean | string} [animClass]
  */
 export function openLightbox(idx, animClass) {
-  // Protection F: wrap the full lightbox open in a top-level try/catch.
+  // Render-failure boundary: wrap the full lightbox open in a top-level try/catch.
   // A render exception here used to leave the user stuck — lightbox
   // overlay visible but with broken state — and only a page reload
   // could recover. Now any throw falls back to closing the lightbox
@@ -174,7 +174,7 @@ function _doOpenLightbox(idx, animClass) {
   }
   if (dateInput) dateInput.classList.add("hidden");
 
-  // Panel-cleanup item 2: the aggregate verdict LEADS the Quality section
+  // The aggregate verdict LEADS the Quality section
   // (big, tier-colored) instead of floating as small text in the header —
   // verdict and the bars that explain it live together. The header's
   // #lb-quality slot stays empty (date + filename only up there).

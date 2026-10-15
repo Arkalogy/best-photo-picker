@@ -1,8 +1,7 @@
 """Local-only acceptance log for restricted-model click-through events.
 
-Batch 4 / item 6 of the legal-posture rollout. Q3 decided the log
-lives in a separate per-user file outside any specific library
-directory: a JSONL file at ``~/.config/bpp/model-acceptance.jsonl``
+The log lives in a separate per-user file outside any specific
+library directory: a JSONL file at ``~/.config/bpp/model-acceptance.jsonl``
 (or the platform equivalent under ``XDG_CONFIG_HOME``). One row per
 acceptance, append-only.
 
@@ -12,7 +11,7 @@ Why it's a separate file rather than the library SQLite DB
   about the *user*, not the *library* — a user who switches
   libraries (BPP supports multi-library workflows) should not lose
   the record of acknowledgments they have already made.
-* The whole evidentiary value of the log is "we can prove the user
+* The whole audit value of the log is "we can prove the user
   saw and accepted exactly this text." That value is much higher
   when the artifact is a small standalone JSONL file readable with
   a text editor than a row inside a 3 GB SQLite photo DB.
@@ -21,8 +20,7 @@ Why it's a separate file rather than the library SQLite DB
 
 What's recorded per row
 
-Each row is a dict containing the fields the second-round legal
-review specified (item 19 + Q11):
+Each row is a dict containing these fields:
 
 * ``model_id`` — the entry id from :mod:`bpp.registry.model_registry`.
 * ``model_sha256`` — the registry's recorded SHA-256 of the weight
@@ -31,7 +29,8 @@ review specified (item 19 + Q11):
 * ``ack_text_version`` + ``ack_text_sha256`` — pointers to the
   canonical disclaimer wording (from :mod:`bpp.registry.disclaimers`).
 * ``use_context_text_version`` + ``use_context_text_sha256`` —
-  pointers to the trap-T5/T6 text + biometric note shown in the
+  pointers to the commercial-use definition, rights-assertion
+  text + biometric note shown in the
   dialog (from :mod:`bpp.registry.use_context`).
 * ``use_context_at_acceptance`` — the user's declared use context
   at the moment of acceptance (``"personal"`` / ``"research"`` /
@@ -39,7 +38,7 @@ review specified (item 19 + Q11):
 * ``separate_rights_asserted`` — boolean. ``True`` when the user
   triggered the separate-rights override on a commercial-context
   acceptance.
-* ``source_of_rights_note`` — Q11 free-text field. Local only,
+* ``source_of_rights_note`` — optional free-text field. Local only,
   never transmitted. Empty string when not provided.
 * ``terms_url`` + ``terms_permalink_url`` + ``terms_retrieved_at``
   — copied from the registry entry at acceptance time so a future
@@ -67,6 +66,7 @@ import datetime
 import json
 import os
 import tempfile
+import threading
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -83,9 +83,10 @@ in a way that would surprise an old reader.
 
 Version history
 
-* ``1`` — Batch-4 baseline. Records aggregate acceptance state; the
+* ``1`` — Baseline. Records aggregate acceptance state; the
   per-checkbox engagement record is validated then discarded.
-* ``2`` — Adds ``checkbox_responses`` (item 5 evidentiary chain).
+* ``2`` — Adds ``checkbox_responses`` (per-checkbox audit
+  chain).
   Each required checkbox the user engaged with is recorded
   individually so a future audit can prove "user clicked checkbox
   X" not just "user submitted a valid form". Older v1 rows on
@@ -137,7 +138,7 @@ class AcceptanceRow:
     #: user submitted for that box. ``confirm_acceptance`` validates
     #: that every required id is True before writing the row, so a
     #: persisted row's map only ever contains ``True`` values today —
-    #: but the *map* is the evidentiary artifact, not the values:
+    #: but the *map* is the audit artifact, not the values:
     #: it proves the user engaged with each specific claim, not just
     #: that the form parsed. Empty ``{}`` on legacy v1 rows.
     checkbox_responses: dict[str, bool] = field(default_factory=dict)
@@ -187,13 +188,26 @@ class AcceptanceRow:
         empty map and keep their original ``schema_version`` so a
         future migration knows which rows still need the per-checkbox
         record back-filled from external evidence (if any)."""
-        raw_responses = raw.get("checkbox_responses") or {}
-        # Defensive coercion: a corrupted row that recorded the map
-        # as a list or string shouldn't crash the reader.
-        if isinstance(raw_responses, dict):
-            checkbox_responses = {str(k): bool(v) for k, v in raw_responses.items()}
-        else:
-            checkbox_responses = {}
+        # A field of the wrong type means a damaged row — never coerced
+        # (``bool("false")`` is True: that would grant commercial rights).
+        # Raising makes the reader skip it whole and fail closed.
+        bad = [k for k in ROW_TEXT_FIELDS if not isinstance(raw[k], str)]
+        bad += [
+            k
+            for k in ("terms_permalink_url", "source_of_rights_note", "event")
+            if not isinstance(raw.get(k, ""), str)
+        ]
+        if type(raw["separate_rights_asserted"]) is not bool:
+            bad.append("separate_rights_asserted")
+        checkbox_responses = raw.get("checkbox_responses") or {}
+        if not isinstance(checkbox_responses, dict) or any(
+            type(v) is not bool for v in checkbox_responses.values()
+        ):
+            bad.append("checkbox_responses")
+        if type(raw.get("schema_version", 1)) is not int:
+            bad.append("schema_version")
+        if bad:
+            raise TypeError(f"wrong-type field(s): {', '.join(bad)}")
         return cls(
             model_id=raw["model_id"],
             model_sha256=raw["model_sha256"],
@@ -202,69 +216,36 @@ class AcceptanceRow:
             use_context_text_version=raw["use_context_text_version"],
             use_context_text_sha256=raw["use_context_text_sha256"],
             use_context_at_acceptance=raw["use_context_at_acceptance"],
-            separate_rights_asserted=bool(raw["separate_rights_asserted"]),
+            separate_rights_asserted=raw["separate_rights_asserted"],
             terms_url=raw["terms_url"],
             terms_permalink_url=raw.get("terms_permalink_url", ""),
             terms_retrieved_at=raw["terms_retrieved_at"],
             accepted_at=raw["accepted_at"],
             source_of_rights_note=raw.get("source_of_rights_note", ""),
-            checkbox_responses=checkbox_responses,
-            event=str(raw.get("event", "accept")),
-            schema_version=int(raw.get("schema_version", 1)),
+            checkbox_responses=dict(checkbox_responses),
+            event=raw.get("event", "accept"),
+            schema_version=raw.get("schema_version", 1),
         )
 
 
-#: Owner-only file mode for the acceptance log. The log records
-#: which restricted models the user accepted, their declared use
-#: context, and free-text source-of-rights notes — sensitive
-#: metadata that should never leak to other local users on a shared
-#: machine. ``0o600`` = read/write for the owner; nothing for group
-#: or world.
-_LOG_FILE_MODE = 0o600
-
-#: Owner-only directory mode for the parent ``XDG_CONFIG_HOME/bpp/``
-#: directory. Prevents directory listing by other local users, which
-#: would otherwise reveal that BPP is installed and that an
-#: acceptance log exists.
-_LOG_DIR_MODE = 0o700
-
-
-def _harden_permissions(target: Path) -> None:
-    """Tighten the acceptance-log file and parent directory to
-    owner-only permissions. Called after every write so a pre-
-    existing file from an older BPP version (created with the
-    default umask) gets re-tightened on the next user action.
-
-    POSIX-only effect: on Windows the mode bits don't map to ACL
-    semantics, and ``os.chmod`` is a no-op for the read/write bits
-    of interest. The privacy claim downgrades to "trust the user
-    profile is appropriately ACL'd" on that platform; the call is
-    safe to make regardless.
-    """
-    try:
-        os.chmod(target, _LOG_FILE_MODE)
-    except OSError as exc:
-        _log.debug(
-            "Could not tighten acceptance-log file mode on %s: %s",
-            target,
-            exc,
-        )
-    try:
-        os.chmod(target.parent, _LOG_DIR_MODE)
-    except OSError as exc:
-        _log.debug(
-            "Could not tighten acceptance-log dir mode on %s: %s",
-            target.parent,
-            exc,
-        )
+# File modes, permission hardening and the mid-line check live in
+# acceptance_log_files (500-LOC cap).
+from bpp.registry.acceptance_log_files import (  # noqa: E402
+    _LOG_DIR_MODE,
+    _LOG_FILE_MODE,
+    _ends_mid_line,
+    _harden_permissions,
+)
 
 
 def append_row(row: AcceptanceRow, *, path: Path | None = None) -> None:
     """Append one row to the acceptance log.
 
-    Creates the parent directory if needed. Atomic on POSIX in the
-    common case: POSIX guarantees single-write append atomicity
-    below the filesystem block size, well above one JSON row.
+    Creates the parent directory if needed. The row and its newline
+    are buffered and flushed together on an ``O_APPEND`` descriptor,
+    so the kernel positions them at end-of-file; on local filesystems a write of one
+    small JSON row is not interleaved with another appender in
+    practice (POSIX does not formally promise this for regular files).
 
     File permissions are pinned to ``0o600`` and the parent directory
     to ``0o700`` — see :data:`_LOG_FILE_MODE`. We use ``os.open`` so
@@ -281,6 +262,10 @@ def append_row(row: AcceptanceRow, *, path: Path | None = None) -> None:
         _LOG_FILE_MODE,
     )
     with os.fdopen(fd, "a", encoding="utf-8") as f:
+        if _ends_mid_line(target):
+            # A truncated last line (power loss mid-write): start a new
+            # line, or this row would be glued onto it and lost too.
+            f.write("\n")
         f.write(row.to_json_line())
         f.write("\n")
         f.flush()
@@ -289,34 +274,78 @@ def append_row(row: AcceptanceRow, *, path: Path | None = None) -> None:
         except OSError:
             # fsync can fail on some FUSE / network filesystems. The
             # write itself succeeded; the durability guarantee is
-            # weaker but acceptable for an evidentiary record. Don't
+            # weaker but acceptable for an audit record. Don't
             # raise — the user already saw the dialog and clicked.
             _log.debug("fsync after acceptance write failed; row still on disk")
     _harden_permissions(target)
 
 
-def iter_rows(*, path: Path | None = None) -> Iterator[AcceptanceRow]:
-    """Yield every row in the log, oldest first. Tolerates a
-    truncated last line (power-loss mid-write) by skipping
-    un-parseable trailing content with a warning."""
+#: Parsed log keyed by file identity. The load gates consult the log on
+#: every model use (a refused model is re-checked each time so a later
+#: acceptance takes effect), so re-parsing an unchanged file per photo
+#: would be pure waste. Every append changes the size, which re-keys it.
+_parsed_cache: dict[str, tuple[tuple[int, int], Parsed]] = {}
+_parsed_cache_lock = threading.Lock()
+
+
+from bpp.registry.acceptance_log_parse import (  # noqa: E402
+    ROW_TEXT_FIELDS,
+    Parsed,
+    fail_closed,
+    latest_rows,
+    parse,
+    withdrawn_by_damage,
+)
+
+
+def _parsed(path: Path | None) -> Parsed:
     target = path or get_acceptance_log_path()
-    if not target.exists():
-        return
-    with target.open("r", encoding="utf-8") as f:
-        for line_no, line in enumerate(f, start=1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                raw = json.loads(line)
-                yield AcceptanceRow.from_dict(raw)
-            except (json.JSONDecodeError, KeyError, TypeError) as exc:
-                _log.warning(
-                    "Skipping unparseable acceptance-log line %d (%s); file=%s",
-                    line_no,
-                    exc,
-                    target,
-                )
+    try:
+        st = target.stat()
+    except FileNotFoundError:
+        return Parsed(rows=(), damaged=())
+    key = (st.st_mtime_ns, st.st_size)
+    with _parsed_cache_lock:
+        cached = _parsed_cache.get(str(target))
+        if cached is None or cached[0] != key:
+            cached = (key, parse(target))
+            _parsed_cache[str(target)] = cached
+    return cached[1]
+
+
+def iter_rows(*, path: Path | None = None) -> Iterator[AcceptanceRow]:
+    """Yield every readable row in the log, oldest first. Damaged lines
+    (e.g. a truncated last line after power loss) are skipped with a
+    warning; :func:`find_latest_for_model` accounts for them."""
+    return iter(_parsed(path).rows)
+
+
+def latest_by_model(*, path: Path | None = None) -> dict[str, AcceptanceRow]:
+    """Every model's :func:`find_latest_for_model` answer, in one pass."""
+    parsed = _parsed(path)
+    return {mid: fail_closed(parsed, i, row) for mid, (i, row) in latest_rows(parsed).items()}
+
+
+@dataclass(frozen=True)
+class Snapshot:
+    """One consistent read of the log: every row, each model's latest
+    row as the load gate judges it, and the models withdrawn only by a
+    damaged line."""
+
+    rows: tuple[AcceptanceRow, ...]
+    gate_view: dict[str, AcceptanceRow]
+    withdrawn_by_damage: tuple[str, ...]
+
+
+def snapshot(*, path: Path | None = None) -> Snapshot:
+    parsed = _parsed(path)
+    return Snapshot(
+        rows=parsed.rows,
+        gate_view={
+            mid: fail_closed(parsed, i, row) for mid, (i, row) in latest_rows(parsed).items()
+        },
+        withdrawn_by_damage=tuple(withdrawn_by_damage(parsed)),
+    )
 
 
 def find_latest_for_model(model_id: str, *, path: Path | None = None) -> AcceptanceRow | None:
@@ -324,13 +353,17 @@ def find_latest_for_model(model_id: str, *, path: Path | None = None) -> Accepta
     ``None`` if no row exists.
 
     "Most recent" means last row in append order (the log is
-    append-only and writers stamp ``accepted_at`` in caller order).
+    append-only and writers stamp ``accepted_at`` in caller order). If a
+    damaged line follows the latest acceptance (and could concern this
+    model), that acceptance is returned as a withdrawal (``event ==
+    "revoke"``): an unreadable line may have been the user's withdrawal.
     """
-    latest: AcceptanceRow | None = None
-    for row in iter_rows(path=path):
+    parsed = _parsed(path)
+    found: tuple[int, AcceptanceRow] | None = None
+    for i, row in enumerate(parsed.rows):
         if row.model_id == model_id:
-            latest = row
-    return latest
+            found = (i, row)
+    return None if found is None else fail_closed(parsed, *found)
 
 
 def has_accepted(model_id: str, *, path: Path | None = None) -> bool:
@@ -352,7 +385,13 @@ def append_revocation(
     fields, flips ``event`` to ``"revoke"``, and stamps a fresh timestamp.
     Returns the written row, or ``None`` if there is nothing to revoke
     (no prior acceptance, or the latest row is already a revocation)."""
-    latest = find_latest_for_model(model_id, path=path)
+    # The last READABLE row, not find_latest_for_model's fail-closed view:
+    # after a damaged line the model already reads as withdrawn, but the
+    # user's explicit withdrawal still belongs in the record.
+    latest = None
+    for row in _parsed(path).rows:
+        if row.model_id == model_id:
+            latest = row
     if latest is None or latest.event != "accept":
         return None
     row = dataclasses.replace(

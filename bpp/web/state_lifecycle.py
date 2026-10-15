@@ -30,7 +30,7 @@ log = get_logger(__name__)
 def switch_library(ctx: WebAppState, new_path: str) -> None:
     """Hot-swap to a different library, cancelling any running workers first.
 
-    T1.3: serialized end-to-end by ``ctx._switch_library_lock``. The
+    Serialized end-to-end by ``ctx._switch_library_lock``. The
     plugin close hooks, worker cancel-and-join, AnalysisStore drain,
     and DB pool close all happen OUTSIDE the (briefly-held) ``ctx.lock``,
     so without serialization two concurrent ``switch_library`` calls —
@@ -55,7 +55,7 @@ def _switch_library_locked(ctx: WebAppState, new_path: str, new_dirs: dict[str, 
     boundary is the only thing the public function does.
     """
 
-    # P5b: notify lifecycle plugins BEFORE we touch any per-library
+    # Notify lifecycle plugins BEFORE we touch any per-library
     # state so they can release resources tied to the outgoing library
     # (DB connections, side-caches, model handles).
     try:
@@ -66,7 +66,7 @@ def _switch_library_locked(ctx: WebAppState, new_path: str, new_dirs: dict[str, 
         log.warning("plugin_protocol.fire_on_library_close failed", exc_info=True)
 
     # Cancel all running workers and wait for them to finish
-    # P4: single canonical cancel-all path lives on WorkerPool.
+    # Single canonical cancel-all path lives on WorkerPool.
     ctx.workers.cancel_and_join_all(timeout=WORKER_JOIN_TIMEOUT_S)
 
     # Stop health-check threads and wait for them to release their
@@ -74,7 +74,7 @@ def _switch_library_locked(ctx: WebAppState, new_path: str, new_dirs: dict[str, 
     if hasattr(ctx, "_health_handle"):
         ctx._health_handle.stop_and_join(timeout=WORKER_JOIN_TIMEOUT_S)
 
-    # P4b: signal + drain background daemon threads through the
+    # Signal + drain background daemon threads through the
     # AnalysisStore collaborator. The warmer polls cancel_warm
     # between iterations; the phash compute thread has no cancel hook
     # (worth adding later) but join_threads waits for its handle so
@@ -106,10 +106,10 @@ def _switch_library_locked(ctx: WebAppState, new_path: str, new_dirs: dict[str, 
         ctx.dirs = ctx.paths.dirs
         ctx.thumbs = None
         ctx.caches.clip_cache = {"embeddings": {}, "ready": False}
-        # P4b: atomic bump + reset on the AnalysisStore (replaces the
+        # Atomic bump + reset on the AnalysisStore (replaces the
         # two-step ``phash_ready = Event()`` + generation+=1 dance).
         ctx.analysis_store.bump_generation_and_reset_phash()
-        # Three-review M-S2: reset the Phase 5 health flag so a
+        # Reset the Phase 5 health flag so a
         # late-finishing daemon from the OUTGOING library can't poison
         # the INCOMING library's /api/v1/health with a stale
         # 'smart-album counts may be stale' degraded status. The new
@@ -177,7 +177,7 @@ def startup(ctx: WebAppState) -> None:
     # because they need closure over the live ctx.
     ctx._register_journal_recovery_handlers()
     ctx._recover_pending_journals()
-    # P3.5: replay any face_extraction_journal rows that didn't
+    # Replay any face_extraction_journal rows that didn't
     # complete. Distinct from the operation_journal handlers above
     # because the per-phase resume needs the run_id, not just a
     # payload-driven re-fire. Best-effort: failures are logged but
@@ -193,7 +193,7 @@ def startup(ctx: WebAppState) -> None:
     # Start background file-health checks (non-blocking, serve mode only).
     if ctx.serve_mode:
         ctx._start_file_health_checks()
-    # P5b: notify lifecycle plugins that a library is open and ready.
+    # Notify lifecycle plugins that a library is open and ready.
     # Best-effort — a misbehaving plugin can't block startup.
     try:
         from bpp.plugin_protocol import fire_on_library_open
@@ -209,11 +209,11 @@ def _register_journal_recovery_handlers(ctx: WebAppState) -> None:
     Called every startup() — after a library switch, the closures
     capture the new ctx, so we use replace=True to rebind.
 
-    P1: each registration site now also captures the current library
+    Each registration site now also captures the current library
     path. Handlers that close over ``ctx`` route through
     :func:`bpp.db.journal.library_bound_recovery` so they refuse to fire
     if ctx has been switched to a different library between registration
-    and recovery. This closes the audit-found data-corruption hole where
+    and recovery. This closes the data-corruption hole where
     a pending recovery from library A could write into library B mid-
     ``switch_library``.
     """
@@ -253,7 +253,7 @@ def _start_file_health_checks(ctx: WebAppState) -> None:
 
 def shutdown(ctx: WebAppState) -> None:
     """Cancel workers and close DB connections for clean shutdown."""
-    # P5b: fire on_library_close + on_shutdown plugin hooks so any
+    # Fire on_library_close + on_shutdown plugin hooks so any
     # per-library resources owned by plugins get released cleanly.
     # Each hook is wrapped separately so a failure in on_library_close
     # doesn't prevent on_shutdown from running — both are best-effort
@@ -271,10 +271,10 @@ def shutdown(ctx: WebAppState) -> None:
         fire_on_shutdown()
     except Exception:
         log.warning("plugin_protocol.fire_on_shutdown failed", exc_info=True)
-    # P4: single canonical cancel-all path lives on WorkerPool.
+    # Single canonical cancel-all path lives on WorkerPool.
     ctx.workers.cancel_and_join_all(timeout=WORKER_JOIN_TIMEOUT_S)
     if hasattr(ctx, "_health_handle"):
         ctx._health_handle.stop_and_join(timeout=WORKER_JOIN_TIMEOUT_S)
-    # P4b: same drain dance as switch_library, now a single call.
+    # Same drain dance as switch_library, now a single call.
     ctx.analysis_store.join_threads(timeout=WORKER_JOIN_TIMEOUT_S)
     close_all_connections()

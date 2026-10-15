@@ -18,10 +18,10 @@ How it works
 * ``embed_face(image, face_box)`` crops the bbox, resizes to 112x112,
   normalizes pixel values to [-1, 1], runs the ONNX session, and
   returns the L2-normalized 512-d embedding.
-* The policy gate fires BEFORE any of this: the loader calls
-  :func:`bpp.registry.enforce_load_policy_for("insightface_buffalo_s")`
-  on first use, so a user who hasn't completed the click-through
-  dialog never sees the download begin.
+* The policy gate fires BEFORE any of this: every lookup runs the
+  loader's cached license check (``ModelSingleton.get_or_raise``
+  for ``insightface_buffalo_s``), so a user who hasn't completed the
+  click-through dialog never sees the download begin.
 
 Face alignment
 --------------
@@ -179,10 +179,9 @@ def remove_local_weights() -> int:
         freed += extracted.stat().st_size
         with contextlib.suppress(OSError):
             extracted.unlink()
-    zip_tmp = extracted.with_suffix(".zip.tmp")
-    if zip_tmp.exists():
-        with contextlib.suppress(OSError):
-            zip_tmp.unlink()
+    from bpp.utils.download import remove_partial_downloads
+
+    remove_partial_downloads(str(extracted.with_suffix(".zip")))
     _buffalo_s_model.reset()
     return freed
 
@@ -198,7 +197,7 @@ def ensure_buffalo_s_model() -> str:
     matches, no network call is made.
     """
     from bpp.scoring.model_base import ModelIntegrityError
-    from bpp.utils.download import download_file, verify_existing
+    from bpp.utils.download import download_file, download_temp_path, verify_existing
 
     extracted_path = _extracted_model_path()
     if extracted_path.exists():
@@ -211,7 +210,7 @@ def ensure_buffalo_s_model() -> str:
                 extracted_path.unlink()
 
     extracted_path.parent.mkdir(parents=True, exist_ok=True)
-    zip_tmp = extracted_path.with_suffix(".zip.tmp")
+    zip_tmp = Path(download_temp_path(str(extracted_path.with_suffix(".zip"))))
     log.info(
         "Downloading buffalo_s.zip (122 MB) — first-use of the InsightFace face recognition path"
     )
@@ -300,10 +299,7 @@ def _get_session():
     state stays uncorrupted and the next call after policy unblocks
     re-attempts cleanly.
     """
-    from bpp.registry import enforce_load_policy_for
-
-    enforce_load_policy_for(REGISTRY_ID)
-    return _buffalo_s_model.get()
+    return _buffalo_s_model.get_or_raise()  # per face: one cached license check
 
 
 def _align_with_landmarks(image: np.ndarray, src_points: np.ndarray) -> np.ndarray | None:
@@ -491,10 +487,8 @@ def register_with_face_embedder_registry() -> None:
             name="buffalo_s",
             embed=embed_face,
             embedding_dim=EMBEDDING_DIM,
-            license_id="research_non_commercial",
-            description=(
-                "InsightFace buffalo_s — MobileFaceNet ArcFace "
-                "(512-d). Research-only / non-commercial weights."
-            ),
-        )
+            registry_id=REGISTRY_ID,
+            description="InsightFace buffalo_s — MobileFaceNet ArcFace (512-d)",
+        ),
+        builtin=True,
     )

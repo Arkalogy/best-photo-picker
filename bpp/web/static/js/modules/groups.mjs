@@ -44,7 +44,7 @@ export function _setFaceGroups(g) {
 /**
  * Refresh `faceGroups` from /api/v1/groups.
  *
- * Protection B: routed through wrapSectionLoader so a /api/v1/groups
+ * Routed through wrapSectionLoader so a /api/v1/groups
  * failure surfaces as a retry pill in the Groups sidebar section
  * instead of silently leaving the list empty.
  */

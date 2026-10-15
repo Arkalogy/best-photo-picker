@@ -261,7 +261,9 @@ class TestLamaCatalogObservability:
         from bpp.ai import inpainting
 
         with (
-            patch.object(inpainting._LAMA, "ensure_model", return_value="/tmp/big-lama.pt"),
+            patch.object(
+                inpainting._LAMA, "ensure_model_or_raise", return_value="/tmp/big-lama.pt"
+            ),
             caplog.at_level("INFO", logger="bpp.ai.inpainting"),
         ):
             path = inpainting.ensure_lama_model()
@@ -270,18 +272,25 @@ class TestLamaCatalogObservability:
         assert "Ensuring LaMa" in msgs, f"no start log; got {msgs!r}"
         assert "ready" in msgs.lower(), f"no finish log; got {msgs!r}"
 
-    def test_ensure_failure_raises_with_context(self):
+    def test_ensure_failure_says_why(self, tmp_path, monkeypatch):
+        import urllib.error
+
         from bpp.ai import inpainting
 
+        # The reason in plain words; the catalog endpoint prefixes the
+        # model's name, so the error says which download failed and why.
+        monkeypatch.setattr(inpainting._LAMA, "model_path", tmp_path / "big-lama.pt")
+        monkeypatch.setattr(inpainting._LAMA, "_license_allows_load", lambda: True)
         with (
-            patch.object(inpainting._LAMA, "ensure_model", return_value=None),
+            patch(
+                "bpp.utils.download.download_file",
+                side_effect=urllib.error.URLError(OSError("offline")),
+            ),
+            patch("time.sleep"),
             pytest.raises(RuntimeError) as exc,
         ):
             inpainting.ensure_lama_model()
-        # The error must name the model and source so a multi-model
-        # endpoint can tell which download failed.
-        assert "lama_inpaint_research" in str(exc.value)
-        assert "source=" in str(exc.value)
+        assert str(exc.value) == "no internet connection, or the download site is unreachable"
 
     def test_remove_logs_warning_on_unlink_failure(self, caplog, tmp_path):
         from bpp.ai import inpainting

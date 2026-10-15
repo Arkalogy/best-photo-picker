@@ -1,9 +1,9 @@
 // @ts-check
 /**
- * P8 — typed action registry that replaces the string-lookup-against-window
+ * Typed action registry that replaces the string-lookup-against-window
  * dispatcher in globals.js.
  *
- * Pre-P8 the click dispatcher in globals.js:233 did `fn = window[name]` for
+ * Originally the click dispatcher in globals.js did `fn = window[name]` for
  * every `data-action`. That contract has three problems:
  *
  *  1. Every handler has to live on `window` — ~890 globals, audited.
@@ -25,7 +25,7 @@
  *   function setOverride(event, photoId) { ... }
  *   registerAction("setOverride", setOverride);
  *
- * The handler signature matches the existing pre-P8 pattern:
+ * The handler signature matches the original window-global pattern:
  *   - If `data-pass-event` is on the element, `event` is the first arg.
  *   - `data-arg0`, `data-arg1`, ... become subsequent positional args.
  *   - `this` inside the handler is the clicked element.
@@ -46,7 +46,7 @@ if (typeof window !== "undefined") {
  * Register a handler for a `data-action="<name>"` site.
  *
  * @param {string} name — must match the `data-action` attribute exactly.
- *   Convention is camelCase, mirroring the pre-P8 window-global names.
+ *   Convention is camelCase, mirroring the original window-global names.
  * @param {Function} handler — invoked with `this`=clicked element and the
  *   coerced args from `data-arg*` (and `event` first when
  *   `data-pass-event` is set).

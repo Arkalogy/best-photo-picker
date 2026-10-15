@@ -15,10 +15,12 @@ from typing import Any
 import cv2
 
 from bpp.exif_utils import get_date
+from bpp.registry import ModelLoadBlockedError
 from bpp.scoring.blur import score_blur_raw
 from bpp.scoring.composition import score_composition
 from bpp.scoring.exposure import score_exposure
 from bpp.scoring.face import detect_faces, score_face
+from bpp.scoring.model_load_gate import log_blocked_once
 from bpp.scoring.pets import is_available as pets_available
 from bpp.scoring.skin import score_skin_exposure
 from bpp.utils.logging import get_logger
@@ -116,6 +118,10 @@ def analyze_single_video(
             result["has_cat"] = pet_result["has_cat"]
             result["has_dog"] = pet_result["has_dog"]
             result["pet_detections"] = pet_result.get("pet_detections", [])
+        except ModelLoadBlockedError as exc:
+            # License gate (not accepted / stale acceptance) — not a
+            # runtime fault; note it once instead of a warning per video.
+            log_blocked_once("Pet detection (YOLO)", exc)
         except Exception:
             # `pets_available()` was True coming in — any failure here is a
             # real runtime fault (model corrupted post-install, mid-run

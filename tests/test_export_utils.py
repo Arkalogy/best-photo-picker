@@ -135,7 +135,7 @@ class TestExportSelectedCopyMode:
         assert report["selected"][0]["blur_score"] == 0.7
 
     def test_report_csv_created(self, tmp_path):
-        """R6-L1: by default the CSV `filepath` column carries the
+        """By default the CSV `filepath` column carries the
         sanitized basename (or library-relative path), not the
         absolute source. Pass `include_source_paths=True` to
         restore the absolute value."""
@@ -179,7 +179,7 @@ class TestExportSelectedCopyMode:
             }
 
     def test_skipped_items_in_report(self, tmp_path):
-        """R6-L1: skipped entries also get the sanitized filepath.
+        """Skipped entries also get the sanitized filepath.
         The fixture uses /fake/skipped_N.jpg sources, which are
         outside the (empty) library_path so they fall back to the
         basename only."""
@@ -253,7 +253,7 @@ class TestExportSelectedModes:
 
 
 class TestExportSelectedMergeAndErrors:
-    """Export merges into an existing folder (UAT change): the previous
+    """Export merges into an existing folder: the previous
     'rmtree on force, refuse otherwise' behavior was a foot-gun — pointing
     at ~/Downloads silently nuked everything. Unrelated files in the
     destination must survive an export."""
@@ -1004,7 +1004,7 @@ class TestSetupLogging:
             root.level = old_level
 
     def test_setup_logging_adds_stream_handler(self):
-        """R11-L4: handlers now live on the root logger so third-party
+        """Handlers now live on the root logger so third-party
         plugin loggers also pass through RedactingFormatter. This test
         was previously checking the `bpp` namespace logger; updated to
         verify the root logger, which is where setup_logging() now
@@ -1040,7 +1040,7 @@ class TestSetupLogging:
 class TestExportReturnValue:
     """Tests for ``export_selected`` returning an ``ExportResult``.
 
-    Prior to the H1 release-audit fix the function returned a plain
+    Prior to the disk-error fix the function returned a plain
     ``(exported, failed)`` tuple. It now returns an ``ExportResult``
     dataclass with the additional ``disk_error`` field so the UI can
     distinguish per-photo failures from a 'whole-export-aborted-due-to-
@@ -1363,7 +1363,7 @@ class TestExportResizeFormat:
 
 
 class TestExportMetadataPrivacy:
-    """R7-L1: default copy/original exports must not preserve EXIF metadata."""
+    """Default copy/original exports must not preserve EXIF metadata."""
 
     def test_default_copy_export_strips_exif_metadata(self, tmp_path):
         src = tmp_path / "private.jpg"

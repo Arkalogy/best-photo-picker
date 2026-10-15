@@ -1,4 +1,4 @@
-"""TDD tests for H-9: MAX_CONTENT_LENGTH must be set."""
+"""TDD tests: MAX_CONTENT_LENGTH must be set."""
 
 from __future__ import annotations
 

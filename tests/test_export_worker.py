@@ -1,4 +1,4 @@
-"""Streaming export worker tests (L-S3 release-audit followup).
+"""Streaming export worker tests.
 
 The synchronous /api/v1/export remains the back-compat path; the new
 /api/v1/export/start path spawns ExportWorker which streams per-photo
@@ -218,7 +218,7 @@ class TestExportApiStartEndpoint:
         assert r.status_code in {400, 404}
 
     def test_existing_outdir_accepted_and_merged(self, client, app, tmp_path):
-        """UAT: pointing /export/start at an existing folder must spawn
+        """Pointing /export/start at an existing folder must spawn
         the worker (202) and merge into it — the previous 409 + Overwrite
         affordance was discarded because 'Overwrite' meant rmtree, which
         destroyed user data when the destination was a shared folder

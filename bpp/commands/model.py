@@ -1,8 +1,7 @@
 """``bpp model`` CLI subcommands — registry + acceptance from the
 text shell.
 
-Batch 4 / item 5 + trap T1 of the legal-posture rollout: a user
-who never opens the GUI must hit the same click-through gate when
+A user who never opens the GUI must hit the same click-through gate when
 they pick a restricted model from a script or headless session.
 ``bpp model accept <id>`` is the CLI parity surface — it prints
 the dialog text, prompts for each checkbox, and writes the
@@ -13,7 +12,9 @@ Subcommands
 
 * ``bpp model list`` — print the picker grouped by license posture.
 * ``bpp model accept <id>`` — interactive click-through; the user
-  answers four yes/no prompts, optionally provides a
+  answers one yes/no prompt per required checkbox (four for a
+  restricted-license model, one for a permissive model that
+  requires attribution acknowledgment), optionally provides a
   source-of-rights note, and the acceptance row is written.
 * ``bpp model accepted`` — read-only listing of accepted-model
   rows.
@@ -56,6 +57,10 @@ def add_subparsers(model_sub: argparse._SubParsersAction) -> None:
     )
     p_accept.add_argument("id", help="The model id to accept")
     p_accept.set_defaults(_model_func=do_model_accept)
+
+    from bpp.commands.model_attribution import add_parser as _add_accept_attribution
+
+    _add_accept_attribution(model_sub)
 
     p_accepted = model_sub.add_parser(
         "accepted",
@@ -123,7 +128,7 @@ def add_subparsers(model_sub: argparse._SubParsersAction) -> None:
         "remove",
         help=(
             "Remove a model entry and optionally purge derived "
-            "embeddings (item 21). Fails closed without an explicit "
+            "embeddings. Fails closed without an explicit "
             "--purge-derived or --keep-derived flag."
         ),
     )

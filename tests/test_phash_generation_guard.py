@@ -1,6 +1,6 @@
-"""R8-H5: phash compute thread must respect the library generation.
+"""Phash compute thread must respect the library generation.
 
-Before R8-H5: `WebAppState.precompute_phashes` spawned a daemon thread
+Previously, `WebAppState.precompute_phashes` spawned a daemon thread
 that closed over `self.phash_ready`. When `switch_library` couldn't
 join the thread within `WORKER_JOIN_TIMEOUT_S`, the orphaned thread
 eventually called `self.phash_ready.set()` — but `self.phash_ready`
@@ -69,7 +69,7 @@ def test_orphaned_compute_does_not_set_new_library_ready(app):
         new_event.set()  # would never be reached in real code
 
     assert not new_event.is_set(), (
-        "R8-H5: the new library's phash_ready must NOT be set by an "
+        "The new library's phash_ready must NOT be set by an "
         "orphaned compute thread carrying the old library's identity"
     )
 

@@ -854,6 +854,7 @@ class TestCoreBlueprintGaps:
                 "serve_mode",
                 "face_recognition_available",
                 "nudenet_available",
+                "nudenet_active",
                 "clip_available",
                 "heic_available",
             ]

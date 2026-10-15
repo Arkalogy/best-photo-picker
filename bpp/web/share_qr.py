@@ -41,7 +41,7 @@ def _render_bpp_glyph(size: int = 220) -> object:
         except OSError:
             continue
     if font is None:
-        # L2: PIL's bitmap default is small + jaggy at the QR center patch
+        # PIL's bitmap default is small + jaggy at the QR center patch
         # size — surfaces visibly worse than any TrueType. Log a warning
         # so headless / minimal Linux deploys can be diagnosed (vs. a
         # silent quality drop the operator never sees).

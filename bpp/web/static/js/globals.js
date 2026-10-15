@@ -68,6 +68,7 @@ window.selectedFaceIds = new Set();
 window.faceRecognitionAvailable = false;
 window.faceInstallable = false;
 window.nudenetAvailable = false;
+window.nudenetActive = false;
 window.petsAvailable = false;
 window.currentAlbumId = null;
 window.albumList = [];
@@ -250,7 +251,7 @@ document.addEventListener("click", function _bppDispatch(e) { if (!e || !e.targe
   if ("preventDefault" in el.dataset) e.preventDefault();
   var name = el.dataset.action;
   if (!name) return;
-  // P8: consult the typed action registry FIRST. Fall back to window[name]
+  // Consult the typed action registry FIRST. Fall back to window[name]
   // during the deprecation window so the ~245 unmigrated handlers still
   // resolve. Once a handler is in the registry, its window.X = X bridge
   // can be deleted. ``?? undefined`` instead of ``|| undefined`` so a

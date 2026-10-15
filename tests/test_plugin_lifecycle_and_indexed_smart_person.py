@@ -1,4 +1,4 @@
-"""P5 finish — plan-named tests.
+"""Plugin lifecycle hooks + indexed smart-person lookups.
 
 * ``test_plugin_lifecycle_hooks_fire_in_order`` (TestPluginLifecycleHooks)
   Registers the reference plugin and asserts that ``on_register``,

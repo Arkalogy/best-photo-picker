@@ -1,6 +1,6 @@
 # ADR 0005 — Legal posture and the model registry
 
-**Status.** Accepted. Shipped across 10 implementation batches (Mar–Jun 2026).
+**Status.** Accepted. Implemented in `bpp/registry/` (Mar–Jun 2026).
 
 **Context.** Best Photo Picker is MIT-licensed and intends to stay so. Its
 core features — face clustering, semantic search, pet detection, content
@@ -10,11 +10,13 @@ governed by separate, often non-permissive, upstream licenses:
 - InsightFace's `buffalo_*` ArcFace bundles are released under
   "research and non-commercial use only" terms.
 - Ultralytics YOLOv11 ships under AGPL-3.0 weights / Enterprise alternative.
-- NudeNet ships under GPL-3.0 weights.
+- NudeNet's repository and weights are AGPL-3.0.
 - LaMa inpainting weights are research-only (CC-BY-NC-SA).
-- OpenAI CLIP ViT-B/32 ships under the MIT-style OpenAI Model License.
-- OpenCV Zoo SFace (the default face embedder) ships under Apache 2.0 —
-  the one permissive option.
+- OpenAI CLIP ViT-B/32 ships under MIT (per the openai/CLIP repository).
+- OpenCV Zoo SFace (the default face embedder) ships under Apache 2.0.
+  dlib's code is Boost, but its 68-point landmark model was trained on
+  iBUG 300-W, whose creators ask that it not be used commercially, so
+  BPP treats dlib's weights as restricted.
 
 A naive implementation would: (a) bundle weights in the wheel, (b) auto-
 download on first analyze, (c) surface a single "MIT — free for commercial
@@ -43,79 +45,96 @@ over.
 **Decision.** A structured model registry mediates every model the user
 can touch, with a click-through gate for restricted-license entries, a
 signed remote overlay for upstream takedowns, and a hard-block in self-
-declared commercial mode. Ten implementation batches:
+declared commercial mode. The pieces:
 
-| Batch | Items | What it lands |
-|------:|-------|---------------|
-| 1 | 3, 7, 19, 20, 24 | Foundation: `ModelEntry` schema, canonical disclaimer text, status enum (`available` / `deprecated` / `withdrawn_no_new_downloads` / `legally_blocked`), evidentiary fields (`ack_text_version`, `ack_text_sha256`, `terms_permalink_url`) |
-| 2 | 1, 2 | Lock SFace (permissive) as the default embedder; CI gate fails the build if any known weight file is present in the wheel |
-| 3 | 18 | Download chokepoint — patch `insightface.utils.storage.download` (and friends) at import time, fail closed |
-| 4 | 4, 5, 6, 13 | Click-through dialog with 4 required checkboxes (not commercial / MIT doesn't grant rights / direct upstream / no paid without separate rights); per-user `~/.config/bpp/model-acceptance.jsonl` outside the library directory |
-| 5 | 15, 16 | First-launch use-context gate (Personal / Research / Commercial / Unspecified); hard-block restricted models in commercial mode unless the user asserts separate rights per model |
-| 6 | 11 | Bring Your Own Model — user-supplied ONNX files, separate BYOM disclaimer + checkbox |
-| 7 | 21 | Model removal flow with derived-data purge (face embeddings tagged with `model_id`; GUI default purge, CLI fail-closed without explicit flag) |
-| 8 | 12, 23 | Signed remote registry — Ed25519-signed manifest fetched from an allowlisted GitHub Pages domain; dual-signature requirement for restriction-class downgrades |
-| 9 | 8, 9, 10, 14, 17 | Surface-parity pass — canonical disclaimer wording lands verbatim in README, PyPI, Settings, dialog, CLI; editorial rule bans restricted-model names from commercial-targeted copy |
-| 10 | 22 | `MODEL_POLICY.md`, `CONTRIBUTING.md`, `CODEOWNERS` gating `bpp/registry/**`, `bpp/scoring/*_embed*.py`, `bpp/utils/download.py` |
+"Restricted" here means a registry entry with
+`commercial_use_restriction_known=True` (upstream terms restrict
+commercial use). A "click-through" entry is one with
+`requires_explicit_ack=True`; every restricted entry is one, and so are
+permissive attribution-licensed models such as the default SFace and
+YuNet, the MediaPipe models and OpenCV's Haar cascade. Attribution-only
+entries are accepted together in one step before the first analysis;
+restricted entries keep their own dialog. The same definitions are used in `MODEL_POLICY.md`.
 
-The acceptance row records every load-bearing field for an evidentiary
+| Component | What it does |
+|-----------|--------------|
+| Registry schema | `ModelEntry` schema, canonical disclaimer text, status enum (`available` / `deprecated` / `withdrawn_no_new_downloads` / `legally_blocked`), audit fields (`ack_text_version`, `ack_text_sha256`, `terms_permalink_url`) |
+| Permissive default + no bundled restricted weights | SFace (permissive) is the default embedder and a test fails if a restricted entry is marked default; a CI check on PRs to `main` fails if any weight file other than the allowlisted Apache-2.0 BlazeFace detector is present in the source tree or the wheel |
+| Download chokepoint | Every BPP model download goes through `download_file()`, which runs the policy gate first; once `bpp.registry` is imported, `insightface.utils.storage.download` (and friends) are patched to refuse unsanctioned auto-downloads |
+| Click-through dialog | 4 required checkboxes (not commercial / MIT doesn't grant rights / downloaded from a third-party host, not Arkalogy / no paid use without separate rights); per-user `~/.config/bpp/model-acceptance.jsonl` outside the library directory |
+| Use-context gate | First-launch choice (Personal / Research / Commercial / Unspecified); restricted models are hard-blocked in commercial mode unless the user asserts separate rights per model |
+| Bring Your Own Model | User-supplied ONNX files, with a separate BYOM disclaimer + checkbox |
+| Model removal | Derived-data purge (face embeddings tagged with `producing_model_id`); `bpp model remove` and `POST /api/v1/model-registry/removal` both refuse to run without an explicit purge-or-keep choice |
+| Signed remote registry | Ed25519-signed manifest fetched from an allowlisted GitHub Pages domain; restriction-class relaxations and new restricted or click-through entries need a quorum of distinct trusted keys (`DUAL_SIG_REQUIREMENT`, currently 1 because one key is trusted) |
+| Surface parity | One constant (`BPP_POSTURE_STATEMENT`) is rendered directly in the Settings → Models banner; tests check that the README (also the PyPI description) carries its opening sentence and closing clause and that the canonical disclaimer printed by the dialog and `bpp model accept` keeps its key phrases; restricted-model names are kept out of README and CHANGELOG |
+| Contributor policy | `MODEL_POLICY.md`, `CONTRIBUTING.md`, and `CODEOWNERS` routing reviews of `bpp/registry/**`, `bpp/scoring/face_*.py`, `bpp/scoring/*_embed*.py`, `bpp/utils/download.py` to the maintainer |
+
+The acceptance row records every load-bearing field for an audit
 chain: `model_id`, `ack_text_version` + `ack_text_sha256` (pin the dialog
 wording), `terms_permalink_url` (pin the upstream license at a specific
 commit), `use_context_at_acceptance`, `separate_rights_asserted`,
 per-checkbox responses (schema v2), `accepted_at`. The file is created
 with mode `0o600` (privacy-by-design on shared systems).
 
-**Item 17 wording** — the canonical posture statement reads, verbatim:
+**Posture statement** — `BPP_POSTURE_STATEMENT` in
+`bpp/registry/disclaimers.py` reads, verbatim:
 
 > Arkalogy will not monetize, sell, or market Best Photo Picker for
-> commercial workflows. However, because the code is MIT-licensed, third
-> parties may still use the code commercially. Restricted-model access is
-> separately controlled by model-specific terms and app-level gates.
+> commercial workflows. Because the source code is MIT-licensed, third
+> parties may still use it commercially; restricted-model access is
+> separately controlled by model-specific terms and app-level gates
+> (commercial-use gate, hard-block, click-through acknowledgment).
+> Optional third-party models may have separate licenses, including
+> non-commercial or research-only restrictions — commercial users must
+> select commercial-safe models or provide their own licensed weights.
 
-The earlier "BPP will never be commercialized" formulation was legally
-inaccurate (MIT permits downstream commercial use of the code) and was
-removed during Batch 9. The current wording distinguishes Arkalogy's
-*choice* from the *rights* the license grants downstream.
+The wording distinguishes Arkalogy's *choice* not to commercialize
+from the *rights* the MIT license grants downstream.
 
 **Consequences.**
 
 *Gained:*
-- A defensible MIT distribution: weights never enter the wheel, never
-  ship in a `bppicker[*]` extra, never get hosted on Arkalogy
-  infrastructure. The boundary is enforced by the Batch-2 CI gate.
-- An enforceable click-through. The Batch-3 chokepoint patches
-  `insightface` at import time so a user who tries to bypass the dialog
-  by `pip install insightface && python -c "from insightface…"` still
-  gets a `BlockedAutoDownloadError`. The Batch-4 dialog is the only
-  resolution path.
-- An evidentiary chain that survives upstream churn. The
+- A defensible MIT distribution: no restricted weights enter the
+  wheel or get hosted on Arkalogy infrastructure. The only model file
+  in the wheel is the Apache-2.0 BlazeFace short-range detector,
+  credited in `NOTICE.txt`. `scripts/check_no_bundled_weights.py`
+  checks the source tree and the built wheel in CI on PRs to `main`.
+- A click-through that BPP's own code paths can't skip. Every
+  BPP download runs the policy gate before the network call, and once
+  `bpp.registry` is imported, `insightface`'s own auto-download is
+  patched to raise `BlockedAutoDownloadError` outside a sanctioned
+  download. Inside BPP, the click-through dialog (or
+  `bpp model accept`) is the only way to unlock a restricted model. A
+  separate Python process that never imports BPP isn't affected.
+- An audit trail that survives upstream churn. The
   `terms_permalink_url` field on every restricted entry pins the
   upstream license to a specific commit; the acceptance log captures
   the SHA-256 of the dialog text the user actually saw, with a CI
   test (`TestDisclaimerVersionLock`) that fails if the text mutates
   without a version bump.
-- A real takedown mechanism. The Batch-8 signed manifest can transition
-  any entry to `legally_blocked` and the Batch-1 status enum is
+- A real takedown mechanism. The signed remote manifest can transition
+  any entry to `legally_blocked`, and the registry status enum is
   consumed by both the load gate (`bpp/registry/policy.py`) and the
-  download gate (`bpp/web/bp_models.py:_enforce_download_status_gate`)
-  to refuse new downloads + require re-assertion to use existing
-  local copies.
-- A privacy-by-design data-retention story. Model removal cascades to
-  the derived face embeddings tagged with `model_id`, so a takedown
-  doesn't leave biometric data behind.
+  download gate (`bpp/web/bp_models.py:_enforce_download_status_gate`).
+  A `legally_blocked` entry can't be downloaded or loaded, including
+  copies already on disk; a withdrawn restricted entry is refused the
+  same way.
+- A privacy-by-design data-retention story. Removing a model can
+  purge the derived face embeddings tagged with its
+  `producing_model_id` (the CLI and the HTTP endpoint both require an
+  explicit purge-or-keep choice). A status change
+  on its own, such as a takedown, doesn't purge them.
 
 *Given up:*
 - Restricted models are never the default. SFace's clustering quality
-  is materially below `buffalo_s` out of the box. The product
-  documentation explicitly names this trade-off in the comparison
-  section.
+  is materially below `buffalo_s` out of the box.
 - Some user friction. A first-time `buffalo_s` user clicks through a
   4-checkbox dialog before they can analyze faces. The dialog is
-  designed to be readable in <60 seconds; UX research did not surface
-  abandonment as a real concern at this friction level.
-- A meaningful maintenance surface: 11 HTTP endpoints, 9 registry
-  modules, 12 test files. The `CODEOWNERS` gate on the load-bearing
-  paths makes contributor mistakes catchable in review.
+  designed to be readable in under 60 seconds.
+- A meaningful maintenance surface: the `/api/v1/model-registry/*`
+  endpoints, 18 Python modules under `bpp/registry/`, and 17 test
+  files under `tests/registry/`. `CODEOWNERS` routes changes to the
+  load-bearing paths to the maintainer for review.
 
 *Tests that enforce this ADR.*
 
@@ -125,18 +144,21 @@ removed during Batch 9. The current wording distinguishes Arkalogy's
   and `WITHDRAWN_NO_NEW_DOWNLOADS` entries cannot be re-downloaded.
 - `tests/registry/test_download_chokepoint.py::TestRealInsightFaceChokepoint`
   — patches survive against the real `insightface` package, not just
-  synthetic fakes.
+  synthetic fakes (runs only where `insightface` is installed; CI
+  doesn't install it).
 - `tests/registry/test_acceptance.py::TestPermalinkValidation` — every
   restricted built-in has a non-empty `terms_permalink_url`.
 - `tests/registry/test_acceptance.py::TestAcceptanceLogPermissions` —
   log file is created mode `0o600`, parent directory `0o700`.
 - `tests/registry/test_model_registry.py::TestDisclaimerVersionLock` —
   canonical + BYOM disclaimer text hashes match the pinned versions.
-- `tests/registry/test_signed_manifest.py` — dual-signature requirement
-  on restriction-class downgrades.
-- `tests/registry/test_surface_parity.py` — disclaimer wording and
-  restricted-license label are identical across README, PyPI, Settings,
-  dialog, CLI.
+- `tests/registry/test_signed_manifest.py` — signature verification,
+  distinct-key counting, and the quorum on restriction-class
+  relaxations (the below-quorum cases run once the quorum is above 1).
+- `tests/registry/test_surface_parity.py` — the Settings banner
+  renders the posture constant, the README carries its opening and
+  closing, the canonical disclaimer keeps its key phrases; README and
+  CHANGELOG don't name restricted models.
 
 **Out of scope.**
 
@@ -145,10 +167,6 @@ removed during Batch 9. The current wording distinguishes Arkalogy's
   does not constrain downstream commercial use of BPP's code.
 - Per-model recommendations. The registry surfaces every model with
   its upstream terms; users decide which to accept.
-- The full Q&A decision tree (Q1–Q11) behind the 24-item plan. That
-  lives in the gitignored `pm-face-embedder-spike.md` development log
-  and is referenced here only for the maintainer's audit trail —
-  external readers do not need it to understand the decision.
 - Re-litigating the choice of upstream models. New permissive face
   embedders (e.g. a future weights-MIT release of AdaFace) would land
   via the same registry surface; the gate machinery is model-agnostic.

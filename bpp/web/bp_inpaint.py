@@ -47,7 +47,7 @@ def api_inpaint(photo_id: int) -> tuple[Response, int]:
 
     from bpp.ai.inpainting import is_available
 
-    # P7: use the BppError handler instead of ad-hoc jsonify-error.
+    # Use the BppError handler instead of ad-hoc jsonify-error.
     from bpp.errors import (
         FeatureUnavailableError,
         NotFoundError,
@@ -126,7 +126,7 @@ def api_inpaint(photo_id: int) -> tuple[Response, int]:
         return jsonify({"image": result_b64, "photo_id": photo_id}), 200
 
     except ValueError as e:
-        # P7: raise into the handler so the response shape matches the
+        # Raise into the handler so the response shape matches the
         # other failure branches in this endpoint. diagnostic_message
         # carries the original ValueError text; user-facing stays clean.
         raise ValidationError(
@@ -139,7 +139,7 @@ def api_inpaint(photo_id: int) -> tuple[Response, int]:
         # as a generic 500 (BppError default). diagnostic_message
         # captures the actual exception for the log; user sees the
         # generic "Inpainting failed" message.
-        # RuntimeError used to be its own branch pre-P7 review; now
+        # RuntimeError used to be its own branch; now
         # collapsed into the catch-all since it's a subclass of
         # Exception and was treated the same way.
         from bpp.errors import BppError

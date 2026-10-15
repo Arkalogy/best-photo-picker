@@ -1,4 +1,4 @@
-"""R8-H12a: scan_extensions is config-driven, not hardcoded.
+"""scan_extensions is config-driven, not hardcoded.
 
 Three call sites used to repeat `["jpg", "jpeg", "png", "heic"]` (or
 `["jpg", "jpeg", "png"]`) inline:

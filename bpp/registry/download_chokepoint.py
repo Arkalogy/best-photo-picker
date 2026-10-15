@@ -1,8 +1,6 @@
 """Block third-party packages from silently auto-downloading models.
 
-Batch 3 / item 18 of the legal-posture rollout. The spec
-specifically called out that BPP's click-through dialog (Batch 4) is
-cosmetic if a transitively-imported package (insightface and
+BPP's click-through dialog is cosmetic if a transitively-imported package (insightface and
 friends) can silently fetch a restricted model on first use behind
 our back. This module installs the structural defence:
 
@@ -23,7 +21,7 @@ our back. This module installs the structural defence:
   trigger a model load) call it before doing any work. If any
   expected patch is missing the call raises rather than letting
   extraction proceed under a silent-leak risk. This is the "fail
-  closed if interception breaks" guarantee Q7 picked.
+  closed if interception breaks" guarantee.
 
 What this is NOT
 
@@ -32,12 +30,11 @@ What this is NOT
   caught here. Adding a new package to :data:`KNOWN_AUTO_DOWNLOADERS`
   is the maintenance path for that case.
 
-* It does not handle restricted-model downloads that BPP itself
-  initiates through the (forthcoming) Batch-4 click-through dialog.
-  Those downloads use the registry-coordinated path and never go
-  through the patched function. See :func:`enter_registry_download`
-  for the context-manager BPP's own download flow will eventually
-  use to bypass the block.
+* It does not block downloads that BPP itself initiates after the
+  click-through gate. Those go through
+  :func:`bpp.utils.download.download_file`, which opens the
+  per-thread bypass window (:func:`enter_registry_download` /
+  :func:`exit_registry_download`) for the duration of the fetch.
 
 What it does NOT do today, intentionally
 
@@ -74,8 +71,8 @@ class BlockedAutoDownloadError(RuntimeError):
     cause unambiguous. The expected user-facing remedy is one of:
 
     * Configure BPP's model registry to point at the right model and
-      let BPP's own download flow (Batch 4) fetch it under the
-      click-through dialog.
+      let BPP's own download flow fetch it under the click-through
+      dialog.
     * Install the model file manually via BYOM and point BPP at it.
 
     Production code MUST NOT catch and swallow this. It surfaces a
@@ -105,9 +102,10 @@ class BlockedAutoDownloadError(RuntimeError):
         if rationale:
             msg += rationale + " "
         msg += (
-            "If you need this model, register it in BPP's model registry and "
-            "use BPP's own download flow, or provide the file via "
-            "Bring-Your-Own-Model. See pm-face-embedder-spike.md, Batch 3."
+            "If you need this model, pick it from BPP's model registry "
+            "(run `bpp model list`) so BPP's own download flow fetches it, "
+            "or provide the file via Bring-Your-Own-Model. See "
+            "MODEL_POLICY.md for how BPP handles third-party models."
         )
         super().__init__(msg)
 
@@ -177,12 +175,13 @@ _patched: set[tuple[str, str]] = set()
 #: ``uninstall``) can roll back without guessing.
 _originals: list[tuple[str, str, Callable[..., Any]]] = []
 
-#: Per-thread flag that BPP's own download flow (Batch 4) sets while
-#: it is in the middle of executing a registry-coordinated download.
-#: When set, :func:`_make_blocked_downloader` returns silently rather
-#: than raising — that is how the click-through dialog will eventually
-#: be allowed to drive the underlying upstream download once the user
-#: has explicitly accepted the terms.
+#: Per-thread flag that BPP's own download flow
+#: (:func:`bpp.utils.download.download_file`) sets while it is in the
+#: middle of executing a registry-coordinated download. When set, the
+#: replacement built by :func:`_make_blocked_downloader` calls through
+#: to the original function rather than raising — that is how a
+#: download the user has explicitly accepted can drive a nested
+#: upstream download.
 _bypass_for_registry = threading.local()
 
 
@@ -198,10 +197,9 @@ def _make_blocked_downloader(entry: _AutoDownloaderEntry) -> Callable[..., Any]:
 
     def blocked(*args: Any, **kwargs: Any) -> Any:
         if _is_bypass_active():
-            # Batch 4 will drive registry-coordinated downloads through
-            # this branch by setting the per-thread bypass. The actual
-            # download then runs via the original function which we
-            # call back into.
+            # Registry-coordinated downloads reach this branch by
+            # setting the per-thread bypass. The actual download then
+            # runs via the original function which we call back into.
             original = _get_original(entry)
             if original is None:
                 raise BlockedAutoDownloadError(
@@ -385,17 +383,17 @@ def enforce_chokepoint() -> None:
         )
 
 
-# ── Bypass for BPP's own download flow (Batch 4 placeholder) ──
+# ── Bypass for BPP's own download flow ──
 
 
 def enter_registry_download() -> None:
-    """Open the per-thread bypass window so a Batch-4 click-through-
-    driven download can pass through the underlying upstream function
+    """Open the per-thread bypass window so a registry-coordinated
+    download can pass through the underlying upstream function
     without raising. MUST be paired with :func:`exit_registry_download`.
 
-    The function is a placeholder until Batch 4 lands the actual
-    click-through dialog. Tests can drive it directly to confirm the
-    bypass mechanism works.
+    :func:`bpp.utils.download.download_file` opens this window around
+    every fetch, after the model-load policy gate has passed. Tests can
+    drive it directly to confirm the bypass mechanism works.
     """
     _bypass_for_registry.active = True
 

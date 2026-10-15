@@ -1,4 +1,4 @@
-"""P5/v36 — smart_person_cluster_id shadow column + index.
+"""v36 — smart_person_cluster_id shadow column + index.
 
 The v36 migration adds an indexed shadow column populated from the
 ``cluster_id`` field of smart_person albums' ``rule_json``. Until v36,
@@ -337,7 +337,7 @@ class TestReaderSitesUseShadowColumn:
     ``json_extract(rule_json, '$.cluster_id') = ?`` must now use
     ``smart_person_cluster_id = ?`` against the indexed column.
 
-    Locked sites (P5 finding): bp_faces_photo, three in bp_faces_bbox.
+    Locked sites: bp_faces_photo, three in bp_faces_bbox.
     """
 
     @pytest.fixture
@@ -354,8 +354,8 @@ class TestReaderSitesUseShadowColumn:
         assert 'json_extract("rule_json", "$.cluster_id")' not in src
 
     def test_bp_faces_bbox_uses_shadow_column(self, repo_root):
-        # The three sites span two modules since the post-review decomp
-        # split: the duplicate-guard lookup moved to face_create_helpers,
+        # The three sites span two modules since a decomposition
+        # split them: the duplicate-guard lookup moved to face_create_helpers,
         # the two name-resolution lookups stay in bp_faces_bbox.
         bbox_src = (repo_root / "bpp" / "web" / "bp_faces_bbox.py").read_text()
         helper_src = (repo_root / "bpp" / "web" / "face_create_helpers.py").read_text()
@@ -365,5 +365,5 @@ class TestReaderSitesUseShadowColumn:
             "sites (duplicate-guard label, name resolution after split, "
             "name resolution after match) — counted across bp_faces_bbox.py "
             "+ face_create_helpers.py since the helpers moved out during "
-            "the post-review decomposition"
+            "a decomposition"
         )

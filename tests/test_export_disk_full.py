@@ -1,6 +1,6 @@
 """Disk-full / permission-denied categorization in export_selected.
 
-Release audit finding H1: the export loop used to catch every OSError
+The export loop used to catch every OSError
 the same way — appended to ``failed`` and kept trying. On a USB stick
 that filled mid-export, the user got "36 exported, 14 failed" with no
 indication every photo from #37 onward failed for the same reason.

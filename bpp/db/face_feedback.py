@@ -11,7 +11,7 @@ import sqlite3
 from typing import TYPE_CHECKING, Any
 
 from bpp.constants import FACE_CLUSTER_THRESHOLD_FALLBACK
-from bpp.db.face_embedding_safety import decode_embedding
+from bpp.db.face_embedding_safety import active_embedding_dim, decode_embedding
 
 if TYPE_CHECKING:
     import numpy as np
@@ -302,11 +302,12 @@ def find_ambiguous_pairs(
         return []
 
     cluster_embs: dict[int, list[np.ndarray]] = {}
+    dim = active_embedding_dim(conn)
     for r in rows:
         cid = r[0] if isinstance(r, tuple) else r["cluster_id"]
         emb_blob = r[1] if isinstance(r, tuple) else r["embedding"]
-        # Protection A: skip corrupt BLOBs before np.mean down-stream.
-        emb = decode_embedding(emb_blob, where="face_feedback.cluster_centroids")
+        # Skip corrupt BLOBs before np.mean down-stream.
+        emb = decode_embedding(emb_blob, where="face_feedback.cluster_centroids", dim=dim)
         if emb is None:
             continue
         cluster_embs.setdefault(int(cid), []).append(emb)

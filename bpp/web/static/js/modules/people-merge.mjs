@@ -182,7 +182,7 @@ export async function doMerge(primaryId, mergeIds) {
   const win = window;
   // In-progress in the status bar (indeterminate); the completion toast
   // below keeps the merged names + photo count, which aren't visible at a
-  // glance. (Toast-noise audit item 2.)
+  // glance.
   win.showStatusProgress?.("Merging faces…", 0);
   try {
     const resp = await apiFetch("/api/v1/faces/merge", {

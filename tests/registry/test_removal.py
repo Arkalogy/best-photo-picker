@@ -1,4 +1,4 @@
-"""Batch 7 model-removal + derived-data-purge tests.
+"""Model-removal + derived-data-purge tests.
 
 Pins:
 
@@ -246,7 +246,7 @@ class TestRemoveModelDispatch:
         face_embeddings_db: sqlite3.Connection,
     ) -> None:
         """Removing SFace is meaningful only via the remote-registry
-        overlay (Batch 8); the in-process removal must refuse with
+        overlay; the in-process removal must refuse with
         a directive message."""
         with pytest.raises(ModelRemovalError, match="built-in"):
             remove_model_with_derived_choice(

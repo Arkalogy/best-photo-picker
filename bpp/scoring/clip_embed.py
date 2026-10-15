@@ -45,7 +45,7 @@ _MODEL_DIR = _cache_dir()
 #         per photo. Larger variants (ViT-L/14) would 4x the storage
 #         and inference time without proportional precision gain on
 #         a personal photo library.
-# License: MIT (same as upstream openai/CLIP).
+# License: see the bpp.registry entry ``openai_clip_vit_b32_onnx``.
 # Pinned:  initial release of bpp's CLIP feature.
 # To bump: change URL + filename + SHA together; CLIP_OUTPUT_NAME and
 #         tokenizer vocab in clip_tokenizer.py must match the new
@@ -233,10 +233,11 @@ def compute_clip_embedding_from_file(filepath: str) -> np.ndarray | None:
     """Load an image and compute its CLIP embedding."""
     from bpp.scoring.aggregate import read_image_for_scoring
 
-    # Canonical scoring image reader: cv2.imread → PIL fallback,
-    # wrapped in retry_io for transient FS failures. Returns None
-    # (with log.warning) on persistent failure.
-    img = read_image_for_scoring(filepath)
+    # Canonical scoring image reader (cv2 → PIL fallback, RAW decoder,
+    # retry_io for transient FS failures). Returns None (with
+    # log.warning) on persistent failure. RAW at half size: CLIP's input
+    # is 224 px, so a full-size demosaic would be wasted work.
+    img = read_image_for_scoring(filepath, raw_half_size=True)
     if img is None:
         return None
     return compute_clip_embedding(img)
@@ -320,6 +321,7 @@ ModelRegistry.register(
         url=_MODEL_URL,
         sha256=_MODEL_SHA256,
         reset=_clip_visual.reset,
+        legal_id="openai_clip_vit_b32_onnx",
     )
 )
 ModelRegistry.register(
@@ -329,5 +331,6 @@ ModelRegistry.register(
         url=_TEXT_MODEL_URL,
         sha256=_TEXT_MODEL_SHA256,
         reset=_clip_text.reset,
+        legal_id="openai_clip_vit_b32_onnx",
     )
 )

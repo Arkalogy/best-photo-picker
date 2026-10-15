@@ -278,7 +278,9 @@ def _apply_perspective(img: Image.Image, edits: dict) -> Image.Image:
 
 def _apply_redeye(img: Image.Image, edits: dict) -> Image.Image:
     """Apply red-eye removal at the user-marked points (if any)."""
-    redeye_points = edits.get("redeye_points")
+    from bpp.db.edits import valid_redeye_points
+
+    redeye_points = valid_redeye_points(edits.get("redeye_points"))
     if not redeye_points:
         return img
     return _apply_redeye_fix(img, redeye_points)
@@ -288,7 +290,7 @@ def _apply_edits(img: Image.Image, edits: dict) -> Image.Image:
     """Apply all edits in order: crop → orient → basic color → advanced
     numpy adjustments → perspective → redeye.
 
-    M12.b: this used to be a 195-LOC function with eight inline phases
+    This used to be a 195-LOC function with eight inline phases
     plus a deeply nested numpy block. Each phase is now its own
     helper; ``_apply_edits`` is a flat pipeline that's easy to reorder
     or extend (a new tool just plugs in another helper).

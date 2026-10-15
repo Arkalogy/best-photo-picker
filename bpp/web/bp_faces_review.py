@@ -108,7 +108,7 @@ def api_faces_review_pairs_next() -> tuple[Response, int]:
     by_cid: dict[int, dict[str, Any]] = {c["cluster_id"]: c for c in clusters}
 
     # Map cluster_id → user name (from smart_person albums).
-    # P5b: indexed shadow-column lookup.
+    # Indexed shadow-column lookup.
     from bpp.db.albums import get_smart_person_cluster_name_map
 
     names_by_cid = get_smart_person_cluster_name_map(conn)
@@ -210,10 +210,13 @@ def api_faces_review_pairs_verdict() -> tuple[Response, int]:
         "SELECT cluster_id, embedding FROM face_embeddings WHERE cluster_id IN (?, ?)",
         (cluster_a, cluster_b),
     ).fetchall()
+    from bpp.db.face_embedding_safety import decode_rows
+
     by_cid: dict[int, list[np.ndarray]] = {}
-    for r in rows:
-        cid = r["cluster_id"]
-        by_cid.setdefault(int(cid), []).append(np.frombuffer(r["embedding"], dtype=np.float32))
+    for cid, emb in decode_rows(
+        conn, ((r["cluster_id"], r["embedding"]) for r in rows), where="bp_faces_review.pair"
+    ):
+        by_cid.setdefault(int(cid), []).append(emb)
     if cluster_a not in by_cid or cluster_b not in by_cid:
         raise NotFoundError(
             "cluster no longer exists",

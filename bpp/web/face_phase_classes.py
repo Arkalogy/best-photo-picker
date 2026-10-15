@@ -21,6 +21,101 @@ from bpp.web.face_phase_types import _NO_JOURNAL, FacePhaseContext
 log = get_logger(__name__)
 
 
+def _refuse_unloaded_plugin_method(conn) -> str | None:
+    """Stop face analysis when the picked embedder is a plugin that isn't
+    loaded (plugins disabled, or it failed to import).
+
+    Otherwise the method would resolve to SFace and the reconcile step
+    would wipe every face the plugin made and overwrite the user's pick.
+    """
+    from bpp.errors import BppError
+    from bpp.scoring.face_embed import is_known_method
+
+    row = conn.execute("SELECT value FROM settings WHERE key='face_embedding_method'").fetchone()
+    picked = row[0] if row else None
+    if picked and not is_known_method(picked):
+        raise BppError(
+            f"face embedder {picked!r} is not loaded",
+            user_message=(
+                f"Face analysis skipped: the face model {picked!r} comes from a plugin "
+                "that isn't loaded. Enable plugins (BPP_ENABLE_PLUGINS=1) or pick "
+                "another model in Settings → Models. Your existing faces are kept."
+            ),
+            method=picked,
+        )
+    return picked
+
+
+def _refuse_fallback(picked: str | None, resolved: str) -> None:
+    """Stop face analysis when the picked model can't load and another
+    one would be used instead (e.g. SFace's file is missing → dlib).
+
+    Running on the substitute would count as a model switch and wipe
+    every face; a model that's missing for a moment must never do that.
+    """
+    from bpp.errors import BppError
+
+    if picked and picked != resolved:
+        raise BppError(
+            f"face embedder {picked!r} unavailable; would fall back to {resolved!r}",
+            user_message=(
+                f"Face analysis skipped: the face model {picked!r} couldn't load — its "
+                "license may need accepting or its file re-downloading (Settings → "
+                "Models). Your existing faces are kept."
+            ),
+            method=picked,
+        )
+
+
+def _refuse_switch_to_unrunnable(conn, method: str) -> None:
+    """Before a model switch clears the faces, make sure the new model can
+    actually run (license accepted, registry entry present). Otherwise
+    the switch would wipe everything and then embed nothing."""
+    from bpp.errors import BppError
+    from bpp.scoring.face_embedder_registry import get_embedder
+    from bpp.scoring.model_load_gate import license_allows
+    from bpp.web.face_method_reconcile import detect_model_switch
+
+    _, switching = detect_model_switch(conn, method)
+    has_faces = conn.execute("SELECT 1 FROM face_embeddings LIMIT 1").fetchone() is not None
+    embedder = get_embedder(method)
+    if not (switching and has_faces and embedder is not None):
+        return
+    if not license_allows(embedder.registry_id, feature=f"Face embedder {method}") or (
+        not _model_files_load(method)
+    ):
+        raise BppError(
+            f"face embedder {method!r} can't run (license or registry entry)",
+            user_message=(
+                f"Face analysis skipped: the face model {method!r} can't run yet — "
+                "accept its license or download it in Settings → Models (or "
+                "reinstall its plugin). Your existing faces are kept."
+            ),
+            method=method,
+        )
+
+
+def _model_files_load(method: str) -> bool:
+    """Whether a built-in model's files are present or can be fetched now.
+
+    A plugin embedder's own files can't be checked ahead of time; one
+    that fails when embedding still loses the switch's faces until the
+    next run (its plugin is responsible for loading reliably).
+    """
+    if method == "buffalo_s":
+        from bpp.scoring import face_embed_buffalo_s
+
+        # Never download here — it would be a silent ~120 MB stall. A
+        # missing file is refused; Settings → Models downloads it with
+        # progress.
+        return face_embed_buffalo_s.is_on_disk()
+    elif method == "dlib":
+        from bpp.scoring.face_recognition_loader import load_face_recognition
+
+        return load_face_recognition() is not None
+    return True
+
+
 class MethodReconcilerPhase:
     """Phase 1 — sface ↔ dlib method change detection and wipe."""
 
@@ -41,8 +136,44 @@ class MethodReconcilerPhase:
             ctx.stored_method = rehydrated.stored_method
             ctx.method_changed = rehydrated.method_changed
             ctx.old_cluster_photos = rehydrated.old_cluster_photos
+            # Phase 5 must extract with the model the run started with —
+            # and refuse, like a fresh run, if it can't load.
+            resolved = self._resolve(ctx.conn)
+            row = ctx.conn.execute(
+                "SELECT value FROM settings WHERE key=?", (phases.EXTRACTED_METHOD_KEY,)
+            ).fetchone()
+            if row and row[0] and row[0] != resolved:
+                # The user switched models since this run started. Don't
+                # mix models, and don't reconcile here: later phases may be
+                # journaled as done and the run's saved name map would be
+                # replaced. Stop with everything intact; the next fresh
+                # analysis performs the switch (snapshot, wipe, re-cluster).
+                from bpp.errors import BppError
+
+                # Close the run so recovery doesn't retry it each startup.
+                journal.force_complete_after_retries(
+                    ctx.conn, ctx.run_id, reason="face model changed mid-run"
+                )
+                raise BppError(
+                    f"face model changed mid-run ({row[0]!r} -> {resolved!r})",
+                    user_message=(
+                        "The face model was changed while an analysis was in "
+                        "progress, so that analysis was stopped. Start a new "
+                        "analysis to use the new model."
+                    ),
+                )
+            ctx.current_method = resolved
         else:
             self.run(ctx)
+
+    @staticmethod
+    def _resolve(conn) -> str:
+        """The method to extract with, refusing an unloaded plugin or a
+        silent fallback to another model."""
+        picked = _refuse_unloaded_plugin_method(conn)
+        resolved = embedding_method(conn)
+        _refuse_fallback(picked, resolved)
+        return resolved
 
     def run(self, ctx: FacePhaseContext) -> None:
         # Bug A fix: pass ctx.conn so embedding_method respects the
@@ -51,7 +182,8 @@ class MethodReconcilerPhase:
         # "pick an embedder" toggle decorative. The resolved choice
         # is stashed on ctx so Phase 5 can drive the per-photo
         # extractor with it.
-        current_method = embedding_method(ctx.conn)
+        current_method = self._resolve(ctx.conn)
+        _refuse_switch_to_unrunnable(ctx.conn, current_method)
         ctx.current_method = current_method
         stored, changed, old_cluster_photos = phases.reconcile_method(ctx.conn, current_method)
         ctx.stored_method = stored
@@ -101,8 +233,14 @@ class PartitionPhase:
         self.run(ctx)
 
     def run(self, ctx: FacePhaseContext) -> None:
+        from bpp.db.face_embedding_safety import active_embedding_dim
+
         ctx.partition = phases.partition_cached_vs_extract(
-            ctx.with_faces, ctx.photo_map, ctx.cached_by_pid, ctx.stale_photo_ids
+            ctx.with_faces,
+            ctx.photo_map,
+            ctx.cached_by_pid,
+            ctx.stale_photo_ids,
+            dim=active_embedding_dim(ctx.conn),
         )
 
 
@@ -128,7 +266,7 @@ class StaleDeletePhase:
 class DismissedSlotsPhase:
     """Phase 4.5 — capture currently-dismissed (photo_id, face_index) slots.
 
-    T1.1 contract: this phase ALWAYS runs, no journal skip. The user
+    Contract: this phase ALWAYS runs, no journal skip. The user
     may have dismissed faces in the window between the original crash
     and this resume; the captured frozenset must reflect that fresh
     state. The snapshot built by the next phase is then re-stored to
@@ -220,7 +358,7 @@ class ClusterPhase:
         # only for the final log line, where 0 is honest ("we resumed
         # past clustering; don't know the count").
         #
-        # H1 fix (review 2026-05-31): we DO have to adopt the still-
+        # We DO have to adopt the still-
         # pending operation_journal row the prior run opened for
         # face_clustering. Without this, the cleanup at the end of
         # run_face_pipeline can't find the row (clustering_journal_id
@@ -277,7 +415,7 @@ class IdentityReconstructPhase:
     On exception the orchestrator re-raises so the journal row stays
     PENDING. The recovery handler then retries on the next startup
     via :func:`bpp.web.face_worker.recover_pending_face_extractions`,
-    bounded by ``T0.4``'s retry cap.
+    bounded by ``MAX_RECOVERY_RETRIES``.
     """
 
     name = "reconstruct_identities"

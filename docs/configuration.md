@@ -20,16 +20,22 @@ peer) is consulted for the loopback / LAN gate. No proxy hop.
 Caddy, Traefik) on the same host, the direct peer is the proxy
 itself (typically `127.0.0.1` or a Docker bridge gateway like
 `172.17.0.1`). With this var set, requests whose `request.remote_addr`
-matches any listed CIDR have their `X-Forwarded-For` header trusted,
-and the *original* client IP is used for the loopback / LAN auth gate
-instead.
+matches any listed CIDR are treated as loopback (owner) by the LAN
+gate. If you also set `behind_proxy: true` in the YAML config, bpp
+additionally honors `X-Forwarded-For`/`-Proto`/`-Host` from those
+peers only, and the original client IP is used for the gate instead.
+The bundled `Dockerfile` sets this variable to the Docker bridge
+ranges (`172.16.0.0/12,192.168.65.0/24`).
 
-**Safety filter:** `_is_safe_proxy_network()` (in `bpp/web/share.py`)
-**rejects** any CIDR that contains public addresses — `0.0.0.0/0`,
-`::/0`, or arbitrary public ranges. The only ranges that pass:
-loopback (`127/8`, `::1`), RFC1918 private (`10/8`, `172.16/12`,
-`192.168/16`), link-local (`169.254/16`, `fe80::/10`), and the
-Docker-Desktop alias range. A misconfigured `0.0.0.0/0` would
+**Safety filter:** `_is_safe_proxy_network()` (in `bpp/web/share_proxy.py`,
+re-exported from `bpp/web/share.py`) **rejects** `0.0.0.0/0`, `::/0`,
+and any range Python doesn't classify as private, loopback or
+link-local. What passes: loopback (`127/8`, `::1`), RFC1918 private
+(`10/8`, `172.16/12`, `192.168/16` — which covers Docker Desktop's
+`192.168.65.0/24`), link-local (`169.254/16`, `fe80::/10`), the
+RFC 6598 carrier-grade NAT block (`100.64.0.0/10`, used by AWS ECS /
+Fargate), and the other special-purpose ranges Python marks private.
+A misconfigured `0.0.0.0/0` would
 otherwise hand the owner SPA (with the per-boot app token) to any
 remote — that's why parse-time rejection logs a warning and drops
 the entry rather than honoring it. See `tests/test_trust_proxy.py`
@@ -89,14 +95,32 @@ cache root.
 moving the rest of the cache. Useful when:
 
 - The host has a small SSD for the cache but a large HDD for the
-  500MB+ ML weights.
+  ML weights (up to ~660 MB for the default set, more with opt-in
+  models).
 - A site-shared model directory is mounted read-only across multiple
   bpp instances (and the cache stays per-instance for write-heavy
   CLIP embeddings).
+- **Offline installs:** model files already present in this directory
+  are used instead of being downloaded again, so copying a populated
+  models directory onto an offline machine is the way to avoid model
+  downloads — bpp has no switch that disables them.
 
 If both `BPP_CACHE_DIR` and `BPP_MODELS_DIR` are set, models go to
 `BPP_MODELS_DIR` and everything else goes under `BPP_CACHE_DIR`.
 Resolution lives in `models_dir()` (`bpp/utils/paths.py`).
+
+## `BPP_SKIP_DOWNLOADS`
+
+**Internal — set by bpp, not by you.** Don't set it yourself.
+
+**What it does:** during an analysis, the model check before scoring
+may find that a model can't be downloaded (for example, no internet
+connection). bpp then sets this variable, a comma-separated list of
+model registry ids, inside that run's own background processes. Those
+processes don't silently try the same download again; they work
+without that model and the run's warning names it. It never affects
+the server process or later runs (see `skip_downloads_in_this_process()`
+in `bpp/utils/download.py`).
 
 ## `BPP_ENABLE_PLUGINS`
 
@@ -158,7 +182,7 @@ some ONNX Runtime versions returns subtly different embeddings than CPU
 for the same inputs — face clusters generated under one provider may not
 match the other. CUDA can crash session construction if the runtime/driver
 combo is wrong. **The accelerated paths are not exercised in upstream CI**
-(we run CPU only on every push). Reports of working configurations are
+(CI runs CPU only, on pull requests to `main`). Reports of working configurations are
 welcome via GitHub issues; treat anything you opt into as your own
 verification surface until it lands in the README's "Tested in CI" matrix.
 
@@ -237,7 +261,7 @@ schema version). The log is local-only and never transmitted; the
 override exists so tests and dev workflows can isolate their writes
 without touching the real user config directory.
 
-**Trust / safety implications:** evidentiary record. Moving the path is
+**Trust / safety implications:** audit record. Moving the path is
 fine; deleting it loses the ability to prove which model acknowledgments
 the user accepted. Don't point it at a multi-user-writable location.
 
@@ -281,7 +305,7 @@ and never transmitted; the override exists so tests and dev workflows
 can isolate their writes without touching the real user config
 directory.
 
-**Trust / safety implications:** evidentiary record for which local
+**Trust / safety implications:** audit record for which local
 files the user pointed BPP at. The store does not contain the user's
 weights — just paths and hashes. Moving the path is fine; pointing it at
 a multi-user-writable location lets another user on the same machine
@@ -292,15 +316,22 @@ The reader lives in `bpp/registry/byom.py`.
 ## `BPP_DISABLE_REMOTE_REGISTRY`
 
 **Default:** *(unset)* — the remote-registry overlay fetch runs at
-import time of `bpp.registry`.
+import time of `bpp.registry`, which `import bpp` loads. In practice
+that means one HTTPS GET to
+`https://arkalogy.github.io/bppicker-registry/registry.json` in every
+bpp process: each CLI command (including `bpp --version`), each
+server start (the desktop app's included), and — on macOS and
+Windows, where Python starts worker processes fresh — each worker
+process the server spawns. The response isn't cached on disk.
 
-**Type:** any truthy string (`"1"`, `"true"`, etc.) disables the fetch;
-unset or empty leaves it on.
+**Type:** any non-empty value disables the fetch — including `0` or
+`false`, because the code only checks that the variable is set to
+something. Unset or empty leaves it on.
 
-**What it does:** turns off the Batch-8 remote-registry overlay
+**What it does:** turns off the signed remote-registry overlay
 mechanism entirely. With the variable set, BPP only sees the bundled
-baseline registered by `bpp.registry.builtins`; no HTTPS call is made
-on startup. Useful for CI runs (deterministic), air-gapped deployments
+baseline registered by `bpp.registry.builtins`; no registry request
+is made at all. Useful for CI runs (deterministic), air-gapped deployments
 (no network), and unit tests that need a stable in-process registry.
 
 **Trust / safety implications:** the overlay is BPP's mechanism for
@@ -340,11 +371,13 @@ The reader lives in `bpp/registry/remote_registry.py`.
 `BPP_REMOTE_REGISTRY_INSECURE=1` is also set).
 
 **What it does:** overrides the URL the overlay fetch reads from.
-Used for local mocking (see `scripts/run_mock_registry.py`) and for
-air-gapped deployments that mirror the manifest on an internal host.
-The HTTPS-only + host-allowlist rules still apply unless the insecure
-escape hatch is also set — and the signature check stays mandatory
-regardless of where the manifest comes from.
+Used for local mocking (see `scripts/run_mock_registry.py`). The
+HTTPS-only + host-allowlist rules still apply unless the insecure
+escape hatch is also set, and the allowlist contains only
+`arkalogy.github.io` — so a manifest mirrored on any other host (for
+example an internal one in an air-gapped deployment) is refused
+unless `BPP_REMOTE_REGISTRY_INSECURE` is set as well. The signature
+check stays mandatory regardless of where the manifest comes from.
 
 **Trust / safety implications:** the override moves the source of the
 manifest. A misconfigured URL pointing at an attacker-controlled host

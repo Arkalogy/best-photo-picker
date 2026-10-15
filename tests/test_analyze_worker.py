@@ -124,7 +124,7 @@ def _drain(worker):
 
 
 class TestTarExtraction:
-    """H4 regression: tar path needs the same size cap and traversal
+    """Regression: tar path needs the same size cap and traversal
     rejection that zips already get, plus error handling for the
     Py3.12+ tarfile filter raising on malicious entries."""
 

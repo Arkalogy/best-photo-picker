@@ -272,8 +272,10 @@ class TestEmbeddingVersionMigration:
 
     def test_method_change_wipes_embeddings(self, db):
         """Changing embedding method should wipe existing embeddings."""
-        # Insert some fake embeddings from "dlib"
-        db.execute("INSERT INTO settings VALUES ('face_embedding_method', 'dlib')")
+        # Faces were extracted with dlib; the user has since picked SFace
+        # (Settings saves the pick before the next analysis).
+        db.execute("INSERT INTO settings VALUES ('face_embedding_method_extracted', 'dlib')")
+        db.execute("INSERT INTO settings VALUES ('face_embedding_method', 'sface')")
         db.execute("INSERT INTO photos VALUES (1, '/test.jpg', 0, NULL, NULL)")
         fake_emb = np.random.randn(128).astype(np.float32).tobytes()
         db.execute(

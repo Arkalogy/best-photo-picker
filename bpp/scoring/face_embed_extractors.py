@@ -90,7 +90,14 @@ def _extract_dlib(
     # converts into a skipped photo (no embeddings) rather than a crash.
     _enforce_dlib_policy()
 
-    import face_recognition
+    from bpp.scoring.face_recognition_loader import (
+        face_recognition_unavailable_reason,
+        load_face_recognition,
+    )
+
+    face_recognition = load_face_recognition()
+    if face_recognition is None:
+        raise ImportError(f"face_recognition {face_recognition_unavailable_reason()}")
 
     from bpp.scoring.face import detect_faces_with_confidence
 
@@ -170,7 +177,7 @@ def _extract_dlib(
                 # face_recognition.face_encodings returns float64 (1024
                 # bytes per 128-d vector). The SFace path stores
                 # float32 (512 bytes). When the same DB sees both,
-                # Protection A's read-side decode rejects the float64
+                # The read-side decode (decode_embedding) rejects the float64
                 # rows as "wrong size 1024 vs expected 512" — silently
                 # losing every face the dlib fallback found. Cast to
                 # float32 here so the storage contract is uniform.
@@ -234,9 +241,10 @@ def _supplement_with_scrfd(
         return sface_results
 
     # Extract embeddings for new detections via dlib (if available)
-    try:
-        import face_recognition
-    except ImportError:
+    from bpp.scoring.face_recognition_loader import load_face_recognition
+
+    face_recognition = load_face_recognition()
+    if face_recognition is None:
         return sface_results
 
     rgb = np.ascontiguousarray(image[:, :, ::-1])
@@ -274,7 +282,7 @@ def _supplement_with_scrfd(
                 # — see the comment in _extract_dlib above. SCRFD-
                 # supplementary faces flowed through dlib's float64
                 # encoder; without the cast they get dropped by
-                # Protection A's read-side decode and never appear in
+                # the read-side decode (decode_embedding) and never appear in
                 # any cluster.
                 "embedding": encoding.astype(np.float32),
                 "quality": quality,

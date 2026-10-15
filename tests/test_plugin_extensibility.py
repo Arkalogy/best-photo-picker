@@ -1,14 +1,14 @@
-"""Regression tests for the bpp-review (2026-05-31) follow-up fixes.
+"""Regression tests for plugin-extensibility fixes.
 
-* M3 — :func:`bpp.web.face_phase_pipeline.register_face_phase` lets
+* :func:`bpp.web.face_phase_pipeline.register_face_phase` lets
   plugins splice phases between the built-ins by priority.
-* M4 — :mod:`bpp.db.event_hooks` exposes post-analyze / post-cluster /
+* :mod:`bpp.db.event_hooks` exposes post-analyze / post-cluster /
   post-import hook buses, swallow-and-log on plugin failure.
-* M5 / L2 — ``docs/plugins.md`` documents the lifecycle hooks and the
+* ``docs/plugins.md`` documents the lifecycle hooks and the
   ``register_album_domain`` call so plugin authors don't go spelunking.
-* L1 — :class:`SmartAlbumRegistry` supports an ``undeletable`` flag that
+* :class:`SmartAlbumRegistry` supports an ``undeletable`` flag that
   ``bp_albums.py`` consults instead of hardcoding the ``"all"`` check.
-* M6 — :class:`SmartAlbumRegistry` supports a ``ui_metadata_fn`` that
+* :class:`SmartAlbumRegistry` supports a ``ui_metadata_fn`` that
   ``bp_albums.py`` dispatches through instead of hardcoding the
   ``"smart_duplicates"`` branch.
 
@@ -27,7 +27,7 @@ from bpp.db import event_hooks
 from bpp.web import face_phase_pipeline as pipeline
 
 # ──────────────────────────────────────────────────────────────────
-# M3 — register_face_phase
+# register_face_phase
 # ──────────────────────────────────────────────────────────────────
 
 
@@ -108,7 +108,7 @@ class TestRegisterFacePhase:
 
 
 # ──────────────────────────────────────────────────────────────────
-# M4 — post-analyze / post-cluster / post-import hooks
+# Post-analyze / post-cluster / post-import hooks
 # ──────────────────────────────────────────────────────────────────
 
 
@@ -215,7 +215,7 @@ class TestPostImportHook:
 
 
 # ──────────────────────────────────────────────────────────────────
-# M5 / L2 — docs/plugins.md surface
+# docs/plugins.md surface
 # ──────────────────────────────────────────────────────────────────
 
 
@@ -238,7 +238,7 @@ class TestPluginsDocCoversNewSurface:
 
     def test_doc_mentions_register_album_domain(self):
         assert "register_album_domain" in self._read_docs(), (
-            "L2 — docs/plugins.md must point at register_album_domain "
+            "docs/plugins.md must point at register_album_domain "
             "so plugins know to tie a custom album type to a mutation domain"
         )
 
@@ -253,7 +253,7 @@ class TestPluginsDocCoversNewSurface:
 
 
 # ──────────────────────────────────────────────────────────────────
-# L1 / M6 — SmartAlbumRegistry undeletable + ui_metadata_fn
+# SmartAlbumRegistry undeletable + ui_metadata_fn
 # ──────────────────────────────────────────────────────────────────
 
 
@@ -302,7 +302,7 @@ class TestSmartAlbumRegistryExtras:
 
     def test_builtin_user_renameable_types_flagged(self):
         """The user-renameable check used to be a hardcoded set inside
-        _ensure_smart_album; it's a registry flag now (review 2026-06-12)."""
+        _ensure_smart_album; it's a registry flag now."""
         from bpp.db.smart_albums import SmartAlbumRegistry
 
         for t in ("smart_person", "smart_pet", "smart_group"):
@@ -344,7 +344,7 @@ class TestSmartAlbumRegistryExtras:
 
     def test_bp_albums_no_longer_hardcodes_all_check(self):
         """bp_albums.py used to read ``if album["album_type"] == "all":``
-        for the delete refusal. The L1 fix moved that to the registry.
+        for the delete refusal. The fix moved that to the registry.
         Source-scan to make sure a future refactor doesn't reintroduce
         the hardcoded branch."""
         from pathlib import Path
@@ -356,7 +356,7 @@ class TestSmartAlbumRegistryExtras:
         assert 'album["album_type"] == "all"' not in src
 
     def test_bp_albums_no_longer_hardcodes_smart_duplicates_check(self):
-        """M6: the smart_duplicates UI-metadata dispatch must go through
+        """The smart_duplicates UI-metadata dispatch must go through
         SmartAlbumRegistry.get_ui_metadata_fn, not the hardcoded
         if-equals branch."""
         from pathlib import Path

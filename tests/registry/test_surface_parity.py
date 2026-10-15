@@ -1,4 +1,4 @@
-"""Batch 9 — surface parity tests for items 8, 9, 10, 14, 17.
+"""Surface parity tests for the model-licensing disclosures.
 
 Pins:
 
@@ -14,8 +14,8 @@ Pins:
 Why these tests exist
 ---------------------
 
-The legal-posture review's item 9 ("warning parity across
-surfaces") is the kind of rule that quietly rots — a future
+Warning parity across
+surfaces is the kind of rule that quietly rots — a future
 editor tweaks the README license paragraph for clarity and
 forgets to keep it in sync with the in-app dialog. The tests
 fail the build when that happens.
@@ -139,11 +139,11 @@ class TestPostureStatementParity:
         )
 
 
-# ── Acceptance dialog button styling (item 5 — affirmative-intent UX) ──
+# ── Acceptance dialog button styling (affirmative-intent UX) ──
 
 
 class TestAcceptanceDialogButtonStyling:
-    """The click-through acceptance dialog (item 5) is the load-bearing
+    """The click-through acceptance dialog is the load-bearing
     evidence-of-consent surface. The affirmative action ("I accept")
     must be the visually prominent primary button so a future legal
     screenshot doesn't read as if BPP de-emphasized commitment in
@@ -255,11 +255,11 @@ class TestApiMdDocumentsModelRegistryEndpoints:
         )
 
 
-# ── ADR for the 24-item legal-posture decision exists + is indexed ──
+# ── ADR for the model-registry decision exists + is indexed ──
 
 
 class TestLegalPostureAdrPresence:
-    """The 24-item legal-posture build is the most ambitious engineering
+    """The model-registry build is the most ambitious engineering
     in the repo. ADR 0005 makes the *rationale* public so a reader who
     only sees the code can still understand the decision. This test
     catches an accidental delete / de-list / rename."""
@@ -268,10 +268,9 @@ class TestLegalPostureAdrPresence:
         adr = REPO_ROOT / "docs/adr/0005-legal-posture-and-model-registry.md"
         assert adr.exists(), (
             "docs/adr/0005-legal-posture-and-model-registry.md must "
-            "exist — the 24-item legal-posture decision is the most "
+            "exist — the model-registry decision is the most "
             "ambitious piece of engineering in the repo and its "
-            "rationale belongs in a public ADR (not just the "
-            "gitignored spike doc)."
+            "rationale belongs in a public ADR."
         )
 
     def test_adr_indexed_in_readme(self) -> None:
@@ -286,17 +285,19 @@ class TestLegalPostureAdrPresence:
 
     def test_adr_carries_load_bearing_phrases(self) -> None:
         """A typo-fix that strips the ADR's load-bearing language
-        (the corrected Item 17 wording, the 10-batch sketch, the
-        evidentiary-chain sketch) silently weakens the portfolio
+        (the corrected posture wording, the component table, the
+        audit-trail sketch) silently weakens the portfolio
         signal. Pin the phrases."""
         adr = _read("docs/adr/0005-legal-posture-and-model-registry.md")
         assert "Arkalogy will not monetize" in adr, (
-            "ADR 0005 must include the corrected Item 17 wording verbatim"
+            "ADR 0005 must include the corrected posture wording verbatim"
         )
         assert "MIT-licensed" in adr
-        assert "10 implementation batches" in adr or "ten implementation batches" in adr.lower(), (
-            "ADR 0005 must reference the 10-batch implementation structure"
-        )
+        for component in ("Download chokepoint", "Signed remote registry", "Use-context gate"):
+            assert component in adr, (
+                f"ADR 0005 must describe the {component!r} component of the registry design"
+            )
+        assert "audit" in adr, "ADR 0005 must sketch the audit trail"
         assert "BIPA" in adr, (
             "ADR 0005 must cite BIPA-class biometric-data regulation as part of the context"
         )
@@ -334,12 +335,12 @@ class TestReadmeDocumentsCliCommands:
         )
 
 
-# ── Marketing-copy ban on restricted-model names (item 14) ──
+# ── Marketing-copy ban on restricted-model names ──
 
 
 # The names the editorial rule bans from marketing copy. The list
 # stays narrow on purpose: technical mentions in code, NOTICE.txt,
-# tests, and the plan doc are intentional. The gate fires only on
+# tests, and design docs are intentional. The gate fires only on
 # the surfaces a reader treats as a product pitch.
 RESTRICTED_MODEL_NAME_TOKENS = (
     "AdaFace",
@@ -358,8 +359,8 @@ MARKETING_SURFACES = (
 
 
 class TestMarketingCopyBansRestrictedModelNames:
-    """Item 14: editorial rule bans restricted-model names from any
-    commercial-targeted copy. The plan doc + NOTICE.txt + tests are
+    """Editorial rule bans restricted-model names from any
+    commercial-targeted copy. NOTICE.txt + tests are
     allowed to name them because they're not marketing copy."""
 
     @pytest.mark.parametrize("surface", MARKETING_SURFACES)
@@ -371,7 +372,7 @@ class TestMarketingCopyBansRestrictedModelNames:
         body = path.read_text(encoding="utf-8")
         assert token not in body, (
             f"Surface {surface!r} contains restricted-model name "
-            f"{token!r}. Item 14 of the legal-posture plan bans "
+            f"{token!r}. The editorial rule bans "
             f"restricted-model names from marketing copy — describe "
             'the capability generically ("opt-in third-party face '
             'embedders") instead.'

@@ -13,12 +13,11 @@ import os as _os
 
 _os.environ.setdefault("OPENCV_IO_MAX_IMAGE_PIXELS", str(200_000_000))
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 APP_NAME = "Best Photo Picker"
 
-# Eagerly import the model registry so the Batch-3 download chokepoint
-# (item 18 of the legal-posture rollout) installs before any BPP code
-# can import a third-party package with auto-download behavior. The
+# Eagerly import the model registry so the download chokepoint
+# installs before any BPP code can import a third-party package with auto-download behavior. The
 # chokepoint patches the upstream downloader if the package is
 # already loaded, and registers a meta-path hook for packages loaded
 # later. Importing it from the top-level bpp package ensures any

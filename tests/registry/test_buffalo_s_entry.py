@@ -3,13 +3,13 @@
 buffalo_s is the first restricted-license face embedder in the
 bundled baseline. Every flag on the entry maps to a downstream
 runtime gate (click-through dialog, commercial-use hard-block,
-dual-signature requirement on relaxation, derived-data purge on
+signature-quorum requirement on relaxation, derived-data purge on
 removal). A careless edit of the registry entry that flipped one
 of these flags would silently change BPP's legal posture without
 any other code visibly breaking — so we pin them here.
 
 A future edit that legitimately changes one of these flags MUST
-go through MODEL_POLICY.md's dual-sig review and update the test
+go through MODEL_POLICY.md's review and update the test
 in the same PR.
 """
 
@@ -37,14 +37,13 @@ class TestBuffaloSPolicyFlags:
         )
 
     def test_buffalo_s_is_not_the_default(self) -> None:
-        """SFace is the permanent default per item 1 of the legal-
-        posture plan; the restricted entries never become the
+        """SFace is the permanent default; the restricted entries never become the
         default-for-kind."""
         default = get_default_for_kind("face_embedder")
         assert default is not None
         assert default.id == "sface_yunet", (
             "Default face embedder is no longer SFace — that's a "
-            "Batch 2 / item 1 invariant. A restricted entry must "
+            "core invariant. A restricted entry must "
             "NEVER be the default."
         )
 

@@ -173,7 +173,7 @@ export function stepZoom(delta) {
 }
 
 /**
- * Render photo grid. Protection F wraps the actual render so a single
+ * Render photo grid. A render-failure boundary wraps the actual render so a single
  * render-time exception (bad data, missing global, vgrid bug) doesn't
  * leave the grid blank — a "Photo grid couldn't render" pill with a
  * Reload button appears in its container instead.
@@ -274,7 +274,7 @@ function _doRenderGrid(opts) {
   }
 
   if (items.length === 0 && filterBy !== "all") {
-    // UAT Bug #7: clear vgrid's item list BEFORE writing the
+    // Clear vgrid's item list BEFORE writing the
     // empty-state HTML. app.mjs:360 installs a ResizeObserver on
     // .content that fires when the popover closes — that
     // ResizeObserver calls vgrid.onResize() → vgrid.render(true),
@@ -287,7 +287,7 @@ function _doRenderGrid(opts) {
     vgrid.firstRow = -1;
     vgrid.lastRow = -1;
 
-    // L-S4: each empty-state carries a one-line hint explaining the
+    // Each empty-state carries a one-line hint explaining the
     // action that populates the filter. Without the hints a first-time
     // user clicking 'Favorites' on a brand-new library saw a bare
     // 'No favorited photos' and concluded the feature was broken

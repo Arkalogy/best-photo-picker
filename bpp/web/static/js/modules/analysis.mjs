@@ -143,7 +143,7 @@ function _listenAnalyzeProgress() {
     const msg = /** @type {any} */ (parseSSE(ev.data));
     if (!msg) return;
     if (msg.type === "phase") {
-      // M15: structured phase events let the UI surface a stepper
+      // Structured phase events let the UI surface a stepper
       // ("Step 3 of 5: Scoring images") instead of a single black-box bar.
       const label = msg.label || msg.phase || "Working…";
       const step = msg.step && msg.of ? ` (Step ${msg.step}/${msg.of})` : "";
@@ -178,7 +178,7 @@ function _listenAnalyzeProgress() {
       removeNudge("analyze_photos");
       loadPhotosAndRecompute();
       refreshSmartAlbums();
-      // Sensitive-photo alert (P0): active notice with a path into the
+      // Sensitive-photo alert: active notice with a path into the
       // Sensitive album. Only fires on NEW flags (server-side count
       // delta) so re-analysis of an unchanged library stays silent.
       if (msg.sensitive_new > 0) {
@@ -300,7 +300,7 @@ export function listenProgress() {
     const msg = /** @type {any} */ (parseSSE(ev.data));
     if (!msg) return;
     if (msg.type === "phase") {
-      // M15: structured phase events drive the high-level stepper.
+      // Structured phase events drive the high-level stepper.
       const label = msg.label || msg.phase || "Working…";
       const step = msg.step && msg.of ? ` (Step ${msg.step}/${msg.of})` : "";
       showStatusProgress(`${label}${step}`, 0);

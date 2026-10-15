@@ -38,7 +38,7 @@ def api_groups() -> tuple[Response, int]:
     groups = detect_groups(conn, min_photos=min_photos)
 
     # Pre-load person album names: cluster_id -> name.
-    # P5b: indexed lookup via the v36 shadow column.
+    # Indexed lookup via the v36 shadow column.
     from bpp.db.albums import get_smart_person_cluster_name_map
 
     person_name_map = get_smart_person_cluster_name_map(conn)

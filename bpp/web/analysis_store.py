@@ -1,6 +1,6 @@
-"""P4b — WebAppState collaborator: analysis-related background state.
+"""WebAppState collaborator: analysis-related background state.
 
-Pre-P4 ``WebAppState`` carried five attributes related to the phash
+Originally ``WebAppState`` carried five attributes related to the phash
 compute + thumbnail warm lifecycle as bare fields:
 
 * ``phash_ready`` — a ``threading.Event`` flipped True once the phash
@@ -15,13 +15,13 @@ compute + thumbnail warm lifecycle as bare fields:
   iterations so library switch / shutdown can drain it cleanly.
 
 Five interrelated fields, one logical concern: "the in-flight
-analysis-derived background work for this library." The audit grouped
-them under ``AnalysisStore`` so a future maintainer doesn't have to
+analysis-derived background work for this library." They are grouped
+under ``AnalysisStore`` so a future maintainer doesn't have to
 piece the relationship back together from cross-file reads.
 
 This module defines :class:`AnalysisStore`. WebAppState constructs one
 at start; property delegates preserve the legacy bare-attribute access
-so the ~3,800 call sites the audit counted continue to work unchanged.
+so the existing call sites continue to work unchanged.
 """
 
 from __future__ import annotations
@@ -39,8 +39,8 @@ log = get_logger(__name__)
 class AnalysisStore:
     """Bundle of analysis-derived background state owned by one WebAppState.
 
-    Field semantics inherited from pre-P4 ``WebAppState``; see module
-    docstring for the full story. The generation counter is the
+    Field semantics are inherited from the original ``WebAppState``
+    fields; see the module docstring for the full story. The generation counter is the
     load-bearing invariant: switch_library increments it; threads
     spawned for library A check it against their captured generation
     before signaling Events, so an orphaned thread from a switched-

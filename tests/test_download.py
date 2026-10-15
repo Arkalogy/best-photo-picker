@@ -1,8 +1,8 @@
 """Tests for bpp.utils.download.
 
-Every test passes ``registry_id`` explicitly: ``None`` for ancillary
-cases that are not exercising the policy gate, and a real legal-
-registry id for the gate tests. The whole point of the chokepoint is
+Every test passes ``registry_id`` explicitly: the MIT CLIP entry (no
+acceptance needed) for cases that are not exercising the policy gate,
+and the entry under test for the gate tests. The whole point of the chokepoint is
 that the argument is REQUIRED; the absence of a default keeps the
 gate honest.
 """
@@ -31,7 +31,7 @@ class TestDownloadFileCleanup:
             download_file(
                 "https://example.com/model.onnx",
                 dest,
-                registry_id=None,
+                registry_id="openai_clip_vit_b32_onnx",
             )
 
         assert not os.path.exists(dest), "Partial file should be removed on failure"
@@ -54,7 +54,7 @@ class TestDownloadFileCleanup:
             download_file(
                 "https://example.com/model.onnx",
                 dest,
-                registry_id=None,
+                registry_id="openai_clip_vit_b32_onnx",
             )
 
         assert not os.path.exists(dest), "Partial file should be removed on write error"
@@ -72,7 +72,7 @@ class TestDownloadFileCleanup:
             download_file(
                 "https://example.com/model.onnx",
                 dest,
-                registry_id=None,
+                registry_id="openai_clip_vit_b32_onnx",
             )
 
         assert os.path.exists(dest)
@@ -104,7 +104,7 @@ class TestDownloadFileSha256:
             download_file(
                 "https://example.com/model.onnx",
                 dest,
-                registry_id=None,
+                registry_id="openai_clip_vit_b32_onnx",
                 sha256=digest,
             )
 
@@ -127,7 +127,7 @@ class TestDownloadFileSha256:
             download_file(
                 "https://example.com/model.onnx",
                 dest,
-                registry_id=None,
+                registry_id="openai_clip_vit_b32_onnx",
                 sha256=wrong_digest,
             )
 
@@ -145,7 +145,7 @@ class TestDownloadFileSha256:
             download_file(
                 "https://example.com/model.onnx",
                 dest,
-                registry_id=None,
+                registry_id="openai_clip_vit_b32_onnx",
             )
 
         assert os.path.exists(dest)
@@ -163,7 +163,7 @@ class TestDownloadFileSha256:
             download_file(
                 "https://example.com/model.onnx",
                 dest,
-                registry_id=None,
+                registry_id="openai_clip_vit_b32_onnx",
                 sha256=digest,
             )
 
@@ -171,7 +171,7 @@ class TestDownloadFileSha256:
 
 
 class TestVerifyExisting:
-    """D-02: verify_existing reads a cached file and re-hashes it
+    """verify_existing reads a cached file and re-hashes it
     against the pinned SHA. Used by ModelSingleton.ensure_model
     BEFORE returning a cached model — the previous code returned
     cached files unconditionally, leaving post-download tampering
@@ -232,12 +232,22 @@ class TestEnsureModelVerifiesCache:
             model_path=model_path,
             model_url="https://example.com/never-fetched",
             create_fn=lambda p: object(),
-            registry_id=None,
+            registry_id="openai_clip_vit_b32_onnx",
             model_sha256=wrong_pin,
         )
 
-        with pytest.raises(ModelIntegrityError):
+        # The bad cache is deleted and fetched again once; bytes that
+        # still don't verify are a loud failure, never a silent load.
+        with (
+            patch(
+                "bpp.utils.download.download_file",
+                side_effect=ModelIntegrityError("SHA-256 mismatch"),
+            ) as refetch,
+            pytest.raises(ModelIntegrityError),
+        ):
             singleton.ensure_model()
+        refetch.assert_called_once()
+        assert not model_path.exists()
 
     def test_cached_file_with_correct_sha_returns_path(self, tmp_path):
         import hashlib
@@ -254,16 +264,16 @@ class TestEnsureModelVerifiesCache:
             model_path=model_path,
             model_url="https://example.com/never-fetched",
             create_fn=lambda p: object(),
-            registry_id=None,
+            registry_id="openai_clip_vit_b32_onnx",
             model_sha256=good_pin,
         )
 
         assert singleton.ensure_model() == model_path
 
     def test_get_propagates_cache_tampering(self, tmp_path):
-        """Top-level get() must let ModelIntegrityError out — that's
-        the whole point. Without this, the post-download tampering
-        case silently degrades to model-unavailable."""
+        """Top-level get() must let ModelIntegrityError out when the
+        re-fetched bytes still don't verify. Without this, tampering
+        silently degrades to model-unavailable."""
         from bpp.scoring.model_base import ModelIntegrityError, ModelSingleton
 
         model_path = tmp_path / "fake_model.onnx"
@@ -275,9 +285,15 @@ class TestEnsureModelVerifiesCache:
             model_path=model_path,
             model_url="https://example.com/never-fetched",
             create_fn=lambda p: object(),
-            registry_id=None,
+            registry_id="openai_clip_vit_b32_onnx",
             model_sha256=wrong_pin,
         )
 
-        with pytest.raises(ModelIntegrityError):
+        with (
+            patch(
+                "bpp.utils.download.download_file",
+                side_effect=ModelIntegrityError("SHA-256 mismatch"),
+            ),
+            pytest.raises(ModelIntegrityError),
+        ):
             singleton.get()

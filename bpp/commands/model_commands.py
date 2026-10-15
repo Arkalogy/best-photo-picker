@@ -237,8 +237,7 @@ def do_use_context_show(_args: argparse.Namespace) -> int:
 def do_use_context_set(args: argparse.Namespace) -> int:
     """Persist a use-context declaration via the CLI.
 
-    Batch 5 / item 15: the gate the user sees on first launch is
-    the GUI / web flow. The CLI parity exists so headless
+    The gate the user sees on first launch is the GUI / web flow. The CLI parity exists so headless
     invocations can declare the same context without spinning the
     web UI; the CLI label is recorded as the ``set_via`` field.
     """
@@ -320,11 +319,11 @@ def do_byom_remove(args: argparse.Namespace) -> int:
 def do_model_remove(args: argparse.Namespace) -> int:
     """Remove a model with explicit derived-data choice.
 
-    Batch 7 / item 21 + Q8: the CLI fails closed when neither
-    ``--purge-derived`` nor ``--keep-derived`` is supplied. The
-    user must say what to do with the embeddings produced by the
-    model — silent removal that left the biometric data behind
-    would undercut the privacy posture the legal-posture spec wanted.
+    The CLI fails closed when neither ``--purge-derived`` nor
+    ``--keep-derived`` is supplied. The user must say what to do
+    with the embeddings produced by the model — silent removal that
+    left the biometric data behind would undercut BPP's privacy
+    posture.
     """
     if args.purge_derived == args.keep_derived:
         print(
@@ -395,7 +394,7 @@ def do_registry_verify(args: argparse.Namespace) -> int:
     """Verify a local remote-registry manifest file against the bundled
     trusted-key set.
 
-    Batch 8 / item 23: gives a release auditor and a registry signer a
+    Gives a release auditor and a registry signer a
     way to dry-run the verifier without needing the BPP server, the GUI,
     or a network fetch. Exits ``0`` on success, ``1`` on any verification
     failure (bad signatures, malformed JSON, missing fields, unknown

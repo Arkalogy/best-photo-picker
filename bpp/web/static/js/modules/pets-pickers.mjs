@@ -138,8 +138,7 @@ export async function showIdentifyPicker(clusterId) {
       return;
     }
     // In-progress in the status bar (indeterminate); the success toast below
-    // is a "name it" prompt, not just a confirmation, so it stays. (Toast-
-    // noise audit item 3.)
+    // is a "name it" prompt, not just a confirmation, so it stays.
     win.showStatusProgress?.("Splitting pet group…", 0);
     try {
       const resp = await apiFetch("/api/v1/pets/split", {
@@ -313,7 +312,7 @@ export function showPetMergePicker(sourceClusterId) {
       });
       if (!ok) return;
       // Progress in the status bar; no "done" toast — the merged result is
-      // visible (two groups become one in the list). (Toast-noise audit #4.)
+      // visible (two groups become one in the list).
       win.showStatusProgress?.("Merging pet groups…", 0);
       try {
         const resp = await apiFetch("/api/v1/pets/merge", {

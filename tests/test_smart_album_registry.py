@@ -146,7 +146,7 @@ class TestSmartAlbumRegistryAPI:
 
 class TestSearchabilityAndResultBucket:
     """Registry flags that replaced bp_search's hardcoded _SKIP_TYPES set
-    and `if atype == "smart_person"` routing (Review 2026-06-17)."""
+    and `if atype == "smart_person"` routing."""
 
     def test_internal_albums_not_searchable(self):
         from bpp.db.smart_albums import SmartAlbumRegistry

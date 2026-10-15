@@ -60,8 +60,8 @@ class TestPyProjectName:
     def test_no_empty_extras_in_pyproject(self):
         """An extra with an empty dependency list installs nothing —
         ``pip install bppicker[X]`` becomes a no-op the user can't tell
-        from a working install. Round-9 audit found `clip = []` and
-        `pets = []` decorating pyproject as if they gated AGPL weights;
+        from a working install. `clip = []` and
+        `pets = []` once decorated pyproject as if they gated AGPL weights;
         the actual gating happens at the model-download layer, not at
         the pip-extras layer. If a future extra needs to be empty for
         some reason (e.g. a pure marker), explicitly comment-document
@@ -282,13 +282,13 @@ class TestDockerfile:
 
 
 class TestCIWorkflowExtras:
-    """R12-OSS-3: the CI workflow's `pip install -e .[X,Y,...]` line
+    """The CI workflow's `pip install -e .[X,Y,...]` line
     is the same drift hazard as the Dockerfile — a removed or
     renamed extra leaves CI installing nothing for that key, and
     pip's "no such extra" warning is easy to miss in green CI logs.
 
     Pre-fix the workflow referenced `[dev,web,faces,nudity,clip,heic,raw]`
-    but `[clip]` was removed in R9-P2 (the empty-extras cleanup),
+    but `[clip]` was removed in the empty-extras cleanup,
     so CI was emitting a silent pip warning on every run."""
 
     def test_ci_extras_are_real_pyproject_keys(self):

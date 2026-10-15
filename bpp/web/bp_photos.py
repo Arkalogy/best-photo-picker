@@ -184,7 +184,7 @@ def api_photos_map() -> tuple[Response, int]:
 def api_photo_detail(photo_id: int) -> tuple[Response, int]:
     """Return full photo dict for a single photo by ID.
 
-    P6/P7: uses the BppError handler for the 404 (consistent error
+    Uses the BppError handler for the 404 (consistent error
     envelope) and the PhotoDict-typed builder for the success body.
     Migration template — copy this shape for other endpoints as you
     touch them.

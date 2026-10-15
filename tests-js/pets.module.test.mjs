@@ -100,7 +100,7 @@ describe("loadPetClusters", () => {
   });
 
   test("on error, preserves prior clusters and surfaces a sidebar sentinel", async () => {
-    // P-06: loadPetClusters now routes through wrapSectionLoader so
+    // loadPetClusters now routes through wrapSectionLoader so
     // a failure surfaces a retry pill in the Pets section instead of
     // silently wiping the list. Keeping the previous clusters lets
     // the user finish what they were doing before the blip.

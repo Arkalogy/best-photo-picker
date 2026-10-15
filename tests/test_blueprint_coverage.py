@@ -476,7 +476,7 @@ class TestAlbumRecompute:
         assert "photos" not in data
 
     def test_recompute_413_when_full_payload_too_large(self, client, bp_app, monkeypatch):
-        """R4-M6 + R6-M1: album recompute cap fires BEFORE recompute()
+        """Album recompute cap fires BEFORE recompute()
         runs. Inject 5001 fake album rows and assert recompute() is
         never called — previously the cap was post-recompute, so
         oversized albums still paid the full CPU/RAM cost just to

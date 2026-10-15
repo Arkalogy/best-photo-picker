@@ -6,6 +6,77 @@ this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.3] — 2026-10-13
+
+Licensing and accuracy release. **Schema version: 44** (unchanged).
+
+### Changed
+- **SCRFD face detector is now opt-in.** Earlier releases downloaded it by
+  default and labelled it MIT. InsightFace's terms say its trained models are
+  for non-commercial research only, so SCRFD now follows the same path as
+  other restricted models: it downloads and runs only after you accept it in
+  Settings → Models, and with a "Commercial" use context it stays blocked
+  unless you state you hold separate rights. YuNet is the default face
+  detector. In our testing on 400 photos, faces were found in the same photos
+  as before; a few small or distant faces were missed.
+- **NudeNet content filter no longer installs NudeNet's code.** BPP runs the
+  downloaded model with its own code (identical scores in our 150-photo
+  comparison),
+  so the `[nudity]` extra is gone and the Mac app no longer bundles NudeNet.
+  The model weights still download only after you accept them, and are now
+  correctly labelled AGPL-3.0 (they were labelled GPL-3.0).
+- **dlib face weights are now treated as restricted.** Their landmark model was
+  trained on a dataset whose creators ask that it not be used commercially, so
+  it gets the same click-through and "Commercial" rules as other research
+  models, and the Mac app no longer includes dlib.
+- **Model acceptance text updated.** It now says models come from third-party
+  hosts rather than "directly from the upstream source". Restricted models you
+  accepted before show "Re-accept needed" in Settings → Models and stay off
+  until you accept again.
+- **Mac app:** the DMG itself is now notarized, not only the app inside it.
+  Each desktop release also attaches an inventory of the app's Python side
+  (packages, their native libraries, the Python runtime and the PyInstaller
+  bootloader) and the exact HEIC/RAW library sources; NOTICE.txt adds a
+  written offer for the source of any bundled GPL/LGPL component.
+
+### Fixed
+- Docker: the health check always failed (it hit an endpoint that needs a
+  token), and the container could not save downloaded models. Models and model
+  acceptances now live on the `/data` volume.
+- SCRFD ignored `BPP_CACHE_DIR` / `BPP_MODELS_DIR`.
+- Mac app: MediaPipe face detection and the last-resort face detector failed
+  to load inside the app, its helper processes crashed on start, and the
+  in-app "install face recognition" offer could never work there. The
+  detectors now load, the helpers start, and the offer is hidden in the app.
+- Fresh `pip install "bppicker[faces]"`: analysis could stop partway while
+  still reporting success, because newer setuptools no longer includes a
+  module the dlib face models need. The `[faces]` extra now pins
+  `setuptools<81`, and bpp carries on without dlib if it still can't load.
+- The BlazeFace full-range face detector never ran on fresh installs because
+  its runtime (`ai-edge-litert`) wasn't declared; it is now part of `[faces]`
+  (except on Intel Macs, which have no build of it).
+- Settings → Models labelled the default SFace and YuNet models "Restricted";
+  they only ask you to acknowledge attribution terms, and now say
+  "Attribution".
+- Three Settings sliders showed the wrong starting values (duplicate
+  sensitivity, burst gap, across dates); they now match the real defaults.
+- License links in the model dialogs that returned 404.
+
+### Documentation
+- Corrected statements that didn't match the code or the repo settings,
+  including:
+  - the network calls list, which now covers the model-registry check that
+    runs whenever bpp starts (turn it off with `BPP_DISABLE_REMOTE_REGISTRY=1`);
+  - registry signing: one trusted key, not two;
+  - that code-owner review is not enforced;
+  - the one model file that ships in the package (BlazeFace, Apache-2.0);
+  - which download hosts are third-party re-hosts;
+  - test counts and Docker status;
+  - plugin loading;
+  - the API reference.
+- Correction to the 0.1.0 notes below: the network list there omits the
+  model-registry check, and NudeNet is AGPL-3.0, not GPL-3.0.
+
 ## [0.1.2] — 2026-10-13
 
 Patch release. **Schema version: 44** (unchanged).
@@ -183,5 +254,8 @@ External calls are limited to documented features:
   desktop wrapper currently builds only the macOS bundle.
 - Python 3.11 only (CI tests this version; 3.12+ is unvalidated).
 
-[Unreleased]: https://github.com/Arkalogy/best-photo-picker/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Arkalogy/best-photo-picker/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/Arkalogy/best-photo-picker/releases/tag/v0.1.3
+[0.1.2]: https://github.com/Arkalogy/best-photo-picker/releases/tag/v0.1.2
+[0.1.1]: https://github.com/Arkalogy/best-photo-picker/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Arkalogy/best-photo-picker/releases/tag/v0.1.0

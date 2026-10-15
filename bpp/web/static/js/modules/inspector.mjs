@@ -234,7 +234,7 @@ export async function _iphTagPerson(thumbHash, clusterId) {
     });
     // No toast: _iphLoadFaces + updateLightboxFaces re-render the panel and
     // overlay with the assigned name, so the result is visible on the same
-    // surface. (Toast-noise audit item 13.)
+    // surface.
     _iphLoadFaces(thumbHash);
     const idx = /** @type {number} */ (win.lightboxIdx);
     const items = /** @type {any[]} */ (win.currentGridItems || []);

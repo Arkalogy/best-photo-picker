@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Fail the build if any ML model weight file ships in an Arkalogy artifact.
 
-Batch 2 (item 2) of the legal-posture rollout. Implements the
-"zero restricted weights in any Arkalogy-controlled artifact" rule
-from the legal-posture spec — even though we don't currently bundle any
-restricted weights, the guard makes the policy enforceable rather
-than convention. A future PR that adds a restricted weight file
+Implements the "zero restricted weights in any Arkalogy-controlled
+artifact" rule from MODEL_POLICY.md (rationale in
+docs/adr/0005-legal-posture-and-model-registry.md) — even though we
+don't currently bundle any restricted weights, the guard makes the
+policy enforceable rather than convention. A future PR that adds a restricted weight file
 (even accidentally) is caught by CI before merge.
 
 What it scans
@@ -252,7 +252,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Fail the build if any ML model weight file ships in an Arkalogy "
-            "artifact (Batch 2 / item 2 of the legal-posture rollout)."
+            "artifact (see MODEL_POLICY.md)."
         ),
     )
     parser.add_argument(
@@ -313,7 +313,7 @@ def main() -> int:
     sys.stderr.write(
         "\n"
         "Arkalogy must not ship model weight files in any release "
-        "artifact (Batch 2 / item 2 of the legal-posture plan). If one "
+        "artifact (see MODEL_POLICY.md). If one "
         "of these files is a genuine non-model binary, add it to the "
         "ALLOWLIST in scripts/check_no_bundled_weights.py with a "
         "one-line rationale. Otherwise, remove it from the artifact.\n"

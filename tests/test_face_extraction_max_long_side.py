@@ -1,8 +1,8 @@
-"""Bug #9 hardening (v40): ``extraction_max_long_side`` per face row.
+"""Bbox-scale hardening (v40): ``extraction_max_long_side`` per face row.
 
 What this pins
 --------------
-The Bug #9 root cause was: ``face_embeddings.bbox_{x,y,w,h}`` are stored
+The bbox-scale bug's root cause was: ``face_embeddings.bbox_{x,y,w,h}`` are stored
 in detector-input coordinate space (the image after ``load_and_downscale``
 at the configured ``max_long_side``), but every read site recomputed the
 detector scale from the *current* config. A config change between
@@ -118,7 +118,7 @@ class TestSchemaIncludesNewColumn:
 class TestReaderReconstructsCorrectlyAcrossConfigChange:
     """Core hardening assertion: a row whose extraction_max_long_side
     is set produces the same bbox_pct regardless of current
-    ``ctx.config['max_long_side']``. This is what prevents Bug #9 from
+    ``ctx.config['max_long_side']``. This is what prevents the bbox-scale bug from
     being reachable again — the read path stops depending on a live
     setting that can drift.
 
@@ -151,7 +151,7 @@ class TestReaderReconstructsCorrectlyAcrossConfigChange:
 
     def test_row_with_known_size_unaffected_by_config_change(self) -> None:
         """Extract row at max_long=1024, store bbox in 682x1024 space.
-        Change current config to 320 (the Bug #9 historical value).
+        Change current config to 320 (the value the bbox-scale bug was seen with).
         The percentage MUST stay identical."""
         # Photo dims: 867x1300 → detector at max_long=1024 → 682x1024.
         orig_w, orig_h = 867, 1300
@@ -201,7 +201,7 @@ class TestReaderReconstructsCorrectlyAcrossConfigChange:
     def test_drifted_config_corrupts_pct_without_v40(self) -> None:
         """Sanity: without v40 (i.e. always using current config) the
         same bbox produces different percentages when config drifts —
-        this is exactly the Bug #9 failure mode. Test exists to make
+        this is exactly the bbox-scale bug's failure mode. Test exists to make
         the protection's value concrete."""
         bbox = (226, 303, 281, 368)
         pct_at_1024 = self._bbox_pct(

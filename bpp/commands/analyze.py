@@ -62,14 +62,29 @@ def do_analyze(args: argparse.Namespace) -> int:
         log.info("[dry-run] Would analyze %d images", len(images))
         return 0
 
-    with timer.section("analyze"):
-        results = analyze_all(
-            images,
-            workdir=workdir,
-            config=cfg,
-            workers=args.workers,
-            seed=args.seed,
+    from bpp.scoring.model_base import ModelIntegrityError
+
+    try:
+        with timer.section("analyze"):
+            results = analyze_all(
+                images,
+                workdir=workdir,
+                config=cfg,
+                workers=args.workers,
+                seed=args.seed,
+            )
+    except ModelIntegrityError as exc:
+        log.error(
+            "Analysis stopped: a model file failed its integrity check (%s). "
+            "Re-download it in Settings → Models, or delete the damaged file so "
+            "it's fetched again, then re-run.",
+            exc,
         )
+        return 1
+    except RuntimeError as exc:
+        # e.g. a worker process died: say so plainly, exit non-zero.
+        log.error("Analysis stopped: %s", exc)
+        return 1
 
     log.info(
         "Analysis complete: %d processed, %d skipped",

@@ -12,6 +12,7 @@
  */
 
 import { apiFetch } from "./api-client.mjs";
+import { downloadProgressText, waitForDownloadJob } from "./download-jobs.mjs";
 import { appConfirm } from "./dialogs.mjs";
 import { openFaceEmbedderAcceptance } from "./face-embedders-acceptance.mjs";
 import { feState } from "./face-embedders-state.mjs";
@@ -19,6 +20,7 @@ import {
   _setRowStatusBusy,
   loadFaceEmbedderPicker,
 } from "./modals-face-embedders.mjs";
+import { notifyModelsChanged } from "./models-changed.mjs";
 import { toast, toastError } from "./toast.mjs";
 
 // ── Install controls — delegate to the legacy /api/v1/models endpoints
@@ -92,7 +94,7 @@ export async function uninstallFaceEmbedderEntry(registryId, legacyLabel) {
       }
     }
     toast(`${legacyLabel} uninstalled.`);
-    void loadFaceEmbedderPicker();
+    notifyModelsChanged();
   } catch (err) {
     toastError("uninstall the model", err);
     void loadFaceEmbedderPicker();
@@ -116,10 +118,8 @@ export async function redownloadFaceEmbedderEntry(registryId, legacyLabel) {
     toast(`${legacyLabel} has no downloadable files.`, "error");
     return;
   }
-  // The /redownload endpoint is synchronous — it blocks until the file is
-  // fully fetched. So the loop below can take many seconds. Show in-row
-  // progress (not just a fire-and-forget toast) so the user isn't staring
-  // at a frozen row wondering if anything is happening.
+  // Each file downloads as a background job; the row shows live progress
+  // (not just a fire-and-forget toast) while we poll it.
   const total = files.length;
   _setRowStatusBusy(
     registryId,
@@ -129,18 +129,20 @@ export async function redownloadFaceEmbedderEntry(registryId, legacyLabel) {
   try {
     let done = 0;
     for (const f of files) {
-      await apiFetch("/api/v1/models/redownload", {
+      const prefix = total > 1 ? `(${done + 1}/${total}) ` : "";
+      const started = await apiFetch("/api/v1/models/redownload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: f.name }),
       });
+      await waitForDownloadJob(started?.job, {
+        onProgress: (snap) =>
+          _setRowStatusBusy(registryId, prefix + downloadProgressText(snap)),
+      });
       done += 1;
-      if (total > 1) {
-        _setRowStatusBusy(registryId, `Downloading… (${done}/${total})`);
-      }
     }
     toast(`${legacyLabel} downloaded.`);
-    void loadFaceEmbedderPicker();
+    notifyModelsChanged();
   } catch (err) {
     // Surface the real reason (the backend now returns it) and restore
     // the true status by reloading the picker.
@@ -152,9 +154,8 @@ export async function redownloadFaceEmbedderEntry(registryId, legacyLabel) {
 /**
  * Explicit Download step for catalog entries (no install wiring in
  * the legacy ModelRegistry — currently only buffalo_s). Bound to the
- * picker's "Download (~SIZE)" menu item. Synchronous from the user's
- * perspective: blocks the row in a Downloading… state until the
- * backend's ``ensure-weights`` endpoint returns. Replaces the silent
+ * picker's "Download (~SIZE)" menu item. The row shows live progress
+ * while the backend's ``ensure-weights`` job runs. Replaces the silent
  * fetch-on-first-use behaviour that violated the "Nothing should be
  * silent" rule.
  *
@@ -171,19 +172,22 @@ export async function ensureCatalogWeights(registryId, displayName) {
   _setRowStatusBusy(registryId, "Downloading…");
   toast(`Downloading ${displayName}…`);
   try {
-    const resp = await apiFetch("/api/v1/face-embedders/ensure-weights", {
+    const started = await apiFetch("/api/v1/face-embedders/ensure-weights", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ registry_id: registryId }),
     });
-    const sizeBytes = (resp && resp.size_bytes) || 0;
+    const snap = await waitForDownloadJob(started?.job, {
+      onProgress: (s) => _setRowStatusBusy(registryId, downloadProgressText(s)),
+    });
+    const sizeBytes = (snap.result && snap.result.size_bytes) || 0;
     const sizeMb = sizeBytes / (1024 * 1024);
     toast(
       sizeMb > 0
         ? `${displayName} downloaded (${sizeMb.toFixed(1)} MB).`
         : `${displayName} downloaded.`,
     );
-    void loadFaceEmbedderPicker();
+    notifyModelsChanged();
   } catch (err) {
     toastError("download the model", err);
     void loadFaceEmbedderPicker();
@@ -208,10 +212,9 @@ export async function setFaceEmbedderUseContext(value) {
     // No toast on change — the dropdown is the affordance; the
     // selected option is its own confirmation. A toast on every
     // re-pick is noisy. Errors still toast.
-    // Re-render so commercial-mode UI cues (e.g. separate-rights
-    // prompt in the dialog next time) and any newly-active hard-block
-    // states surface immediately.
-    void loadFaceEmbedderPicker();
+    // Commercial mode changes which models the load gate allows: re-render
+    // the picker and refresh the content-filter hint right away.
+    notifyModelsChanged();
   } catch (err) {
     toastError("set the use context", err);
   }

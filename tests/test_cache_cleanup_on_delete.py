@@ -1,4 +1,4 @@
-"""TDD tests for M-2: permanent delete must clean up cache files."""
+"""TDD tests: permanent delete must clean up cache files."""
 
 from __future__ import annotations
 

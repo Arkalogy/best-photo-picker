@@ -17,7 +17,7 @@ import { reviewSensitiveBeforeExport } from "./sensitive.mjs";
 import { esc, escapeJsAttr } from "./text-format.mjs";
 import { toast, toastError } from "./toast.mjs";
 
-// L-S3: large exports (100+ photos with format conversion) used to run
+// Large exports (100+ photos with format conversion) used to run
 // synchronously inside the Flask request — the UI showed nothing for
 // 30-60s and looked frozen. Above this threshold the export modal now
 // switches to the streaming worker path (/api/v1/export/start +
@@ -147,7 +147,7 @@ export async function doExport() {
     return;
   }
 
-  // Sensitive-photo review gate (P0): runs BEFORE the busy state flips
+  // Sensitive-photo review gate: runs BEFORE the busy state flips
   // on, so a cancel leaves the export modal exactly as it was. A
   // selection with no flagged photos passes through with no dialog.
   const _allPaths = win.getExportPaths ? [...win.getExportPaths()] : [];
@@ -197,7 +197,7 @@ export async function doExport() {
   };
   if (maxSizeVal) body.max_size = parseInt(maxSizeVal, 10);
 
-  // L-S3: stream large exports so the user sees per-photo progress
+  // Stream large exports so the user sees per-photo progress
   // instead of a 30-60s blank pause. Small batches keep the
   // synchronous path — same return shape, no UI flicker.
   const useStreaming = exportPaths.length >= _EXPORT_STREAM_THRESHOLD;
@@ -265,7 +265,7 @@ export async function doExport() {
     // conversion error) — surface a 'View log' shortcut. The per-photo
     // details are in Settings → Activity; without this affordance the
     // user has nowhere to go from a 'N failed' toast. Matches the
-    // pattern Bug #8 (activity-log warning toast) and the window
+    // pattern the activity-log warning toast and the window
     // onerror handler in app.mjs use.
     toast(`${data.failed} photo${data.failed !== 1 ? "s" : ""} failed to export`, "error", { /* toast-ok: summary, not an error pattern */
       action: {

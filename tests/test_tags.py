@@ -1,4 +1,4 @@
-"""TDD tests for P0-4: Tags / Keywords — DB layer, API, and integration."""
+"""TDD tests for Tags / Keywords — DB layer, API, and integration."""
 
 from __future__ import annotations
 

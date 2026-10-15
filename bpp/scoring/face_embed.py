@@ -61,12 +61,9 @@ def is_available() -> bool:
     """
     if _sface_available():
         return True
-    try:
-        import face_recognition  # noqa: F401
+    from bpp.scoring.face_recognition_loader import load_face_recognition
 
-        return True
-    except ImportError:
-        return False
+    return load_face_recognition() is not None
 
 
 def can_install() -> bool:
@@ -104,30 +101,20 @@ EMBEDDING_METHOD_SFACE = "sface"
 EMBEDDING_METHOD_DLIB = "dlib"
 EMBEDDING_METHOD_BUFFALO_S = "buffalo_s"
 
-# Map each embedding METHOD string to the canonical model-registry entry id
-# stored in face_embeddings.producing_model_id. The derived-data purge
-# (registry/derived_data_purge.py) deletes rows WHERE producing_model_id =
-# <registry id> at model-removal time, so the WRITE side must store the
-# registry id, not the bare method. A method missing from this map would
-# tag rows with the short string and the purge would silently miss them —
-# exactly the buffalo_s bug ("buffalo_s" stored vs "insightface_buffalo_s"
-# purged). Single source of truth; test_face_embedding_method_dispatch
-# asserts every entry resolves to a real registry id. BYOM extractions pass
-# their own byom_<hash> id through `method` and fall through unchanged.
-EMBEDDING_METHOD_TO_REGISTRY_ID = {
-    EMBEDDING_METHOD_SFACE: "sface_yunet",
-    EMBEDDING_METHOD_DLIB: "dlib_face_recognition_resnet_v1",
-    EMBEDDING_METHOD_BUFFALO_S: "insightface_buffalo_s",
-}
-
 
 def producing_model_id_for(method: str) -> str:
-    """Canonical model-registry id for a stored embedding's ``method``.
+    """Model-registry id stored with an embedding made by ``method``.
 
-    Unknown methods (e.g. BYOM ``byom_<hash>``) pass through unchanged so
-    the purge can still match them by the id they were tagged with.
+    Read from the embedder's own ``registry_id`` — the one place the
+    link is written — so the derived-data purge (which deletes rows
+    ``WHERE producing_model_id = <registry id>``) always matches.
+    Unknown methods (e.g. BYOM ``byom_<hash>``) pass through unchanged
+    so the purge can still match them by the id they were tagged with.
     """
-    return EMBEDDING_METHOD_TO_REGISTRY_ID.get(method, method)
+    from bpp.scoring.face_embedder_registry import get_embedder
+
+    embedder = get_embedder(method)
+    return embedder.registry_id if embedder is not None else method
 
 
 # Minimum face size in pixels (width or height) for embedding extraction.
@@ -198,6 +185,11 @@ def embedding_method(conn: sqlite3.Connection | None = None) -> str:
             preferred = None
         if preferred == EMBEDDING_METHOD_DLIB:
             return EMBEDDING_METHOD_DLIB
+        if preferred and preferred not in _BUILTIN_METHODS:
+            from bpp.scoring.face_embedder_registry import get_embedder
+
+            if get_embedder(preferred) is not None:
+                return preferred  # a plugin embedder the user picked
         if preferred == EMBEDDING_METHOD_SFACE:
             if _get_sface_recognizer() is not None:
                 return EMBEDDING_METHOD_SFACE
@@ -229,9 +221,8 @@ def embedding_method(conn: sqlite3.Connection | None = None) -> str:
             return EMBEDDING_METHOD_DLIB
     # No setting or unrecognized value: consult the model registry's
     # default-for-kind entry before falling back to availability
-    # detection. Batch 2 of the legal-posture rollout (item 1) lifts
-    # the "what is the default embedder" decision into the registry so
-    # a future change cannot quietly land users on a restricted model
+    # detection. The "what is the default embedder" decision lives in
+    # the registry so a future change cannot quietly land users on a restricted model
     # by re-ordering availability checks here. When the registry has
     # no face-embedder default registered (test contexts that reset
     # the registry, fresh imports, etc.) the historical
@@ -315,7 +306,8 @@ def extract_face_embeddings(
             embedding extracted.  Higher = fewer false embeddings in clusters
             but may miss some faces.  Default 0.65 was calibrated on 150
             real-world photos (97.3% precision, <5% true face loss).
-        method: ``"sface"`` | ``"dlib"`` | ``None``. See above.
+        method: ``"sface"`` | ``"dlib"`` | ``"buffalo_s"`` | a registered
+            plugin embedder's name | ``None``. See above.
     """
     if method == EMBEDDING_METHOD_DLIB:
         # User explicitly chose dlib — skip SFace entirely.
@@ -341,6 +333,29 @@ def extract_face_embeddings(
             min_quality=min_embedding_quality,
         )
 
+    if method and method not in _BUILTIN_METHODS:
+        from bpp.scoring.face_embedder_registry import get_embedder
+
+        embedder = get_embedder(method)
+        if embedder is None and not method.startswith("byom_"):
+            # Never fall back to SFace: its vectors would be stored under
+            # the plugin's name (or rejected for the wrong size).
+            if method not in _unknown_method_warned:
+                _unknown_method_warned.add(method)
+                log.warning(
+                    "Face embedder %r isn't loaded in this process; no faces embedded", method
+                )
+            return []
+        if embedder is not None:
+            # A plugin embedder picked in Settings: never mixed with the
+            # built-ins (embeddings from different models don't compare).
+            return (
+                _extract_plugin(
+                    image, embedder, min_confidence, embedding_confidence, min_embedding_quality
+                )
+                or []
+            )
+
     # method == "sface" or None: SFace first, dlib fallback.
     result = _extract_sface(
         image,
@@ -361,23 +376,78 @@ def extract_face_embeddings(
     )
 
 
+_unknown_method_warned: set[str] = set()
+
+
+def is_known_method(method: str) -> bool:
+    """A built-in method, a BYOM id, or a loaded plugin embedder."""
+    from bpp.scoring.face_embedder_registry import get_embedder
+
+    return (
+        method in _BUILTIN_METHODS or method.startswith("byom_") or get_embedder(method) is not None
+    )
+
+
+_BUILTIN_METHODS = frozenset(
+    {EMBEDDING_METHOD_SFACE, EMBEDDING_METHOD_DLIB, EMBEDDING_METHOD_BUFFALO_S}
+)
+
+
+def _extract_plugin(image, embedder, min_confidence, embedding_confidence, min_quality):
+    """Embed every detected face with a plugin's ``embed(image, box)``,
+    once its registry entry's license allows it.
+
+    Each vector must have the declared ``embedding_dim`` and finite,
+    non-zero values; it is then normalised to unit length and scaled
+    like SFace's, so the face-grouping threshold applies. Anything else
+    is dropped (one warning per plugin)."""
+    from bpp.scoring.face_embed_buffalo import _extract_with_embedder
+    from bpp.scoring.model_load_gate import license_allows
+
+    feature = f"Face embedder {embedder.name}"
+    if not license_allows(embedder.registry_id, feature=feature):
+        return []
+
+    def embed(img, box, _row):
+        raw = embedder.embed(img, box)
+        if raw is None:  # the contract's "can't embed this face"
+            return None
+        vec = np.asarray(raw, dtype=np.float64).ravel()
+        norm = float(np.linalg.norm(vec)) if np.isfinite(vec).all() else 0.0
+        if vec.shape != (embedder.embedding_dim,) or norm <= 0.0:
+            _warn_bad_plugin_vector(embedder, vec)
+            return None
+        return vec / norm * SFACE_DISTANCE_SCALE
+
+    return _extract_with_embedder(
+        image, min_confidence, embedding_confidence, min_quality, embed, embedder.name
+    )
+
+
+_bad_vector_warned: set[str] = set()
+
+
+def _warn_bad_plugin_vector(embedder, vec) -> None:
+    if embedder.name in _bad_vector_warned:
+        return
+    _bad_vector_warned.add(embedder.name)
+    log.warning(
+        "Face embedder %r returned an unusable vector (shape %s, declared %d floats, "
+        "or non-finite / all-zero); those faces are skipped.",
+        embedder.name,
+        vec.shape,
+        embedder.embedding_dim,
+    )
+
+
 # ── public embedder registry ──
 #
-# Document the two built-in embedding backends in the public
-# `face_embedder_registry` so plugins can introspect / extend.
-# The orchestration in `extract_face_embeddings` keeps its
-# SFace-first / dlib-fallback ordering — these registrations
-# don't replace it, they make the contract visible to plugin
-# authors who want to add a third backend (e.g. ArcFace).
-#
-# `embed=` here is None because both built-in paths are deeply
-# coupled to OpenCV's `FaceRecognizerSF` API (SFace) or
-# `face_recognition.face_encodings` (dlib) and a clean per-face
-# `(image, bbox) -> ndarray` extraction would need a substantial
-# refactor of `extract_face_embeddings`. The registry is the
-# extension point; the orchestrator stays as-is until a plugin
-# author actually wants to swap in a new backend, at which point
-# we'll wire the orchestrator to consult the registry.
+# The built-in embedders are registered so their names and registry ids
+# live in one place (producing_model_id_for reads them). They run through
+# their own paths in `extract_face_embeddings` — SFace and dlib are tied
+# to OpenCV's FaceRecognizerSF / face_recognition APIs — so their `embed`
+# is a placeholder. A plugin embedder's `embed(image, box)` is called per
+# face when `face_embedding_method` names it.
 from bpp.scoring.face_embedder_registry import FaceEmbedder, register_embedder  # noqa: E402
 
 
@@ -398,29 +468,28 @@ register_embedder(
         name="sface",
         embed=_embed_not_directly_callable,
         embedding_dim=128,
-        license_id="Apache-2.0",
-        description="OpenCV SFace — primary, BSD-licensed, fast",
-    )
+        registry_id="sface_yunet",
+        description="OpenCV SFace — primary, fast",
+    ),
+    builtin=True,
 )
 register_embedder(
     FaceEmbedder(
         name="dlib",
         embed=_embed_not_directly_callable,
         embedding_dim=128,
-        license_id="BSD-3-Clause",
+        registry_id="dlib_face_recognition_resnet_v1",
         description="face_recognition / dlib fallback (requires bppicker[faces])",
-    )
+    ),
+    builtin=True,
 )
 register_embedder(
     FaceEmbedder(
         name="buffalo_s",
         embed=_embed_not_directly_callable,
         embedding_dim=512,
-        license_id="research_non_commercial",
-        description=(
-            "InsightFace buffalo_s — MobileFaceNet ArcFace (512-d). "
-            "Research-only / non-commercial weights. Requires "
-            "click-through acceptance."
-        ),
-    )
+        registry_id="insightface_buffalo_s",
+        description="InsightFace buffalo_s — MobileFaceNet ArcFace (512-d)",
+    ),
+    builtin=True,
 )

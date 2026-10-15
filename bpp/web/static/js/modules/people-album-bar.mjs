@@ -111,7 +111,7 @@ export async function _paRename(albumId, currentName) {
       updatePersonAlbumBar(album);
     }
     // No toast: updateToolbarTitle + updatePersonAlbumBar update the name in
-    // place, so the rename is visible. (Toast-noise audit item 14.)
+    // place, so the rename is visible.
   } catch (e) {
     toastError("rename the person", e);
   }

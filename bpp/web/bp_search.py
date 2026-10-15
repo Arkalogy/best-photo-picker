@@ -203,11 +203,10 @@ def _semantic_search(conn, ctx, query: str) -> list[dict]:
     with ctx.lock:
         emb_matrix = ctx.caches.clip_cache.get("matrix")
         photo_ids = ctx.caches.clip_cache.get("matrix_ids")
-    if emb_matrix is None or photo_ids is None:
-        photo_ids = [pid for pid in embeddings if pid in embeddings]
-        if not photo_ids:
-            return []
-        emb_matrix = np.stack([embeddings[pid] for pid in photo_ids])
+    if emb_matrix is None or not photo_ids:
+        # The cache sets matrix, ids and embeddings together; a reset
+        # between the two reads above just means "nothing to search yet".
+        return []
     similarities = emb_matrix @ text_emb  # dot product (both L2-normalized)
 
     # Filter by minimum similarity and get top-K

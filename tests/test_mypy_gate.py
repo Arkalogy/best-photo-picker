@@ -1,4 +1,4 @@
-"""P6 — mypy strict-mode gate on the typed scope.
+"""Mypy strict-mode gate on the typed scope.
 
 The TypedDict contract is only as good as the static checker that
 enforces it. This gate runs mypy in strict mode against the modules

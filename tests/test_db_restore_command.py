@@ -385,10 +385,10 @@ class TestStalenessMetadata:
         assert "stale" in err.lower()
 
     def test_fresh_metadata_with_stale_mtime_uses_older(self, tmp_path, capsys):
-        """D-04 update of C-06: when metadata says fresh but mtime is
+        """When metadata says fresh but mtime is
         old, the conservative read is to use the OLDER timestamp.
-        Previously this test asserted 'fresh metadata wins'; D-04
-        flipped that to 'older value wins' so a forged-fresh sidecar
+        Previously this test asserted 'fresh metadata wins'; it was
+        flipped to 'older value wins' so a forged-fresh sidecar
         on top of an actually-old file can't bypass the staleness
         guard. accept_stale=True is implicit in _args, so rc=0; we
         verify the warning fires anyway."""
@@ -426,7 +426,7 @@ class TestStalenessMetadata:
         assert "metadata sidecar missing" in err
 
     def test_future_dated_sidecar_rejected_and_falls_back(self, tmp_path, capsys):
-        """D-04: a forged/corrupt sidecar with `created_at_epoch` set
+        """A forged/corrupt sidecar with `created_at_epoch` set
         far in the future would otherwise produce age=0 (clamped from
         negative) and silently bypass the staleness guard. Reject
         future-dated metadata and fall back to mtime."""
@@ -743,7 +743,7 @@ class TestRestorePreservesPrev:
 
 
 class TestRestoreMaintenanceLock:
-    """R4-M5: a per-library maintenance lock prevents two parallel
+    """A per-library maintenance lock prevents two parallel
     `bpp db restore-backup` invocations from racing each other.
 
     The serving-lock guard already prevents server-vs-restore
@@ -839,7 +839,7 @@ class TestRestoreMaintenanceLock:
         )
 
     def test_lock_published_with_pid_atomically(self, tmp_path):
-        """R5-H4: the lockfile, once it exists, must contain the
+        """The lockfile, once it exists, must contain the
         owner's PID — no empty-content window. Previously the lock
         was created via O_EXCL and the PID was written later;
         a racing contender during that gap could see empty content,
@@ -895,7 +895,7 @@ class TestRestoreMaintenanceLock:
         my_pid = str(os.getpid())
         for content in seen_lock_content:
             assert content == my_pid, (
-                f"R5-H4 broken: tmp file linked with content {content!r} "
+                f"Lockfile atomicity broken: tmp file linked with content {content!r} "
                 f"instead of PID {my_pid!r}. The lockfile would appear "
                 "empty to a racing contender."
             )
@@ -903,11 +903,11 @@ class TestRestoreMaintenanceLock:
         assert not os.path.isfile(lock_path_canonical)
 
 
-# ─── R11-M7: refuse restore when .backup.corrupt-* sibling exists ────
+# ─── Refuse restore when .backup.corrupt-* sibling exists ────
 
 
 def test_restore_refuses_when_corrupt_quarantine_present(tmp_path, capsys):
-    """R11-M7: a stranded `.backup.corrupt-<timestamp>` file is a red
+    """A stranded `.backup.corrupt-<timestamp>` file is a red
     flag — backup_db() couldn't cleanly handle a corrupt copy on a
     prior run. Restoring before the operator reviews the file means
     they may be restoring over a state the system already flagged
@@ -957,7 +957,7 @@ def test_restore_proceeds_after_corrupt_quarantine_cleanup(tmp_path):
 
 
 def test_restore_refuses_when_legacy_corrupt_backup_marker_exists(tmp_path, capsys):
-    """R12-M2: pre-R11 builds quarantined corrupt backups under a
+    """Older builds quarantined corrupt backups under a
     fixed name `.backup.corrupt` (no timestamp). A user upgrading
     across versions could have one left over. The preflight must
     cover the legacy shape too, otherwise an upgrade path silently

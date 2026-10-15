@@ -4,7 +4,7 @@ restore / recluster.
 Extracted from ``bpp.web.bp_faces_manage`` during the v0.1 cleanup. Owns
 its own Flask blueprint and is registered explicitly by ``app.py``
 alongside ``bp_faces_manage``. (Earlier we used a side-effect-import
-pattern; P0 of the refactor plan converted it to explicit registration.)
+pattern; it has since been converted to explicit registration.)
 """
 
 from __future__ import annotations
@@ -324,11 +324,15 @@ def api_faces_restore() -> tuple[Response, int]:
         existing_rows = conn.execute(
             "SELECT cluster_id, embedding FROM face_embeddings WHERE cluster_id >= 0"
         ).fetchall()
+        from bpp.db.face_embedding_safety import decode_rows
+
         cluster_embs: dict[int, list[np.ndarray]] = {}
-        for r in existing_rows:
-            cluster_embs.setdefault(r["cluster_id"], []).append(
-                np.frombuffer(r["embedding"], dtype=np.float32)
-            )
+        for cid, emb in decode_rows(
+            conn,
+            ((r["cluster_id"], r["embedding"]) for r in existing_rows),
+            where="bp_faces_cluster_ops.centroids",
+        ):
+            cluster_embs.setdefault(cid, []).append(emb)
         centroids = {cid: np.mean(embs, axis=0) for cid, embs in cluster_embs.items()}
 
         if centroids:
@@ -343,15 +347,20 @@ def api_faces_restore() -> tuple[Response, int]:
             ).fetchall()
             assigned_count = 0
             new_count = 0
+            usable = decode_rows(
+                conn,
+                ((r["id"], r["embedding"]) for r in unassigned),
+                where="bp_faces_cluster_ops.unassigned",
+            )
+            usable_ids = {i for i, _ in usable}
+            unassigned = [r for r in unassigned if r["id"] in usable_ids]
             if unassigned:
                 # Vectorize the N-face x M-cluster nearest-centroid scan: one
                 # (N, M) distance matrix instead of N*M np.linalg.norm calls.
                 cluster_ids = list(centroids.keys())
                 centroids_mat = np.stack([centroids[c] for c in cluster_ids])
                 cid_to_col = {c: i for i, c in enumerate(cluster_ids)}
-                embs_mat = np.stack(
-                    [np.frombuffer(r["embedding"], dtype=np.float32) for r in unassigned]
-                )
+                embs_mat = np.stack([emb for _, emb in usable])
                 # ||a-b||^2 = ||a||^2 + ||b||^2 - 2 a·b; clip to 0 before sqrt
                 # to absorb tiny negative values from float roundoff.
                 a2 = (embs_mat * embs_mat).sum(axis=1)

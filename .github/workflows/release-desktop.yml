@@ -1,6 +1,7 @@
 name: Desktop App (macOS)
 
-# Builds the signed + notarized macOS desktop app (DMG) and attaches it
+# Builds the signed + notarized macOS desktop app, packages it in a
+# signed + notarized DMG, and attaches it
 # to the GitHub Release that triggered the run. Mirrors publish.yml's
 # safety: fires ONLY when a Release is *published* (the explicit button
 # on the Releases page) — drafting, saving, or pushing never triggers
@@ -12,8 +13,9 @@ name: Desktop App (macOS)
 # 2026-06-11 unsigned decision): the app is signed with the Arkalogy
 # Developer ID certificate and notarized by Apple so it opens on
 # double-click — no Gatekeeper "Open Anyway" detour. Tauri reads the
-# six APPLE_* env vars below and signs + notarizes + staples
-# automatically; no manual codesign/notarytool calls needed. If the
+# six APPLE_* env vars below and signs + notarizes + staples the .app
+# automatically. Tauri does not notarize the DMG wrapper, so a separate
+# step submits and staples the DMG itself. If the
 # secrets are absent (e.g. a fork), the build still produces an
 # UNSIGNED DMG so CI doesn't hard-fail — only Arkalogy releases are
 # signed. pipx remains the canonical install path for technical users;
@@ -37,15 +39,30 @@ on:
     types: [published]
   workflow_dispatch:
 
+# Read-only by default. The build job installs and runs a lot of
+# third-party code (pip/npm packages, PyInstaller, upstream source
+# downloads), so it never holds a token that can write to the repo; only
+# the small upload-release job below — which runs no third-party code —
+# gets `contents: write`.
 permissions:
-  contents: write # gh release upload
+  contents: read
 
 jobs:
   build-macos-app:
     runs-on: macos-15 # Apple Silicon; arm64-only artifact (Intel deferred)
     timeout-minutes: 60
+    env:
+      # The extras the sidecar is built with — also the inventory's scope.
+      BPP_EXTRAS: web,heic,faces,raw,inpaint
+      # Release asset names, used by every step below. NOTICE.txt names
+      # these files, so rename them there too.
+      INVENTORY_ASSET: bppicker-third-party-inventory.json
+      SOURCES_ASSET: bppicker-third-party-sources.tar.gz
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # No token left in .git/config for later steps to read.
+          persist-credentials: false
 
       - name: Verify tag matches package version
         # Same guard as publish.yml: never attach an app whose internal
@@ -64,22 +81,79 @@ jobs:
           fi
           echo "OK: tag $TAG_VERSION matches package and tauri.conf"
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.11" # pinned — matches the sidecar/CI pin
 
       - name: Install bpp + PyInstaller
         # Full extras so the frozen sidecar has feature parity with a
         # maxed-out pip install (optional features can't pip-install
-        # themselves inside a frozen binary at runtime).
+        # themselves inside a frozen binary at runtime). The same
+        # BPP_EXTRAS list scopes the third-party inventory below.
         run: |
           python -m pip install --upgrade pip
-          pip install ".[web,heic,faces,raw,nudity,inpaint]" pyinstaller
+          pip install ".[${BPP_EXTRAS}]" pyinstaller
+
+      # ── Third-party inventory + corresponding sources ────────────────
+      # These steps run after the Release is already published, so none
+      # of them may stop the DMG from being attached: each records its
+      # outcome as a step output and the "Stage release assets" step
+      # reports anything missing (warning + job-summary error). The
+      # written offer in NOTICE.txt covers a release whose sources have
+      # to be attached by hand. workflow_dispatch smoke runs are strict
+      # instead: the last step fails them if any of these didn't succeed.
+
+      - name: Inventory the sidecar's third-party code
+        # Offline. Every distribution in the bppicker[$BPP_EXTRAS]
+        # dependency closure with its license and the shared libraries
+        # it installs, plus the CPython runtime and the PyInstaller
+        # bootloader. Build-only tools (pip, PyInstaller, ...) are out
+        # of scope.
+        id: inventory
+        run: |
+          if python scripts/third_party_inventory.py inventory \
+              --out third-party --extras "$BPP_EXTRAS"; then
+            echo "ok=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Third-party inventory failed — the release will not carry it"
+          fi
+
+      - name: Fetch the pinned HEIC/RAW sources
+        # Network. The x265 / libde265 / libheif archives and patches
+        # named in pillow-heif's build recipe at the installed tag, and
+        # the LibRaw commits rawpy pins, each download retried 3 times.
+        id: sources
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          if python scripts/third_party_inventory.py sources --out third-party \
+              && tar czf "$SOURCES_ASSET" -C third-party third-party-sources; then
+            ls -lh "$SOURCES_ASSET"
+            echo "ok=1" >> "$GITHUB_OUTPUT"
+          else
+            rm -f "$SOURCES_ASSET"
+            echo "::warning::Couldn't fetch the pinned HEIC/RAW sources — attach $SOURCES_ASSET to the release by hand"
+          fi
 
       - name: Build sidecar (PyInstaller)
         run: bash desktop/build-sidecar.sh
 
-      - uses: actions/setup-node@v6
+      - name: Record what PyInstaller bundled
+        # Offline. Reads the frozen sidecar's archive and adds, to the
+        # inventory, every packed file attributed to its distribution /
+        # the Python runtime / PyInstaller, plus any distribution
+        # PyInstaller collected outside the dependency closure.
+        id: bundled
+        if: steps.inventory.outputs.ok == '1'
+        run: |
+          if python scripts/third_party_inventory.py bundled \
+              --out third-party --binary dist/bpp-server; then
+            echo "ok=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Couldn't read the sidecar archive — the inventory lacks the bundled-file list"
+          fi
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "20"
 
@@ -87,7 +161,7 @@ jobs:
         working-directory: desktop
         run: npm ci
 
-      - name: Build Tauri app (signed + notarized DMG)
+      - name: Build Tauri app (signed + notarized .app in a signed DMG)
         # Tauri signs + notarizes + staples automatically when the
         # APPLE_* env vars are present. If they're absent (a fork
         # without the secrets), it falls back to an unsigned DMG rather
@@ -116,25 +190,130 @@ jobs:
           ls -lh "$OUT"
           echo "ARTIFACT=$OUT" >> "$GITHUB_ENV"
 
-      - name: Verify the DMG is notarized (release only)
-        # Gatekeeper assessment proves the staple worked — a green
-        # "accepted source=Notarized Developer ID" is the whole point.
-        # Non-blocking on the smoke path (forks/unsigned builds).
-        if: github.event_name == 'release'
-        run: |
-          spctl -a -t open --context context:primary-signature -vv "$ARTIFACT" 2>&1 || {
-            echo "::warning::spctl assessment did not report Notarized — verify signing secrets are set"; }
-
-      - name: Upload to the release
-        if: github.event_name == 'release'
+      - name: Notarize and staple the DMG
+        # Tauri notarizes the .app but not the DMG around it, so
+        # Gatekeeper would otherwise report the download itself as
+        # "Unnotarized Developer ID". Skipped when the signing secrets
+        # are absent (forks produce an unsigned DMG).
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${GITHUB_REF#refs/tags/}" "$ARTIFACT" --clobber
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -z "$APPLE_ID" ]; then
+            echo "::warning::No signing secrets — DMG left unnotarized"
+            exit 0
+          fi
+          xcrun notarytool submit "$ARTIFACT" \
+            --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple "$ARTIFACT"
+          xcrun stapler validate "$ARTIFACT"
+          echo "DMG_NOTARIZED=1" >> "$GITHUB_ENV"
+
+      - name: Verify Gatekeeper accepts the DMG
+        # A green "source=Notarized Developer ID" is the whole point.
+        # Hard-fails whenever the DMG was notarized above, so a release
+        # can never ship a DMG that Gatekeeper rejects.
+        if: env.DMG_NOTARIZED == '1'
+        run: |
+          spctl -a -t open --context context:primary-signature -vv "$ARTIFACT" 2>&1 | tee spctl.txt
+          grep -q "source=Notarized Developer ID" spctl.txt
+
+      - name: Stage release assets
+        # Builds the upload list from what actually exists: the DMG
+        # always, the inventory and the sources archive only if their
+        # steps succeeded. Anything missing is reported here.
+        if: always() && env.ARTIFACT != ''
+        env:
+          INVENTORY_OK: ${{ steps.inventory.outputs.ok }}
+          SOURCES_OK: ${{ steps.sources.outputs.ok }}
+          BUNDLED_OK: ${{ steps.bundled.outputs.ok }}
+        run: |
+          ASSETS="$ARTIFACT"
+          MISSING=""
+          if [ "$INVENTORY_OK" = "1" ]; then
+            cp third-party/third-party-inventory.json "$INVENTORY_ASSET"
+            ASSETS="$ASSETS $INVENTORY_ASSET"
+            [ "$BUNDLED_OK" = "1" ] || MISSING="$MISSING the inventory's bundled-file list;"
+          else
+            MISSING="$MISSING $INVENTORY_ASSET;"
+          fi
+          if [ "$SOURCES_OK" = "1" ] && [ -f "$SOURCES_ASSET" ]; then
+            ASSETS="$ASSETS $SOURCES_ASSET"
+          else
+            MISSING="$MISSING $SOURCES_ASSET;"
+          fi
+          echo "ASSETS=$ASSETS" >> "$GITHUB_ENV"
+          if [ -n "$MISSING" ]; then
+            echo "::error title=Third-party assets incomplete::Missing:$MISSING generate and attach them to this release by hand (NOTICE.txt's written offer still applies)."
+            {
+              echo "## :x: Third-party inventory/sources incomplete"
+              echo ""
+              echo "Missing:$MISSING"
+              echo ""
+              echo "The DMG was still attached. Re-run \`scripts/third_party_inventory.py\` against this release's build environment and attach the missing files with \`gh release upload\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # shellcheck disable=SC2086 # ASSETS is a space-separated file list
+          ls -lh $ASSETS
+          mkdir -p release-assets
+          # shellcheck disable=SC2086
+          cp $ASSETS release-assets/
+
+      - name: Hand the release assets to the upload job
+        # This job has no write token; upload-release attaches them.
+        if: github.event_name == 'release'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release-assets
+          path: release-assets/
+          retention-days: 3 # room to re-run a failed upload-release
+          compression-level: 0 # the DMG is already compressed
 
       - name: Upload smoke-test artifact (workflow_dispatch only)
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: macos-dmg
-          path: BestPhotoPicker-macOS-arm64.dmg
+          path: |
+            ${{ env.ARTIFACT }}
+            ${{ env.INVENTORY_ASSET }}
+            ${{ env.SOURCES_ASSET }}
           retention-days: 7
+
+      - name: Fail the smoke run if the inventory is incomplete
+        # Release runs never fail here (the DMG must still ship); manual
+        # smoke runs do, so a broken inventory surfaces before a release.
+        if: >-
+          github.event_name == 'workflow_dispatch' && (
+          steps.inventory.outputs.ok != '1' ||
+          steps.sources.outputs.ok != '1' ||
+          steps.bundled.outputs.ok != '1')
+        run: |
+          echo "::error::Inventory ${{ steps.inventory.outputs.ok }} / sources ${{ steps.sources.outputs.ok }} / bundled ${{ steps.bundled.outputs.ok }} (1 = ok)"
+          exit 1
+
+  upload-release:
+    # The only job that can write to the repo. It runs no third-party code
+    # (no checkout, no installs, no builds): it downloads the files the
+    # build job staged and attaches them to the published release.
+    needs: build-macos-app
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # gh release upload
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: release-assets
+          path: release-assets
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -lh release-assets
+          gh release upload "${GITHUB_REF#refs/tags/}" release-assets/* \
+            --clobber --repo "$GITHUB_REPOSITORY"
+

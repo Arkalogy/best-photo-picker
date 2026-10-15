@@ -1,42 +1,34 @@
 """Built-in ModelEntry registrations.
 
-Batch 2 of the legal-posture rollout (item 1 — lock SFace as default
-face embedder). The two entries registered here are the only face
-embedders BPP ships with out-of-the-box metadata; both are
-permissively-licensed (Apache 2.0 / Boost SL) so the commercial-use
-restriction flag is ``False`` for both. SFace carries
-``default_for_kind=True`` so the registry-driven default-selection
-layer (Batch 2) lands new installs on SFace with no user action.
+Covers every model BPP knows about out of the box: face embedders
+(SFace, dlib, buffalo_s), face detectors (SCRFD, YuNet), the CLIP
+semantic-search encoder, the pet detector, the nudity classifier and
+the LaMa inpainter, plus the supporting models in
+:mod:`bpp.registry.builtins_bundled`. This registry is the only place
+a model's license is written; scoring code and UI labels link to an
+entry by id. SFace (Apache 2.0) carries ``default_for_kind=True`` so
+new installs land on SFace as the face embedder; dlib is restricted
+for commercial use because of its landmark model's training data.
 
 The entries record what we know today about each model's upstream
 provenance — source URL, terms URL, license summary — without
-asserting a legal opinion (item 24 wording). The user-facing labels
-come from :mod:`bpp.registry.labels`.
+asserting a legal opinion. The user-facing labels come from
+:mod:`bpp.registry.labels`.
 
 Imported eagerly by :mod:`bpp.registry.__init__` so registration
 happens the first time any consumer imports the registry package.
 Idempotent: importing twice does not duplicate the entries (the
 underlying registry replaces on same id).
 
-Not in scope for this batch:
-
-* Wiring downstream code paths (face_embed.embedding_method,
-  worker dispatch) to actually read from the registry — that
-  is in Batch 4 (the click-through gate consumes the registry
-  via the dialog).
-* Registering non-face models (CLIP, YOLO, NudeNet, LaMa, etc.).
-  Each kind earns its own registration as the surrounding
-  batch lands.
-
-Added post-Batch-10: buffalo_s (item-1 follow-up — first restricted
-face embedder registered in the bundled baseline). This validates
-the click-through + hard-block + dual-sig + removal-purge surfaces
-against a real research-only entry rather than only against the
-unit-test scaffolding.
+buffalo_s is the restricted (research-only) face embedder in the
+bundled baseline. It exercises the click-through + hard-block +
+signed-overlay quorum + removal-purge surfaces against a real restricted entry
+rather than only against unit-test scaffolding.
 """
 
 from __future__ import annotations
 
+from bpp.registry.builtins_bundled import BUNDLED_ENTRIES
 from bpp.registry.disclaimers import (
     CANONICAL_DISCLAIMER_VERSION,
     PERMISSIVE_ATTRIBUTION_DISCLAIMER_VERSION,
@@ -50,11 +42,10 @@ from bpp.registry.model_registry import (
     register_entry,
 )
 
-# Hash placeholders for the weight files. Real SHA-256 values land
-# when Batch 3 (download chokepoint) wires the integrity check against
-# the actual downloaded bytes; until then the entries are
-# metadata-only and the empty string sentinels signal "no weight-file
-# verification configured yet" to consumers.
+# Hash placeholder for weight files the registry does not pin. Entries
+# using it are metadata-only from the registry's point of view; the
+# empty-string sentinel signals "no registry weight-file verification
+# configured" to consumers.
 _NO_WEIGHT_HASH = ""
 
 
@@ -65,9 +56,9 @@ SFACE_ENTRY = ModelEntry(
     source_url="https://github.com/opencv/opencv_zoo/tree/main/models/face_recognition_sface",
     terms_url="https://github.com/opencv/opencv_zoo/blob/main/LICENSE",
     terms_permalink_url=(
-        "https://github.com/opencv/opencv_zoo/blob/fef72f33ed29bedfaf09ef7d54e4cbbc4d76c7b8/LICENSE"
+        "https://github.com/opencv/opencv_zoo/blob/af1afb38ffa9f7b054a746d73ebf2d6e1ae2eb24/LICENSE"
     ),
-    terms_retrieved_at="2026-06-02",
+    terms_retrieved_at="2026-10-13",
     license_summary=(
         "OpenCV Zoo distribution under Apache 2.0; SFace weights "
         "trained on LFW-derived data. Apache 2.0 permits commercial "
@@ -75,8 +66,7 @@ SFACE_ENTRY = ModelEntry(
         "text, and any NOTICE file from the upstream project when "
         "redistributing or shipping a product that includes the model."
     ),
-    # Strictest defensible posture (option B from legal-posture
-    # discussion): only literal-MIT entries bypass the click-through.
+    # Strictest defensible posture: only literal-MIT entries bypass the click-through.
     # Apache 2.0 has NOTICE / attribution duties — surface them once
     # so the user has explicitly seen them.
     requires_explicit_ack=True,
@@ -102,27 +92,31 @@ DLIB_ENTRY = ModelEntry(
     source_url="https://github.com/ageitgey/face_recognition_models",
     terms_url="https://github.com/davisking/dlib/blob/master/LICENSE.txt",
     terms_permalink_url=("https://github.com/davisking/dlib/blob/v19.24.2/dlib/LICENSE.txt"),
-    terms_retrieved_at="2026-06-02",
+    terms_retrieved_at="2026-10-13",
     license_summary=(
-        "dlib distributed under the Boost Software License; "
-        "face_recognition wrapper code is MIT. Pretrained ResNet "
-        "weights ship with the face_recognition_models package. "
-        "Boost permits commercial use but requires preserving the "
-        "license text when redistributing the model or shipping a "
-        "product that includes it."
+        "dlib is Boost-licensed and the face_recognition wrapper is MIT, "
+        "but the 68-point landmark model in face_recognition_models was "
+        "trained on the iBUG 300-W dataset, whose creators ask that it "
+        "not be used in commercial products. BPP treats these weights "
+        "as restricted for commercial use and does not bundle them in "
+        "the desktop app. This entry also covers dlib's HOG face "
+        "detector, which BPP runs through the same face_recognition "
+        "package (importing it loads the landmark model)."
     ),
-    # Strictest defensible posture (option B from legal-posture
-    # discussion): Boost is functionally MIT but is technically a
-    # different license with its own attribution clauses. Surface
-    # them once.
+    # Restricted: the 300-W non-commercial request on the landmark
+    # model. Same treatment as the other research-trained weights —
+    # click-through, and blocked in a "Commercial" use context unless
+    # the user states they hold separate rights.
     requires_explicit_ack=True,
-    ack_text_version=PERMISSIVE_ATTRIBUTION_DISCLAIMER_VERSION,
-    ack_text_sha256=permissive_attribution_disclaimer_sha256(),
-    ack_text_kind="permissive_attribution",
-    upstream_claimed_license_class=LicenseClass.BOOST_SOFTWARE_LICENSE,
-    commercial_use_restriction_known=False,
-    bppicker_commercial_default_allowed=True,
-    commercial_unlock_requires_rights_assertion=False,
+    ack_text_version=CANONICAL_DISCLAIMER_VERSION,
+    ack_text_sha256=canonical_disclaimer_sha256(),
+    ack_text_kind="canonical",
+    # Code is Boost and the package says CC0, but the landmark model's
+    # training-data terms exclude commercial use — classified by that.
+    upstream_claimed_license_class=LicenseClass.RESEARCH_NON_COMMERCIAL,
+    commercial_use_restriction_known=True,
+    bppicker_commercial_default_allowed=False,
+    commercial_unlock_requires_rights_assertion=True,
     status=ModelStatus.AVAILABLE,
     training_data="dlib face_recognition private (Davis King)",
     weight_sha256=_NO_WEIGHT_HASH,
@@ -134,7 +128,7 @@ DLIB_ENTRY = ModelEntry(
 #: First restricted-license face embedder in the bundled baseline.
 #: Validates every restricted-model surface end-to-end against a real
 #: entry: the click-through dialog, the commercial-use hard-block,
-#: the dual-signature requirement on relaxation, derived-data purge
+#: the signed-overlay quorum on relaxation, derived-data purge
 #: on removal, and the surface-parity disclaimer wording.
 #:
 #: Provenance: InsightFace's buffalo_s is part of the model zoo at
@@ -163,9 +157,9 @@ BUFFALO_S_ENTRY = ModelEntry(
         # Update this permalink whenever ``terms_retrieved_at`` is
         # bumped.
         "https://github.com/deepinsight/insightface/blob/"
-        "0b7d8ea7df9dde33c25f7d1f0d8c8e5a3e8e1f3a/README.md"
+        "7aaa8e52fa787eb27b87d654a268483a53505c59/README.md"
     ),
-    terms_retrieved_at="2026-06-03",
+    terms_retrieved_at="2026-10-13",
     license_summary=(
         "InsightFace project code under MIT; the bundled face-analysis "
         "model weights (including buffalo_s) are released for "
@@ -201,40 +195,44 @@ BUFFALO_S_ENTRY = ModelEntry(
 
 #: ── Face detectors ──
 #:
-#: SCRFD: InsightFace's small-scale face detector. Code under
-#: insightface MIT; the .onnx detector weights ship without a
-#: separate license that asserts non-commercial restriction (the
-#: research-only clause in the InsightFace README applies to the
-#: face-analysis BUNDLES, not to the standalone SCRFD detector).
+#: SCRFD: InsightFace's small-scale face detector — RESTRICTED.
+#: InsightFace's code is MIT, but its README states that models
+#: trained on its data, whether downloaded by hand from the GitHub
+#: repo or through the python library, are for non-commercial
+#: research purposes only. That covers these detector weights, so
+#: SCRFD gets the same restricted treatment as buffalo_s: explicit
+#: acceptance before download or use, blocked in commercial mode,
+#: and not the default detector.
 SCRFD_ENTRY = ModelEntry(
     id="insightface_scrfd_25g",
     display_name="InsightFace SCRFD 2.5g (face detection)",
     kind="face_detector",
-    source_url=("https://github.com/deepinsight/insightface/tree/master/detection/scrfd"),
-    terms_url="https://github.com/deepinsight/insightface/blob/master/LICENSE",
+    source_url=(
+        "https://huggingface.co/RuteNL/SCRFD-face-detection-ONNX/resolve/main/2.5g_bnkps.onnx"
+    ),
+    terms_url="https://github.com/deepinsight/insightface/blob/master/README.md#license",
     terms_permalink_url=(
         "https://github.com/deepinsight/insightface/blob/"
-        "0b7d8ea7df9dde33c25f7d1f0d8c8e5a3e8e1f3a/LICENSE"
+        "7aaa8e52fa787eb27b87d654a268483a53505c59/README.md"
     ),
-    terms_retrieved_at="2026-06-03",
+    terms_retrieved_at="2026-10-13",
     license_summary=(
-        "InsightFace project distributed under MIT. The SCRFD "
-        "detector weights are published under the same MIT license; "
-        "the project's non-commercial clause applies to the "
-        "face-analysis bundles (buffalo_*), not the standalone "
-        "detector."
+        "InsightFace code is MIT, but its trained models are for "
+        "non-commercial research use only per the project's README. "
+        "Downloaded from a third-party Hugging Face re-host of the "
+        "InsightFace SCRFD 2.5g weights."
     ),
-    requires_explicit_ack=False,
+    requires_explicit_ack=True,
     ack_text_version=CANONICAL_DISCLAIMER_VERSION,
     ack_text_sha256=canonical_disclaimer_sha256(),
-    upstream_claimed_license_class=LicenseClass.MIT,
-    commercial_use_restriction_known=False,
-    bppicker_commercial_default_allowed=True,
-    commercial_unlock_requires_rights_assertion=False,
+    upstream_claimed_license_class=LicenseClass.RESEARCH_NON_COMMERCIAL,
+    commercial_use_restriction_known=True,
+    bppicker_commercial_default_allowed=False,
+    commercial_unlock_requires_rights_assertion=True,
     status=ModelStatus.AVAILABLE,
     training_data="WIDER FACE (research dataset)",
     weight_sha256=_NO_WEIGHT_HASH,
-    default_for_kind=True,
+    default_for_kind=False,
     produces_biometric_data=True,
     # 2.5g_bnkps.onnx — measured 2026-06-03 against the HuggingFace mirror.
     expected_download_size_bytes=3_291_737,
@@ -251,9 +249,9 @@ YUNET_ENTRY = ModelEntry(
     source_url=("https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet"),
     terms_url="https://github.com/opencv/opencv_zoo/blob/main/LICENSE",
     terms_permalink_url=(
-        "https://github.com/opencv/opencv_zoo/blob/fef72f33ed29bedfaf09ef7d54e4cbbc4d76c7b8/LICENSE"
+        "https://github.com/opencv/opencv_zoo/blob/af1afb38ffa9f7b054a746d73ebf2d6e1ae2eb24/LICENSE"
     ),
-    terms_retrieved_at="2026-06-03",
+    terms_retrieved_at="2026-10-13",
     license_summary=(
         "OpenCV Zoo distribution under Apache 2.0. The YuNet "
         "detector weights ship under the same license. Apache 2.0 "
@@ -262,7 +260,7 @@ YUNET_ENTRY = ModelEntry(
         "the upstream project when redistributing or shipping a "
         "product that includes the model."
     ),
-    # Strictest defensible posture (option B): Apache 2.0 attribution
+    # Strictest defensible posture: Apache 2.0 attribution
     # duties surfaced once before download.
     requires_explicit_ack=True,
     ack_text_version=PERMISSIVE_ATTRIBUTION_DISCLAIMER_VERSION,
@@ -275,7 +273,7 @@ YUNET_ENTRY = ModelEntry(
     status=ModelStatus.AVAILABLE,
     training_data="WIDER FACE (research dataset)",
     weight_sha256=_NO_WEIGHT_HASH,
-    default_for_kind=False,
+    default_for_kind=True,
     produces_biometric_data=True,
     # face_detection_yunet_2023mar.onnx — measured 2026-06-03 against
     # the OpenCV Zoo main branch.
@@ -331,7 +329,7 @@ CLIP_VIT_B32_ENTRY = ModelEntry(
 #:   * Distributing a Docker image containing the weights triggers
 #:     the AGPL source-disclosure obligation
 #: Note: ``default_for_kind=False`` despite being the only registered
-#: pet detector. The Batch-2 invariant rules out restricted entries
+#: pet detector. The registry invariant rules out restricted entries
 #: as defaults — users must explicitly opt in via the click-through
 #: before pet detection runs. Adding a permissive pet detector in
 #: the future would make it the default for the kind.
@@ -343,9 +341,9 @@ YOLOV11N_PETS_ENTRY = ModelEntry(
     terms_url="https://github.com/ultralytics/ultralytics/blob/main/LICENSE",
     terms_permalink_url=(
         "https://github.com/ultralytics/ultralytics/blob/"
-        "8b21c14b8c2ce2eb95cc7e2b41ee46e1ef27c97c/LICENSE"
+        "2c6fc0a4443b9cf805ef17b1cfdd71a98693b4d4/LICENSE"
     ),
-    terms_retrieved_at="2026-06-03",
+    terms_retrieved_at="2026-10-13",
     license_summary=(
         "Ultralytics YOLOv11 (including the YOLOv11n nano variant) "
         "distributed under AGPL-3.0. The AGPL obligations attach to "
@@ -374,24 +372,25 @@ YOLOV11N_PETS_ENTRY = ModelEntry(
 
 #: ── Nudity classifier (NudeNet) — RESTRICTED ──
 #:
-#: NudeNet 320n. The package is published as GPL-3.0; the model
+#: NudeNet 320n. The repository LICENSE is AGPL-3.0 (its PyPI
+#: metadata says MIT; BPP follows the LICENSE file); the model
 #: weights are distributed as part of the same release. Same
 #: restricted-default treatment as YOLOv11n.
 NUDENET_320N_ENTRY = ModelEntry(
     id="nudenet_320n",
-    display_name="NudeNet 320n (nudity classifier, GPL-3.0)",
+    display_name="NudeNet 320n (nudity classifier, AGPL-3.0)",
     kind="nudity_classifier",
     source_url="https://github.com/notAI-tech/NudeNet",
     terms_url="https://github.com/notAI-tech/NudeNet/blob/v3/LICENSE",
     terms_permalink_url=(
-        # NudeNet v3 LICENSE permalink; verified GPL-3.0.
+        # NudeNet v3 LICENSE permalink; verified AGPL-3.0.
         "https://github.com/notAI-tech/NudeNet/blob/"
-        "ddc4810ff6a99d1b7baf2027cc15a6e0e69c5b9b/LICENSE"
+        "bac927ae7ef3ea6b57c175e3fb36686a1115db16/LICENSE"
     ),
-    terms_retrieved_at="2026-06-03",
+    terms_retrieved_at="2026-10-13",
     license_summary=(
         "NudeNet code + bundled model weights distributed under "
-        "GPL-3.0. The strong copyleft attaches to derived works "
+        "AGPL-3.0. The strong copyleft attaches to derived works "
         "distributed externally; personal local use does not "
         "trigger source-disclosure but commercial / distribution "
         "scenarios do."
@@ -399,7 +398,7 @@ NUDENET_320N_ENTRY = ModelEntry(
     requires_explicit_ack=True,
     ack_text_version=CANONICAL_DISCLAIMER_VERSION,
     ack_text_sha256=canonical_disclaimer_sha256(),
-    upstream_claimed_license_class=LicenseClass.GPL_3_0,
+    upstream_claimed_license_class=LicenseClass.AGPL_3_0,
     commercial_use_restriction_known=True,
     bppicker_commercial_default_allowed=False,
     commercial_unlock_requires_rights_assertion=True,
@@ -477,3 +476,6 @@ def register_builtins() -> None:
     register_entry(YOLOV11N_PETS_ENTRY)
     register_entry(NUDENET_320N_ENTRY)
     register_entry(LAMA_INPAINT_ENTRY)
+    # Supporting models every analysis runs (MediaPipe, Haar cascade).
+    for entry in BUNDLED_ENTRIES:
+        register_entry(entry)

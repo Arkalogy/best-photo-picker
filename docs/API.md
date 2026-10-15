@@ -2,12 +2,12 @@
 
 Best Photo Picker exposes a full REST API on `localhost:5001`. All endpoints are served from the Flask web UI.
 
-**Versioning.** All endpoints live under the `/api/v1/` prefix. The version segment is part of the contract — when breaking changes ship, they will be released under `/api/v2/` and `/api/v1/` will be kept alongside (and eventually deprecated with notice). Today there is exactly one version (`v1`), so every example in this document is a real path you can curl. There are no unversioned aliases — `/api/<endpoint>` (without `v1/`) returns 404.
+**Versioning.** All endpoints live under the `/api/v1/` prefix. The version segment is part of the contract — when breaking changes ship, they will be released under `/api/v2/` and `/api/v1/` will be kept alongside (and eventually deprecated with notice). Today there is exactly one version (`v1`), so every example in this document is a real path you can curl. There are no unversioned aliases — `/api/<endpoint>` (without `v1/`) is not routed (403 without a token, since the auth gate runs first; 404 with one).
 
 **Authentication.** Every `/api/v1/*` request must carry a valid token in the `X-Auth-Token` header (or the `_token=` query string for `<img>` / `<video>` URLs that can't send custom headers). Two tokens are accepted:
 
 - **App session token** — generated fresh on every server boot, embedded in the index page's `<meta name="auth-token">` tag for the local Tauri app to read.
-- **Persistent share token** — DB-backed, used by phones via the LAN share URL. Only valid from non-loopback addresses and only when the device's fingerprint cookie maps to a *trusted* `share_devices` row.
+- **Persistent share token** — DB-backed, used by phones via the LAN share URL. From a non-loopback address it is only accepted when the device's fingerprint cookie maps to a *trusted* `share_devices` row. From loopback it is accepted as the local owner (a power-user escape hatch on the host machine).
 
 When **LAN sharing is off** (Settings → Share toggle), all non-loopback requests are denied at the gate before the token check runs. When LAN sharing is on, untrusted phones can only reach a small allow-list (`/`, `/static/*`, `/api/v1/share/pair/status`, `/api/v1/share/pair/request`) until the owner approves them. See [security.md](security.md) for the full threat model.
 
@@ -22,17 +22,25 @@ When **LAN sharing is off** (Settings → Share toggle), all non-loopback reques
 
 ## Quick Start
 
+Every `/api/v1/*` call needs the app session token (see **Authentication** above). From the machine running bpp, read it out of the index page — it changes on every server restart:
+
+```bash
+TOKEN=$(curl -s http://localhost:5001/ | sed -n 's/.*name="auth-token" content="\([^"]*\)".*/\1/p')
+```
+
+The examples below omit the header for brevity; add `-H "X-Auth-Token: $TOKEN"` to each one, or the request is rejected with `403`.
+
 ### 1. Check status and list photos
 
 ```bash
 # Check app status (is the server running? are there photos?)
-curl http://localhost:5001/api/v1/status
+curl -H "X-Auth-Token: $TOKEN" http://localhost:5001/api/v1/status
 
 # List all analyzed photos with metadata and scores
-curl http://localhost:5001/api/v1/photos
+curl -H "X-Auth-Token: $TOKEN" http://localhost:5001/api/v1/photos
 
 # List albums
-curl http://localhost:5001/api/v1/albums
+curl -H "X-Auth-Token: $TOKEN" http://localhost:5001/api/v1/albums
 ```
 
 ### 2. Trigger analysis and monitor progress
@@ -73,7 +81,7 @@ curl -X POST http://localhost:5001/api/v1/export \
 
 ## Building on the API
 
-Best Photo Picker exposes a full REST API on `localhost:5001`. You can build custom frontends, integrate with automation tools (Shortcuts, Hazel, cron), or use it as a photo scoring microservice. The API binds to localhost; authentication is implicit because only the local machine can reach the socket. For LAN sharing (multi-device access from a phone or tablet on the same Wi-Fi), see [`docs/security.md`](security.md) for the pairing model and auth boundary. All state-changing operations use `POST`, `PUT`, or `DELETE`, so read-only tools can safely call any `GET` endpoint without side effects.
+Best Photo Picker exposes a full REST API on `localhost:5001`. You can build custom frontends, integrate with automation tools (Shortcuts, Hazel, cron), or use it as a photo scoring microservice. By default the server binds to `127.0.0.1`, and every `/api/v1/*` request still has to carry the token described under **Authentication** — binding to loopback does not make the API unauthenticated. For LAN sharing (multi-device access from a phone or tablet on the same Wi-Fi), see [`docs/security.md`](security.md) for the pairing model and auth boundary. All state-changing operations use `POST`, `PUT`, or `DELETE`, so read-only tools can safely call any `GET` endpoint without side effects.
 
 ---
 
@@ -104,22 +112,27 @@ Application status and feature availability.
   "analyzing": false,
   "importing": false,
   "serve_mode": true,
-  "defaults": { "blur_weight": 1.0, "..." : "..." },
+  "defaults": { "blur_weight": 0.3, "..." : "..." },
   "face_recognition_available": true,
   "face_installable": false,
-  "nudenet_available": false,
+  "nudenet_available": true,
+  "nudenet_active": false,
   "pets_available": true,
   "face_extraction_done": true,
   "face_needs_clustering": false,
   "face_extracting": false,
-  "face_cluster_threshold": 0.55,
+  "face_cluster_threshold": 0.8,
   "clip_available": true,
   "clip_installable": false,
   "clip_ready": true,
   "clip_extracting": false,
   "clip_embedding_count": 1234,
   "heic_available": true,
-  "pet_detection_done": false
+  "pet_detection_done": false,
+  "phash_progress": { "done": 1234, "total": 1234, "running": false },
+  "clip_cap": 200000,
+  "clip_cap_status": "enabled",
+  "clip_cap_peak_mb": 0
 }
 ```
 
@@ -130,13 +143,21 @@ Library statistics: counts, sizes, format breakdown.
 **Response:**
 
 ```json
-{ "total_photos": 1234, "total_size": 5368709120, "formats": { "jpg": 900, "png": 334 } }
+{
+  "photo_count": 1234,
+  "total_count": 1240,
+  "video_count": 6,
+  "raw_count": 0,
+  "total_size": 5368709120,
+  "avg_file_size": 4329604,
+  "format_breakdown": { "jpg": 900, "png": 334 }
+}
 ```
 
 ### GET /api/v1/health
 
 Aggregated liveness + readiness in one call (db, storage, background
-workers, the operation journal, and the P4 collaborators). Lightweight by
+workers, the operation journal, and the `WebAppState` collaborators). Lightweight by
 construction — liveness only, no model probes or deep `quick_check`. Always
 returns `200`; inspect the per-check blocks for status. Filesystem paths are
 included only for the local-app owner.
@@ -145,13 +166,35 @@ included only for the local-app owner.
 
 ```json
 {
-  "db": { "ok": true, "writable": true, "schema_version": 43, "path": "…/photopicker.db" },
-  "storage": { "accessible": true, "free_gb": 812.4, "total_gb": 1862.0, "path": "…/BestPhotoPicker" },
-  "workers": { "analyze": { "alive": false }, "import": { "alive": false } },
-  "journals": { "pending": 0, "kinds": {} },
-  "collaborators": { "analysis_store": { "phash_ready": true, "generation": 3 } }
+  "status": "ok",
+  "uptime_s": 3601.2,
+  "checks": {
+    "db": { "ok": true, "writable": true, "schema_version": 44, "path": "…/photopicker.db" },
+    "storage": { "accessible": true, "error": null, "latency_ms": 0.6, "free_gb": 812.4, "total_gb": 1862.0, "path": "…/BestPhotoPicker" },
+    "workers": { "analyze": { "alive": false }, "import": { "alive": false }, "face": { "alive": false }, "clip": { "alive": false }, "export": { "alive": false } },
+    "journals": { "pending": 0, "kinds": {} },
+    "collaborators": { "analysis_store": { "phash_ready": true, "generation": 3, "...": "..." }, "caches": { "...": "..." }, "lifecycle": { "...": "..." } },
+    "phase5": { "in_flight": false, "failed": false },
+    "models": {
+      "license_blocked": {
+        "needs_license": ["insightface_scrfd_25g"],
+        "needs_reaccept": [],
+        "needs_commercial_rights": [],
+        "blocked": []
+      }
+    }
+  }
 }
 ```
+
+`checks.models.license_blocked` lists every registered model the load gate
+would refuse right now, by reason (the same decision that runs at load time;
+see `load_state` under `GET /api/v1/model-registry/entries`). It's
+informational: it includes optional models that aren't switched on or in use,
+so a fresh install lists several. It doesn't affect `status`; only a failure
+to compute it does (`"models": {"error": "License check failed"}`).
+
+`status` is `"ok"` when every check is green and `"degraded"` otherwise. Requires the auth token like every `/api/v1/*` route, so it is not usable as a tokenless container liveness probe (the Dockerfile `HEALTHCHECK` fetches a static file instead).
 
 ### GET /api/v1/health/storage
 
@@ -160,7 +203,7 @@ Check if the library storage path is accessible (useful for NAS/network drives).
 **Response:**
 
 ```json
-{ "accessible": true }
+{ "accessible": true, "error": null, "latency_ms": 0.4 }
 ```
 
 ### POST /api/v1/photos/recheck-missing
@@ -378,6 +421,12 @@ Photos with GPS coordinates for map view.
 }
 ```
 
+### GET /api/v1/photos/:photo_id
+
+Full photo record (same shape as one entry of `GET /api/v1/photos`)
+for a single photo by integer ID. Unknown ID → `404` with the standard
+error envelope.
+
 ### GET /api/v1/photos/preview
 
 Preview photos from DB before analysis is complete. Returns basic metadata for all imported photos.
@@ -390,10 +439,10 @@ Recompute the photo selection with given weights and parameters.
 |-------|------|---------|-------------|
 | `k` | int | 50 | Number of photos to select |
 | `seed` | int | 42 | Random seed for reproducibility |
-| `blur_weight` | float | 1.0 | Sharpness weight |
-| `exposure_weight` | float | 1.0 | Lighting weight |
-| `face_weight` | float | 1.0 | Face quality weight |
-| `composition_weight` | float | 1.0 | Composition weight |
+| `blur_weight` | float | config (0.30) | Sharpness weight, clamped to 0–10 |
+| `exposure_weight` | float | config (0.20) | Lighting weight, clamped to 0–10 |
+| `face_weight` | float | config (0.35) | Face quality weight, clamped to 0–10 |
+| `composition_weight` | float | config (0.15) | Composition weight, clamped to 0–10 |
 | `face_selection_boost` | float | | Boost for photos containing selected faces |
 | `sensitive_in_picks` | string | `allow` | Sensitive-photo pick policy: `allow` (compete normally) or `exclude` (filter from auto-picks; manual includes still win) |
 | `selected_faces` | int[] | `[]` | Cluster IDs of people to prioritize |
@@ -405,6 +454,7 @@ Recompute the photo selection with given weights and parameters.
 | `max_per_month` | int | | Maximum photos per month |
 | `force_include` | string[] | `[]` | Filepaths to always include |
 | `force_exclude` | string[] | `[]` | Filepaths to always exclude |
+| `start_date` / `end_date` | string | | `YYYY-MM-DD`; when both are set, only photos dated in that range compete |
 | `delta` | bool | false | Return only selection + scores (no full metadata) |
 
 ```bash
@@ -968,6 +1018,7 @@ Import photos from a source directory into the library.
 |-------|------|----------|-------------|
 | `source_dir` | string | yes | Source directory path |
 | `batch_name` | string | no | Custom batch name |
+| `import_live_photo_sidecars` | bool | no | Also import Live Photo motion sidecars (default `false`) |
 
 ```bash
 curl -X POST http://localhost:5001/api/v1/import \
@@ -1037,8 +1088,21 @@ everything from scratch. Photos are untouched.
 ### POST /api/v1/export/start
 
 Owner-only. Spawn the streaming export worker; returns 202
-immediately. Body: `{output_dir, mode, k, ...}` — `mode` is any
+immediately. Body: the same parameters as `POST /api/v1/export`
+(`outdir`, `selected_paths`, `mode`, `fmt`, …) — `mode` is any
 registered export mode (`copy` / `hardlink` / `symlink` built in).
+
+### GET /api/v1/export/modes
+
+Owner-only. List the registered per-photo export modes (built-ins plus
+any plugin-registered ones) for the export dialog. `zip` is left out —
+it is a separate "bundle into a .zip" option.
+
+**Response:**
+
+```json
+{ "modes": [ { "name": "copy", "description": "…", "builtin": true } ] }
+```
 
 ### GET /api/v1/export/progress
 
@@ -1052,6 +1116,15 @@ progress stream emits `cancelled` and closes.
 
 ## Models & Install
 
+### GET /api/v1/models/content-filter
+
+Whether automatic sensitive-photo detection is on right now — NudeNet's
+license is accepted (current terms, current use context) and its weights are
+on disk. A small call: the sidebar re-reads it after any model or license
+change instead of fetching the whole `/api/v1/status` snapshot.
+
+**Response:** `{"active": true}`
+
 ### GET /api/v1/models
 
 ML model status grouped by feature (installed, enabled, size, license).
@@ -1059,7 +1132,29 @@ ML model status grouped by feature (installed, enabled, size, license).
 ### GET /api/v1/models/pending
 
 Models not on disk yet — the downloads the next analyze would trigger.
-Powers the download-consent dialog (`{models: [...], total_mb}`).
+Powers the pre-analysis dialog.
+
+```json
+{ "models": [ { "name": "CLIP visual encoder", "size_mb": 336,
+                "host": "huggingface.co", "url": "…",
+                "legal_entry_id": "openai_clip_vit_b32_onnx",
+                "needs_acceptance": false } ],
+  "total_mb": 336,
+  "attribution": [ { "name": "Selfie segmenter", "size_mb": 0.3, "…": "…",
+                     "legal_entry_id": "mediapipe_selfie_segmenter",
+                     "needs_acceptance": true } ],
+  "attribution_mb": 0.3,
+  "blocked": [ { "legal_entry_id": "nudenet_320n", "kind": "nudity_classifier",
+                 "reason": "needs_license", "research_only": false,
+                 "default_for_kind": false, "…": "…" } ] }
+```
+
+`models` download now. `attribution` download only if the user accepts
+the attribution-licensed models in the dialog's combined step (see
+`/model-registry/acceptance/attribution-bundle`). `blocked` lists
+restricted models that need their own acceptance in Settings → Models;
+`reason` is `needs_license`, `needs_reaccept` (accepted under older
+terms) or `status_blocked`.
 
 ### POST /api/v1/models/toggle
 
@@ -1072,8 +1167,27 @@ re-downloaded later. Body: `{name}`.
 
 ### POST /api/v1/models/redownload
 
-Owner-only. Delete and re-download a model by name (recovers from a
-corrupt cache). Body: `{name}`.
+Owner-only. Re-download a model by name (recovers from a corrupt cache).
+Body: `{name}`. Status and license refusals return at once (`409`);
+otherwise the fetch runs in the background and the response is `202`
+with the job (see below). The existing file stays in place until the new
+one is downloaded and verified. A second request for the same model while
+it is still downloading joins the running job instead of starting another.
+
+### GET /api/v1/models/download-jobs/:job
+
+Owner-only. Progress of a background download started by `redownload` or
+`ensure-weights` (`job` is the key those return, e.g.
+`model:CLIP visual` or `catalog:insightface_buffalo_s`; URL-encode it).
+
+```json
+{ "job": "catalog:insightface_buffalo_s", "label": "insightface_buffalo_s",
+  "status": "running", "bytes_done": 52428800, "bytes_total": 127596032,
+  "result": null, "error": null }
+```
+
+`status` is `running`, `done` (with `result`) or `error` (with a
+user-facing `error` message). Unknown jobs return `404`.
 
 ### POST /api/v1/install/:key
 
@@ -1977,8 +2091,8 @@ third-party ML models: the click-through acceptance dialog, the
 per-user acceptance log, the use-context declaration, the
 Bring-Your-Own-Model path, and model removal with derived-data purge.
 See [model-policy](../MODEL_POLICY.md) for the policy these endpoints
-enforce, and `pm-face-embedder-spike.md` (gitignored) for the
-24-item plan.
+enforce, and [ADR 0005](adr/0005-legal-posture-and-model-registry.md)
+for the design rationale.
 
 Every mutating endpoint requires `@requires_local_app` — the LAN
 share principal cannot drive someone else's acceptance or model
@@ -1990,6 +2104,17 @@ removal. The two read endpoints (`acceptance/draft` and
 List every registered `ModelEntry`, grouped by license posture
 (permissive vs restricted). The Settings → Models picker renders
 this response.
+`runs_alongside_default` marks a supporting model that runs together
+with its kind's default (the BlazeFace detectors next to YuNet) rather
+than as a fallback; `ships_with_runtime` marks weights that come inside
+an installed library (the Haar cascade), so they are always on disk.
+`load_state` is the load gate's decision for the entry right now: `"ok"`
+(it loads), `"needs_license"` (never accepted, or you withdrew your acceptance),
+`"needs_reaccept"` (accepted under older license terms),
+`"needs_commercial_rights"` (use context is Commercial and the
+separate-rights assertion wasn't made) or `"blocked"` (the model was
+withdrawn or legally blocked in the registry — accepting can't enable it, and
+`POST /api/v1/model-registry/acceptance/confirm` refuses it with 400).
 
 **Response:**
 
@@ -2009,11 +2134,14 @@ this response.
           "group_subtitle": "No known commercial-use restriction",
           "license_summary": "OpenCV Zoo distribution under Apache 2.0…",
           "status": "available",
-          "requires_explicit_ack": false,
+          "requires_explicit_ack": true,
           "commercial_use_restriction_known": false,
           "default_for_kind": true,
-          "ack_text_kind": "canonical",
-          "expected_download_size_bytes": 232589
+          "runs_alongside_default": false,
+          "ships_with_runtime": false,
+          "ack_text_kind": "permissive_attribution",
+          "load_state": "ok",
+          "expected_download_size_bytes": 0
         }
       ]
     },
@@ -2065,7 +2193,7 @@ Read-only.
     { "id": "not_commercial", "text": "I will not use this model for commercial workflows…" }
   ],
   "separate_rights_assertion": "I have obtained separate commercial rights for…",
-  "ack_text_version": "canonical-disclaimer-v2",
+  "ack_text_version": "canonical-disclaimer-v3",
   "ack_text_sha256": "a7346a755f33a9a4b1a6e4a08bcddce0dfca976b63baa15c2139254c1d00c5e5",
   "use_context_text_version": "use-context-v1",
   "use_context_text_sha256": "…",
@@ -2122,6 +2250,34 @@ boxes, blank timestamp, restricted entry without a `terms_permalink_url`):
 { "error": "user must check every required box. Unchecked: ['not_commercial']" }
 ```
 
+### GET /api/v1/model-registry/acceptance/attribution-bundle
+
+The attribution-licensed models (Apache 2.0 / BSD-style: SFace, YuNet,
+the MediaPipe models, the Haar cascade) that have no current
+acceptance, plus the notice and the one checkbox the pre-analysis
+dialog shows for all of them. `models` is empty when there is nothing
+to accept. Restricted models are never listed.
+
+```json
+{ "models": [ { "id": "mediapipe_selfie_segmenter",
+                "display_name": "MediaPipe Selfie Segmenter (subject segmentation)",
+                "kind": "segmenter", "license": "Apache 2.0",
+                "terms_url": "https://storage.googleapis.com/…" } ],
+  "compressed_disclaimer": "…", "full_disclaimer": "…",
+  "biometric_responsibility_text": "…",
+  "required_checkboxes": [ { "id": "permissive_attribution_acknowledged", "text": "…" } ] }
+```
+
+### POST /api/v1/model-registry/acceptance/attribution-bundle/confirm
+
+Owner-only. Record one acceptance row per model — the same row the
+per-model dialog writes. All-or-nothing: a restricted or unknown id, or
+an unticked checkbox, returns `400` and records nothing.
+
+**Body:** `{ "model_ids": ["opencv_yunet", "…"], "checkbox_responses": { "permissive_attribution_acknowledged": true } }`
+
+**Response (200):** `{ "accepted": ["opencv_yunet", "…"] }`
+
 ### GET /api/v1/model-registry/acceptance/list
 
 Read-only view of the acceptance log. Settings → "View your
@@ -2135,7 +2291,7 @@ acceptances" renders this. Returns every row in append order
   "acceptances": [
     {
       "model_id": "insightface_buffalo_s",
-      "ack_text_version": "canonical-disclaimer-v2",
+      "ack_text_version": "canonical-disclaimer-v3",
       "ack_text_sha256": "…",
       "use_context_at_acceptance": "personal",
       "separate_rights_asserted": false,
@@ -2193,11 +2349,11 @@ picker uses this endpoint as the "Download" step in the Review → Download
 → Use → Uninstall lifecycle so the user is never surprised by a silent
 multi-MB fetch on first analyze (project convention: nothing should be silent).
 
-Synchronous — blocks until the fetch + SHA-verifying extract completes.
-The download itself routes through `bpp.utils.download.download_file`,
-which runs the policy gate before any network call, so a restricted
-entry whose license has not been accepted is refused here too.
-`@requires_local_app`.
+Status and license refusals return at once; the fetch + SHA-verifying
+extract then runs as a background job (poll
+`GET /api/v1/models/download-jobs/:job`). The download routes through
+`bpp.utils.download.download_file`, which re-runs the policy gate before
+any network call. `@requires_local_app`.
 
 **Body:**
 
@@ -2205,7 +2361,7 @@ entry whose license has not been accepted is refused here too.
 { "registry_id": "insightface_buffalo_s" }
 ```
 
-**Response (200):**
+**Response (202):** the download job; when it finishes its `result` is
 
 ```json
 { "ok": true, "size_bytes": 127596032 }
@@ -2213,9 +2369,10 @@ entry whose license has not been accepted is refused here too.
 
 Returns **400** when `registry_id` is missing or names an entry that
 has no catalog loader (e.g. an installable model with legacy
-`ModelRegistry` wiring — those go through `/api/v1/models/redownload`).
-Returns the underlying error's diagnostic message on policy refusal,
-SHA mismatch, or network failure.
+`ModelRegistry` wiring — those go through `/api/v1/models/redownload`),
+and **409** when the license is not accepted (or was accepted under older
+terms) or the entry's status forbids new downloads. A SHA mismatch or
+network failure ends the job with `status: "error"` and the reason.
 
 ### POST /api/v1/face-embedders/uninstall-weights
 
@@ -2359,9 +2516,8 @@ deleted.
 Remove a model entry and optionally purge its derived data (face
 embeddings tagged with the producing `model_id`). Both fields are
 required — the endpoint fails closed when `purge_derived` is
-omitted, matching the CLI's explicit-flag requirement (Q8). The
-GUI confirmation modal sends `purge_derived=true` unless the user
-explicitly checked the "Keep derived data" opt-out.
+omitted, matching the CLI's explicit-flag requirement (`bpp model remove`).
+No GUI screen calls this endpoint yet.
 
 **Body:**
 

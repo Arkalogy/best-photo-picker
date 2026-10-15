@@ -29,13 +29,14 @@ from __future__ import annotations
 
 import sqlite3
 
+from bpp.errors import BppError
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
 
 
 def recover_pending_face_extractions(conn: sqlite3.Connection) -> int:
-    """P3.5 — replay every pending row in face_extraction_journal.
+    """Replay every pending row in face_extraction_journal.
 
     Called from ``state_lifecycle.startup`` after the operation_journal
     recovery has run. Each pending row's run_id is passed back into
@@ -63,7 +64,7 @@ def recover_pending_face_extractions(conn: sqlite3.Connection) -> int:
     resumed = 0
     for entry in pending:
         run_id = entry["run_id"]
-        # T0.4: bound retry attempts so a deterministic failure
+        # Bound retry attempts so a deterministic failure
         # (corrupt snapshot, unrecoverable phase-7 crash) doesn't loop
         # on every server restart forever. Pre-check before incrementing
         # so the count reflects "attempts so far," not "this attempt."
@@ -123,6 +124,9 @@ def recover_pending_face_extractions(conn: sqlite3.Connection) -> int:
             )
             resumed += 1
             log.info("Recovery: resumed face extraction run %s to completion", run_id)
+        except BppError as e:
+            # A deliberate stop (model changed or unavailable), not a crash.
+            log.warning("Recovery: face extraction run %s stopped: %s", run_id, e.user_message)
         except Exception:
             log.warning(
                 "Recovery: face extraction run %s failed mid-resume "
@@ -160,7 +164,7 @@ def register_face_clustering_recovery() -> None:
         try:
             from bpp.db.smart_albums import get_affected_album_types, refresh_smart_albums
 
-            # L5: same scope as the post-clustering refresh in
+            # Same scope as the post-clustering refresh in
             # _extract_faces — only cluster-state-derived kinds.
             refresh_smart_albums(
                 conn,
@@ -196,7 +200,7 @@ def register_face_extraction_retry_recovery(library_path: str | None = None) -> 
     right answer there because deleting the breadcrumb would silently
     lose the "face data is in a half-state" signal.
 
-    P1 — ``library_path`` (optional, but passed by the state lifecycle):
+    ``library_path`` (optional, but passed by the state lifecycle):
     when provided, the handler is wrapped with
     :func:`bpp.db.journal.library_bound_recovery` so a switch_library
     between registration and recovery refuses to fire the wrong

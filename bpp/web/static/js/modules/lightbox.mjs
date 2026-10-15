@@ -235,19 +235,9 @@ document.addEventListener("keydown", (e) => {
   }
   if (_libPickerOpen) return;
   if (e.key === "Escape") {
-    // The model-terms acceptance dialog (Settings → Models → Review &
-    // accept) stacks ON TOP of the settings overlay and owns ESC while
-    // it's up. This handler runs before the dialog's own ESC handler, so
-    // without this guard it would close the settings overlay underneath —
-    // dropping the user all the way to the home grid instead of back to
-    // Settings. Yield and let the dialog's handler close just the dialog.
-    if (
-      document
-        .getElementById("fe-acceptance-overlay")
-        ?.classList.contains("visible")
-    ) {
-      return;
-    }
+    // The model picker's dialog, ⋯ menus and ⓘ popovers handle their own
+    // ESC in the capture phase (face-embedders-popover.mjs) and stop it,
+    // so ESC only reaches this handler when none of them is open.
     const cardMenu = document.getElementById("card-ctx-menu");
     if (cardMenu && !cardMenu.classList.contains("hidden")) {
       win.hideCardCtxMenu?.();

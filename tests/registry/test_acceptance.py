@@ -1,22 +1,22 @@
-"""Batch 4 acceptance-flow tests.
+"""Acceptance-flow tests.
 
 These pin the contracts every consumer (HTML dialog, CLI prompt,
-Flask endpoint, Batch-5 hard-block gate) relies on:
+Flask endpoint, commercial-mode hard-block gate) relies on:
 
 * The :class:`AcceptanceDraft` carries every string the dialog
   must render and every checkbox the user must answer.
-* :func:`confirm_acceptance` enforces the legal-review-mandated
+* :func:`confirm_acceptance` enforces the required
   four-checkbox gate (all required, all true) and persists every
-  evidentiary field.
+  audit field.
 * :func:`is_acceptance_valid_for` returns ``True`` only when the
   user accepted the exact wording currently active. A wording
   change invalidates older acceptances and re-prompts.
 * The acceptance-log file lives outside the library directory and
   honors ``BPP_ACCEPTANCE_LOG_PATH``.
-* Trap T6: separate-rights assertion is per-model.
-* Trap T5: commercial-use definition is rendered inside the
+* The separate-rights assertion is per-model.
+* The commercial-use definition is rendered inside the
   acceptance flow.
-* Item 13: biometric-responsibility text is part of the dialog
+* The biometric-responsibility text is part of the dialog
   payload.
 """
 
@@ -28,6 +28,7 @@ from pathlib import Path
 import pytest
 
 from bpp.registry import (
+    CANONICAL_DISCLAIMER_VERSION,
     AcceptanceError,
     LicenseClass,
     ModelEntry,
@@ -83,7 +84,7 @@ def _make_restricted_entry(entry_id: str = "test_restricted") -> ModelEntry:
         terms_retrieved_at="2026-06-02",
         license_summary="Test restricted entry — non-commercial only",
         requires_explicit_ack=True,
-        ack_text_version="canonical-disclaimer-v2",
+        ack_text_version=CANONICAL_DISCLAIMER_VERSION,
         ack_text_sha256=canonical_disclaimer_sha256(),
         upstream_claimed_license_class=LicenseClass.RESEARCH_NON_COMMERCIAL,
         commercial_use_restriction_known=True,
@@ -107,7 +108,7 @@ def _make_permissive_entry(entry_id: str = "test_permissive") -> ModelEntry:
         terms_retrieved_at="2026-06-02",
         license_summary="Test permissive entry",
         requires_explicit_ack=False,
-        ack_text_version="canonical-disclaimer-v2",
+        ack_text_version=CANONICAL_DISCLAIMER_VERSION,
         ack_text_sha256=canonical_disclaimer_sha256(),
         upstream_claimed_license_class=LicenseClass.APACHE_2_0,
         commercial_use_restriction_known=False,
@@ -124,10 +125,9 @@ def _make_permissive_entry(entry_id: str = "test_permissive") -> ModelEntry:
 
 
 class TestAcceptanceDraft:
-    """The dialog payload carries every legally-required text. Trap
-    T5 (commercial-use definition), item 13 (biometric
-    responsibility), and trap T6 (per-model rights assertion) all
-    appear on the draft."""
+    """The dialog payload carries every required text: the
+    commercial-use definition, the biometric-responsibility text,
+    and the per-model rights assertion all appear on the draft."""
 
     def test_draft_contains_required_checkboxes(self) -> None:
         entry = _make_restricted_entry()
@@ -243,7 +243,7 @@ class TestConfirmAcceptance:
     def test_per_checkbox_responses_persist_on_acceptance_row(
         self, isolated_log_path: Path
     ) -> None:
-        """Item 5 evidentiary chain: each required checkbox the user
+        """Audit trail: each required checkbox the user
         engaged with must be recorded individually so a future audit
         can prove "user clicked checkbox #3" not just "user submitted
         a valid form"."""
@@ -324,7 +324,7 @@ class TestConfirmAcceptance:
         assert rows[0].checkbox_responses == {}
 
 
-# ── terms_permalink_url evidentiary chain ──
+# ── terms_permalink_url audit trail ──
 
 
 class TestPermalinkValidation:
@@ -412,7 +412,7 @@ class TestPermalinkValidation:
             "These restricted-license builtins lack a "
             "terms_permalink_url: " + ", ".join(missing) + ". "
             "Pin the upstream LICENSE URL to a specific commit SHA "
-            "so acceptance rows record a stable evidentiary URL."
+            "so acceptance rows record a stable audit URL."
         )
 
 
@@ -420,7 +420,7 @@ class TestPermalinkValidation:
 
 
 class TestIsAcceptanceValidFor:
-    """The Batch-5 hard-block gate uses this to decide whether to let
+    """The commercial-mode hard-block gate uses this to decide whether to let
     a restricted model load. Wording change invalidates older
     acceptances; permissive models trivially pass."""
 
@@ -635,7 +635,7 @@ class TestUtcNowIso:
         assert stamp.endswith("+00:00")
 
 
-# ── File-system privacy (item 6 + privacy-by-design) ──
+# ── File-system privacy (privacy-by-design) ──
 
 
 import os  # noqa: E402  (deferred to keep import section clean)

@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * Protection F — safeRender boundary tests.
+ * safeRender boundary tests.
  *
  * What this pins
  * --------------
@@ -119,7 +119,7 @@ describe("_safeRenderReload", () => {
   });
 });
 
-describe("registerSectionLabel (plugin extensibility — P-07)", () => {
+describe("registerSectionLabel (plugin extensibility)", () => {
   test("a plugin-registered section uses its registered label in the sentinel", async () => {
     // Plugin author registers a section at startup, then routes its
     // loader through wrapSectionLoader. The retry-pill message must

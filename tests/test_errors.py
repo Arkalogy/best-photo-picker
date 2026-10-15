@@ -1,4 +1,4 @@
-"""P7 — :class:`BppError` hierarchy + structured response envelope."""
+""":class:`BppError` hierarchy + structured response envelope."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from bpp.errors import (
 )
 
 
-# Spawn-friendly module-level target for T1.5 cross-process pickle test.
+# Spawn-friendly module-level target for the cross-process pickle test.
 # Nested-function targets fail with AttributeError under spawn because
 # the start method re-imports this module by name and looks the target
 # up there.
@@ -82,7 +82,7 @@ class TestSubclasses:
 
 
 class TestVirtualSubclasses:
-    """The five pre-P7 exception classes are virtual subclasses —
+    """The five legacy exception classes are virtual subclasses —
     ``isinstance(e, BppError)`` returns True even though they don't
     actually subclass BppError. This makes the migration to
     ``except BppError`` safe without touching their existing raisers
@@ -143,11 +143,11 @@ class TestEnvelopeShape:
         assert envelope["context"] == {"primary": 1, "target": 2}
 
 
-# ── T1.5: pickle round-trip — BppError subclasses across subprocess boundary ──
+# ── Pickle round-trip — BppError subclasses across subprocess boundary ──
 
 
 class TestBppErrorPickling:
-    """T1.5: BppError subclasses must survive pickle so a subprocess
+    """BppError subclasses must survive pickle so a subprocess
     worker can raise one and the parent re-raises it identically.
 
     A BppError subclass with extra ``__init__`` parameters that doesn't
@@ -254,19 +254,19 @@ class TestBppErrorPickling:
         assert restored.cap == 10000
 
 
-# ── T1.6: MRO check for the multi-base legacy embedding-cap classes ──
+# ── MRO check for the multi-base legacy embedding-cap classes ──
 
 
 class TestEmbeddingCapMRO:
-    """T1.6: ``FaceEmbeddingsTooLarge(_ResourceExhaustedError, RuntimeError)``
+    """``FaceEmbeddingsTooLarge(_ResourceExhaustedError, RuntimeError)``
     and the matching CLIP class use multiple inheritance to keep
     ``except RuntimeError`` callers working while also being a
     :class:`BppError` subclass. The MRO determines:
 
     * which ``__init__`` runs on construction
     * which ``http_status`` / ``code`` get inherited
-    * whether ``isinstance(obj, RuntimeError)`` is True (pre-P7 callers)
-    * whether ``isinstance(obj, BppError)`` is True (post-P7 callers)
+    * whether ``isinstance(obj, RuntimeError)`` is True (legacy callers)
+    * whether ``isinstance(obj, BppError)`` is True (newer callers)
 
     A future refactor that swaps the base order, or replaces
     ``_ResourceExhaustedError`` with a non-Exception mixin, would
@@ -284,7 +284,7 @@ class TestEmbeddingCapMRO:
         )
         assert BppError in mro, "must be catchable as BppError"
         assert RuntimeError in mro, (
-            "pre-P7 ``except RuntimeError`` callers must keep working — "
+            "legacy ``except RuntimeError`` callers must keep working — "
             "this is the back-compat contract"
         )
         # Cross-check: dual-isinstance contract.

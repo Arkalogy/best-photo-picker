@@ -1,4 +1,4 @@
-"""P2 — BoundedSubprocessRunner machinery.
+"""BoundedSubprocessRunner machinery.
 
 Tests live below the actual scoring/face-extract integration tests in
 ``test_scoring_subprocess.py`` and ``test_cancel_propagation.py``;
@@ -261,7 +261,7 @@ class TestCancellation:
 
     def test_thread_cancellation_bridged_to_child(self):
         """ThreadCancellation is not picklable; runner must bridge to
-        an mp.Event via mirror thread (P1 contract)."""
+        an mp.Event via mirror thread (cancellation contract)."""
         runner = BoundedSubprocessRunner(_CountingPhase(child_fn=_child_polls_cancel_then_emits))
         token = ThreadCancellation()
         token.set()
@@ -293,7 +293,7 @@ class TestCancellation:
         assert state["count"] == 2
 
     def test_bridge_thread_does_not_leak_after_natural_completion(self):
-        """T1.2: a successful run with a non-mp cancel_event (e.g. a
+        """A successful run with a non-mp cancel_event (e.g. a
         ThreadCancellation that NEVER fires) historically spawned a
         mirror-bridge daemon that polled forever — the daemon-thread
         flag didn't help because Flask's parent stays alive across
@@ -333,7 +333,7 @@ class TestCancellation:
         raise AssertionError(
             f"BoundedSubprocessRunner leaked {len(leaked) - bridges_before} "
             f"cancel-token-mirror thread(s) after natural completion "
-            f"(T1.2 — fixed by stop_event in _prepare_cancel_event)"
+            f"(fixed by stop_event in _prepare_cancel_event)"
         )
 
 

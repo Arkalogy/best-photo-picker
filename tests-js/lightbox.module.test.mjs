@@ -369,7 +369,7 @@ describe("updateLightboxExif", () => {
     });
     const html = document.getElementById("lb-exif")?.innerHTML || "";
     expect(html).toContain("Apple iPhone 14");
-    // Panel-cleanup item 3: one "Info" section, coordinates live on the
+    // Panel cleanup: one "Info" section, coordinates live on the
     // map (tooltip), never as a text row.
     expect(html).toContain("Info");
     expect(html).not.toContain("37.7000, -122.4000");
@@ -649,7 +649,7 @@ describe("_lbTogglePanel (mobile bottom sheet)", () => {
   });
 });
 
-describe("R8-M7 — picker listener cleanup registry", () => {
+describe("Picker listener cleanup registry", () => {
   // Source-scan regression for the cleanup-registry pattern. Any
   // future picker that registers document-level listeners must hand
   // its teardown to `_lbActiveCleanups` so `closeLightbox` can drain

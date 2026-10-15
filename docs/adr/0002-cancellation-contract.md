@@ -1,25 +1,28 @@
 # ADR 0002 — Cancellation contract
 
-**Status.** Proposed (P0). Locks the shape that P1 implements.
+**Status.** Accepted. Implemented in `bpp/utils/cancel.py`; the
+mirror-thread bridge lives in `BoundedSubprocessRunner` (ADR 0001), and
+recovery handlers in `bpp/web/face_recovery.py` take the captured
+`library_path`. Inside the face-extraction child, phases still poll a
+`cancellation_check` callable derived from the token.
 
-**Context.** The audit found three different cancellation styles in the
-codebase: `threading.Event` in `BackgroundWorker._cancelled`, a
+**Context.** Before this ADR the codebase had three different
+cancellation styles: `threading.Event` in `BackgroundWorker._cancelled`, a
 `multiprocessing.Event` passed into the scoring subprocess child, and a
 raw `Callable[[], bool]` named `cancellation_check` inside
 `extract_and_cluster_faces`. Worse:
 
-- `run_face_extraction_subprocess` does NOT propagate the cancel signal
-  into the child (analyze_face_extract.py:323–388). The cancel button
-  in the UI stops emitting *visible* progress but the child runs to
-  completion.
-- The chunk loop in `run_face_extraction_subprocess` (analyze_face_extract.py:347+)
-  has no cancel check between chunks.
-- Recovery handlers in `face_worker.py:684` close over `get_ctx_or_none`,
-  not over a captured library identity. After `switch_library`, an
-  in-flight recovery for the OLD library writes into the NEW library's
-  DB. (This is a real data-corruption hole, not just a cancel issue.)
+- `run_face_extraction_subprocess` did NOT propagate the cancel signal
+  into the child. The cancel button in the UI stopped emitting *visible*
+  progress but the child ran to completion.
+- The chunk loop in `run_face_extraction_subprocess` had no cancel
+  check between chunks.
+- Recovery handlers closed over `get_ctx_or_none`, not over a captured
+  library identity. After `switch_library`, an in-flight recovery for
+  the OLD library could write into the NEW library's
+  DB. (This was a real data-corruption hole, not just a cancel issue.)
 
-**Decision.** P1 ships `bpp/utils/cancel.py` with a single
+**Decision.** Ship `bpp/utils/cancel.py` with a single
 `CancellationToken` protocol:
 
 ```python
@@ -70,4 +73,5 @@ short-circuits with a log warning if `ctx.library_path != library_path`.
 **Out of scope.**
 - Killing in-flight HTTP requests on cancel.
 - Cancellation of `ProcessPoolExecutor` workers spawned *inside* the
-  face-extract subprocess (different problem — covered by P3).
+  face-extract subprocess (a different problem, handled by the
+  face-extraction phases themselves).

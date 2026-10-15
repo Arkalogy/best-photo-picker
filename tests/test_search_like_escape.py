@@ -1,4 +1,4 @@
-"""TDD tests for M-6: LIKE queries must escape % and _ wildcards."""
+"""TDD tests: LIKE queries must escape % and _ wildcards."""
 
 from __future__ import annotations
 

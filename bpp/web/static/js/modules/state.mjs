@@ -53,6 +53,7 @@ const _STATE_SCHEMA = {
   faceRecognitionAvailable: false,
   faceInstallable: false,
   nudenetAvailable: false,
+  nudenetActive: false,
   petsAvailable: false,
   sidebarFaceSort: "count",
   _dismissedCount: 0,

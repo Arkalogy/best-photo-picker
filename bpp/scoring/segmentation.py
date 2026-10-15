@@ -30,7 +30,7 @@ _MODEL_DIR = str(_models_dir())
 # Why this one: float16 quantised "latest" — small (~1MB), CPU
 #         realtime. Despite the name, it works on any human-subject
 #         photo, not just selfies.
-# License: Apache 2.0 (MediaPipe).
+# License: see the bpp.registry entry ``mediapipe_selfie_segmenter``.
 # To bump: same `/latest/` pattern as other MediaPipe models —
 #         refresh SHA when Google rotates the artifact.
 _SEGMENTER_PATH = os.path.join(_MODEL_DIR, "selfie_segmenter.tflite")
@@ -61,7 +61,7 @@ _segmenter = ModelSingleton(
     model_url=_SEGMENTER_URL,
     model_sha256=_SEGMENTER_SHA256,
     create_fn=_create_segmenter,
-    registry_id=None,  # ancillary mediapipe segmenter, no licensing concern
+    registry_id="mediapipe_selfie_segmenter",
     import_check=lambda: __import__("mediapipe"),
 )
 
@@ -75,7 +75,7 @@ def ensure_segmenter_model() -> list[str]:
     """Pre-download segmenter model. Returns list of warnings."""
     warnings = []
     path = _segmenter.ensure_model()
-    if path is None:
+    if path is None and not _segmenter.license_blocked():
         warnings.append("Selfie segmenter unavailable — subject composition scoring disabled")
     return warnings
 

@@ -1,12 +1,12 @@
 """Import-cycle gate — fails fast if any pytest discovery would dead-lock
 on a circular module load.
 
-P0 of refactor-plan.md. During the v0.1 split I introduced several
-lazy-import workarounds to break cycles (smart_album_people pulls
+The v0.1 module split introduced several lazy-import
+workarounds to break cycles (smart_album_people pulls
 _ensure_smart_album back from smart_albums at call time;
 photos_lifecycle pulls PHOTO_COLS_SLIM from photos at call time;
 schema_migrate pulls SCHEMA_VERSION from schema at call time). The
-lazy-import band-aid works but each one is a code smell — a P3/P4
+lazy-import band-aid works but each one is a code smell — a later
 refactor that re-introduces a top-level cycle won't show up as a
 test failure until something actually imports the new combination.
 

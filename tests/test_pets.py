@@ -36,7 +36,7 @@ class TestModelManagement:
         assert "bpp" in model_dir
 
     def test_ensure_model_skips_download_if_exists(self, tmp_path, monkeypatch):
-        """Post-R5-H3, the cached file is SHA-verified before reuse —
+        """The cached file is SHA-verified before reuse —
         a tampered cache now raises ModelIntegrityError. Pin
         _MODEL_SHA256 to the test bytes so verification passes; the
         path under test is still "existing cache reused without

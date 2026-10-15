@@ -653,6 +653,47 @@ describe("_deriveRowState — lifecycle is exactly one of the 8 enum values", ()
   }
 });
 
+describe("_deriveRowState — supporting models", () => {
+  test("a model that runs alongside the default reads Running, not Backup", () => {
+    _seedFaceEmbedderStateForTests({
+      activeFaceMethod: "sface",
+      requiresAckIds: ["mediapipe_blazeface_full_range"],
+      acceptedIds: ["mediapipe_blazeface_full_range"],
+    });
+    const state = _deriveRowState(
+      {
+        id: "mediapipe_blazeface_full_range",
+        kind: "face_detector",
+        requires_explicit_ack: true,
+        default_for_kind: false,
+        runs_alongside_default: true,
+      },
+      { status: "ready", files: [{ name: "BlazeFace full-range", exists: true }] }
+    );
+    expect(state.lifecycle).toBe("running");
+  });
+
+  test("weights shipped inside a library count as on disk", () => {
+    _seedFaceEmbedderStateForTests({
+      activeFaceMethod: "sface",
+      requiresAckIds: ["opencv_haar_frontalface"],
+      acceptedIds: ["opencv_haar_frontalface"],
+    });
+    const state = _deriveRowState(
+      {
+        id: "opencv_haar_frontalface",
+        kind: "face_detector",
+        requires_explicit_ack: true,
+        default_for_kind: false,
+        ships_with_runtime: true,
+      },
+      undefined
+    );
+    expect(state.onDisk).toBe(true);
+    expect(state.lifecycle).toBe("backup-available");
+  });
+});
+
 describe("status cell + menu agree (via shared lifecycle)", () => {
   // Single integration test per lifecycle value: seed the inputs that
   // produce that lifecycle, render the row, and check the visible
@@ -1068,7 +1109,13 @@ describe("redownloadFaceEmbedderEntry — progress + error surfacing", () => {
   test("success posts the file name and toasts completion", async () => {
     seedRow();
     apiFetchMock.mockReset();
-    apiFetchMock.mockResolvedValue({});
+    apiFetchMock.mockImplementation((/** @type {string} */ url) =>
+      Promise.resolve(
+        url === "/api/v1/models/redownload"
+          ? { job: "model:x.onnx", status: "running" }
+          : { status: "done", result: {} }
+      )
+    );
 
     await redownloadFaceEmbedderEntry("x", "X model");
 

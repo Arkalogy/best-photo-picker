@@ -112,7 +112,7 @@ def api_faces_for_photo(path_hash: str) -> tuple[Response, int]:
 
     # Compute detection image dimensions for percentage-based bbox.
     # Each face row records the detector input size it was extracted at
-    # (v40 / Bug #9 hardening). The bbox values are in that coordinate
+    # (v40 coordinate-space hardening). The bbox values are in that coordinate
     # space, so we reconstruct dimensions per row using the row's own
     # extraction_max_long_side, NOT the live config — a config change
     # mid-library would otherwise silently shift every stored overlay.
@@ -216,7 +216,7 @@ def api_face_crop(path_hash: str, face_index: int) -> Response | tuple[Response,
 
     crop_dir = ctx.dirs["face_crops"]
     os.makedirs(crop_dir, exist_ok=True)
-    # Use the detector size the row was extracted at (v40 / Bug #9).
+    # Use the detector size the row was extracted at (v40).
     # Pre-v40 rows have NULL → fall back to current config.
     max_long_side = row["extraction_max_long_side"]
     if max_long_side is None:

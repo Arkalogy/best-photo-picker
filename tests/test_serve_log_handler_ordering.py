@@ -1,7 +1,7 @@
 """Regression gate: in `do_serve` the file-log handler must be attached
 BEFORE `create_app` runs.
 
-Bug surfaced during UAT (2026-06-01). The Phase 5 daemon thread is
+Bug surfaced during manual testing. The Phase 5 daemon thread is
 spawned inside `init_app_db()` which runs during `create_app()`. The
 daemon immediately emits a `log.info("Phase 5 backfill starting ...")`
 line. Before this fix, `add_file_handler()` was called after

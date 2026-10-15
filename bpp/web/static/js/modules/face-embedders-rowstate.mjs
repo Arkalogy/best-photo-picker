@@ -13,6 +13,8 @@ import { feState } from "./face-embedders-state.mjs";
 import { _formatBytes } from "./format-helpers.mjs";
 import { escapeAttr, esc } from "./text-format.mjs";
 
+// Status + size cells live in face-embedders-cells.mjs (500-LOC cap).
+
 /**
  * Map registry id → ``face_embedding_method`` setting value. Only
  * face_embedder entries have a setting value because the analyze
@@ -98,6 +100,9 @@ export const ROW_LIFECYCLE = Object.freeze({
  *   restricted: boolean,
  *   accepted: boolean,
  *   licenseBlocked: boolean,
+ *   needsReaccept: boolean,
+ *   needsCommercialRights: boolean,
+ *   unavailable: boolean,
  *   onDisk: boolean,
  *   isCatalog: boolean,
  *   isCatalogEntry: boolean,
@@ -123,15 +128,34 @@ export function _deriveRowState(entry, install) {
   //     the registry is THE one the runtime uses. Treat that as
   //     picked so DEFAULT-marked rows read "Running" instead of
   //     the misleading "Ready" once their weights arrive.
+  //   * Supporting models that run together with the default (the
+  //     BlazeFace detectors next to YuNet) are in use too, not backups.
   const isPicked =
     (isFaceEmbedder &&
       methodValue !== undefined &&
       methodValue === feState.activeFaceMethod) ||
-    (!isFaceEmbedder && entry?.default_for_kind === true);
+    (!isFaceEmbedder &&
+      (entry?.default_for_kind === true || entry?.runs_alongside_default === true));
 
   const restricted = entry?.requires_explicit_ack === true;
   const accepted = feState.acceptedIds.has(entry?.id);
-  const licenseBlocked = restricted && !accepted;
+  // The server's load-gate decision, when it sends one, is the truth:
+  // it also covers commercial use without the rights assertion and
+  // withdrawn / legally blocked entries, which the acceptance list
+  // can't see. Older servers: fall back to the acceptance list.
+  const loadState = entry?.load_state;
+  const licenseBlocked = loadState ? loadState !== "ok" : restricted && !accepted;
+  // Accepted once, but under an older license text — the load gate
+  // refuses it, so it is NOT accepted; flag it so the row says
+  // "re-accept" instead of a generic "needs license".
+  const needsReaccept = loadState
+    ? loadState === "needs_reaccept"
+    : licenseBlocked && feState.reacceptIds.has(entry?.id);
+  // Accepted, but the use context is Commercial and the separate-rights
+  // assertion wasn't made — the dialog (in Commercial mode) asks for it.
+  const needsCommercialRights = loadState === "needs_commercial_rights";
+  // Withdrawn or legally blocked: accepting can't make it run.
+  const unavailable = loadState === "blocked";
 
   const files = Array.isArray(install?.files) ? install.files : [];
   const hasDownloadable = files.some((f) => f && f.name);
@@ -149,7 +173,9 @@ export function _deriveRowState(entry, install) {
   // so consult it regardless of whether a legacy record is attached.
   // The old guard ignored it whenever a fileless legacy row existed,
   // leaving LaMa / NudeNet stuck at "Not downloaded" even once fetched.
-  const onDisk = filesOnDisk || catalogOnDisk;
+  // Weights shipped inside an installed library (the Haar cascade in
+  // opencv-python) are always present.
+  const onDisk = filesOnDisk || catalogOnDisk || entry?.ships_with_runtime === true;
 
   // Lifecycle: exactly one value. Order matters — the picked-row
   // states take priority over the not-picked equivalents because
@@ -199,6 +225,9 @@ export function _deriveRowState(entry, install) {
     restricted,
     accepted,
     licenseBlocked,
+    needsReaccept,
+    needsCommercialRights,
+    unavailable,
     onDisk,
     isCatalog,
     isCatalogEntry,
@@ -216,113 +245,6 @@ export function _deriveRowState(entry, install) {
         ? entry.expected_download_size_bytes
         : 0,
   };
-}
-
-// ── Status cell ─────────────────────────────────────────────────────
-
-//: Lifecycle → status badge mapping. One row per lifecycle value.
-//: When you add a new lifecycle, add an entry here.
-const _STATUS_BY_LIFECYCLE = {
-  [ROW_LIFECYCLE.RUNNING]: {
-    main: "Running",
-    sub: null,
-    cls: "fe-status-active",
-    tip: "This is your pick AND its weights are on this device. It's what runs at analyze time.",
-  },
-  [ROW_LIFECYCLE.PICKED_NEEDS_DOWNLOAD]: {
-    main: "Can’t run",
-    sub: "needs download",
-    cls: "fe-status-warn",
-    tip: "This is your pick, but its weights aren't on this device. Open ⋯ → Download to make it run. Until then a substitute model is doing the work.",
-  },
-  [ROW_LIFECYCLE.PICKED_NEEDS_LICENSE]: {
-    main: "Can’t run",
-    sub: "needs license",
-    cls: "fe-status-warn",
-    tip: "This is your pick, but its license isn't accepted (or was withdrawn). Open ⋯ → Review the license to enable it. Until then a substitute model is doing the work.",
-  },
-  [ROW_LIFECYCLE.NEEDS_LICENSE]: {
-    main: "Needs license",
-    sub: null,
-    cls: "fe-status-warn",
-    tip: "Weights are on this device, but the license hasn't been accepted (or was withdrawn). Open ⋯ → Review the license to enable use.",
-  },
-  [ROW_LIFECYCLE.READY]: {
-    main: "Ready",
-    sub: null,
-    cls: "fe-status-ok",
-    tip: "Downloaded and ready. Open ⋯ → “Use this model” to pick it.",
-  },
-  [ROW_LIFECYCLE.BACKUP_AVAILABLE]: {
-    main: "Backup",
-    sub: "auto-fallback",
-    cls: "fe-status-muted",
-    tip: "Downloaded and available. The runtime only uses this if the primary for its kind can't load — the picker doesn't expose a manual switch.",
-  },
-  [ROW_LIFECYCLE.NEEDS_RUNTIME]: {
-    main: "Needs runtime",
-    sub: null,
-    cls: "fe-status-warn",
-    tip: "Weights are downloaded, but a runtime package is missing — open ⋯ → “Install runtime…”.",
-  },
-  [ROW_LIFECYCLE.PARTIAL]: {
-    main: "Incomplete",
-    sub: "missing files",
-    cls: "fe-status-warn",
-    tip: "Some model files are missing — open ⋯ → “Redownload” to fix.",
-  },
-  [ROW_LIFECYCLE.NOT_DOWNLOADED]: {
-    main: "Not downloaded",
-    sub: null,
-    cls: "fe-status-muted",
-    tip: "Available to download — not yet on this device.",
-  },
-};
-
-/**
- * Plain-English status label for the Status column. Drives entirely
- * off the row's lifecycle — no flag-juggling, no cross-row guessing.
- *
- * @param {ReturnType<typeof _deriveRowState>} state
- */
-export function _statusCell(state) {
-  const s = _STATUS_BY_LIFECYCLE[state.lifecycle];
-  const tipAttr = s.tip ? ` title="${escapeAttr(s.tip)}"` : "";
-  const subHtml = s.sub
-    ? `<span class="fe-status-sub">${esc(s.sub)}</span>`
-    : "";
-  return `<span class="fe-status ${s.cls}"${tipAttr}><span class="fe-status-main">${esc(s.main)}</span>${subHtml}</span>`;
-}
-
-/**
- * Render the Size column cell. Three sources, in priority order:
- *
- *   1. Actual size from install state (file on disk, known bytes).
- *   2. Registered expected download size for catalog entries. The
- *      "~" estimate marker drops once the catalog entry is on disk
- *      (state.onDisk is true even if install.size_bytes is 0,
- *      because catalog entries report on-disk via catalog_on_disk
- *      rather than a populated install record).
- *   3. Em-dash when neither is known.
- *
- * @param {ReturnType<typeof _deriveRowState>} state
- */
-export function _sizeCell(state) {
-  if (state.sizeBytes > 0) {
-    return `<span class="fe-cell-size-val">${_formatBytes(state.sizeBytes)}</span>`;
-  }
-  if (state.expectedSize > 0) {
-    // When the catalog entry's weights are on disk, the size is no
-    // longer an estimate — render with the normal size class so it
-    // visually matches the installable rows. The italic
-    // "fe-cell-size-expected" style is reserved for pre-download
-    // estimates ("~121.7 MB"), where the italic + "~" together
-    // signal "this is what you would download, not what you have."
-    const cls = state.onDisk ? "fe-cell-size-val" : "fe-cell-size-expected";
-    const prefix = state.onDisk ? "" : "~";
-    return `<span class="${cls}" title="Download size">${prefix}${_formatBytes(state.expectedSize)}</span>`;
-  }
-  return `<span class="fe-cell-size-empty">—</span>`;
 }
 
 /**
@@ -362,20 +284,35 @@ export function _buildMenuFromState(entry, state) {
        // consent to OUR license; "the model's license" pins it.
        // Once accepted, the item states the fact ("accepted ✓") but
        // stays clickable so the user can re-read the terms any time.
-      label: state.accepted
-        ? "Model’s license accepted"
-        : "Review & accept the model’s license",
+      label: state.unavailable && !state.accepted
+        ? "View the model’s license"
+        : state.needsCommercialRights
+          ? "Confirm your commercial-use rights for this model"
+          : state.accepted
+            ? "Model’s license accepted"
+            : state.needsReaccept
+              ? "Re-accept the model’s license (terms updated)"
+              : "Review & accept the model’s license",
       action: "openFaceEmbedderAcceptance",
-      args: [entry.id],
+      // Withdrawn / blocked: read-only — accepting couldn't enable it.
+      args: state.unavailable ? [entry.id, "view"] : [entry.id],
       enabled: true,
-      done: state.accepted,
+      // ✓ only when the license is fully satisfied.
+      done: state.accepted && !state.needsCommercialRights && !state.unavailable,
     });
   }
 
   // 2. Download / Redownload. Catalog entries route through a
   //    different action; installable entries hit the legacy
   //    redownload endpoint.
-  const downloadSub = downloadBlocked ? "Accept the license first" : null;
+  const acceptFirst = state.unavailable
+    ? "No longer available"
+    : state.needsCommercialRights
+      ? "Confirm commercial-use rights first"
+      : state.needsReaccept
+        ? "Re-accept the license first"
+        : "Accept the license first";
+  const downloadSub = downloadBlocked ? acceptFirst : null;
   if (state.hasDownloadable) {
     items.push({
       label: state.onDisk ? "Redownload" : "Download",
@@ -420,7 +357,7 @@ export function _buildMenuFromState(entry, state) {
     } else {
       let useSub = null;
       if (state.licenseBlocked) {
-        useSub = "Accept the license first";
+        useSub = acceptFirst;
       } else if (!state.onDisk) {
         // "Download to activate" when the picked row is the one
         // missing weights — emphasizes that the click completes a

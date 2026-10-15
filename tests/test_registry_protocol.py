@@ -1,4 +1,4 @@
-"""P5 — every plugin-target registry conforms to the shared protocol.
+"""Every plugin-target registry conforms to the shared protocol.
 
 Gate test for the unification deliverable: WorkerRegistry,
 SmartAlbumRegistry, ExportModeRegistry, DedupeStrategyRegistry all
@@ -59,7 +59,7 @@ class TestRegistryProtocolConformance:
 
     def test_canonical_list_is_non_empty(self):
         assert len(plugin_target_registries()) >= 4, (
-            "the plugin-target list collapsed below the four registries P5 unified"
+            "the plugin-target list collapsed below the four unified registries"
         )
 
     def test_registry_names_are_unique(self):

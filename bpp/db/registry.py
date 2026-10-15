@@ -17,22 +17,64 @@ def get_registry_path() -> str:
     return os.path.join(config_home, "bpp", "libraries.json")
 
 
+def _text_fields(lib: dict[str, Any]) -> dict[str, Any]:
+    """Text fields as text (they're sorted and shown): a hand-edited
+    ``null`` or number would otherwise break sorting by ``last_opened``."""
+    return {
+        **lib,
+        **{
+            k: (lib[k] if isinstance(lib[k], str) else "" if lib[k] is None else str(lib[k]))
+            for k in ("name", "last_opened", "created_at")
+            if k in lib
+        },
+    }
+
+
+def _is_intact(data: dict[str, Any]) -> bool:
+    """True when :func:`load_registry` keeps *data* as it is. A save over
+    a registry it doesn't sets the file aside first, so a library entry
+    the reader dropped is kept on disk instead of erased."""
+    libraries = data.get("libraries")
+    return (
+        isinstance(libraries, list)
+        and all(
+            isinstance(lib, dict) and isinstance(lib.get("path"), str) and _text_fields(lib) == lib
+            for lib in libraries
+        )
+        and isinstance(data.get("active"), str | None)
+    )
+
+
 def load_registry() -> dict[str, Any]:
     """Load the registry from disk. Returns default if missing or corrupted."""
-    path = get_registry_path()
-    if not os.path.exists(path):
+    from bpp.utils.json_utils import load_json_file
+
+    data = load_json_file(get_registry_path(), {}, expected_type=dict, context="library registry")
+    libraries = data.get("libraries")
+    if not isinstance(libraries, list):
         return {"libraries": [], "active": None}
-    try:
-        with open(path) as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return {"libraries": [], "active": None}
+    # Every entry is used as {"path": str, ...}; drop any that isn't.
+    data["libraries"] = [
+        _text_fields(lib)
+        for lib in libraries
+        if isinstance(lib, dict) and isinstance(lib.get("path"), str)
+    ]
+    if not isinstance(data.get("active"), str):
+        data["active"] = None
+    return data
 
 
 def save_registry(data: dict[str, Any]) -> None:
     """Atomically write the registry to disk."""
+    from bpp.utils.json_utils import set_aside_if_unreadable
+
     path = get_registry_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    # A damaged registry (or entry) the reader dropped: keep it rather
+    # than overwrite the library list without it.
+    set_aside_if_unreadable(
+        path, expected_type=dict, is_valid=_is_intact, context="library registry"
+    )
     # Write to temp file then rename for atomicity
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
     try:

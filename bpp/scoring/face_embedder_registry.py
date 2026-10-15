@@ -21,7 +21,7 @@ A plugin registers its embedder via:
         name="arcface",
         embed=my_arcface_embed,
         embedding_dim=512,
-        license_id="MIT",
+        registry_id="my_arcface",  # a ModelEntry you register_entry()'d
     ))
 
 The orchestrator in ``face_embed.extract_face_embeddings`` keeps
@@ -71,8 +71,8 @@ class FaceEmbedder:
         in DB rows so the cluster code can refuse to compare
         embeddings from different backends.
 
-    ``license_id``: SPDX-style identifier for the embedder's model
-        weights / code.
+    ``registry_id``: id of the :mod:`bpp.registry` entry for the
+        embedder's weights. The license is read from that entry.
 
     ``description``: one-line tooltip text. Optional.
     """
@@ -80,22 +80,59 @@ class FaceEmbedder:
     name: str
     embed: EmbedFn
     embedding_dim: int
-    license_id: str = ""
+    registry_id: str
     description: str = ""
+
+    @property
+    def license_label(self) -> str:
+        """Plain-English license, derived from the registry entry."""
+        from bpp.registry.labels import license_label_for
+
+        return license_label_for(self.registry_id)
 
 
 _REGISTRY: _ScoringRegistry[FaceEmbedder] = _ScoringRegistry("face embedder", _log)
 
 
-def register_embedder(embedder: FaceEmbedder) -> None:
-    """Add an embedder to the registry. Idempotent — replaces on same name."""
+#: Names of the built-in embedders. A plugin can't register under one of
+#: them: the pipeline would ignore it (or, for an embedder, tag the
+#: built-in's stored rows with the plugin's registry id).
+BUILTIN_NAMES: set[str] = set()
+
+
+def register_embedder(embedder: FaceEmbedder, *, builtin: bool = False) -> None:
+    """Add an embedder to the registry. Re-registering a name replaces it,
+    except that only built-in code (``builtin=True``) may use a
+    built-in name."""
+    if builtin:
+        BUILTIN_NAMES.add(embedder.name)
+    elif embedder.name in BUILTIN_NAMES:
+        raise ValueError(
+            f"{embedder.name!r} is a built-in face embedder name; register the "
+            "plugin under its own name."
+        )
     _log.debug(
-        "Registered face embedder %r (dim=%d, license=%s)",
+        "Registered face embedder %r (dim=%d, registry_id=%s)",
         embedder.name,
         embedder.embedding_dim,
-        embedder.license_id or "unspecified",
+        embedder.registry_id,
     )
     _REGISTRY.register(embedder, embedder.name)
+
+
+#: Size of the default (SFace / dlib) embedding, and of embeddings from
+#: an unknown method.
+DEFAULT_EMBEDDING_DIM = 128
+
+
+def embedding_dim_for(method: str | None) -> int:
+    """Number of floats an embedding made by ``method`` has — the
+    embedder's declared ``embedding_dim`` (one source for the size
+    check on write, in the startup cleanup and on read)."""
+    import bpp.scoring.face_embed  # noqa: F401 — registers the built-ins
+
+    embedder = get_embedder(method) if method else None
+    return embedder.embedding_dim if embedder is not None else DEFAULT_EMBEDDING_DIM
 
 
 def get_embedder(name: str) -> FaceEmbedder | None:

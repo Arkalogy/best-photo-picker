@@ -1,4 +1,4 @@
-"""P3.5 — per-phase journal for face extraction with SIGKILL resume.
+"""Per-phase journal for face extraction with SIGKILL resume.
 
 Pre-v37 a crash during ``extract_and_cluster_faces`` forced a full re-run
 on next startup. v37 adds the ``face_extraction_journal`` table that
@@ -59,7 +59,7 @@ PHASE_BIT_CLUSTER = 5
 PHASE_BIT_IDENTITY = 6
 ALL_PHASE_BITS = 0b1111111
 
-# T0.4 — bounded recovery retries. The recovery handler increments
+# Bounded recovery retries. The recovery handler increments
 # ``retry_count`` before each attempt; once it reaches MAX_RECOVERY_RETRIES
 # the row is force-completed with ``completed_at = GAVE_UP_SENTINEL`` so
 # subsequent startups skip it. The number is conservative — 3 attempts
@@ -70,7 +70,7 @@ GAVE_UP_SENTINEL = -1
 
 
 def _reset_table_cache() -> None:
-    """Compatibility shim — earlier P3.5 drafts memoized the table
+    """Compatibility shim — earlier drafts memoized the table
     probe by id(conn) and exposed this hook for tests. The cache was
     removed (positive AND negative caching both have stale-state
     failure modes under id recycling, observed in the full suite at
@@ -210,7 +210,7 @@ def complete_run(conn: sqlite3.Connection, run_id: str) -> None:
 def get_retry_count(conn: sqlite3.Connection, run_id: str) -> int:
     """Return the retry_count for *run_id*, or 0 if missing/no table.
 
-    T0.4. ``retry_count`` was added in schema v39; databases that
+    ``retry_count`` was added in schema v39; databases that
     haven't run that migration return 0.
     """
     if not _has_journal_table(conn):
@@ -250,10 +250,12 @@ def increment_retry_count(conn: sqlite3.Connection, run_id: str) -> int:
     return get_retry_count(conn, run_id)
 
 
-def force_complete_after_retries(conn: sqlite3.Connection, run_id: str) -> None:
+def force_complete_after_retries(
+    conn: sqlite3.Connection, run_id: str, *, reason: str | None = None
+) -> None:
     """Mark a run as "gave up" by setting completed_at = GAVE_UP_SENTINEL.
 
-    T0.4: called by the recovery handler when ``retry_count`` exceeds
+    Called by the recovery handler when ``retry_count`` exceeds
     ``MAX_RECOVERY_RETRIES``. The sentinel value lets future startups
     skip the row via the standard ``WHERE completed_at IS NULL`` filter
     without losing the diagnostic that this run never finished.
@@ -265,6 +267,9 @@ def force_complete_after_retries(conn: sqlite3.Connection, run_id: str) -> None:
         (GAVE_UP_SENTINEL, run_id),
     )
     conn.commit()
+    if reason:
+        log.info("Face extraction run_id=%s closed without finishing: %s", run_id, reason)
+        return
     log.warning(
         "Face extraction run_id=%s force-completed after %d failed recovery "
         "attempts. Manual intervention required: run Settings → Faces → Retry "
@@ -360,17 +365,11 @@ def _deserialize_snapshot(blob: str) -> PreExtractSnapshot:
     from bpp.utils.json_utils import safe_json_loads
     from bpp.web.face_extraction_phases import PreExtractSnapshot
 
-    payload = safe_json_loads(blob, {}, context="face_extraction_journal snapshot")
-    if not isinstance(payload, dict):
-        # Corrupted blob (somehow got a non-dict JSON value). Treat as
-        # absent — the orchestrator re-runs phase 1.
-        return PreExtractSnapshot(
-            stored_method=None,
-            method_changed=False,
-            old_cluster_photos=None,
-            stale_photo_ids=frozenset(),
-            dismissed_slots=frozenset(),
-        )
+    # A corrupt or non-object blob reads as {} — every field below then
+    # falls back to "absent" and the orchestrator re-runs phase 1.
+    payload = safe_json_loads(
+        blob, {}, context="face_extraction_journal snapshot", expected_type=dict
+    )
 
     raw_ocp = payload.get("old_cluster_photos")
     old_cluster_photos: dict[int, set[int]] | None = None

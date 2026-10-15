@@ -502,7 +502,7 @@ class TestMediaPathAuth:
         assert _authorize(ctx, req).decision == AuthDecision.DENY
 
 
-# ─── R6-L2: constant-time token comparison ──────────────────────────
+# ─── Constant-time token comparison ──────────────────────────
 
 
 class TestConstantTimeTokenCompare:

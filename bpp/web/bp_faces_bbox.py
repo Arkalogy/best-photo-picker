@@ -50,6 +50,7 @@ from bpp.web.face_create_helpers import (
 from bpp.web.face_create_helpers import (
     parse_create_inputs as _parse_create_inputs,
 )
+from bpp.web.face_create_helpers import require_hand_drawn_faces_supported
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx, with_face_lock
 
@@ -105,6 +106,7 @@ def api_faces_create() -> tuple[Response, int]:
         raise NotFoundError("Unknown image", path_hash=path_hash)
 
     conn = ctx.get_conn()
+    require_hand_drawn_faces_supported(conn)
     photo_id = get_photo_id_by_path(conn, filepath)
     if photo_id is None:
         raise NotFoundError("Photo not in database", filepath=filepath)
@@ -229,6 +231,7 @@ def api_faces_update_bbox() -> tuple[Response, int]:
         )
 
     conn = ctx.get_conn()
+    require_hand_drawn_faces_supported(conn)
     row = conn.execute(
         "SELECT fe.id, fe.photo_id, fe.cluster_id, p.filepath FROM face_embeddings fe "
         "JOIN photos p ON p.id = fe.photo_id WHERE fe.id=?",

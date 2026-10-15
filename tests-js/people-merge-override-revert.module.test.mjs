@@ -38,7 +38,7 @@ function stubFetch(status) {
   );
 }
 
-describe("excludePerson — optimistic override revert on failure (review CR)", () => {
+describe("excludePerson — optimistic override revert on failure", () => {
   test("success: all photos marked exclude", async () => {
     stubFetch(200);
     await excludePerson(6);
@@ -55,7 +55,7 @@ describe("excludePerson — optimistic override revert on failure (review CR)", 
   });
 });
 
-describe("includePerson — optimistic override revert on failure (review CR)", () => {
+describe("includePerson — optimistic override revert on failure", () => {
   beforeEach(() => {
     /** @type {any} */ (state).overrides = { "/a.jpg": "exclude", "/b.jpg": "exclude" };
   });

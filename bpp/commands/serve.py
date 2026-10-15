@@ -105,7 +105,7 @@ def do_serve(args: argparse.Namespace) -> int:
 
     add_file_handler(os.path.join(dirs["logs"], "server.log"))
 
-    # Protection C: full integrity check + auto-restore + auto-prune
+    # Startup integrity gate: full integrity check + auto-restore + auto-prune
     # BEFORE create_app touches the DB. If the previous shutdown was
     # ungraceful (SIGKILL mid-write — Jun-2 incident), the WAL may be
     # in a state where quick_check passes but the full integrity check

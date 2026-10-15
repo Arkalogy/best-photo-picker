@@ -201,7 +201,7 @@ describe("renderGrid", () => {
     expect(document.getElementById("photo-grid")?.textContent).toContain("No favorited photos");
   });
 
-  test("empty-state survives a subsequent vgrid.onResize() (UAT Bug #7)", () => {
+  test("empty-state survives a subsequent vgrid.onResize()", () => {
     // The bug: when a filter switch lands on items.length === 0, the
     // empty-state branch sets grid.innerHTML correctly. But vgrid still
     // holds the PREVIOUS filter's items in vgrid.items. Anything that

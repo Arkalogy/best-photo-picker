@@ -163,7 +163,7 @@ def export_selected(
         orig_name = os.path.basename(src)
         dest_name = f"{i:03d}_{orig_name}"
         dest = safe_join(selected_dir, dest_name)
-        # L-S3: progress callback fires per-photo so the UI can show
+        # Progress callback fires per-photo so the UI can show
         # determinate progress on long exports (100+ photos with
         # format conversion ran for 30-60s with no feedback before).
         # Fail-soft: a misbehaving callback can't break the export.

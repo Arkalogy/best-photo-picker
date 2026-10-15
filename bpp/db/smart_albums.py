@@ -68,7 +68,7 @@ def refresh_smart_albums(
 ) -> None:
     """Create or update smart albums.
 
-    L5: when ``kinds`` is given, only refresh those album types. Use
+    When ``kinds`` is given, only refresh those album types. Use
     this from HTTP handlers + worker callers that mutated a specific
     domain (e.g., a face merge only affects ``smart_person``; no need
     to re-walk every video / screenshot / document query). When
@@ -384,7 +384,7 @@ SmartAlbumRegistry.register(
     user_renameable=True,
     replace=True,
 )
-# L1 / review 2026-05-31: the "all" album is undeletable. Previously
+# The "all" album is undeletable. Previously
 # bp_albums.py hardcoded this check; expose it on the registry so a
 # plugin can mark its own type undeletable.
 SmartAlbumRegistry.register(
@@ -399,7 +399,7 @@ SmartAlbumRegistry.register(
 )
 
 
-# M6 / review 2026-05-31: smart_duplicates uses a UI-metadata hook for
+# smart_duplicates uses a UI-metadata hook for
 # the cluster-siblings sidebar; bp_albums.py used to hardcode the
 # dispatch. The hook receives (conn, ctx, photos, photos_data) and
 # mutates photos_data in place.
@@ -434,7 +434,9 @@ def get_smart_album_photo_ids(conn: sqlite3.Connection, album: dict[str, Any]) -
     if not rule and album.get("rule_json"):
         from bpp.utils.json_utils import safe_json_loads
 
-        rule = safe_json_loads(album["rule_json"], {}, context=f"album {album.get('id', '?')}")
+        rule = safe_json_loads(
+            album["rule_json"], {}, context=f"album {album.get('id', '?')}", expected_type=dict
+        )
     entry = SmartAlbumRegistry.get(album.get("album_type", ""))
     if entry:
         return entry[1](conn, rule)

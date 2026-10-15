@@ -1,10 +1,10 @@
-"""P4 — once-per-process deprecation warnings for legacy attribute access.
+"""Once-per-process deprecation warnings for legacy attribute access.
 
 Several ``WebAppState`` attributes moved into collaborators
 (:class:`WorkerPool`, :class:`ModelCache`, :class:`AnalysisStore`,
-:class:`LibraryLifecycle`) during P4. The audit found ~3,800 access
-sites; migrating all of them in one pass would mass-break the suite,
-so P4 ships @property delegates that keep the old reads + writes
+:class:`LibraryLifecycle`). There were ~3,800 access sites;
+migrating all of them in one pass would mass-break the suite, so the
+move ships @property delegates that keep the old reads + writes
 working.
 
 A property without a deprecation signal is silent — call sites have
@@ -16,7 +16,7 @@ Usage::
 
     class WebAppState:
         @property
-        @deprecated_attr("self.workers (P4 collaborator)")
+        @deprecated_attr("self.workers (collaborator)")
         def _workers(self) -> dict[str, BackgroundWorker]:
             return self.workers._workers
 
@@ -60,7 +60,7 @@ def deprecated_attr(
     property getter fires per process.
 
     ``new_path`` is the human-readable name of the recommended new
-    access site (e.g. ``"ctx.workers (P4 WorkerPool)"``). The log
+    access site (e.g. ``"ctx.workers (WorkerPool)"``). The log
     message includes the attribute's own ``__qualname__`` so the
     operator can see both the old name AND the new path.
 

@@ -201,7 +201,7 @@ class TestBackupDB:
         result = backup_db(db_path)
         assert result is None, "verify failure must return None"
 
-        # Quarantine file exists with the corrupt bytes. R11-M6: name
+        # Quarantine file exists with the corrupt bytes. The name
         # is now `.backup.corrupt-<UTC-timestamp>` so concurrent or
         # repeat failures don't collide on a fixed target.
         import glob as _glob
@@ -220,7 +220,7 @@ class TestBackupDB:
         assert os.path.getsize(backup_path) == good_size
 
     def test_quarantine_names_unique_within_same_second(self, db_path, monkeypatch):
-        """R12-M1: two backup verifications failing within the same
+        """Two backup verifications failing within the same
         wall-clock second must produce DISTINCT quarantine filenames.
 
         Pre-fix the suffix was `%Y%m%dT%H%M%SZ` (1 s resolution); the
@@ -291,7 +291,7 @@ class TestBackupDB:
     def test_quarantine_move_failure_is_logged_and_falls_back_to_remove(
         self, db_path, monkeypatch, caplog
     ):
-        """R10-M3: when shutil.move fails to quarantine the corrupt
+        """When shutil.move fails to quarantine the corrupt
         copy, the previous shape silently suppressed the OSError —
         operator had no breadcrumb. Now the failure is logged with
         exc_info, and a fallback `os.remove` runs so the corrupt copy
@@ -488,7 +488,7 @@ class TestPerStepMigrationBackup:
         original = conn_mod.backup_db
 
         def spy_backup(p, preserve_prev=False):
-            # R8-H4 added the `preserve_prev` kwarg; spy must accept
+            # The rotation takes a `preserve_prev` kwarg; spy must accept
             # it and pass through so the post-rotation behavior is
             # exercised end-to-end (first call rotates, subsequent
             # calls preserve `.backup.prev`).
@@ -505,7 +505,7 @@ class TestPerStepMigrationBackup:
         assert steps_run == [100, 101, 102]
         assert len(backup_calls) == 3
         assert all(c[0] == db_p for c in backup_calls)
-        # R8-H4: first call rotates (preserve_prev=False), the next
+        # First call rotates (preserve_prev=False), the next
         # two preserve the pre-migration `.backup.prev` snapshot.
         assert [c[1] for c in backup_calls] == [False, True, True]
         # The on-disk .backup verifies cleanly
@@ -653,7 +653,7 @@ class TestCheckpointWAL:
             assert os.path.getsize(wal) == 0
 
     def test_checkpoint_failure_is_logged_not_silent(self, db_path, caplog):
-        """R9-rec-H1: a failed checkpoint must leave a breadcrumb in
+        """A failed checkpoint must leave a breadcrumb in
         the log so an operator can diagnose disk-full / permission /
         corrupt-WAL issues. Pre-fix, the failure was swallowed by
         `contextlib.suppress(Exception)` with no log emission."""

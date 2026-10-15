@@ -98,8 +98,8 @@ SENSITIVE_NUDITY_THRESHOLD = 0.7
 
 # Minimum detector confidence for a pet detection to surface in any
 # user-facing view (lightbox chips, Pets view, pet smart albums). The
-# DETECTION threshold stays low (0.2 — recall for clustering), but on a
-# real library the 0.2-0.5 band was almost entirely fur-texture false
+# DETECTION threshold stays low (0.2 — recall for clustering), but in
+# testing the 0.2-0.5 band was almost entirely fur-texture false
 # positives: fur-like textures such as rugs and plush toys read as
 # "dog 43%", and most detections in that band were wrong. Stored rows are kept —
 # this floor applies at read time, so tuning it never needs a rescan.
@@ -266,3 +266,7 @@ MODEL_TOGGLE_KEYS = (
     "model_pets",
     "model_clip",
 )
+#: Switches a scoring run honors: the Settings toggles plus ones the
+#: analysis preflight sets for a single run (``model_yunet`` has no
+#: Settings switch; it's turned off when its download failed).
+RUN_TOGGLE_KEYS = (*MODEL_TOGGLE_KEYS, "model_yunet")

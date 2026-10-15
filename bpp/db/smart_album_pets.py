@@ -100,7 +100,9 @@ def _refresh_pet_albums(conn: sqlite3.Connection) -> None:
     orphan_ids = [
         album_id
         for album_id, rule_json in existing
-        if safe_json_loads(rule_json, {}, context="smart_pet album rule").get("cluster_id")
+        if safe_json_loads(rule_json, {}, context="smart_pet album rule", expected_type=dict).get(
+            "cluster_id"
+        )
         not in active_cids
     ]
     if orphan_ids:

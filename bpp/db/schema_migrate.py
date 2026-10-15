@@ -83,7 +83,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
 
     initial_version = dialect.get_user_version(conn)
 
-    # P2: refuse a DB at a NEWER schema version than this binary
+    # Refuse a DB at a NEWER schema version than this binary
     # could migrate to. Without this, the migration loop silently
     # no-ops (every step's `version >= target` short-circuit) and
     # the binary opens the DB as if it understood the schema.

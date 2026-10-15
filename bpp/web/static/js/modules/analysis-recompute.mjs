@@ -85,7 +85,7 @@ export async function doRecompute(opts) {
     : "/api/v1/recompute";
   // Responses can land out of order: on a cold load the Library recompute is
   // still in flight when the user opens an album, and its late answer (the
-  // library-wide picks) used to overwrite the album's selection (BPP-27).
+  // library-wide picks) used to overwrite the album's selection.
   // Only the newest request for the scope that's still on screen may apply.
   const _seq = (win._recomputeSeq = (win._recomputeSeq || 0) + 1);
   const _scope = win.currentAlbumId ?? null;
@@ -187,7 +187,7 @@ async function _loadAllPhotosPaginated() {
   // page so the real cap is 500k. Either bump the limit by raising one
   // of the multipliers, or surface a clear error when truncation would
   // happen — the worst outcome is a partially-loaded grid that the
-  // user can't tell is partial. D-06.
+  // user can't tell is partial.
   const MAX_PAGES = 100;
   let offset = 0;
   let truncated = false;

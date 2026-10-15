@@ -408,7 +408,7 @@ describe("export modal", () => {
   });
 });
 
-describe("_populateClearPhotoCount (M-S4)", () => {
+describe("_populateClearPhotoCount", () => {
   test("renders warning with formatted total + correct pluralization", async () => {
     const fetchMock = vi.fn(
       async () =>

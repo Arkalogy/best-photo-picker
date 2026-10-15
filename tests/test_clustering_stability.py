@@ -439,7 +439,7 @@ class TestExtractAndClusterPipeline:
     def test_pipeline_different_as_completed_order(self, tmp_path):
         """Simulate the worker pool returning futures in different orders.
 
-        T4: the orchestrator switched from ``as_completed`` to
+        The orchestrator switched from ``as_completed`` to
         ``wait(FIRST_COMPLETED)`` for bounded in-flight submission.
         We patch ``wait`` instead and shuffle the completion order in
         each return wave to prove cluster assignments are still stable.
@@ -478,7 +478,7 @@ class TestExtractAndClusterPipeline:
                     side_effect=mock_extract,
                 ),
                 patch(
-                    # T4: orchestrator now uses wait + FIRST_COMPLETED
+                    # The orchestrator now uses wait + FIRST_COMPLETED
                     # for bounded in-flight submission. Phase 5 was
                     # extracted into its own module during the 500-LOC
                     # split — the wait import lives in face_extraction_phase5.

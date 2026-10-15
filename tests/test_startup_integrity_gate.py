@@ -1,11 +1,11 @@
-"""Tests for Protection C — startup integrity gate.
+"""Tests for the startup integrity gate.
 
 The Jun-2 demo lib incident: ``PRAGMA quick_check`` returned "ok" but
 ``PRAGMA integrity_check`` revealed dozens of "never used pages"
 debris. The full check is the diagnostic; the quick check is just a
 sanity probe.
 
-Protection C adds three helpers in ``bpp/db/connection.py``:
+The startup integrity gate adds three helpers in ``bpp/db/connection.py``:
   * ``full_integrity_check`` — runs the full PRAGMA, returns
     ``(ok, [errors])``.
   * ``prune_corrupt_face_embeddings`` — DELETEs rows whose embedding
@@ -146,7 +146,7 @@ class TestPruneCorruptFaceEmbeddings:
         assert prune_corrupt_face_embeddings(str(tmp_path / "nope.db")) == 0
 
     def test_prunes_null_embeddings(self, tmp_path: Path) -> None:
-        """P-05: NULL embeddings shouldn't exist per the schema, but
+        """NULL embeddings shouldn't exist per the schema, but
         a SIGKILL-mid-write can leave one. Sweep them in the same
         pass as wrong-size rows so face counts match what the app
         actually reads."""
@@ -178,7 +178,7 @@ class TestPruneCorruptFaceEmbeddings:
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """P-04: the prune-summary log line should name the affected
+        """The prune-summary log line should name the affected
         photos so a user noticing missing face data can grep the log
         and find the cause instead of asking support to dig in the DB."""
         db = tmp_path / "lib.db"
@@ -310,7 +310,7 @@ class TestRestoreFromBackupIfCorrupt:
         assert restore_from_backup_if_corrupt(str(tmp_path / "absent.db")) is None
 
     def test_db_path_is_never_absent_during_swap(self, tmp_path: Path) -> None:
-        """P-11: the old sequence ``move(db_path → corrupt)`` followed
+        """The old sequence ``move(db_path → corrupt)`` followed
         by ``copy(backup → db_path)`` left a ~ms window where ``db_path``
         didn't exist. A concurrent opener (a plugin acting on
         on_db_restore, a future admin UI calling this directly) would

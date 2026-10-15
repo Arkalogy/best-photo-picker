@@ -9,15 +9,17 @@
 
 # Image processing
 # max_long_side: 1024       # Downscale long side to this before analysis
-# thumbnail_size: 64        # Size for perceptual hash thumbnails
+# thumbnail_size: 64        # Grid thumbnail size in the web UI (px)
 
 # Deduplication
-# hash_distance_threshold: 10  # dHash Hamming distance threshold for "same" image
-# time_window_seconds: 15      # Cluster burst photos within this time window
+# hash_distance_threshold: 20         # dHash/aHash Hamming distance for "same" image within the time window
+# time_window_seconds: 30             # Max seconds between shots to count as one burst
+# global_hash_distance_threshold: 10  # dHash/aHash Hamming distance for duplicates across the whole library
 
 # Diversity
 # max_per_day: 3            # Max selected photos per calendar day
 # min_per_month: 1          # Try to include at least 1 per month
+# max_per_month: 0          # Max selected photos per month (0 = unlimited)
 
 # Security
 # follow_symlinks: false    # Do not follow symlinks in input by default

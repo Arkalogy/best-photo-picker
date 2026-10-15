@@ -16,7 +16,7 @@ declare global {
   // Leaflet (loaded from CDN)
   const L: any;
 
-  // P8: window extensions. The action registry exposes itself on window
+  // Window extensions. The action registry exposes itself on window
   // for the click dispatcher; tests reach for arbitrary window.X bindings
   // to simulate legacy fallback paths.
   interface Window {
