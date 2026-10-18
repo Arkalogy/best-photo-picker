@@ -614,11 +614,17 @@ def test_phash_confirmed_sidecar_detection_runs_after_hashing():
     )
     # But the worker MUST run the phash pre-scan, which is what actually
     # saves the ~2x scoring cost on a sidecar-heavy library by keeping the
-    # confirmed sidecars out of the scoring/face/CLIP passes.
-    assert "split_scan_for_confirmed_sidecars" in worker_src, (
+    # confirmed sidecars out of the scoring/face/CLIP passes. (The step
+    # body lives in analyze_run_steps; the worker calls it.)
+    from bpp.web import analyze_run_steps
+
+    assert "prescan_live_photo_sidecars(" in worker_src, (
         "analyze worker must run the Live Photo phash pre-scan so confirmed "
         "sidecars are skipped from the expensive scoring passes (the perf "
         "complement to the phash-confirmed tagging)"
+    )
+    assert "split_scan_for_confirmed_sidecars" in inspect.getsource(analyze_run_steps), (
+        "the pre-scan step must confirm sidecars by phash, never filename alone"
     )
 
 

@@ -1,8 +1,15 @@
-"""Flask app factory."""
+"""Flask app factory.
+
+``create_app`` is the sequence; each step is its own function below, in
+the order it runs: process-level setup, the Flask object, error
+handlers, plugins, shared state, blueprints, the auth boundary, security
+headers, shutdown.
+"""
 
 from __future__ import annotations
 
 import atexit
+import secrets
 import sys
 
 from flask import Flask, jsonify, request
@@ -20,6 +27,44 @@ def create_app(
     library_path: str | None = None,
 ) -> Flask:
     """Create and configure the Flask application."""
+    _prepare_process()
+
+    app = Flask(__name__)
+    app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
+    app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB
+
+    _register_error_handlers(app)
+    _load_plugins(app)
+
+    # Create shared state and register on app.extensions for blueprint access
+    ctx = WebAppState(
+        input_dir=input_dir,
+        workdir=workdir,
+        config_path=config_path,
+        library_path=library_path,
+    )
+    app.extensions["bpp"] = ctx
+
+    _register_blueprints(app)
+    _install_auth_boundary(app, ctx)
+    _install_security_headers(app)
+
+    # Ensure workers stop and SQLite connections are closed on app teardown.
+    # Skip under pytest: tests create many app instances; registering N
+    # atexit handlers that all fire at interpreter exit (after pytest has
+    # closed stdout/stderr) produces "I/O operation on closed file"
+    # tracebacks if a worker's shutdown path needs to log. Workers are
+    # daemon threads (base_worker.py) so they're terminated with the
+    # interpreter regardless. Long-lived servers (`bpp serve`) install
+    # their own signal + atexit handlers in bpp.commands.do_serve.
+    if "pytest" not in sys.modules:
+        atexit.register(ctx.shutdown)
+
+    return app
+
+
+def _prepare_process() -> None:
+    """Process-level setup that must precede any worker thread."""
     # The app: it lists what installs hold for the processes it starts
     # (set before any worker thread runs).
     from bpp.scoring.install_hold import become_app
@@ -33,9 +78,7 @@ def create_app(
     from bpp.web.state import heic_available
 
     if not heic_available():
-        from bpp.utils.logging import get_logger
-
-        get_logger(__name__).warning(
+        log.warning(
             "pillow_heif not installed — HEIC photos will be skipped on import "
             "and HEIF face crops will use unrotated bbox coords. "
             "Install with: pip install bppicker[heic]"
@@ -54,20 +97,19 @@ def create_app(
 
     warn_if_legacy_trust_proxy()
 
-    app = Flask(__name__)
-    app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
-    app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB
 
-    # Single error handler that translates any uncaught BppError
-    # into a structured response envelope. Replaces the historical
-    # 47 ad-hoc ``return jsonify({"error": ...}), 500`` sites; endpoints
-    # can now just ``raise ValidationError(...)`` and the handler does
-    # the response + logging consistently.
-    #
-    # Privacy: the response body comes from ``user_message`` (safe);
-    # ``diagnostic_message`` is logged separately at WARNING with the
-    # full exception traceback. Filesystem paths or internal IDs that
-    # belong only in the log stay out of the wire payload.
+def _register_error_handlers(app: Flask) -> None:
+    """One handler turns any uncaught ``BppError`` into the response envelope.
+
+    Replaces the historical 47 ad-hoc ``return jsonify({"error": ...}),
+    500`` sites; endpoints can now just ``raise ValidationError(...)`` and
+    the handler does the response + logging consistently.
+
+    Privacy: the response body comes from ``user_message`` (safe);
+    ``diagnostic_message`` is logged separately at WARNING with the full
+    exception traceback. Filesystem paths or internal IDs that belong
+    only in the log stay out of the wire payload.
+    """
     from bpp.errors import BppError
     from bpp.scoring.install_hold import HeldForRestart
 
@@ -131,11 +173,16 @@ def create_app(
             )
         return jsonify(exc.to_dict()), exc.http_status
 
-    # load third-party plugin packages BEFORE building
-    # WebAppState so plugins can register face detectors, embedders,
-    # config-schema fields, smart album types, and worker factories
-    # before the registries are first consumed. Failures are logged
-    # and skipped — a single broken plugin must not abort startup.
+
+def _load_plugins(app: Flask) -> None:
+    """Load plugin packages and fire their registration hooks.
+
+    Runs BEFORE ``WebAppState`` is built so plugins can register face
+    detectors, embedders, config-schema fields, smart album types, and
+    worker factories before the registries are first consumed. Failures
+    are logged and skipped — a single broken plugin must not abort
+    startup.
+    """
     from bpp.plugins import load_plugin_entry_points
 
     load_plugin_entry_points()
@@ -160,16 +207,8 @@ def create_app(
     except Exception:
         pass  # best-effort; loader already logs per-plugin failures
 
-    # Create shared state and register on app.extensions for blueprint access
-    ctx = WebAppState(
-        input_dir=input_dir,
-        workdir=workdir,
-        config_path=config_path,
-        library_path=library_path,
-    )
-    app.extensions["bpp"] = ctx
 
-    # Register blueprints
+def _register_blueprints(app: Flask) -> None:
     from bpp.web.bp_album_overrides import bp as album_overrides_bp
     from bpp.web.bp_albums import bp as albums_bp
     from bpp.web.bp_analysis import bp as analysis_bp
@@ -208,48 +247,56 @@ def create_app(
     from bpp.web.bp_share import bp as share_bp
     from bpp.web.bp_tags import bp as tags_bp
 
-    app.register_blueprint(core_bp)
-    app.register_blueprint(health_bp)
-    app.register_blueprint(models_bp)
-    app.register_blueprint(install_bp)
-    app.register_blueprint(model_registry_bp)
-    app.register_blueprint(model_admin_bp)
-    app.register_blueprint(attribution_bp)
-    app.register_blueprint(catalog_bp)
-    app.register_blueprint(photos_bp)
-    app.register_blueprint(export_bp)
-    app.register_blueprint(photos_manage_bp)
-    app.register_blueprint(photos_lifecycle_bp)
-    app.register_blueprint(inpaint_bp)
-    app.register_blueprint(recompute_bp)
-    app.register_blueprint(os_integration_bp)
-    app.register_blueprint(albums_bp)
-    app.register_blueprint(album_overrides_bp)
-    app.register_blueprint(media_bp)
-    app.register_blueprint(analysis_bp)
-    app.register_blueprint(faces_bp)
-    app.register_blueprint(faces_extract_bp)
-    app.register_blueprint(faces_photo_bp)
-    app.register_blueprint(faces_manage_bp)
-    app.register_blueprint(faces_cluster_ops_bp)
-    app.register_blueprint(faces_bbox_bp)
-    app.register_blueprint(faces_review_bp)
-    app.register_blueprint(groups_bp)
-    app.register_blueprint(clip_bp)
-    app.register_blueprint(pets_bp)
-    app.register_blueprint(search_bp)
-    app.register_blueprint(settings_bp)
-    app.register_blueprint(library_bp)
-    app.register_blueprint(tags_bp)
-    app.register_blueprint(memories_bp)
-    app.register_blueprint(calendar_bp)
-    app.register_blueprint(logs_bp)
-    app.register_blueprint(share_bp)
+    for blueprint in (
+        core_bp,
+        health_bp,
+        models_bp,
+        install_bp,
+        model_registry_bp,
+        model_admin_bp,
+        attribution_bp,
+        catalog_bp,
+        photos_bp,
+        export_bp,
+        photos_manage_bp,
+        photos_lifecycle_bp,
+        inpaint_bp,
+        recompute_bp,
+        os_integration_bp,
+        albums_bp,
+        album_overrides_bp,
+        media_bp,
+        analysis_bp,
+        faces_bp,
+        faces_extract_bp,
+        faces_photo_bp,
+        faces_manage_bp,
+        faces_cluster_ops_bp,
+        faces_bbox_bp,
+        faces_review_bp,
+        groups_bp,
+        clip_bp,
+        pets_bp,
+        search_bp,
+        settings_bp,
+        library_bp,
+        tags_bp,
+        memories_bp,
+        calendar_bp,
+        logs_bp,
+        share_bp,
+    ):
+        app.register_blueprint(blueprint)
 
-    # Auth boundary: delegates to bpp.web.share.authorize_request().
-    # Splitting the policy out makes it unit-testable, swappable for
-    # OAuth/JWT in the future, and easier to reason about. See
-    # docs/security.md for the trust model and threat assumptions.
+
+def _install_auth_boundary(app: Flask, ctx: WebAppState) -> None:
+    """Auth boundary: delegates to ``bpp.web.share.authorize_request()``.
+
+    Splitting the policy out makes it unit-testable, swappable for
+    OAuth/JWT in the future, and easier to reason about. See
+    docs/security.md for the trust model and threat assumptions.
+    """
+
     @app.before_request
     def _check_auth_token():
         if app.config.get("TESTING"):
@@ -337,21 +384,23 @@ def create_app(
         )
         return jsonify(error="Forbidden"), 403
 
-    # Content-Security-Policy: defense-in-depth against XSS.
-    #
-    # script-src uses a per-request nonce. All inline event handlers
-    # (onclick, oninput, etc.) have been migrated to data-action /
-    # data-oninput attributes dispatched by globals.js — no
-    # 'unsafe-inline' needed for script-src.
-    #
-    # style-src still requires 'unsafe-inline' for inline <style>
-    # blocks and dynamic style= attributes set by JS.
-    #
-    # Leaflet + markercluster are vendored under /static/vendor/ so
-    # no external script host is needed. Map tile PNGs are fetched
-    # from OpenStreetMap when the user opens the Map view; img-src
-    # whitelists those domains.
-    import secrets
+
+def _install_security_headers(app: Flask) -> None:
+    """Content-Security-Policy and the other defense-in-depth headers.
+
+    script-src uses a per-request nonce. All inline event handlers
+    (onclick, oninput, etc.) have been migrated to data-action /
+    data-oninput attributes dispatched by globals.js — no
+    'unsafe-inline' needed for script-src.
+
+    style-src still requires 'unsafe-inline' for inline <style>
+    blocks and dynamic style= attributes set by JS.
+
+    Leaflet + markercluster are vendored under /static/vendor/ so
+    no external script host is needed. Map tile PNGs are fetched
+    from OpenStreetMap when the user opens the Map view; img-src
+    whitelists those domains.
+    """
 
     @app.before_request
     def _gen_csp_nonce() -> None:
@@ -393,16 +442,3 @@ def create_app(
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
         return response
-
-    # Ensure workers stop and SQLite connections are closed on app teardown.
-    # Skip under pytest: tests create many app instances; registering N
-    # atexit handlers that all fire at interpreter exit (after pytest has
-    # closed stdout/stderr) produces "I/O operation on closed file"
-    # tracebacks if a worker's shutdown path needs to log. Workers are
-    # daemon threads (base_worker.py) so they're terminated with the
-    # interpreter regardless. Long-lived servers (`bpp serve`) install
-    # their own signal + atexit handlers in bpp.commands.do_serve.
-    if "pytest" not in sys.modules:
-        atexit.register(ctx.shutdown)
-
-    return app

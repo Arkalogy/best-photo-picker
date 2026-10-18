@@ -25,7 +25,6 @@ CAP = 500
 GRANDFATHERED: dict[str, int] = {
     "bpp/db/schema.py": 530,
     "bpp/db/photos.py": 507,
-    "bpp/web/static/js/modules/albums-render.mjs": 505,
 }
 
 

@@ -25,6 +25,7 @@
     "test:e2e:all": "bash scripts/run_e2e.sh all"
   },
   "devDependencies": {
+    "acorn": "^8.17.0",
     "@playwright/test": "^1.59.1",
     "@types/node": "^25.6.0",
     "@vitest/coverage-v8": "^4.1.7",

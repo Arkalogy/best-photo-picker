@@ -6,63 +6,40 @@ so the host module stays under the 500-LOC soft cap. The outer
 delegates the actual restore work to :func:`_do_restore_locked` here.
 
 Re-exported from :mod:`bpp.commands.db_restore` for back-compat.
+
+Each preflight step below returns an exit code to stop with, or
+``None`` to carry on; :func:`_do_restore_locked` runs them in order.
 """
 
 from __future__ import annotations
 
+import datetime
+import glob
 import os
+import shutil
+import sqlite3
+import sys
+import time
 
 from bpp.utils.logging import get_logger
+
+# Time skew tolerance: 1 hour. Clocks differ across hosts, an NTP
+# adjustment can move time slightly, etc. A sidecar more than 1h
+# in the future is suspect.
+_SKEW_TOLERANCE_S = 3600.0
 
 
 def _do_restore_locked(args, db_path: str, backup_path: str, check_integrity) -> int:
     """Restore body that runs under the maintenance lock. Extracted
     from do_db_restore_backup so the outer function can release the
     lock in a single try/finally on every exit path."""
-    import contextlib  # noqa: F401  # used in inner finallies
-    import datetime
-    import shutil
-    import sys
-
     print(f"Restoring DB from: {backup_path}")
     print(f"           target: {db_path}")
     print()
 
-    # refuse to restore if a `.corrupt-<timestamp>` sibling
-    # exists alongside the chosen backup. A stranded quarantine file
-    # is a red flag — the previous backup_db() couldn't cleanly
-    # quarantine a corrupt copy. Operator should review (and most
-    # likely delete) the .corrupt file before proceeding, so they
-    # don't inadvertently restore from a state the system already
-    # flagged as suspect.
-    #
-    # also catch the legacy `.backup.corrupt` (no
-    # timestamp suffix) shape. Pre-R11 builds wrote that fixed
-    # name, and a user upgrading across versions could have one
-    # left over. The preflight refusal must cover both forms so
-    # the upgrade path is fail-closed too.
-    import glob as _glob
-
-    stranded = _glob.glob(backup_path + ".corrupt-*")
-    legacy = backup_path + ".corrupt"
-    if os.path.exists(legacy):
-        stranded.append(legacy)
-    if stranded:
-        print(
-            f"error: corrupt-quarantine sibling(s) exist alongside {backup_path}:",
-            file=sys.stderr,
-        )
-        for s in stranded:
-            print(f"  {s}", file=sys.stderr)
-        print(
-            "An earlier backup failed verification and was quarantined. "
-            "Review the file(s) above (e.g., bring them to a maintainer) "
-            "and delete them before retrying. Refusing to restore until "
-            "they're cleaned up so you don't unknowingly restore over a "
-            "state the system flagged as suspect.",
-            file=sys.stderr,
-        )
-        return 6
+    code = _refuse_stranded_quarantine(backup_path)
+    if code is not None:
+        return code
 
     # Verify the source backup before doing anything destructive.
     if not check_integrity(backup_path):
@@ -74,25 +51,109 @@ def _do_restore_locked(args, db_path: str, backup_path: str, check_integrity) ->
         )
         return 3
 
-    # refuse to restore a backup whose schema is NEWER than
-    # the running binary's `SCHEMA_VERSION`. A user who downgraded
-    # bpp (e.g. v0.2 → v0.1) would otherwise restore a v29 `.backup`
-    # onto a binary that knows v23; the older binary then either
-    # silently misreads columns it doesn't know about, or runs its
-    # forward migrations again and corrupts the live DB. Either way
-    # the user thinks "I restored my data" but in fact lost it.
-    # Fail closed and tell them to upgrade bpp first.
-    import sqlite3 as _sqlite3
+    code = _refuse_newer_schema(backup_path)
+    if code is not None:
+        return code
 
+    age_days, backup_human, live_human = _backup_age(db_path, backup_path)
+    code = _confirm_restore(args, age_days, backup_human, live_human)
+    if code is not None:
+        return code
+
+    moved = _swap_in_backup(db_path, backup_path)
+
+    # Final verify on the restored DB so the user gets immediate
+    # feedback if something went sideways during the copy itself.
+    if not check_integrity(db_path):
+        print(
+            "error: restored DB failed integrity check — see the moved-"
+            f"aside files at {moved} for recovery. "
+            "Please file a security/security advisory if you can repro.",
+            file=sys.stderr,
+        )
+        return 4
+
+    _write_restore_sentinel(db_path)
+
+    print()
+    print(f"Restored.  Moved-aside files: {', '.join(moved)}")
+    print(
+        "Once you've confirmed the app starts and your library looks "
+        "correct, you can delete the moved-aside files manually."
+    )
+    # persist restore success in server.log so the next
+    # `bpp serve` startup has an explicit breadcrumb of what
+    # happened. Without this, a script that does
+    # `bpp db restore-backup && bpp serve` left no log evidence
+    # the restore even ran — only stdout, which scripts often
+    # discard.
+    log = get_logger(__name__)
+    log.info(
+        "Database restored from %s (moved-aside files: %s)",
+        backup_path,
+        ", ".join(moved),
+    )
+    return 0
+
+
+def _refuse_stranded_quarantine(backup_path: str) -> int | None:
+    """Refuse to restore if a `.corrupt-<timestamp>` sibling exists
+    alongside the chosen backup.
+
+    A stranded quarantine file is a red flag — the previous backup_db()
+    couldn't cleanly quarantine a corrupt copy. Operator should review
+    (and most likely delete) the .corrupt file before proceeding, so
+    they don't inadvertently restore from a state the system already
+    flagged as suspect.
+
+    Also catches the legacy `.backup.corrupt` (no timestamp suffix)
+    shape. Pre-R11 builds wrote that fixed name, and a user upgrading
+    across versions could have one left over. The preflight refusal
+    must cover both forms so the upgrade path is fail-closed too.
+    """
+    stranded = glob.glob(backup_path + ".corrupt-*")
+    legacy = backup_path + ".corrupt"
+    if os.path.exists(legacy):
+        stranded.append(legacy)
+    if not stranded:
+        return None
+    print(
+        f"error: corrupt-quarantine sibling(s) exist alongside {backup_path}:",
+        file=sys.stderr,
+    )
+    for s in stranded:
+        print(f"  {s}", file=sys.stderr)
+    print(
+        "An earlier backup failed verification and was quarantined. "
+        "Review the file(s) above (e.g., bring them to a maintainer) "
+        "and delete them before retrying. Refusing to restore until "
+        "they're cleaned up so you don't unknowingly restore over a "
+        "state the system flagged as suspect.",
+        file=sys.stderr,
+    )
+    return 6
+
+
+def _refuse_newer_schema(backup_path: str) -> int | None:
+    """Refuse to restore a backup whose schema is NEWER than the running
+    binary's `SCHEMA_VERSION`.
+
+    A user who downgraded bpp (e.g. v0.2 → v0.1) would otherwise restore
+    a v29 `.backup` onto a binary that knows v23; the older binary then
+    either silently misreads columns it doesn't know about, or runs its
+    forward migrations again and corrupts the live DB. Either way the
+    user thinks "I restored my data" but in fact lost it. Fail closed
+    and tell them to upgrade bpp first.
+    """
     from bpp.db.connection import get_db
     from bpp.db.schema import SCHEMA_VERSION
 
     try:
-        _check = get_db(backup_path)
-        row = _check.execute("PRAGMA user_version").fetchone()
+        check = get_db(backup_path)
+        row = check.execute("PRAGMA user_version").fetchone()
         backup_user_version = int(row[0]) if row else 0
         if backup_user_version == 0:
-            has_photos = _check.execute(
+            has_photos = check.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='photos'"
             ).fetchone()
             if not has_photos:
@@ -103,7 +164,7 @@ def _do_restore_locked(args, db_path: str, backup_path: str, check_integrity) ->
                     file=sys.stderr,
                 )
                 return 3
-    except _sqlite3.Error as e:
+    except sqlite3.Error as e:
         print(
             f"error: could not read PRAGMA user_version from {backup_path}: {e}",
             file=sys.stderr,
@@ -119,29 +180,31 @@ def _do_restore_locked(args, db_path: str, backup_path: str, check_integrity) ->
             file=sys.stderr,
         )
         return 4
+    return None
 
-    # Staleness check: backup_db() runs once per server startup, so a
-    # rarely-run app accumulates a stale backup. Restoring a 60-day-old
-    # backup silently loses 60 days of imports/edits — exactly what a
-    # nervous user reaching for `restore-backup` does NOT want.
-    #
-    # Prefer the metadata sidecar's `created_at_epoch` over
-    # filesystem mtime. mtime can be touched/copied without preserving
-    # the original creation time, so a stale backup with a fresh
-    # mtime would otherwise sail through this guard. Fall back to
-    # mtime when the sidecar is missing or malformed (older bpp
-    # versions wrote no sidecar) and warn so the operator knows the
-    # estimate is weaker.
+
+def _backup_age(db_path: str, backup_path: str) -> tuple[float, str, str]:
+    """How far behind the live DB the backup is: ``(age_days,
+    backup_written, live_written)`` with the two times human-readable.
+
+    backup_db() runs once per server startup, so a rarely-run app
+    accumulates a stale backup. Restoring a 60-day-old backup silently
+    loses 60 days of imports/edits — exactly what a nervous user
+    reaching for `restore-backup` does NOT want.
+
+    Prefer the metadata sidecar's `created_at_epoch` over filesystem
+    mtime. mtime can be touched/copied without preserving the original
+    creation time, so a stale backup with a fresh mtime would otherwise
+    sail through this guard. Fall back to mtime when the sidecar is
+    missing or malformed (older bpp versions wrote no sidecar) and warn
+    so the operator knows the estimate is weaker.
+    """
     from bpp.db.connection import read_backup_meta
 
     meta = read_backup_meta(backup_path)
     live_mtime = os.path.getmtime(db_path)
     backup_path_mtime = os.path.getmtime(backup_path)
-    # Time skew tolerance: 1 hour. Clocks differ across hosts, an NTP
-    # adjustment can move time slightly, etc. A sidecar more than 1h
-    # in the future is suspect.
-    _SKEW_TOLERANCE_S = 3600.0
-    now = __import__("time").time()
+    now = time.time()
 
     if meta is not None and "created_at_epoch" in meta:
         meta_epoch = float(meta["created_at_epoch"])
@@ -183,7 +246,16 @@ def _do_restore_locked(args, db_path: str, backup_path: str, check_integrity) ->
     live_dt = datetime.datetime.fromtimestamp(live_mtime)
     backup_human = backup_dt.strftime("%Y-%m-%d %H:%M") + f" [{meta_source}]"
     live_human = live_dt.strftime("%Y-%m-%d %H:%M")
+    return age_days, backup_human, live_human
 
+
+def _confirm_restore(args, age_days: float, backup_human: str, live_human: str) -> int | None:
+    """Warn about a stale backup, then get the operator's go-ahead.
+
+    The bigger the data-loss window, the higher the friction: a stale
+    (>7 days) backup can't be restored with ``--yes`` alone, and a very
+    stale (>30 days) one needs ``RESTORE`` typed, not just ``y``.
+    """
     is_stale = age_days > 7.0
     is_very_stale = age_days > 30.0
 
@@ -213,36 +285,40 @@ def _do_restore_locked(args, db_path: str, backup_path: str, check_integrity) ->
         )
         return 5
 
-    if not args.yes:
-        print(
-            "This will move the current DB aside and replace it.\n"
-            "Stop any running `bpp serve` first.\n"
-        )
-        # Very-stale (>30 days) requires typing RESTORE, not just y —
-        # the bigger the data-loss window, the higher the friction.
-        prompt = (
-            "Type RESTORE to proceed (case-sensitive): " if is_very_stale else "Proceed? [y/N]: "
-        )
-        try:
-            ans = input(prompt).strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\nAborted.", file=sys.stderr)
-            return 1
-        if is_very_stale:
-            if ans != "RESTORE":
-                print("Aborted.")
-                return 1
-        elif ans.lower() not in ("y", "yes"):
+    if args.yes:
+        return None
+
+    print(
+        "This will move the current DB aside and replace it.\nStop any running `bpp serve` first.\n"
+    )
+    prompt = "Type RESTORE to proceed (case-sensitive): " if is_very_stale else "Proceed? [y/N]: "
+    try:
+        ans = input(prompt).strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\nAborted.", file=sys.stderr)
+        return 1
+    if is_very_stale:
+        if ans != "RESTORE":
             print("Aborted.")
             return 1
+    elif ans.lower() not in ("y", "yes"):
+        print("Aborted.")
+        return 1
+    return None
 
-    # Move current DB + WAL/SHM aside (timestamped) so the user can
-    # inspect / recover them later if the restore turns out wrong.
-    # Wrap each shutil call in `retry_io`: if the library lives
-    # on a NAS / iCloud / Dropbox path, a transient EIO / ESTALE / SMB
-    # timeout mid-restore would otherwise leave the live DB moved aside
-    # but the backup not yet copied — a worse recovery state than the
-    # one the user was trying to leave.
+
+def _swap_in_backup(db_path: str, backup_path: str) -> list[str]:
+    """Move the live DB (+ WAL/SHM) aside, timestamped, and copy the
+    backup (+ its WAL/SHM) into place. Returns the moved-aside paths.
+
+    The live files are kept so the user can inspect / recover them
+    later if the restore turns out wrong. Each shutil call is wrapped
+    in `retry_io`: if the library lives on a NAS / iCloud / Dropbox
+    path, a transient EIO / ESTALE / SMB timeout mid-restore would
+    otherwise leave the live DB moved aside but the backup not yet
+    copied — a worse recovery state than the one the user was trying
+    to leave.
+    """
     from bpp.utils.retry import retry_io
 
     stamp = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -262,25 +338,19 @@ def _do_restore_locked(args, db_path: str, backup_path: str, check_integrity) ->
         bwal = backup_path + suffix
         if os.path.isfile(bwal):
             retry_io(shutil.copy2, bwal, db_path + suffix, label=f"restore: copy {suffix}")
+    return moved
 
-    # Final verify on the restored DB so the user gets immediate
-    # feedback if something went sideways during the copy itself.
-    if not check_integrity(db_path):
-        print(
-            "error: restored DB failed integrity check — see the moved-"
-            f"aside files at {moved} for recovery. "
-            "Please file a security/security advisory if you can repro.",
-            file=sys.stderr,
-        )
-        return 4
 
-    # Drop a sentinel so the next startup's backup_db() skips
-    # ONE rotation. Without this, the live DB (now identical to
-    # .backup) would be re-copied to .backup, rotating the OLD
-    # .backup into .backup.prev — overwriting the user's last-good
-    # fallback the moment they start the server. The sentinel is
-    # consumed (and deleted) on the first backup_db() call after
-    # restore, so subsequent rotations resume normally.
+def _write_restore_sentinel(db_path: str) -> None:
+    """Drop a sentinel so the next startup's backup_db() skips ONE rotation.
+
+    Without this, the live DB (now identical to .backup) would be
+    re-copied to .backup, rotating the OLD .backup into .backup.prev —
+    overwriting the user's last-good fallback the moment they start the
+    server. The sentinel is consumed (and deleted) on the first
+    backup_db() call after restore, so subsequent rotations resume
+    normally.
+    """
     sentinel = db_path + ".restore-pending"
     try:
         with open(sentinel, "w", encoding="utf-8") as f:
@@ -296,23 +366,3 @@ def _do_restore_locked(args, db_path: str, backup_path: str, check_integrity) ->
             "starting the server.",
             file=sys.stderr,
         )
-
-    print()
-    print(f"Restored.  Moved-aside files: {', '.join(moved)}")
-    print(
-        "Once you've confirmed the app starts and your library looks "
-        "correct, you can delete the moved-aside files manually."
-    )
-    # persist restore success in server.log so the next
-    # `bpp serve` startup has an explicit breadcrumb of what
-    # happened. Without this, a script that does
-    # `bpp db restore-backup && bpp serve` left no log evidence
-    # the restore even ran — only stdout, which scripts often
-    # discard.
-    log = get_logger(__name__)
-    log.info(
-        "Database restored from %s (moved-aside files: %s)",
-        backup_path,
-        ", ".join(moved),
-    )
-    return 0
