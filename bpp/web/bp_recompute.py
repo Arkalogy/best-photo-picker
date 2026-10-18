@@ -67,14 +67,7 @@ def api_recompute() -> tuple[Response, int]:
         raise NotFoundError("No analysis data")
 
     params = request.get_json(silent=True) or {}
-
-    cfg = dict(ctx.config)
-    for key in RECOMPUTE_WEIGHT_KEYS:
-        if key in params:
-            cfg[key] = clamp_override(key, params[key])
-    # Sensitive-photo policy is a string enum, not a clampable weight.
-    if params.get("sensitive_in_picks") in ("allow", "exclude"):
-        cfg["sensitive_in_picks"] = params["sensitive_in_picks"]
+    cfg = _config_with_overrides(ctx.config, params)
 
     k = clamp_k(params.get("k", cfg.get("default_selection_k", 50)))
     seed = int(params.get("seed", cfg.get("default_selection_seed", 42)))
@@ -94,30 +87,7 @@ def api_recompute() -> tuple[Response, int]:
     for p in analysis:
         (deleted if p.get("deleted_at") else active).append(p)
 
-    # Optional date-range filter (used by calendar "Pick best" flow)
-    start_date = params.get("start_date")
-    end_date = params.get("end_date")
-    if start_date and end_date:
-        import datetime as _dt
-
-        try:
-            _dt.date.fromisoformat(start_date)
-            _dt.date.fromisoformat(end_date)
-        except (ValueError, TypeError) as e:
-            raise ValidationError(
-                "Invalid date format, use YYYY-MM-DD",
-                start_date=start_date,
-                end_date=end_date,
-            ) from e
-        if start_date > end_date:
-            raise ValidationError(
-                "start_date must be <= end_date",
-                start_date=start_date,
-                end_date=end_date,
-            )
-        before = len(active)
-        active = [p for p in active if start_date <= (p.get("date") or "")[:10] <= end_date]
-        log.info("Date range %s to %s: %d -> %d photos", start_date, end_date, before, len(active))
+    active = _filter_date_range(active, params)
 
     # refuse oversized non-delta payloads BEFORE running
     # recompute() and the (expensive) CLIP embedding load. Previously
@@ -126,20 +96,9 @@ def api_recompute() -> tuple[Response, int]:
     # has no path to "send some photos but not all" — clients above
     # the cap must reissue with `delta: true`.
     if not params.get("delta"):
-        photo_count = len(active) + len(deleted)
-        if photo_count > RECOMPUTE_FULL_PAYLOAD_LIMIT:
-            return jsonify(
-                {
-                    "error": (
-                        f"Library has {photo_count} photos; full-payload "
-                        f"recompute is capped at {RECOMPUTE_FULL_PAYLOAD_LIMIT}. "
-                        'Re-issue with {"delta": true} and load photos via '
-                        "/api/v1/photos."
-                    ),
-                    "delta_required": True,
-                    "photo_count": photo_count,
-                }
-            ), 413
+        too_large = _full_payload_too_large(len(active) + len(deleted))
+        if too_large is not None:
+            return too_large
 
     face_cluster_map = None
     if selected_faces:
@@ -215,6 +174,68 @@ def api_recompute() -> tuple[Response, int]:
             "stats": stats,
         }
     ), 200
+
+
+def _config_with_overrides(config: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+    """A copy of the config with the request's weight overrides (clamped
+    to the schema) and the sensitive-photo policy applied."""
+    cfg = dict(config)
+    for key in RECOMPUTE_WEIGHT_KEYS:
+        if key in params:
+            cfg[key] = clamp_override(key, params[key])
+    # Sensitive-photo policy is a string enum, not a clampable weight.
+    if params.get("sensitive_in_picks") in ("allow", "exclude"):
+        cfg["sensitive_in_picks"] = params["sensitive_in_picks"]
+    return cfg
+
+
+def _filter_date_range(
+    active: list[dict[str, Any]], params: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Optional date-range filter (used by the calendar "Pick best" flow)."""
+    start_date = params.get("start_date")
+    end_date = params.get("end_date")
+    if not (start_date and end_date):
+        return active
+    import datetime as _dt
+
+    try:
+        _dt.date.fromisoformat(start_date)
+        _dt.date.fromisoformat(end_date)
+    except (ValueError, TypeError) as e:
+        raise ValidationError(
+            "Invalid date format, use YYYY-MM-DD",
+            start_date=start_date,
+            end_date=end_date,
+        ) from e
+    if start_date > end_date:
+        raise ValidationError(
+            "start_date must be <= end_date",
+            start_date=start_date,
+            end_date=end_date,
+        )
+    before = len(active)
+    active = [p for p in active if start_date <= (p.get("date") or "")[:10] <= end_date]
+    log.info("Date range %s to %s: %d -> %d photos", start_date, end_date, before, len(active))
+    return active
+
+
+def _full_payload_too_large(photo_count: int) -> tuple[Response, int] | None:
+    """The 413 for a full-payload recompute over the cap, else None."""
+    if photo_count <= RECOMPUTE_FULL_PAYLOAD_LIMIT:
+        return None
+    return jsonify(
+        {
+            "error": (
+                f"Library has {photo_count} photos; full-payload "
+                f"recompute is capped at {RECOMPUTE_FULL_PAYLOAD_LIMIT}. "
+                'Re-issue with {"delta": true} and load photos via '
+                "/api/v1/photos."
+            ),
+            "delta_required": True,
+            "photo_count": photo_count,
+        }
+    ), 413
 
 
 @bp.post("/api/v1/optimize")

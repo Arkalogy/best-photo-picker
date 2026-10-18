@@ -110,11 +110,59 @@ def api_health() -> tuple[Response, int]:
     construction: no quick_check pass, no model probes, just liveness +
     quick disk + journal snapshot. Use ``/api/v1/status`` for the
     user-facing app state instead.
+
+    Each ``checks`` block is one probe function below. LAN clients get
+    the boolean flags only; absolute paths (which leak the owner's
+    username, drive name, library location) are owner-only.
     """
     ctx = get_ctx()
     now = time.time()
     started_at = getattr(ctx, "_created_at", now)
+    is_owner = principal_is_local_app()
 
+    db_check, conn = _db_check(ctx, is_owner)
+    storage_check = _storage_check(ctx, is_owner)
+    journals_check = _journals_check(conn)
+    phase5_check = _phase5_check(ctx)
+    models_check = _models_check()
+
+    # Aggregate status: ok if everything reports clean, degraded if any
+    # individual probe failed. We never return "down" through this code
+    # path — if the request was served at all the server is up; the
+    # caller can detect down by HTTP failure / timeout.
+    status = "ok"
+    if (
+        not db_check.get("ok")
+        or not storage_check.get("accessible", False)
+        or journals_check.get("pending", 0) > 0
+        or phase5_check["failed"]
+        or "error" in models_check
+    ):
+        status = "degraded"
+
+    return (
+        jsonify(
+            {
+                "status": status,
+                "uptime_s": round(now - started_at, 1),
+                "checks": {
+                    "db": db_check,
+                    "storage": storage_check,
+                    "workers": _workers_check(ctx, now),
+                    "journals": journals_check,
+                    "collaborators": _collaborators_check(ctx, is_owner),
+                    "phase5": phase5_check,
+                    "models": models_check,
+                },
+            }
+        ),
+        200,
+    )
+
+
+def _db_check(ctx: Any, is_owner: bool) -> tuple[dict[str, Any], Any]:
+    """Liveness of the DB connection; returns the block and the
+    connection (None when it couldn't be acquired)."""
     db_check: dict[str, Any] = {"ok": False}
     conn = None
     try:
@@ -128,96 +176,108 @@ def api_health() -> tuple[Response, int]:
         # which is already owner-only.
         log.warning("health: db connection acquisition failed", exc_info=True)
         db_check["error"] = "Database connection failed"
+        return db_check, None
 
-    is_owner = principal_is_local_app()
-    if conn is not None:
-        try:
-            conn.execute("SELECT 1").fetchone()
-            db_check["ok"] = True
-            db_check["writable"] = True  # WAL is on; if SELECT works writes do too
-            db_check["schema_version"] = dialect.get_user_version(conn)
-            # Only LOCAL_APP gets the absolute DB path. LAN clients
-            # get the boolean health flags but not the filesystem layout
-            # (which leaks the owner's username, drive name, library
-            # location).
-            if is_owner:
-                db_path = dialect.database_path(conn)
-                if db_path:
-                    db_check["path"] = db_path
-        except sqlite3.Error as e:
-            # Don't leak SQLite error text to the API — it can hint at
-            # schema, table names, and version. Log details server-side.
-            log.warning("health: db check failed: %s", e)
-            db_check["error"] = "Database check failed"
+    try:
+        conn.execute("SELECT 1").fetchone()
+        db_check["ok"] = True
+        db_check["writable"] = True  # WAL is on; if SELECT works writes do too
+        db_check["schema_version"] = dialect.get_user_version(conn)
+        # Only LOCAL_APP gets the absolute DB path. LAN clients
+        # get the boolean health flags but not the filesystem layout
+        # (which leaks the owner's username, drive name, library
+        # location).
+        if is_owner:
+            db_path = dialect.database_path(conn)
+            if db_path:
+                db_check["path"] = db_path
+    except sqlite3.Error as e:
+        # Don't leak SQLite error text to the API — it can hint at
+        # schema, table names, and version. Log details server-side.
+        log.warning("health: db check failed: %s", e)
+        db_check["error"] = "Database check failed"
+    return db_check, conn
 
+
+def _storage_check(ctx: Any, is_owner: bool) -> dict[str, Any]:
     library_path = ctx.state.get("library_path") or ctx.state.get("workdir") or ""
-    # Same filter for the storage block — LOCAL_APP only.
+    # Same filter as the DB block — the path is LOCAL_APP only.
     storage_check: dict[str, Any] = {"path": library_path} if is_owner else {}
-    if library_path:
-        storage_check.update(check_storage_accessible(library_path))
-        if not is_owner:
-            # check_storage_accessible may include `error` text that
-            # has the path in it. Strip path-bearing fields for LAN.
-            storage_check = {
-                k: v
-                for k, v in storage_check.items()
-                if k in {"accessible", "latency_ms", "free_gb", "total_gb"}
-            }
-        try:
-            usage = shutil.disk_usage(library_path)
-            storage_check["free_gb"] = round(usage.free / (1024**3), 2)
-            storage_check["total_gb"] = round(usage.total / (1024**3), 2)
-        except OSError as e:
-            # OS error text can include local path fragments — keep it
-            # in logs only.
-            log.warning("health: disk_usage failed for %s: %s", library_path, e)
-            storage_check["disk_usage_error"] = "Disk usage check failed"
-    else:
+    if not library_path:
         storage_check["accessible"] = False
         storage_check["error"] = "No library path"
+        return storage_check
+    storage_check.update(check_storage_accessible(library_path))
+    if not is_owner:
+        # check_storage_accessible may include `error` text that
+        # has the path in it. Strip path-bearing fields for LAN.
+        storage_check = {
+            k: v
+            for k, v in storage_check.items()
+            if k in {"accessible", "latency_ms", "free_gb", "total_gb"}
+        }
+    try:
+        usage = shutil.disk_usage(library_path)
+        storage_check["free_gb"] = round(usage.free / (1024**3), 2)
+        storage_check["total_gb"] = round(usage.total / (1024**3), 2)
+    except OSError as e:
+        # OS error text can include local path fragments — keep it
+        # in logs only.
+        log.warning("health: disk_usage failed for %s: %s", library_path, e)
+        storage_check["disk_usage_error"] = "Disk usage check failed"
+    return storage_check
 
-    # Worker liveness + activity — iterate the registry rather than
-    # spelling out individual workers so a future plugin worker shows
-    # up automatically. ``last_activity_s`` lets an operator
-    # distinguish a stuck worker (alive=True but last activity grew
-    # minutes-stale) from a slow-but-progressing one. The field is
-    # absent when the worker never ran in this process (no progress
-    # events emitted yet).
-    #
-    # Proof-of-concept consumer: reach through ctx.workers directly
-    # instead of the deprecated ctx._workers property delegate. The
-    # delegate still works (logs a deprecation warning), but the
-    # collaborator surface is what every new endpoint should target;
-    # this one was migrated as proof. See docs/architecture-notes.md.
+
+def _workers_check(ctx: Any, now: float) -> dict[str, dict[str, Any]]:
+    """Worker liveness + activity — iterate the registry rather than
+    spelling out individual workers so a future plugin worker shows
+    up automatically. ``last_activity_s`` lets an operator
+    distinguish a stuck worker (alive=True but last activity grew
+    minutes-stale) from a slow-but-progressing one. The field is
+    absent when the worker never ran in this process (no progress
+    events emitted yet).
+
+    Proof-of-concept consumer: reach through ctx.workers directly
+    instead of the deprecated ctx._workers property delegate. The
+    delegate still works (logs a deprecation warning), but the
+    collaborator surface is what every new endpoint should target;
+    this one was migrated as proof. See docs/architecture-notes.md.
+    """
     worker_check: dict[str, dict[str, Any]] = {}
-    now = time.time()
     for name, worker in ctx.workers.items():
         info: dict[str, Any] = {"alive": bool(getattr(worker, "is_alive", False))}
         last = float(getattr(worker, "_last_activity", 0.0))
         if last > 0:
             info["last_activity_s"] = round(now - last, 1)
         worker_check[name] = info
+    return worker_check
 
+
+def _journals_check(conn: Any) -> dict[str, Any]:
     journals_check: dict[str, Any] = {"pending": 0, "kinds": {}}
-    if conn is not None:
-        try:
-            entries = pending_journals(conn)
-            kinds: dict[str, int] = {}
-            for entry in entries:
-                k = str(entry.get("kind", "unknown"))
-                kinds[k] = kinds.get(k, 0) + 1
-            journals_check = {"pending": len(entries), "kinds": kinds}
-        except sqlite3.Error as e:
-            log.warning("health: journals check failed: %s", e)
-            journals_check["error"] = "Journals check failed"
+    if conn is None:
+        return journals_check
+    try:
+        entries = pending_journals(conn)
+        kinds: dict[str, int] = {}
+        for entry in entries:
+            k = str(entry.get("kind", "unknown"))
+            kinds[k] = kinds.get(k, 0) + 1
+        return {"pending": len(entries), "kinds": kinds}
+    except sqlite3.Error as e:
+        log.warning("health: journals check failed: %s", e)
+        journals_check["error"] = "Journals check failed"
+        return journals_check
 
-    # Surface collaborator state. The WorkerPool block already
-    # lives under "workers" above; this adds the cache + store
-    # collaborators so on-call can tell whether the phash compute
-    # thread is alive, whether CLIP / face-cluster caches are
-    # populated, and the analysis-store generation counter (which
-    # bumps on every switch_library — a runaway switch loop shows up
-    # here as a generation that doesn't match the uptime).
+
+def _collaborators_check(ctx: Any, is_owner: bool) -> dict[str, Any]:
+    """Surface collaborator state. The WorkerPool block lives under
+    "workers"; this adds the cache + store collaborators so on-call can
+    tell whether the phash compute thread is alive, whether CLIP /
+    face-cluster caches are populated, and the analysis-store
+    generation counter (which bumps on every switch_library — a runaway
+    switch loop shows up here as a generation that doesn't match the
+    uptime)."""
     collaborators_check: dict[str, Any] = {}
     analysis_store = getattr(ctx, "analysis_store", None)
     if analysis_store is not None:
@@ -267,62 +327,33 @@ def api_health() -> tuple[Response, int]:
             "library_path": getattr(lifecycle, "library_path", None),
             "workdir": getattr(lifecycle, "workdir", None),
         }
+    return collaborators_check
 
-    # Phase 5 (background dup-cluster + smart-album backfill) failure
-    # surfaces here so the operator sees 'smart album counts may be
-    # stale' without grepping server.log. The flag is reset on every
-    # spawn and set by the daemon's except block — True means the
-    # last attempted run failed. Active iff library has been opened
-    # (smart_album_backfill_done starts True on fresh ctx).
+
+def _phase5_check(ctx: Any) -> dict[str, bool]:
+    """Phase 5 (background dup-cluster + smart-album backfill) failure
+    surfaces here so the operator sees 'smart album counts may be
+    stale' without grepping server.log. The flag is reset on every
+    spawn and set by the daemon's except block — True means the
+    last attempted run failed. Active iff library has been opened
+    (smart_album_backfill_done starts True on fresh ctx)."""
     _backfill_event = getattr(ctx, "smart_album_backfill_done", None)
-    phase5_check = {
+    return {
         "failed": bool(getattr(ctx, "phase5_failed", False)),
         "in_flight": bool(_backfill_event) and not _backfill_event.is_set(),
     }
 
-    # Every registered model the load gate would refuse right now, by
-    # reason (license not accepted / older terms / commercial use without
-    # the rights assertion / withdrawn). Informational: it includes
-    # optional models nobody switched on. Cached until the license files
-    # or registry entries change.
+
+def _models_check() -> dict[str, Any]:
+    """Every registered model the load gate would refuse right now, by
+    reason (license not accepted / older terms / commercial use without
+    the rights assertion / withdrawn). Informational: it includes
+    optional models nobody switched on. Cached until the license files
+    or registry entries change."""
     from bpp.web.model_filter import license_blocked_models
 
-    models_check: dict[str, Any]
     try:
-        models_check = {"license_blocked": license_blocked_models()}
+        return {"license_blocked": license_blocked_models()}
     except Exception:
         log.warning("health: license check failed", exc_info=True)
-        models_check = {"error": "License check failed"}
-
-    # Aggregate status: ok if everything reports clean, degraded if any
-    # individual probe failed. We never return "down" through this code
-    # path — if the request was served at all the server is up; the
-    # caller can detect down by HTTP failure / timeout.
-    status = "ok"
-    if (
-        not db_check.get("ok")
-        or not storage_check.get("accessible", False)
-        or journals_check.get("pending", 0) > 0
-        or phase5_check["failed"]
-        or "error" in models_check
-    ):
-        status = "degraded"
-
-    return (
-        jsonify(
-            {
-                "status": status,
-                "uptime_s": round(now - started_at, 1),
-                "checks": {
-                    "db": db_check,
-                    "storage": storage_check,
-                    "workers": worker_check,
-                    "journals": journals_check,
-                    "collaborators": collaborators_check,
-                    "phase5": phase5_check,
-                    "models": models_check,
-                },
-            }
-        ),
-        200,
-    )
+        return {"error": "License check failed"}

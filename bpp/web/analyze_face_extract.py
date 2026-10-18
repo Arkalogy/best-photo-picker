@@ -387,6 +387,22 @@ def run_face_extraction_subprocess(
     # Architecture #1: chunked subprocesses (memory-safe for the
     # workers=1 / thread-pool path that's vulnerable to allocator
     # accumulation across the full library).
+    return _run_chunked(
+        with_faces, config_snapshot, db_path, progress_callback, cancel_event, parent_token
+    )
+
+
+def _run_chunked(
+    with_faces: list[dict[str, Any]],
+    config_snapshot: dict[str, Any],
+    db_path: str,
+    progress_callback: Any | None,
+    cancel_event: Any,
+    parent_token: Any,
+) -> tuple[int, int, int | None]:
+    """One fresh subprocess per chunk of photos (see
+    :func:`run_face_extraction_subprocess`, architecture #1)."""
+    total = len(with_faces)
     chunk_size = max(1, _FACE_EXTRACTION_CHUNK_SIZE)
     total_faces = 0
     last_clusters = 0

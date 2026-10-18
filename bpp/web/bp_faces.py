@@ -12,7 +12,6 @@ from bpp.constants import (
     ACTIVE_PHOTO_SQL,
     CLUSTER_DISMISSED,
 )
-from bpp.db.face_embedding_safety import active_embedding_dim, decode_embedding
 from bpp.db.settings import delete_setting, set_setting
 from bpp.errors import ValidationError
 from bpp.utils.json_utils import safe_json_loads
@@ -167,9 +166,11 @@ def api_faces_review() -> tuple[Response, int]:
     For each unreviewed cluster, computes distance to all named clusters
     and returns the best match (if within suggestion threshold).
     """
-    import re
-
-    import numpy as np
+    from bpp.web.faces_review_match import (
+        cluster_centroids,
+        named_cluster_names,
+        suggested_match,
+    )
 
     ctx = get_ctx()
     conn = ctx.get_conn()
@@ -178,79 +179,20 @@ def api_faces_review() -> tuple[Response, int]:
         return jsonify({"unreviewed": [], "total": 0, "reviewed": 0}), 200
 
     # Find which cluster_ids have a named smart_person album.
-    # Indexed lookup via get_smart_person_cluster_name_map (uses
-    # the v36 smart_person_cluster_id shadow column).
-    named_cids: dict[int, str] = {}  # cid -> name
-    person_n_re = re.compile(r"^Person \d+$")
-    try:
-        from bpp.db.albums import get_smart_person_cluster_name_map
-
-        for cid, name in get_smart_person_cluster_name_map(conn).items():
-            if not person_n_re.match(name):
-                named_cids[cid] = name
-    except Exception:
-        # Don't fail the whole face-review endpoint on a named-cluster
-        # query glitch — fall through with empty named_cids so the
-        # response is still useful. But surface the failure so the
-        # operator sees it — never swallow silently.
-        log.warning(
-            "Failed to load named smart_person albums for face review",
-            exc_info=True,
-        )
+    named_cids = named_cluster_names(conn)
 
     total = len(clusters)
     unreviewed = [c for c in clusters if c["cluster_id"] not in named_cids]
     reviewed = total - len(unreviewed)
 
-    # Compute centroids for named clusters from DB embeddings
-    named_centroids: dict[int, np.ndarray] = {}
-    if named_cids:
-        placeholders = ",".join(["?"] * len(named_cids))
-        emb_rows = conn.execute(
-            f"SELECT cluster_id, embedding FROM face_embeddings "
-            f"WHERE cluster_id IN ({placeholders})",
-            list(named_cids.keys()),
-        ).fetchall()
-        # Route through decode_embedding so a corrupt
-        # row can't crash the People-review screen the way the
-        # Jun-2 incident crashed /faces/clusters. Bad rows are
-        # skipped; the centroid is computed from whatever remains.
-        cluster_embs: dict[int, list[np.ndarray]] = {}
-        dim = active_embedding_dim(conn)
-        for r in emb_rows:
-            cid = r["cluster_id"]
-            emb = decode_embedding(r["embedding"], where="bp_faces.review.named_centroids", dim=dim)
-            if emb is None:
-                continue
-            cluster_embs.setdefault(cid, []).append(emb)
-        for cid, embs in cluster_embs.items():
-            named_centroids[cid] = np.mean(embs, axis=0)
-
-    # Compute centroids for unreviewed clusters
-    unreviewed_cids = [c["cluster_id"] for c in unreviewed]
-    unreviewed_centroids: dict[int, np.ndarray] = {}
-    if unreviewed_cids:
-        placeholders = ",".join(["?"] * len(unreviewed_cids))
-        emb_rows = conn.execute(
-            f"SELECT cluster_id, embedding FROM face_embeddings "
-            f"WHERE cluster_id IN ({placeholders})",
-            unreviewed_cids,
-        ).fetchall()
-        # Same defense as the named-centroids loop above.
-        # A single bad row used to crash this whole endpoint; now bad
-        # rows are skipped and the centroid is built from what's left.
-        cluster_embs2: dict[int, list[np.ndarray]] = {}
-        dim = active_embedding_dim(conn)
-        for r in emb_rows:
-            cid = r["cluster_id"]
-            emb = decode_embedding(
-                r["embedding"], where="bp_faces.review.unreviewed_centroids", dim=dim
-            )
-            if emb is None:
-                continue
-            cluster_embs2.setdefault(cid, []).append(emb)
-        for cid, embs in cluster_embs2.items():
-            unreviewed_centroids[cid] = np.mean(embs, axis=0)
+    named_centroids = cluster_centroids(
+        conn, list(named_cids.keys()), where="bp_faces.review.named_centroids"
+    )
+    unreviewed_centroids = cluster_centroids(
+        conn,
+        [c["cluster_id"] for c in unreviewed],
+        where="bp_faces.review.unreviewed_centroids",
+    )
 
     # Add thumb hashes + suggested match for each unreviewed cluster.
     # Each crop the user judges ("is this Kai?") carries its source photo's
@@ -276,40 +218,14 @@ def api_faces_review() -> tuple[Response, int]:
         meta_fps.extend(sample_fps)
 
         # Find best match among named clusters
-        c["suggested_match"] = None
-        centroid = unreviewed_centroids.get(cid)
-        if centroid is not None and named_centroids:
-            best_cid, best_dist = None, float("inf")
-            for ncid, ncentroid in named_centroids.items():
-                dist = float(np.linalg.norm(centroid - ncentroid))
-                if dist < best_dist:
-                    best_dist = dist
-                    best_cid = ncid
-            if best_cid is not None:
-                # Convert distance to confidence %
-                # Map distance to confidence: 0 dist = 100%, max_dist (2.0) = 0%
-                max_dist = 2.0
-                confidence = max(0, min(100, int((1 - best_dist / max_dist) * 100)))
-                # Find representative for the suggested person (O(1) lookup)
-                match_rep = None
-                mc = clusters_by_cid.get(best_cid)
-                if mc is not None:
-                    mr = mc["representative"]
-                    if ctx.thumbs:
-                        mr["thumb_hash"] = ctx.thumbs.get_hash(mr["filepath"])
-                    match_rep = {
-                        "thumb_hash": mr.get("thumb_hash", ""),
-                        "face_index": mr["face_index"],
-                        "filepath": mr.get("filepath", ""),
-                    }
-                    meta_fps.append(mr.get("filepath", ""))
-                c["suggested_match"] = {
-                    "cluster_id": best_cid,
-                    "name": named_cids[best_cid],
-                    "distance": round(best_dist, 3),
-                    "confidence": confidence,
-                    "representative": match_rep,
-                }
+        c["suggested_match"] = suggested_match(
+            unreviewed_centroids.get(cid),
+            named_centroids,
+            named_cids,
+            clusters_by_cid,
+            ctx,
+            meta_fps,
+        )
 
     # Batched metadata lookup, then attach to every representative + sample.
     meta = photo_meta_by_filepaths(conn, meta_fps)

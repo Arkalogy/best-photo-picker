@@ -136,7 +136,7 @@ remain available for at least the v0.1 → v0.2 window and are removed
 once every call site has migrated.
 
 PoC consumer reaching through the canonical collaborator surface:
-`api_health()` in `bpp/web/bp_health.py` reads `ctx.workers.items()` directly
+`_workers_check()` (the health endpoint's worker probe) in `bpp/web/bp_health.py` reads `ctx.workers.items()` directly
 instead of going through the deprecated `ctx._workers` delegate.
 
 ## Plugin extension surface

@@ -355,15 +355,20 @@ class TestReaderSitesUseShadowColumn:
 
     def test_bp_faces_bbox_uses_shadow_column(self, repo_root):
         # The three sites span two modules since a decomposition
-        # split them: the duplicate-guard lookup moved to face_create_helpers,
-        # the two name-resolution lookups stay in bp_faces_bbox.
+        # split them: the duplicate-guard lookup lives in
+        # face_create_helpers; the two name resolutions in bp_faces_bbox
+        # go through one helper that calls the indexed single-row
+        # lookup in bpp.db.albums.
         bbox_src = (repo_root / "bpp" / "web" / "bp_faces_bbox.py").read_text()
         helper_src = (repo_root / "bpp" / "web" / "face_create_helpers.py").read_text()
-        combined = bbox_src + helper_src
-        assert combined.count("smart_person_cluster_id = ?") >= 3, (
-            "the indexed shadow column must be used at all three lookup "
-            "sites (duplicate-guard label, name resolution after split, "
-            "name resolution after match) — counted across bp_faces_bbox.py "
-            "+ face_create_helpers.py since the helpers moved out during "
-            "a decomposition"
+        assert helper_src.count("smart_person_cluster_id = ?") >= 1, (
+            "the duplicate-guard lookup in face_create_helpers.py must use the "
+            "indexed shadow column"
+        )
+        assert bbox_src.count("find_smart_person_album_by_cluster(") >= 1, (
+            "bp_faces_bbox.py must resolve the person name through the indexed "
+            "single-row lookup in bpp.db.albums"
+        )
+        assert bbox_src.count("_person_name_for_cluster(conn") >= 2, (
+            "both name resolutions (after split, after match) must use that helper"
         )

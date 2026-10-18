@@ -64,7 +64,8 @@ class TestPeriodicWalCheckpoint:
         production call site uses TRUNCATE."""
         import inspect
 
-        src = inspect.getsource(face_extraction_phase5.extract_new_embeddings)
+        # The per-photo commit / checkpoint / progress step of extract_new_embeddings.
+        src = inspect.getsource(face_extraction_phase5._commit_and_report)
         assert "wal_checkpoint(TRUNCATE)" in src, (
             "Periodic checkpoint must use TRUNCATE mode to actually "
             "shrink the WAL. Other modes leave the file growing."
@@ -82,7 +83,8 @@ class TestPeriodicWalCheckpoint:
         whole machinery."""
         import inspect
 
-        src = inspect.getsource(face_extraction_phase5.extract_new_embeddings)
+        # The per-photo commit / checkpoint / progress step of extract_new_embeddings.
+        src = inspect.getsource(face_extraction_phase5._commit_and_report)
         # Look for the pattern: PRAGMA wal_checkpoint(TRUNCATE) is
         # inside a try block whose except catches OperationalError.
         # Naive string search is fine — the cadence block is small.

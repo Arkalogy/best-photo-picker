@@ -26,25 +26,14 @@ CAP = 150
 
 # (file, function) -> size when measured. Shrink-only; never raise one.
 BASELINE: dict[tuple[str, str], int] = {
-    ("bpp/web/face_extraction_phase5.py", "extract_new_embeddings"): 249,
     ("bpp/config_schema.py", "_register_builtins"): 247,
-    ("bpp/web/bp_health.py", "api_health"): 225,
-    ("bpp/web/derived_recovery.py", "precompute_phashes"): 219,
-    ("bpp/web/install_stream.py", "install_progress"): 205,
     ("bpp/scoring/model_manifest.py", "all_models"): 197,
     ("bpp/cli.py", "build_parser"): 195,
     ("bpp/commands/db_restore.py", "do_db_restore_backup"): 189,
     ("bpp/db/library.py", "import_folder"): 187,
-    ("bpp/web/derived_recovery.py", "_compute"): 182,
-    ("bpp/web/install_stream.py", "generate"): 180,
     ("bpp/db/face_identity_remap.py", "_remap_names_and_tags"): 180,
     ("bpp/db/backup.py", "backup_db"): 178,
-    ("bpp/web/bp_faces_cluster_ops.py", "api_faces_restore"): 172,
-    ("bpp/web/bp_faces.py", "api_faces_review"): 171,
-    ("bpp/web/bp_recompute.py", "api_recompute"): 167,
     ("bpp/db/live_photo.py", "split_scan_for_confirmed_sidecars"): 164,
-    ("bpp/web/bp_faces_bbox.py", "api_faces_update_bbox"): 159,
-    ("bpp/web/analyze_face_extract.py", "run_face_extraction_subprocess"): 156,
     ("bpp/commands/pick.py", "do_pick"): 155,
 }
 
