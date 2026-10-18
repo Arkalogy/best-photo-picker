@@ -1144,9 +1144,12 @@ Powers the pre-analysis dialog.
                      "legal_entry_id": "mediapipe_selfie_segmenter",
                      "needs_acceptance": true } ],
   "attribution_mb": 0.3,
-  "blocked": [ { "legal_entry_id": "nudenet_320n", "kind": "nudity_classifier",
+  "blocked": [ { "name": "NudeNet 320n (nudity classifier, AGPL-3.0)",
+                 "display_name": "NudeNet 320n (nudity classifier, AGPL-3.0)",
+                 "size_mb": 11.6, "host": "",
+                 "legal_entry_id": "nudenet_320n", "kind": "nudity_classifier",
                  "reason": "needs_license", "research_only": false,
-                 "default_for_kind": false, "…": "…" } ] }
+                 "default_for_kind": false, "from_plugin": false } ] }
 ```
 
 `models` download now. `attribution` download only if the user accepts
@@ -1154,7 +1157,26 @@ the attribution-licensed models in the dialog's combined step (see
 `/model-registry/acceptance/attribution-bundle`). `blocked` lists
 restricted models that need their own acceptance in Settings → Models;
 `reason` is `needs_license`, `needs_reaccept` (accepted under older
-terms) or `status_blocked`.
+terms) or `status_blocked` (the registry no longer allows new
+downloads). The license is judged first: a model that is both
+unaccepted and status-blocked reports `needs_license` /
+`needs_reaccept`, so `status_blocked` only appears for a model whose
+acceptance is already current.
+
+`legal_entry_id` is the model's id in the legal registry (the id the
+Settings → Models endpoints take) and `kind` the capability it provides
+(`nudity_classifier`, `face_embedder`, …).
+
+Two kinds of item land here. A file from the download manifest carries
+its file label as `name`, the model's Settings name as `display_name`,
+and the download's `size_mb` / `host`. A restricted model the manifest
+doesn't cover (NudeNet, LaMa — fetched later by their own
+post-acceptance download) has `name` equal to `display_name`, `host`
+empty, and `size_mb` from the registry's expected download size (`0`
+when it isn't recorded); such a model is left out while its registry
+status forbids new downloads. `research_only` marks a
+research-or-non-commercial license, `default_for_kind` the kind's
+default model, and `from_plugin` a manifest file registered by a plugin.
 
 ### POST /api/v1/models/toggle
 
@@ -2302,9 +2324,13 @@ acceptances" renders this. Returns every row in append order
         "direct_upstream": true,
         "no_paid_without_separate_rights": true
       },
-      "schema_version": 2
+      "schema_version": 2,
+      "event": "accept",
+      "current": true,
+      "needs_reaccept": false
     }
-  ]
+  ],
+  "withdrawn_by_damage": []
 }
 ```
 
@@ -2313,6 +2339,21 @@ load with `checkbox_responses: {}` and `schema_version: 1`. Each row also
 carries an `event` discriminator (`"accept"` or `"revoke"`); legacy rows
 without it read as `"accept"`. For a given `model_id`, the most-recent
 row's event decides whether it is currently accepted.
+
+Each row is judged as the load gate judges it: `current` is `true` for
+an acceptance of the model's CURRENT acknowledgment text (the model may
+load); `needs_reaccept` is `true` for an acceptance that the gate
+refuses — one of an older text (a disclaimer-version bump; the user
+re-accepts) or one for a model the registry no longer knows (never
+`current`, and there is nothing to re-accept). A withdrawal row has both
+`false`.
+
+`withdrawn_by_damage` lists the model ids whose latest acceptance is
+followed by a damaged (unreadable) log line that could have been the
+user's withdrawal: the gate treats them as withdrawn (fail closed), and
+Settings says why. Such a model's latest row still reads `"event":
+"accept"` (the row as written) but is judged withdrawn: `current` and
+`needs_reaccept` are both `false`.
 
 ### POST /api/v1/model-registry/acceptance/revoke
 
