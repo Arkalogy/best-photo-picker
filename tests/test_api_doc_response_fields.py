@@ -40,9 +40,23 @@ def _section(header: str) -> str:
 
 def _blocked_example(section: str) -> str:
     """Just the ``"blocked": [ ... ]`` part of the section's JSON example."""
-    start = section.index('"blocked": [')
-    end = section.index("]", start)
-    return section[start:end]
+    marker = '"blocked": ['
+    start = section.find(marker)
+    assert start != -1, f"the example has no {marker} (reflowed?)"
+    depth, in_string, escaped = 0, False, False
+    for i in range(start, len(section)):
+        ch = section[i]
+        if escaped:
+            escaped = False
+        elif ch == "\\":
+            escaped = True
+        elif ch == '"':
+            in_string = not in_string
+        elif not in_string:
+            depth += {"[": 1, "]": -1}.get(ch, 0)
+            if ch == "]" and depth == 0:
+                return section[start:i]
+    raise AssertionError("unterminated blocked[] example")
 
 
 class TestModelsPending:

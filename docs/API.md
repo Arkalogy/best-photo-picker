@@ -1174,7 +1174,13 @@ doesn't cover (NudeNet, LaMa — fetched later by their own
 post-acceptance download) has `name` equal to `display_name`, `host`
 empty, and `size_mb` from the registry's expected download size (`0`
 when it isn't recorded); such a model is left out while its registry
-status forbids new downloads. `research_only` marks a
+status forbids new downloads. Neither kind of item is reported for a
+restricted model that merely needs its license when a permissive,
+downloadable model already provides the same `kind` (SCRFD next to
+YuNet): that capability isn't missing, so the restricted alternate is
+dropped from both lists (a plugin's manifest file is still reported).
+A stale acceptance (`needs_reaccept`) is still reported, since the user
+once opted in and the feature has stopped. `research_only` marks a
 research-or-non-commercial license, `default_for_kind` the kind's
 default model, and `from_plugin` a manifest file registered by a plugin.
 
@@ -2340,13 +2346,18 @@ carries an `event` discriminator (`"accept"` or `"revoke"`); legacy rows
 without it read as `"accept"`. For a given `model_id`, the most-recent
 row's event decides whether it is currently accepted.
 
-Each row is judged as the load gate judges it: `current` is `true` for
-an acceptance of the model's CURRENT acknowledgment text (the model may
-load); `needs_reaccept` is `true` for an acceptance that the gate
-refuses — one of an older text (a disclaimer-version bump; the user
-re-accepts) or one for a model the registry no longer knows (never
+`current` is `true` for an acceptance of the model's CURRENT
+acknowledgment text; `needs_reaccept` is `true` for an acceptance the
+load gate refuses — one of an older text (a disclaimer-version bump; the
+user re-accepts) or one for a model the registry no longer knows (never
 `current`, and there is nothing to re-accept). A withdrawal row has both
-`false`.
+`false`. (A model that needs no click-through has no text to be stale,
+so any acceptance row for it reads `current: true`.) Only a model's
+most-recent row carries the gate's verdict (an
+acceptance followed by a damaged log line reads as withdrawn); older
+rows are judged on their own text, so an acceptance that a later row
+revoked still reads `current: true`. Whether the model may load is the
+newest row's answer, not any row's.
 
 `withdrawn_by_damage` lists the model ids whose latest acceptance is
 followed by a damaged (unreadable) log line that could have been the

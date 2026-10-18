@@ -14,9 +14,9 @@ sketched below were not adopted; a handful of endpoints still return
 ad-hoc error JSON.
 
 **Context.** Before this ADR, bpp had exactly two custom exceptions:
-- `ModelIntegrityError` (`bpp/scoring/model_base.py:36`) — SHA mismatch
+- `ModelIntegrityError` (`bpp/scoring/model_base.py`) — SHA mismatch
   on a cached ML model; must NOT silently degrade.
-- `ServingLockError` (`bpp/utils/serving_lock.py:36`) — couldn't acquire
+- `ServingLockError` (`bpp/utils/serving_lock.py`) — couldn't acquire
   the per-library serving lock at startup.
 
 Everywhere else, failures bubbled through plain `Exception`,

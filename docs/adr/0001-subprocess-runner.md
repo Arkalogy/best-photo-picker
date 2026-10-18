@@ -5,7 +5,10 @@ scoring (`bpp/web/analyze_scoring.py`) and face extraction
 (`bpp/web/analyze_face_extract.py`) both run through it. The shipped API
 generalizes the sketch below: each worker supplies a `Phase` (target,
 argv builder, per-message reducer) and `run(payload, *, cancel_event,
-progress_callback)` returns `(state, child_pid)`. Point 7 (config
+progress_callback)` returns `(state, child_pid)`. The constructor's
+timeouts are `message_timeout_s`, `graceful_join_s` and `force_join_s`
+(the sketch's `queue_get_timeout_s` / `graceful_timeout_s` /
+`force_timeout_s`). Point 7 (config
 marshalling) is not enforced by type — callers still pass the plain-dict
 snapshot from `_snapshot_config`, a thin wrapper over
 `ConfigSnapshot.from_live`. The "spawn only" constraint under
@@ -53,8 +56,9 @@ it with a picklability gate test.
    child force-kill within `force_timeout_s`. The runner is responsible
    for the post-mortem `proc.exitcode` check (SIGKILL/SIGSEGV detection).
 5. **Cancellation:** the token (see ADR 0002) is passed
-   to the child as `multiprocessing.Event`; the runner checks it in
-   the drain loop between messages.
+   to the child as `multiprocessing.Event`; the child polls it between
+   photos and exits. The parent's drain doesn't check it: it waits for
+   the child's next message (at most `message_timeout_s`), then joins.
 6. **Env-var-pinning preservation:** the runner spawn target MUST
    import via the `analyze_worker` module path so the env-var setdefault
    block at module top fires in the child before any cv2/numpy/onnxruntime

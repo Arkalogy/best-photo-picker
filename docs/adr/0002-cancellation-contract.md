@@ -63,8 +63,10 @@ short-circuits with a log warning if `ctx.library_path != library_path`.
 
 **Consequences.**
 - A user clicking Cancel during a 5,000-photo analyze reliably stops
-  the child within `force_timeout_s` of the click — no more "stop
-  showing progress but keep eating CPU."
+  the child: it exits at its next per-photo cancel check, and the parent
+  (which doesn't abort its drain, but waits for the child's next message
+  for at most `message_timeout_s`) then joins within `graceful_join_s` +
+  `force_join_s` — no more "stop showing progress but keep eating CPU."
 - `switch_library` no longer creates a window where the OLD library's
   recovery rewrites the NEW library's data.
 - New tests must actually fire a subprocess and join under timeout to

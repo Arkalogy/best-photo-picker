@@ -247,10 +247,10 @@ The Code Style section above covers the minimum gates. A few more conventions ar
 
 Two test patterns coexist under `tests-js/`:
 
-1. **Harness style** (`loadScript` from `_harness.mjs`) — for the legacy non-module JS (today only `bpp/web/static/js/globals.js`). Loads a file via `new Function(...)`. Doesn't produce v8 coverage.
+1. **Script style** — for the one legacy non-module file, `bpp/web/static/js/globals.js`. The test reads the file and runs it with `new Function("window", "document", source)` against jsdom (see `tests-js/dispatcher.test.mjs`). Doesn't produce v8 coverage.
 2. **Module style** (`import` directly) — for new ES modules under `bpp/web/static/js/modules/`. Does produce coverage.
 
-Prefer module style for new code. See `bpp/web/static/js/modules/text-format.mjs` and its test for the reference pattern. If a runtime file has a top-level IIFE that touches the DOM (the init block in `globals.js` is the remaining example), call `stubMissingDomElements()` from `_harness.mjs` before `loadScript()`.
+Prefer module style for new code. See `bpp/web/static/js/modules/text-format.mjs` and its test for the reference pattern. `globals.js` has a top-level init block that touches the DOM, so load it once per file (in `beforeAll`), not once per test — re-running it stacks event listeners.
 
 ### Incremental type safety
 
