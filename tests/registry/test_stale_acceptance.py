@@ -249,7 +249,7 @@ class TestScrfdGateReset:
     def test_revoke_rearms_every_gate_for_the_id(self) -> None:
         """Generic: dlib (no ModelRegistry entry) is re-armed too."""
         from bpp.scoring.face_embed_extractors import _dlib_gate
-        from bpp.web.bp_models import reset_runtime_for_legal_id
+        from bpp.scoring.model_lifecycle import reset_runtime_for_legal_id
 
         _accept("dlib_face_recognition_resnet_v1")
         _dlib_gate.enforce()

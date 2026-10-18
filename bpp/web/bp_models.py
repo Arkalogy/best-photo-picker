@@ -28,6 +28,9 @@ from flask import Blueprint, Response, jsonify, request
 
 from bpp.constants import MODEL_TOGGLE_KEYS
 from bpp.errors import BppError, ConflictError, ValidationError
+
+# (Through the module, never bare names: one patch point for the tests.)
+from bpp.scoring import model_lifecycle
 from bpp.utils.logging import get_logger
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx
@@ -144,15 +147,6 @@ def api_model_download_job(job_key: str) -> tuple[Response, int]:
     return jsonify(snap), 200
 
 
-def _ensure_model_modules_imported() -> None:
-    """Make sure every built-in model file is registered (the registry is
-    filled by importing each scoring module; a fresh server may hit
-    Settings → Models before any photo is scored)."""
-    from bpp.scoring.model_lifecycle import ensure_builtin_model_files_registered
-
-    ensure_builtin_model_files_registered()
-
-
 def _model_path_url_sha(name: str) -> tuple[str, str, str | None]:
     """Resolve a UI model name → (path, url, sha256).
 
@@ -162,7 +156,7 @@ def _model_path_url_sha(name: str) -> tuple[str, str, str | None]:
     """
     from bpp.scoring.model_base import ModelRegistry
 
-    _ensure_model_modules_imported()
+    model_lifecycle.ensure_builtin_model_files_registered()
     entry = ModelRegistry.get(name)
     if entry is None:
         raise ValueError(f"Unknown model: {name}")
@@ -172,51 +166,6 @@ def _model_path_url_sha(name: str) -> tuple[str, str, str | None]:
     # Errno 2. cache_dir() is the primary fix; this is belt-and-suspenders
     # for any entry that hardcodes a path.
     return (os.path.expanduser(entry.path), entry.url or "", entry.sha256)
-
-
-def _reset_model_cache(name: str) -> None:
-    """Clear cached model state so next .get() re-initialises from
-    disk. Used by both redownload and uninstall.
-
-    Driven by ModelRegistry. ModelSingleton-backed entries point at
-    `singleton.reset`; YuNet / SFace use module-global negative-cache
-    resetters defined in their own scoring modules. Unknown names are
-    silently ignored (no raise).
-    """
-    from bpp.scoring.model_base import ModelRegistry
-
-    _ensure_model_modules_imported()
-    entry = ModelRegistry.get(name)
-    if entry is not None:
-        entry.reset()
-
-
-# One definition, shared with the download list (model_lifecycle).
-from bpp.scoring.model_lifecycle import declared_legal_id  # noqa: E402
-
-
-def reset_runtime_for_legal_id(legal_id: str) -> list[str]:
-    """Make an acceptance change (revoke / accept) take effect without
-    a restart: re-arm every memoized license gate for ``legal_id`` and
-    call the reset hook of every ModelRegistry file that belongs to it
-    (drops cached sessions / negative caches). Returns the file names
-    reset. Generic — driven by the declared legal ids, not a per-model
-    list."""
-    from bpp.scoring.model_base import ModelRegistry
-    from bpp.scoring.model_load_gate import reset_gates_for
-
-    _ensure_model_modules_imported()
-    reset_gates_for(legal_id)
-    names: list[str] = []
-    for entry in ModelRegistry.all():
-        if declared_legal_id(entry) != legal_id:
-            continue
-        try:
-            entry.reset()
-            names.append(entry.name)
-        except Exception:
-            log.warning("Reset hook failed for %s", entry.name, exc_info=True)
-    return names
 
 
 def _resolve_legal_id(name: str) -> str:
@@ -229,8 +178,8 @@ def _resolve_legal_id(name: str) -> str:
     """
     from bpp.scoring.model_base import ModelRegistry
 
-    _ensure_model_modules_imported()
-    declared = declared_legal_id(ModelRegistry.get(name))
+    model_lifecycle.ensure_builtin_model_files_registered()
+    declared = model_lifecycle.declared_legal_id(ModelRegistry.get(name))
     if declared is None:
         log.error("Redownload refused for %s: it declares no model-registry entry", name)
         raise BppError(
@@ -345,7 +294,7 @@ def _fetch_redownload(name: str, path: str, url: str, sha: str | None, legal_id:
             os.remove(tmp_path)
         raise
 
-    _reset_model_cache(name)
+    model_lifecycle.reset_model_file(name)
 
     from bpp.web.models_status import _file_info
 
@@ -397,7 +346,7 @@ def api_models_uninstall() -> tuple[Response, int]:
             name=model_name,
         ) from e
 
-    _reset_model_cache(model_name)
+    model_lifecycle.reset_model_file(model_name)
     log.info(
         "Uninstalled model %s (%.1f MB freed)",
         model_name,

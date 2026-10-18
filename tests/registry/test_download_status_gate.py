@@ -69,7 +69,7 @@ class TestDownloadStatusGate:
         the download step at all"."""
         with (
             patch("bpp.utils.download.download_file") as mock_download,
-            patch("bpp.web.bp_models._reset_model_cache"),
+            patch("bpp.scoring.model_lifecycle.reset_model_file"),
             patch("bpp.web.bp_models.os.replace"),
             patch("bpp.web.bp_models.os.path.exists", return_value=False),
             patch("bpp.web.bp_models.os.makedirs"),
@@ -87,7 +87,7 @@ class TestDownloadStatusGate:
         download path run."""
         with (
             patch("bpp.utils.download.download_file") as mock_download,
-            patch("bpp.web.bp_models._reset_model_cache"),
+            patch("bpp.scoring.model_lifecycle.reset_model_file"),
             patch("bpp.web.bp_models.os.replace"),
             patch("bpp.web.bp_models.os.path.exists", return_value=False),
             patch("bpp.web.bp_models.os.makedirs"),

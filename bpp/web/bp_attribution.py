@@ -92,10 +92,10 @@ def api_attribution_bundle_confirm() -> tuple[Any, int]:
         raise ValidationError(str(exc)) from exc
     # Re-arm gates and drop cached "unavailable" verdicts so the
     # acceptance takes effect in this process without a restart.
-    from bpp.web.bp_models import reset_runtime_for_legal_id
+    from bpp.scoring import model_lifecycle
 
     for row in rows:
-        reset_runtime_for_legal_id(row.model_id)
+        model_lifecycle.reset_runtime_for_legal_id(row.model_id)
     accepted = [row.model_id for row in rows]
     log.info("Attribution acceptance recorded for %d model(s): %s", len(accepted), accepted)
     return jsonify({"accepted": accepted}), 200

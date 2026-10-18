@@ -33,6 +33,7 @@ from bpp.registry import (
     utc_now_iso,
 )
 from bpp.registry.acceptance_log import append_row, find_latest_for_model
+from bpp.scoring import model_lifecycle
 from bpp.scoring.model_base import ModelEntry, ModelRegistry
 from bpp.web import bp_models
 
@@ -56,7 +57,7 @@ _ALL_SCORING_MODULES = (
 def _import_everything() -> None:
     for mod in _ALL_SCORING_MODULES:
         importlib.import_module(mod)
-    bp_models._ensure_model_modules_imported()
+    model_lifecycle.ensure_builtin_model_files_registered()
 
 
 def _accept(model_id: str) -> None:
@@ -88,7 +89,7 @@ class TestStructuralLink:
         _import_everything()
         problems = {}
         for entry in ModelRegistry.all():
-            declared = bp_models.declared_legal_id(entry)
+            declared = model_lifecycle.declared_legal_id(entry)
             if declared is None or get_entry(declared) is None:
                 problems[entry.name] = declared
         assert not problems, f"files with no / an unknown legal entry: {problems}"
@@ -133,7 +134,7 @@ class TestFailClosed:
                 bp_models._redownload_model("FAKE licensed model")
             dl.assert_not_called()
         finally:
-            ModelRegistry._entries.pop("FAKE licensed model", None)
+            ModelRegistry.unregister_for_tests("FAKE licensed model")
 
 
 @pytest.mark.no_preaccept_permissive
@@ -180,7 +181,7 @@ class TestNudeNetRedownloadGate:
         _accept("nudenet_320n")
         with (
             patch("bpp.web.bp_models.os.replace"),
-            patch("bpp.web.bp_models._reset_model_cache"),
+            patch("bpp.scoring.model_lifecycle.reset_model_file"),
         ):
             dl, err, _ = self._run(tmp_path)
         assert err is None

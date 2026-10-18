@@ -13,6 +13,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import ClassVar
 
+from bpp.utils.logging import get_logger
+
+log = get_logger(__name__)
+
 # `name` is the user-facing string the JS sends as the redownload /
 # uninstall key. Built-in files appear in Settings → Models through
 # their hand-written rows in `bpp/web/models_status.py` (which must use
@@ -112,6 +116,12 @@ class ModelRegistry:
             cls._plugin.add(entry.name)
 
     @classmethod
+    def unregister_for_tests(cls, name: str) -> None:
+        """Drop a throwaway entry a test registered (no-op if absent)."""
+        cls._entries.pop(name, None)
+        cls._plugin.discard(name)
+
+    @classmethod
     def get(cls, name: str) -> ModelEntry | None:
         return cls._entries.get(name)
 
@@ -205,3 +215,47 @@ def ensure_builtin_model_files_registered() -> None:
 
     for mod in BUILTIN_MODEL_MODULES:
         importlib.import_module(mod)
+
+
+def reset_model_file(name: str) -> None:
+    """Drop one model file's cached state so the next ``.get()``
+    re-initialises from disk (after a redownload or an uninstall).
+
+    Driven by ModelRegistry: ModelSingleton-backed entries point at
+    ``singleton.reset``; YuNet / SFace use module-global negative-cache
+    resetters defined in their own scoring modules. An unknown name is
+    silently ignored; a hook that fails is logged, not raised — the file
+    operation that led here (an uninstall, a redownload) is already done.
+    """
+    ensure_builtin_model_files_registered()
+    entry = ModelRegistry.get(name)
+    if entry is None:
+        return
+    try:
+        entry.reset()
+    except Exception:
+        log.warning("Reset hook failed for %s", name, exc_info=True)
+
+
+def reset_runtime_for_legal_id(legal_id: str) -> list[str]:
+    """Make an acceptance change (revoke / accept) take effect without
+    a restart: re-arm every memoized license gate for ``legal_id`` and
+    call the reset hook of every ModelRegistry file that belongs to it
+    (drops cached sessions / negative caches). Returns the file names
+    reset. Generic — driven by the declared legal ids, not a per-model
+    list. (Called from the web endpoints; the CLI's accept runs in its
+    own process, where there is nothing cached to reset.)"""
+    from bpp.scoring.model_load_gate import reset_gates_for
+
+    ensure_builtin_model_files_registered()
+    reset_gates_for(legal_id)
+    names: list[str] = []
+    for entry in ModelRegistry.all():
+        if declared_legal_id(entry) != legal_id:
+            continue
+        try:
+            entry.reset()
+            names.append(entry.name)
+        except Exception:
+            log.warning("Reset hook failed for %s", entry.name, exc_info=True)
+    return names

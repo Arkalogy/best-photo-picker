@@ -33,15 +33,14 @@ def plugin_model(tmp_path):
         return path
 
     yield _register
-    ModelRegistry._entries.pop(_NAME, None)
-    ModelRegistry._plugin.discard(_NAME)
+    ModelRegistry.unregister_for_tests(_NAME)
 
 
 def test_builtin_models_are_not_listed_as_plugins():
     from bpp.scoring.model_base import plugin_model_entries
-    from bpp.web.bp_models import _ensure_model_modules_imported
+    from bpp.scoring.model_lifecycle import ensure_builtin_model_files_registered
 
-    _ensure_model_modules_imported()
+    ensure_builtin_model_files_registered()
     assert [e.name for e in plugin_model_entries()] == []
 
 
@@ -136,8 +135,7 @@ def test_plugin_file_bpp_cannot_fetch_offers_no_download(tmp_path, url, legal_id
         items, blocked = compute_pending_and_blocked()
         assert all(i["name"] != _NAME for i in items + blocked)  # prompt agrees
     finally:
-        ModelRegistry._entries.pop(_NAME, None)
-        ModelRegistry._plugin.discard(_NAME)
+        ModelRegistry.unregister_for_tests(_NAME)
 
 
 def test_plugin_model_with_bundled_weights_is_not_a_download(tmp_path):
@@ -178,8 +176,7 @@ def test_plugin_model_with_bundled_weights_is_not_a_download(tmp_path):
         assert feat["bundled"] is True
         assert feat["files"][0]["exists"] is False  # nothing cached: no Uninstall
     finally:
-        ModelRegistry._entries.pop(_NAME, None)
-        ModelRegistry._plugin.discard(_NAME)
+        ModelRegistry.unregister_for_tests(_NAME)
 
 
 def test_reset_for_tests_clears_plugin_marks():
@@ -193,9 +190,9 @@ def test_reset_for_tests_clears_plugin_marks():
 
 
 def test_plugin_cannot_take_over_a_builtin_model_name():
-    from bpp.web.bp_models import _ensure_model_modules_imported
+    from bpp.scoring.model_lifecycle import ensure_builtin_model_files_registered
 
-    _ensure_model_modules_imported()
+    ensure_builtin_model_files_registered()
     real = ModelRegistry.get("SFace recognition")
     with pytest.raises(ValueError, match="built-in"):
         ModelRegistry.register(
@@ -223,7 +220,7 @@ def test_bpp_module_imported_by_a_plugin_stays_builtin():
     # Its file path is read from the model cache dir at registration;
     # an earlier test may have pointed that elsewhere, and re-registering
     # a name at another path is refused. Only the origin matters here.
-    ModelRegistry._entries.pop("Selfie segmenter", None)
+    ModelRegistry.unregister_for_tests("Selfie segmenter")
     importlib.reload(seg)  # bpp's own module registers again
     assert "Selfie segmenter" not in {e.name for e in plugin_model_entries()}
 
@@ -246,8 +243,7 @@ def test_registration_from_outside_bpp_is_a_plugin_file(tmp_path):
     try:
         assert "file from a plugin module" in {e.name for e in plugin_model_entries()}
     finally:
-        ModelRegistry._entries.pop("file from a plugin module", None)
-        ModelRegistry._plugin.discard("file from a plugin module")
+        ModelRegistry.unregister_for_tests("file from a plugin module")
 
 
 @pytest.mark.no_preaccept_permissive

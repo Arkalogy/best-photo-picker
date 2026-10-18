@@ -197,7 +197,7 @@ class TestRedownloadEndpoint:
                 bp_models, "_model_path_url_sha", return_value=(str(target), "https://x/y", None)
             ),
             patch.object(bp_models, "_resolve_legal_id", return_value="openai_clip_vit_b32_onnx"),
-            patch.object(bp_models, "_reset_model_cache"),
+            patch("bpp.scoring.model_lifecycle.reset_model_file"),
             patch("bpp.utils.download.download_file", side_effect=slow_download),
         ):
             t0 = time.time()

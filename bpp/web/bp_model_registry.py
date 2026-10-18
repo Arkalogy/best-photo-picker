@@ -349,9 +349,9 @@ def api_acceptance_confirm() -> tuple[Any, int]:
         raise ValidationError(str(exc)) from exc
     # Re-arm gates / once-per-process skip notices so the new
     # acceptance is picked up immediately.
-    from bpp.web.bp_models import reset_runtime_for_legal_id
+    from bpp.scoring import model_lifecycle
 
-    reset_runtime_for_legal_id(row.model_id)
+    model_lifecycle.reset_runtime_for_legal_id(row.model_id)
     log.info(
         "Acceptance recorded: model=%s use_context=%s separate_rights_asserted=%s",
         row.model_id,
@@ -487,8 +487,8 @@ def api_acceptance_revoke() -> tuple[Any, int]:
         raise ValidationError(f"No active acceptance to withdraw for {model_id!r}.")
     # Take effect now, not after a restart: re-arm memoized license
     # gates + drop cached sessions for this model's files.
-    from bpp.web.bp_models import reset_runtime_for_legal_id
+    from bpp.scoring import model_lifecycle
 
-    reset_names = reset_runtime_for_legal_id(model_id)
+    reset_names = model_lifecycle.reset_runtime_for_legal_id(model_id)
     log.info("Acceptance withdrawn: model=%s (reset: %s)", model_id, reset_names or "none")
     return jsonify({"revocation": asdict(row)}), 200

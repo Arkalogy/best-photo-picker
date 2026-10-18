@@ -250,9 +250,10 @@ def test_every_model_writer_uses_a_per_writer_temp_file(tmp_path, monkeypatch, w
             monkeypatch.setattr(sf, "_enforce_sface_policy", lambda: None)
             sf._ensure_sface_model()
         else:
+            from bpp.scoring import model_lifecycle
             from bpp.web import bp_models
 
-            monkeypatch.setattr(bp_models, "_reset_model_cache", lambda name: None)
+            monkeypatch.setattr(model_lifecycle, "reset_model_file", lambda name: None)
             monkeypatch.setattr(
                 "bpp.web.models_status._file_info", lambda name, path: {"name": name}
             )

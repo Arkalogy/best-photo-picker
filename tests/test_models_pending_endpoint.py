@@ -285,8 +285,8 @@ def test_every_manifest_entry_is_linked_to_its_registry_entry():
 
     from bpp.registry import get_entry
     from bpp.scoring.model_base import ModelRegistry
+    from bpp.scoring.model_lifecycle import declared_legal_id
     from bpp.scoring.model_manifest import all_models
-    from bpp.web.bp_models import declared_legal_id
 
     by_path = {pathlib.Path(e.path): declared_legal_id(e) for e in ModelRegistry.all()}
     for m in all_models():
