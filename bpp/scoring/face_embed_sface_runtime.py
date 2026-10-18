@@ -34,7 +34,8 @@ log = get_logger(__name__)
 
 # Scale factor applied to L2-normalized SFace embeddings so that
 # Euclidean distances fall in the same range as dlib's face_recognition:
-#   dlib:  same-person ~0.4,  different ~0.9,  default threshold 0.55
+#   dlib:  same-person ~0.4,  different ~0.9 (the default threshold is
+#          FACE_CLUSTER_THRESHOLD_FALLBACK in bpp.constants)
 #   SFace: same-person ~0.52, different ~0.88  (after scaling by 0.65)
 # This lets the existing clustering threshold slider (0.3-1.0) work unchanged.
 SFACE_DISTANCE_SCALE = 0.65
@@ -63,7 +64,7 @@ _SFACE_MODEL_PATH = str(_sface_models_dir() / "face_recognition_sface_2021dec.on
 # ── Model: SFace face recognition (December 2021 release) ──────────
 # What:   converts a detected face crop (typically from YuNet) into a
 #         128-dim L2-normalized embedding. Two faces are "the same
-#         person" if cosine distance < ~0.55. Powers the per-cluster
+#         person" if cosine distance is under the cluster threshold. Powers the per-cluster
 #         person tab.
 # Where:  opencv_zoo, same source as YuNet.
 # Why this one: SFace is the OpenCV-recommended embedder, paired

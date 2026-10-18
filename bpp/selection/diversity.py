@@ -19,8 +19,10 @@ class DiversityTracker:
       3. Visual (hash fallback): reject if hash distance <= threshold to any accepted photo
     """
 
-    # Hash distance used when CLIP embeddings are unavailable.
-    # Looser than dedup (10/8) — catches "same scene, different take".
+    # Hash distance used when CLIP embeddings are unavailable — catches
+    # "same scene, different take" among the picks (dedup's own thresholds
+    # are the `hash_distance_threshold` / `global_hash_distance_threshold`
+    # config keys).
     HASH_FALLBACK_DISTANCE = 16
 
     def __init__(

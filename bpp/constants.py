@@ -205,12 +205,12 @@ CLUSTER_DISMISSED = -2  # face dismissed (not a real face / ignored)
 FACE_MIN_PHOTOS = 4
 
 # ── Face clustering threshold ──
-# Empirical default for the dlib-128 distance metric: same person typically
-# clusters under ~0.55, different people above ~0.9. The user-tunable
-# `face_cluster_threshold` config key seeds from this when a fresh DB is
-# initialized; `Config.get(..., FACE_CLUSTER_THRESHOLD_FALLBACK)` callers
-# use it when DEFAULTS / YAML / DB are all silent.
-FACE_CLUSTER_THRESHOLD_FALLBACK = 0.55
+# The default for the user-tunable `face_cluster_threshold` config key
+# (DEFAULTS reads it from here — the one copy): clustering distance on the
+# scaled embedding metric, lower = stricter (schema range 0.3-1.2).
+# `config.get(..., FACE_CLUSTER_THRESHOLD_FALLBACK)` callers given a partial
+# config get the same value the app's own config would give.
+FACE_CLUSTER_THRESHOLD_FALLBACK = 0.80
 
 # ── Scoring (face) ──
 FACE_AREA_MULTIPLIER = 10.0  # ~10% of frame area = perfect score

@@ -466,7 +466,9 @@ def api_faces_feedback_stats() -> tuple[Response, int]:
     config_threshold = ctx.config.get("face_cluster_threshold", FACE_CLUSTER_THRESHOLD_FALLBACK)
     threshold, info = compute_adaptive_face_threshold(conn, default=config_threshold)
     feedback = get_face_feedback(conn)
-    nudge = should_suggest_recluster(conn, current_threshold=config_threshold)
+    nudge = should_suggest_recluster(
+        conn, current_threshold=config_threshold, default=config_threshold
+    )
     return jsonify(
         {
             "threshold": threshold,

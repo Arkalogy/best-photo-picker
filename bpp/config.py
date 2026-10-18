@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from bpp.constants import CLIP_MODEL_NAME, MODEL_TOGGLE_KEYS
+from bpp.constants import CLIP_MODEL_NAME, FACE_CLUSTER_THRESHOLD_FALLBACK, MODEL_TOGGLE_KEYS
 from bpp.scoring.registry import get_weight_defaults
 
 DEFAULTS: dict[str, Any] = {
@@ -31,7 +31,8 @@ DEFAULTS: dict[str, Any] = {
     "face_embedding_confidence": 0.65,  # min quality for embedding (0.0-1.0)
     "min_face_area_pct": 0.20,  # min face area as % of image (0.05-1.0)
     "min_embedding_quality": 0.25,  # min quality score for embedding (0.1-0.5)
-    "face_cluster_threshold": 0.80,  # clustering distance (0.3-1.2, lower=stricter)
+    # clustering distance (0.3-1.2, lower=stricter); the value lives in constants
+    "face_cluster_threshold": FACE_CLUSTER_THRESHOLD_FALLBACK,
     "face_selection_boost": 0.15,  # score boost for selected faces (0.0-1.0)
     # Groups (people who appear together)
     "group_min_photos": 3,  # photos two people must share to form a group (1-10)

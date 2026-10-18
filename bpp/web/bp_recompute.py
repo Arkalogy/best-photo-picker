@@ -38,7 +38,8 @@ from bpp.web.recompute import (
     recompute,
 )
 from bpp.web.share import requires_local_app
-from bpp.web.state import clamp_k, clamp_weight, get_ctx
+from bpp.web.state import clamp_k, get_ctx
+from bpp.web.state_helpers import clamp_override
 
 log = get_logger(__name__)
 
@@ -70,7 +71,7 @@ def api_recompute() -> tuple[Response, int]:
     cfg = dict(ctx.config)
     for key in RECOMPUTE_WEIGHT_KEYS:
         if key in params:
-            cfg[key] = clamp_weight(params[key])
+            cfg[key] = clamp_override(key, params[key])
     # Sensitive-photo policy is a string enum, not a clampable weight.
     if params.get("sensitive_in_picks") in ("allow", "exclude"):
         cfg["sensitive_in_picks"] = params["sensitive_in_picks"]
@@ -285,7 +286,7 @@ def api_album_recompute(album_id: int) -> tuple[Response, int]:
         cfg.update(album["config"])
     for key in RECOMPUTE_WEIGHT_KEYS:
         if key in params:
-            cfg[key] = clamp_weight(params[key])
+            cfg[key] = clamp_override(key, params[key])
     # Sensitive-photo policy is a string enum, not a clampable weight.
     # Persisted with the album config via update_album() below.
     if params.get("sensitive_in_picks") in ("allow", "exclude"):

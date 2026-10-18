@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 
+from bpp.config import DEFAULTS
 from bpp.scoring.clip_embed import cosine_similarity
 from bpp.utils.logging import get_logger
 
@@ -162,7 +163,7 @@ def semantic_deduplicate(
         threshold,
     )
 
-    time_window = config.get("time_window_seconds", 30)
+    time_window = config.get("time_window_seconds", DEFAULTS["time_window_seconds"])
 
     # Build filepath -> photo_id lookup for embedding access
     # analysis items may have "id" (from DB) or not

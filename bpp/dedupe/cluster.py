@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from bpp.config import DEFAULTS
 from bpp.constants import CLUSTER_UNASSIGNED
 from bpp.dedupe.common import within_time_window
 from bpp.dedupe.phash import (
@@ -39,8 +40,10 @@ def deduplicate(
     if config is None:
         config = {}
 
-    hash_threshold = config.get("hash_distance_threshold", 10)
-    time_window = config.get("time_window_seconds", 30)
+    # A partial config (a plugin, the strategy hook, a test) falls back to
+    # the app's own defaults — never a stricter private copy.
+    hash_threshold = config.get("hash_distance_threshold", DEFAULTS["hash_distance_threshold"])
+    time_window = config.get("time_window_seconds", DEFAULTS["time_window_seconds"])
 
     # Compute hashes for all images (both dHash and aHash)
     for item in analysis:
@@ -110,7 +113,9 @@ def deduplicate(
 
     # Pass 2: Global phash dedup (no time constraint, tighter threshold)
     # Catches near-identical photos taken at different times
-    global_threshold = config.get("global_hash_distance_threshold", 8)
+    global_threshold = config.get(
+        "global_hash_distance_threshold", DEFAULTS["global_hash_distance_threshold"]
+    )
     if global_threshold > 0:
         selected = _global_dedup(selected, global_threshold)
 

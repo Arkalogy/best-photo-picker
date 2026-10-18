@@ -38,6 +38,27 @@ def clamp_weight(val: Any) -> float:
     return max(_WEIGHT_MIN, min(float(val), _WEIGHT_MAX))
 
 
+def clamp_override(key: str, val: Any) -> float | int:
+    """Clamp a recompute override to ITS key's range: the config schema's
+    (``hash_distance_threshold`` 0-64, ``time_window_seconds`` 0-600, …),
+    or the weight range for the scoring weights, which have none. (One
+    clamp for every key once squeezed a threshold of 20 to 10 — silently
+    stricter than not passing it at all.)"""
+    from bpp.config_schema import get_schema
+    from bpp.errors import ValidationError
+
+    try:
+        value = float(val)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError(f"{key} must be a number", field=key, value=val) from exc
+    field = get_schema(key)
+    if field is None or field.min is None or field.max is None:
+        return clamp_weight(value)
+    clamped = max(float(field.min), min(value, float(field.max)))
+    # (int() like the Settings path, so one value never becomes two integers.)
+    return int(clamped) if field.type is int else clamped
+
+
 def clamp_k(val: Any, default: int = 50) -> int:
     """Clamp k parameter to valid range."""
     try:

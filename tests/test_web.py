@@ -283,6 +283,26 @@ class TestRoutes:
         assert "/tmp/test_photos/img_000.jpg" in data["selected_paths"]
         assert "/tmp/test_photos/img_009.jpg" not in data["selected_paths"]
 
+    def test_recompute_overrides_keep_their_own_range(self, web_client, monkeypatch):
+        # 20 / 30 are the defaults: restating them must not tighten dedup
+        # (the old blanket 0-10 clamp turned 20 into 10). The fixture has no
+        # hashes, so prove the wiring: the per-key clamp sees each override.
+        from bpp.web import bp_recompute, state_helpers
+
+        seen = {}
+
+        def spy(key, value):
+            seen[key] = state_helpers.clamp_override(key, value)
+            return seen[key]
+
+        monkeypatch.setattr(bp_recompute, "clamp_override", spy)
+        resp = web_client.post(
+            "/api/v1/recompute",
+            json={"k": 3, "hash_distance_threshold": 20, "time_window_seconds": 30},
+        )
+        assert resp.status_code == 200
+        assert seen == {"hash_distance_threshold": 20, "time_window_seconds": 30}
+
     def test_photos_404_without_analysis(self, tmp_path):
         from bpp.web.app import create_app
 

@@ -267,7 +267,8 @@ def should_suggest_recluster(
 # ── Ambiguous pair finder (for /api/faces/review-pairs) ──
 
 # Absolute ceiling for "worth reviewing" cluster-centroid distance.
-# Anchored to face-embedding empirics: same person is usually < 0.55,
+# Anchored to face-embedding empirics: same person is usually well under the
+# cluster threshold (FACE_CLUSTER_THRESHOLD_FALLBACK),
 # clearly different is > 0.85. 0.75 is the "probably worth a human glance"
 # upper bound. Anchored to an absolute value — not to the adaptive
 # threshold — because the adaptive threshold can drift toward 1.0 once
