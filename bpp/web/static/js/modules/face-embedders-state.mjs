@@ -19,18 +19,27 @@
  * @typedef {object} FeState
  * @property {object | null} currentDraft  Open acceptance draft, or null.
  * @property {string} currentUseContext    Declared use-context value.
- * @property {string} activeFaceMethod     Active face_embedding_method.
+ * @property {string | null} activeFaceMethod  Active face_embedding_method (null: it couldn't be loaded).
  * @property {Map<string, object>} installState  registry id → /api/v1/models install state.
  * @property {Set<string>} requiresAckIds   Ids needing click-through before use.
  * @property {Set<string>} acceptedIds      Ids accepted under the CURRENT license text.
  * @property {Set<string>} reacceptIds      Ids accepted under an OLDER text — need re-accepting.
  * @property {Set<string>} catalogEntryIds  Ids fetched via the catalog endpoint.
  * @property {Set<string>} busyRowIds       Ids mid-operation (download/uninstall).
+ * @property {Map<string, string>} busyText  Their in-row status ("Downloading… 40%").
  * @property {Map<string, string>} loadStates  Id → the server's load-gate decision
  *   (``ok`` / ``needs_license`` / ``needs_reaccept`` /
  *   ``needs_commercial_rights`` / ``blocked``).
- * @property {number | null} pendingScrollRestore  Parent scroll to restore post-render.
+ * @property {{install: string, license: string, method: string}} unknown
+ *   What the last load couldn't fetch (install state, the acceptance list,
+ *   the active face method) — why, or "" when it loaded: rows that need
+ *   it read "Unknown".
+ * @property {Map<string, boolean>} decided  Id → accepted (true) or withdrawn
+ *   (false) on this page: known even when the acceptance list doesn't
+ *   load; cleared once it does.
  */
+
+import { esc } from "./text-format.mjs";
 
 /** @type {FeState} */
 export const feState = {
@@ -43,8 +52,11 @@ export const feState = {
   reacceptIds: new Set(),
   catalogEntryIds: new Set(),
   busyRowIds: new Set(),
+  busyText: new Map(),
   loadStates: new Map(),
-  pendingScrollRestore: null,
+  /** What the last load couldn't fetch (why): rows needing it read "Unknown". */
+  unknown: { install: "", license: "", method: "" },
+  decided: new Map(),
 };
 
 /**
@@ -59,7 +71,8 @@ export function _collectRequiresAckIds(groups) {
   const out = new Set();
   for (const g of groups || []) {
     for (const e of g.entries || []) {
-      if (e && e.requires_explicit_ack && e.id) out.add(e.id);
+      // (=== true: the row's own rule, so the dialog can't disagree with it.)
+      if (e && e.requires_explicit_ack === true && e.id) out.add(e.id);
     }
   }
   return out;
@@ -170,6 +183,22 @@ export function damagedLogNoticeHTML(payload) {
 }
 
 /**
+ * Say what the picker couldn't load (and why), with a Retry: the rows
+ * that needed it read "Unknown" rather than a confident wrong status.
+ * @param {Array<{what: string, why: string}>} failures
+ * @returns {string} HTML ("" when nothing failed)
+ */
+export function loadFailureNoticeHTML(failures) {
+  if (!failures.length) return "";
+  const parts = failures.map((f) => `${esc(f.what)} (${esc(f.why)})`).join(", ");
+  return (
+    `<p class="setting-muted fe-load-failure-notice" role="status">Couldn't load ${parts} — ` +
+    `models marked “Unknown” may be fine. ` +
+    `<button class="modal-btn modal-btn-secondary" data-action="loadFaceEmbedderPicker">Retry</button></p>`
+  );
+}
+
+/**
  * Test seam: clear the picker state so unit tests start from a known
  * empty baseline. Not used in production code.
  */
@@ -180,11 +209,13 @@ export function _resetFaceEmbedderStateForTests() {
   feState.catalogEntryIds = new Set();
   feState.installState = new Map();
   feState.busyRowIds = new Set();
+  feState.busyText = new Map();
   feState.loadStates = new Map();
   feState.currentUseContext = "unspecified";
   feState.activeFaceMethod = "sface";
   feState.currentDraft = null;
-  feState.pendingScrollRestore = null;
+  feState.unknown = { install: "", license: "", method: "" };
+  feState.decided = new Map();
 }
 
 /**

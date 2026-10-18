@@ -1,7 +1,7 @@
 // @ts-check
 /**
  * Face-embedder license acceptance dialog (the click-through that gates
- * restricted models) + its scroll-restore helpers.
+ * restricted models).
  *
  * Split out of ``modals-face-embedders.mjs`` for the 500-LOC cap. Shares
  * picker state via ``feState`` and calls back into the picker
@@ -13,6 +13,7 @@
 
 import { apiFetch } from "./api-client.mjs";
 import { appConfirm } from "./dialogs.mjs";
+import { licenseFacts } from "./face-embedders-license.mjs";
 import { _feInstallGlobalHandlers } from "./face-embedders-popover.mjs";
 import { feState } from "./face-embedders-state.mjs";
 import { loadFaceEmbedderPicker } from "./modals-face-embedders.mjs";
@@ -25,19 +26,14 @@ import { toast, toastError } from "./toast.mjs";
  *
  * @param {string} modelId
  * @param {string} [mode] ``"view"`` opens read-only even if never accepted
- *   (a withdrawn model: accepting can't enable it).
+ *   (a withdrawn model: accepting can't enable it); ``"unknown"`` read-only
+ *   too, when whether you accepted it couldn't be loaded.
  */
 export async function openFaceEmbedderAcceptance(modelId, mode) {
   // Ensure ESC + backdrop-click handlers are wired even when the
   // dialog is opened without first going through
   // loadFaceEmbedderPicker (e.g. from the runtime-block toast).
   _feInstallGlobalHandlers();
-  // Snapshot the parent Settings → Models scroll position so we can
-  // restore it after the dialog closes. Without this, accepting or
-  // cancelling triggers loadFaceEmbedderPicker which rewrites the
-  // picker container — the scroll resets to top and the user loses
-  // their place in a long list.
-  _captureParentScrollForRestore();
   try {
     const draft = await apiFetch(
       `/api/v1/model-registry/acceptance/draft?model_id=${encodeURIComponent(
@@ -66,32 +62,37 @@ export async function openFaceEmbedderAcceptance(modelId, mode) {
  * - ``rights``: accepted, but refused for commercial use without the
  *   separate-rights assertion — ask for it; withdrawing stays possible.
  * - ``review``: accepted and fine — read-only, with Withdraw.
+ * - ``unknown``: whether you accepted it couldn't be loaded — read-only,
+ *   Close only (accepting again would add a duplicate to the record).
  * - ``accept``: a fresh acceptance.
+ * From the same license facts as the row, so its menu label and the
+ * dialog it opens agree.
  *
  * @param {string} modelId
  * @param {string} [requested]
- * @returns {"view" | "rights" | "review" | "accept"}
+ * @returns {"view" | "rights" | "review" | "unknown" | "accept"}
  */
 function _dialogMode(modelId, requested) {
-  if (requested === "view") return "view";
-  const accepted = feState.acceptedIds.has(modelId);
+  if (requested === "view" || requested === "unknown") return requested;
+  const row = licenseFacts(modelId, feState.requiresAckIds.has(modelId), feState.loadStates.get(modelId));
+  if (row.licenseUnknown) return "unknown"; // however it was opened
   // Rights mode re-uses the acceptance on file — only if there is one.
-  if (accepted && feState.loadStates.get(modelId) === "needs_commercial_rights") return "rights";
-  return accepted ? "review" : "accept";
+  if (row.accepted && row.needsCommercialRights) return "rights";
+  return row.accepted ? "review" : "accept";
 }
 
 /**
  * @param {object} draft
- * @param {"view" | "rights" | "review" | "accept"} [mode]
+ * @param {"view" | "rights" | "review" | "unknown" | "accept"} [mode]
  */
 function _renderAcceptanceDialog(draft, mode = "accept") {
   const body = document.getElementById("fe-acceptance-body");
   if (!body) return;
   // Read-only: review / view show the terms; rights keeps the (already
   // given) acknowledgments ticked and asks only for the rights assertion.
-  const alreadyAccepted = mode === "review" || mode === "view";
-  const boxAttr =
-    mode === "view" ? " disabled" : mode === "accept" ? "" : " checked disabled";
+  const readOnly = mode === "view" || mode === "unknown";
+  const alreadyAccepted = mode === "review" || readOnly;
+  const boxAttr = readOnly ? " disabled" : mode === "accept" ? "" : " checked disabled";
   const checkboxes = (draft.required_checkboxes || [])
     .map(
       (cb) => `
@@ -104,11 +105,15 @@ function _renderAcceptanceDialog(draft, mode = "accept") {
   const acceptedBanner =
     mode === "review"
       ? `<div class="fe-accepted-banner">✓ You've accepted these terms. Shown here for your reference.</div>`
+      : mode === "unknown"
+        ? `<div class="fe-notice-banner">Couldn't check whether you've accepted these terms — load the list again to accept or withdraw. Shown here for reference.</div>`
       : mode === "view"
         ? `<div class="fe-notice-banner">This model has been withdrawn or blocked in the model registry, so it can't be enabled. Its terms are shown for reference.${
             feState.acceptedIds.has(draft.model_id)
               ? ` You can still <button type="button" class="fe-link-btn" data-action="revokeFaceEmbedderAcceptance" data-arg0="${escapeAttr(draft.model_id)}">withdraw your acceptance</button>.`
-              : ""
+              : feState.unknown.license && !feState.decided.has(draft.model_id)
+                ? " Couldn't check whether you'd accepted it — load the list again to withdraw an acceptance."
+                : ""
           }</div>`
         : mode === "rights"
           ? `<div class="fe-notice-banner">You've accepted these terms, but your use context is Commercial: confirm below that you hold separate rights, or <button type="button" class="fe-link-btn" data-action="revokeFaceEmbedderAcceptance" data-arg0="${escapeAttr(draft.model_id)}">withdraw your acceptance</button>.</div>`
@@ -179,8 +184,8 @@ function _renderAcceptanceDialog(draft, mode = "accept") {
   const cancelBtn = /** @type {HTMLElement | null} */ (
     document.querySelector('[data-action="closeFaceEmbedderAcceptance"]')
   );
-  if (acceptBtn) acceptBtn.hidden = mode === "view";
-  if (mode === "view") {
+  if (acceptBtn) acceptBtn.hidden = readOnly;
+  if (readOnly) {
     // Nothing to accept or withdraw: Close only.
     if (cancelBtn) cancelBtn.textContent = "Close";
     return;
@@ -308,73 +313,6 @@ export function closeFaceEmbedderAcceptance() {
     overlay.setAttribute("style", "display: none");
   }
   feState.currentDraft = null;
-  // Restore the parent scroll position once the next
-  // loadFaceEmbedderPicker render completes (it re-renders the
-  // picker container after close, so we install a one-shot
-  // listener via _restoreParentScrollOnNextRender).
-  _restoreParentScrollOnNextRender();
-}
-
-/**
- * Snapshot the scroll position of the picker's nearest scrollable
- * ancestor (the Settings modal body). Stored in module-level state
- * so :func:`_restoreParentScrollOnNextRender` can restore it after
- * ``loadFaceEmbedderPicker`` rewrites the picker container.
- */
-function _captureParentScrollForRestore() {
-  const container = document.getElementById("face-embedder-picker");
-  const scroller = _findScrollableAncestor(container);
-  feState.pendingScrollRestore = scroller ? scroller.scrollTop : null;
-}
-
-/**
- * Walk up the DOM from ``el`` returning the first ancestor whose
- * computed overflow-y allows scrolling. Used to find the Settings
- * modal body the picker lives in without hardcoding a selector
- * (the surrounding HTML structure has changed over time).
- *
- * @param {Element | null} el
- * @returns {HTMLElement | null}
- */
-function _findScrollableAncestor(el) {
-  let node = el?.parentElement || null;
-  while (node && node !== document.body) {
-    const style = window.getComputedStyle(node);
-    const overflowY = style.overflowY;
-    if (
-      (overflowY === "auto" || overflowY === "scroll") &&
-      node.scrollHeight > node.clientHeight
-    ) {
-      return /** @type {HTMLElement} */ (node);
-    }
-    node = node.parentElement;
-  }
-  return null;
-}
-
-/**
- * Watch the picker container for the next innerHTML change (the
- * post-acceptance ``loadFaceEmbedderPicker`` reload) and restore
- * the captured parent scroll position once the new rows are in
- * the DOM. MutationObserver fires before the browser paints, so
- * the user doesn't see a flash of scroll-reset.
- */
-function _restoreParentScrollOnNextRender() {
-  if (feState.pendingScrollRestore == null) return;
-  const target = feState.pendingScrollRestore;
-  feState.pendingScrollRestore = null;
-  const container = document.getElementById("face-embedder-picker");
-  if (!container) return;
-  const scroller = _findScrollableAncestor(container);
-  if (!scroller) return;
-  const observer = new MutationObserver(() => {
-    scroller.scrollTop = target;
-    observer.disconnect();
-  });
-  observer.observe(container, { childList: true, subtree: true });
-  // Safety: disconnect after 2 s if no render fires (e.g. the
-  // close was a cancel that didn't trigger a reload).
-  setTimeout(() => observer.disconnect(), 2000);
 }
 
 /** Confirm acceptance — POSTs to /acceptance/confirm. */
@@ -440,6 +378,15 @@ export async function confirmFaceEmbedderAcceptance() {
     // re-fetches the acceptance list.
     if (feState.currentDraft.model_id) {
       feState.acceptedIds.add(feState.currentDraft.model_id);
+      feState.decided.set(feState.currentDraft.model_id, true); // known now
+      // Accepted (with the rights it asked for): it may load — known here,
+      // not left unknown until a reload, which may fail to fetch the list.
+      // (Withdrawn stays withdrawn: accepting can't make it run.)
+      // (Only a decision the server made is replaced: an older server
+      // sends none, and the acceptance list decides there.)
+      const id = feState.currentDraft.model_id;
+      const was = feState.loadStates.get(id);
+      if (was && was !== "blocked") feState.loadStates.set(id, "ok");
       feState.reacceptIds.delete(feState.currentDraft.model_id);
     }
     toast(`Acceptance recorded for ${feState.currentDraft.model_display_name}.`);
@@ -475,8 +422,12 @@ export async function revokeFaceEmbedderAcceptance(modelId) {
       body: JSON.stringify({ model_id: modelId }),
     });
     feState.acceptedIds.delete(modelId);
+    feState.decided.set(modelId, false); // known now: not accepted
     feState.reacceptIds.delete(modelId);
-    feState.loadStates.delete(modelId); // stale until the picker reloads
+    // Acceptance withdrawn: it may not load (a withdrawn model stays so;
+    // with no server decision, the acceptance list decides).
+    const was = feState.loadStates.get(modelId);
+    if (was && was !== "blocked") feState.loadStates.set(modelId, "needs_license");
     toast("License acceptance withdrawn.");
     closeFaceEmbedderAcceptance();
     notifyModelsChanged();

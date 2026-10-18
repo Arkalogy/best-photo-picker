@@ -213,12 +213,13 @@ describe("license dialog modes", () => {
     expect(heard).toHaveBeenCalledTimes(1); // accepting announces the change
   });
 
-  test("withdrawing forgets the row's cached load state", async () => {
+  test("withdrawing replaces the row's cached load state: it needs a license", async () => {
+    // (Not the stale "needs commercial rights": the dialog asks to accept.)
     fe._seedFaceEmbedderStateForTests({ acceptedIds: ["nudenet_320n"] });
     feState.loadStates = new Map([["nudenet_320n", "needs_commercial_rights"]]);
     apiFetchMock.mockResolvedValue({});
     await fe.revokeFaceEmbedderAcceptance("nudenet_320n");
-    expect(feState.loadStates.has("nudenet_320n")).toBe(false);
+    expect(feState.loadStates.get("nudenet_320n")).toBe("needs_license");
   });
 
   test("accepted and fine: review with Withdraw", async () => {
@@ -226,5 +227,19 @@ describe("license dialog modes", () => {
     await fe.openFaceEmbedderAcceptance("nudenet_320n");
     expect(accept().hidden).toBe(false);
     expect(accept().dataset.action).toBe("revokeFaceEmbedderAcceptance");
+  });
+});
+
+describe("accepting or withdrawing a license updates the row at once", () => {
+  test("accepted: it may load, even before (or without) a successful reload", async () => {
+    feState.loadStates.set("nudenet_320n", "needs_license");
+    feState.currentDraft = {
+      model_id: "nudenet_320n",
+      model_display_name: "NudeNet",
+      required_checkboxes: [],
+    };
+    document.body.innerHTML += '<input type="checkbox" id="fe-ack-dummy" checked>';
+    await fe.confirmFaceEmbedderAcceptance();
+    expect(feState.loadStates.get("nudenet_320n")).toBe("ok");
   });
 });

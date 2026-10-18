@@ -12,16 +12,51 @@
  */
 
 import { apiFetch } from "./api-client.mjs";
-import { downloadProgressText, waitForDownloadJob } from "./download-jobs.mjs";
+import {
+  DOWNLOAD_STALLED_TEXT,
+  downloadProgressText,
+  downloadRetryText,
+  waitForDownloadJob,
+} from "./download-jobs.mjs";
 import { appConfirm } from "./dialogs.mjs";
 import { openFaceEmbedderAcceptance } from "./face-embedders-acceptance.mjs";
+import { licenseFacts } from "./face-embedders-license.mjs";
 import { feState } from "./face-embedders-state.mjs";
 import {
+  _clearRowBusy,
   _setRowStatusBusy,
   loadFaceEmbedderPicker,
 } from "./modals-face-embedders.mjs";
 import { notifyModelsChanged } from "./models-changed.mjs";
 import { toast, toastError } from "./toast.mjs";
+
+/**
+ * A row's operation ended: unlock it. Done, it announced the change (the
+ * "models changed" reload redraws it); failed, redraw its real status here.
+ * @param {string} registryId
+ * @param {boolean} succeeded
+ */
+function _endRowOperation(registryId, succeeded) {
+  _clearRowBusy(registryId);
+  if (!succeeded) void loadFaceEmbedderPicker();
+}
+
+/**
+ * The refused switch, why (its load-gate decision), and what to do.
+ * @param {string} displayName
+ * @param {{unavailable: boolean, needsCommercialRights: boolean, needsReaccept: boolean}} row
+ * @returns {string}
+ */
+function _blockedMessage(displayName, row) {
+  const why = row.unavailable
+    ? "it has been withdrawn — pick another model."
+    : row.needsCommercialRights
+      ? "your commercial-use rights for it aren't confirmed — confirm them in its ⋯ menu."
+      : row.needsReaccept
+        ? "its license terms changed — re-accept them in its ⋯ menu."
+        : "its license isn't accepted — accept it in its ⋯ menu.";
+  return `Couldn't switch to ${displayName}: ${why}`;
+}
 
 // ── Install controls — delegate to the legacy /api/v1/models endpoints
 // ── until the per-entry install logic lands in the registry layer. ──
@@ -74,9 +109,10 @@ export async function uninstallFaceEmbedderEntry(registryId, legacyLabel) {
   );
   if (!ok) return;
   // In-row progress (not just a toast) so a multi-file delete shows
-  // status, matching redownload/ensure-weights. The reload at the end
-  // — on success AND in the catch — clears the busy state.
+  // status, matching redownload/ensure-weights. Unlocked when it ends
+  // (_endRowOperation) — a reload meanwhile keeps the row locked.
   _setRowStatusBusy(registryId, "Uninstalling…");
+  let succeeded = false;
   try {
     if (isCatalogPath) {
       await apiFetch("/api/v1/face-embedders/uninstall-weights", {
@@ -95,9 +131,11 @@ export async function uninstallFaceEmbedderEntry(registryId, legacyLabel) {
     }
     toast(`${legacyLabel} uninstalled.`);
     notifyModelsChanged();
+    succeeded = true;
   } catch (err) {
     toastError("uninstall the model", err);
-    void loadFaceEmbedderPicker();
+  } finally {
+    _endRowOperation(registryId, succeeded);
   }
 }
 
@@ -126,6 +164,7 @@ export async function redownloadFaceEmbedderEntry(registryId, legacyLabel) {
     total > 1 ? `Downloading… (0/${total})` : "Downloading…",
   );
   toast(`Downloading ${legacyLabel}…`);
+  let succeeded = false;
   try {
     let done = 0;
     for (const f of files) {
@@ -138,16 +177,20 @@ export async function redownloadFaceEmbedderEntry(registryId, legacyLabel) {
       await waitForDownloadJob(started?.job, {
         onProgress: (snap) =>
           _setRowStatusBusy(registryId, prefix + downloadProgressText(snap)),
+        onStall: () => _setRowStatusBusy(registryId, prefix + DOWNLOAD_STALLED_TEXT),
+        onRetry: (err) => _setRowStatusBusy(registryId, prefix + downloadRetryText(err)),
       });
       done += 1;
     }
     toast(`${legacyLabel} downloaded.`);
     notifyModelsChanged();
+    succeeded = true;
   } catch (err) {
-    // Surface the real reason (the backend now returns it) and restore
-    // the true status by reloading the picker.
+    // Surface the real reason (the backend now returns it); the redraw
+    // below restores the true status.
     toastError("download the model", err);
-    void loadFaceEmbedderPicker();
+  } finally {
+    _endRowOperation(registryId, succeeded);
   }
 }
 
@@ -171,6 +214,7 @@ export async function ensureCatalogWeights(registryId, displayName) {
   }
   _setRowStatusBusy(registryId, "Downloading…");
   toast(`Downloading ${displayName}…`);
+  let succeeded = false;
   try {
     const started = await apiFetch("/api/v1/face-embedders/ensure-weights", {
       method: "POST",
@@ -179,6 +223,8 @@ export async function ensureCatalogWeights(registryId, displayName) {
     });
     const snap = await waitForDownloadJob(started?.job, {
       onProgress: (s) => _setRowStatusBusy(registryId, downloadProgressText(s)),
+      onStall: () => _setRowStatusBusy(registryId, DOWNLOAD_STALLED_TEXT),
+      onRetry: (err) => _setRowStatusBusy(registryId, downloadRetryText(err)),
     });
     const sizeBytes = (snap.result && snap.result.size_bytes) || 0;
     const sizeMb = sizeBytes / (1024 * 1024);
@@ -188,9 +234,11 @@ export async function ensureCatalogWeights(registryId, displayName) {
         : `${displayName} downloaded.`,
     );
     notifyModelsChanged();
+    succeeded = true;
   } catch (err) {
     toastError("download the model", err);
-    void loadFaceEmbedderPicker();
+  } finally {
+    _endRowOperation(registryId, succeeded);
   }
 }
 
@@ -247,15 +295,32 @@ export async function setActiveFaceEmbedder(
   // so the gate never fired — runtime enforcement on the backend
   // caught it, but the user saw a confusing analyze-time error
   // instead of a clean "review terms first" toast.
-  if (
-    registryId &&
-    feState.requiresAckIds.has(registryId) &&
-    !feState.acceptedIds.has(registryId)
-  ) {
+  // The server's load-gate decision, when it sent one, is the truth;
+  // otherwise the acceptance list — and if that didn't load, whether it's
+  // accepted is unknown (the settings save has no license gate of its
+  // own, so don't switch on a guess). From the same license facts as the
+  // row's own status, so the menu and this check can't disagree.
+  const row = registryId
+    ? licenseFacts(
+        registryId,
+        feState.requiresAckIds.has(registryId),
+        feState.loadStates.get(registryId),
+      )
+    : null;
+  if (row?.licenseUnknown || feState.unknown.method) {
+    // (Which model is in use didn't load either: don't overwrite a setting
+    // this page never read.)
+    const [what, why] = row?.licenseUnknown
+      ? ["whether its license is accepted", feState.unknown.license]
+      : ["which face model is in use", feState.unknown.method];
     toast(
-      `${displayName} needs acceptance first — click "Review & accept…".`,
-      "error",
+      `Couldn't switch to ${displayName}: the page couldn't load ${what} (${why}) — load the list again, then try again.`,
+      "warning",
     );
+    return;
+  }
+  if (row?.licenseBlocked) {
+    toast(_blockedMessage(displayName, row), "error");
     return;
   }
   try {

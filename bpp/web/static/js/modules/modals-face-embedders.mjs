@@ -64,11 +64,13 @@ import {
   _collectCatalogEntryIds,
   _collectReacceptIds,
   damagedLogNoticeHTML,
+  loadFailureNoticeHTML,
   _collectRequiresAckIds,
   _resetFaceEmbedderStateForTests,
   _seedFaceEmbedderStateForTests,
   feState,
 } from "./face-embedders-state.mjs";
+import { _clearRowBusy, _setRowStatusBusy, busyFallbackHTML } from "./face-embedders-busy.mjs";
 import { _formatBytes } from "./format-helpers.mjs";
 import { MODELS_CHANGED_EVENT } from "./models-changed.mjs";
 import { escapeAttr, esc } from "./text-format.mjs";
@@ -78,6 +80,8 @@ import { USE_CONTEXT_OPTIONS } from "./use-context-options.mjs";
 // Re-export so the existing test/import path (modals-face-embedders.mjs)
 // keeps working after the state + acceptance + actions + rowstate split.
 export {
+  _clearRowBusy,
+  _setRowStatusBusy,
   _resetFaceEmbedderStateForTests,
   _seedFaceEmbedderStateForTests,
   _acceptanceGateSatisfied,
@@ -104,23 +108,48 @@ export async function loadFaceEmbedderPicker() {
   const container = document.getElementById("face-embedder-picker");
   if (!container) return;
   _feInstallGlobalHandlers();
-  container.innerHTML = '<p class="setting-muted">Loading…</p>';
+  const load = ++_loadCount; // a newer load (another click) wins
+  // A reload keeps the rows on screen (locked) until the new ones arrive:
+  // emptying the list first would collapse it and lose the user's place.
+  if (container.querySelector("tr[data-entry-id]")) container.setAttribute("aria-busy", "true");
+  else container.innerHTML = '<p class="setting-muted">Loading…</p>' + busyFallbackHTML();
   try {
-    const [registry, useCtx, legacy, settings, acceptances] =
-      await Promise.all([
-        apiFetch("/api/v1/model-registry/entries"),
-        apiFetch("/api/v1/model-registry/use-context"),
-        apiFetch("/api/v1/models").catch(() => null),
-        apiFetch("/api/v1/settings").catch(() => null),
-        apiFetch("/api/v1/model-registry/acceptance/list").catch(
-          () => null,
-        ),
-      ]);
+    // These three only refine the rows: if one fails the picker still
+    // draws, says what it couldn't load, and marks the rows that needed
+    // it "Unknown" (not a confident "needs license" / "not downloaded").
+    const [registry, useCtx, [install, method, license]] = await Promise.all([
+      apiFetch("/api/v1/model-registry/entries"),
+      apiFetch("/api/v1/model-registry/use-context"),
+      Promise.allSettled([
+        apiFetch("/api/v1/models"),
+        apiFetch("/api/v1/settings"),
+        apiFetch("/api/v1/model-registry/acceptance/list"),
+      ]),
+    ]);
+    if (load !== _loadCount) return; // out of date: the newer load draws
+    /** @type {(r: PromiseSettledResult<any>) => any} */
+    const value = (r) => (r.status === "fulfilled" ? r.value : null);
+    const [legacy, settings, acceptances] = [value(install), value(method), value(license)];
+    /** @type {(r: PromiseSettledResult<any>) => string} */
+    const why = (r) => (r.status === "rejected" ? r.reason?.message || String(r.reason) : "");
+    /** @type {Array<[string, PromiseSettledResult<any>]>} */
+    const named = [
+      ["install status", install],
+      ["the face model in use", method],
+      ["your accepted licenses", license],
+    ];
+    const failures = named.flatMap(([what, r]) => (why(r) ? [{ what, why: why(r) }] : []));
+    feState.unknown = { install: why(install), method: why(method), license: why(license) };
     feState.currentUseContext = useCtx?.use_context || "unspecified";
-    feState.activeFaceMethod = settings?.face_embedding_method || "sface";
+    // (Settings didn't load: no guess — embedder rows read "Unknown".)
+    feState.activeFaceMethod = settings ? settings.face_embedding_method || "sface" : null;
     feState.installState = _buildInstallStateMap(legacy);
     feState.requiresAckIds = _collectRequiresAckIds(registry.groups || []);
     feState.acceptedIds = _collectAcceptedIds(acceptances);
+    // The list is the truth once it loads; until then, what was accepted
+    // or withdrawn on this page stands.
+    if (acceptances) feState.decided = new Map();
+    for (const [id, ok] of feState.decided) if (ok) feState.acceptedIds.add(id);
     // The server's load-gate decision per row: picks the acceptance
     // dialog's mode (e.g. ask for commercial-use rights).
     feState.loadStates = new Map();
@@ -131,15 +160,37 @@ export async function loadFaceEmbedderPicker() {
     }
     feState.reacceptIds = _collectReacceptIds(acceptances);
     feState.catalogEntryIds = _collectCatalogEntryIds(registry.groups || []);
-    // The reload reflects post-operation truth; clear the busy gate so
-    // freshly-completed operations don't keep their row locked out.
-    feState.busyRowIds = new Set();
     container.innerHTML =
-      damagedLogNoticeHTML(acceptances) + _renderUnifiedPickerHTML(registry.groups || []);
+      loadFailureNoticeHTML(failures) +
+      damagedLogNoticeHTML(acceptances) +
+      _renderUnifiedPickerHTML(registry.groups || []);
+    // Rows still mid-operation (a reload from elsewhere: another row's
+    // change, Retry) stay locked and keep showing their progress; each
+    // operation unlocks its own row when it ends (_clearRowBusy).
+    // (One the new list doesn't draw keeps a line of its own.)
+    const undrawn = [...feState.busyRowIds].filter(
+      (id) => !_setRowStatusBusy(id, feState.busyText.get(id) || "Working…"),
+    );
+    container.insertAdjacentHTML("beforeend", busyFallbackHTML(undrawn));
   } catch (err) {
-    container.innerHTML = `<p class="setting-muted">Could not load model registry: ${esc(err.message || String(err))}</p>`;
+    if (load !== _loadCount) return;
+    // An operation still running is said, not hidden (its progress comes
+    // back with the list).
+    const busy = feState.busyRowIds.size
+      ? " A model download or removal is still running (below)."
+      : "";
+    const reason = String(err.message || err).replace(/\.+$/, "");
+    container.innerHTML =
+      `<p class="setting-muted">Couldn't load the model list: ${esc(reason)}.${busy} ` +
+      `<button class="modal-btn modal-btn-secondary" data-action="loadFaceEmbedderPicker">Retry</button></p>` +
+      busyFallbackHTML();
+  } finally {
+    if (load === _loadCount) container.removeAttribute("aria-busy");
   }
 }
+
+/** Counts picker loads: only the newest draws. */
+let _loadCount = 0;
 
 /**
  * Build registry-id → install-state map by joining the legacy
@@ -298,39 +349,6 @@ function _renderRow(entry) {
   </tr>`;
 }
 
-/**
- * Replace a row's status cell with a transient busy indicator while a
- * long operation (download) is in flight. The picker reload at the end
- * of the operation restores the real status. Honors the "nothing should
- * be silent" rule — a multi-second download must show progress in-row,
- * not just a fire-and-forget toast.
- *
- * @param {string} registryId
- * @param {string} text  e.g. "Downloading…"
- */
-export function _setRowStatusBusy(registryId, text) {
-  // Marks the row as in-flight so subsequent ⋯ opens and action
-  // clicks bounce off the busy gate until ``loadFaceEmbedderPicker``
-  // clears it. Without this, the bug screenshot showed an open menu
-  // mid-download offering Redownload + Uninstall + Use this model
-  // simultaneously — any of which would corrupt the operation.
-  feState.busyRowIds.add(registryId);
-  // Registry ids are simple slugs (e.g. "opencv_yunet"); CSS.escape is the
-  // correct guard but is absent under jsdom, so fall back to a quote-strip.
-  const safeId =
-    typeof CSS !== "undefined" && CSS.escape
-      ? CSS.escape(registryId)
-      : String(registryId).replace(/["\\]/g, "");
-  const cell = document.querySelector(
-    `tr[data-entry-id="${safeId}"] .fe-cell-status`,
-  );
-  if (cell) {
-    cell.innerHTML = `<span class="fe-status fe-status-busy"><span class="fe-spinner"></span>${esc(text)}</span>`;
-  }
-  // Close the menu if it was open when the busy state started.
-  const openMenu = document.getElementById("fe-ovr-" + registryId);
-  if (openMenu) openMenu.classList.remove("open", "fe-overflow-menu--up");
-}
 
 /**
  * Render the install-state pill (Ready / Not downloaded / Fallback / …).

@@ -9,7 +9,13 @@
  */
 
 import { apiFetch } from "./api-client.mjs";
-import { downloadProgressText, waitForDownloadJob } from "./download-jobs.mjs";
+import {
+  DOWNLOAD_STALLED_SHORT,
+  DOWNLOAD_STALLED_TEXT,
+  downloadProgressText,
+  downloadRetryText,
+  waitForDownloadJob,
+} from "./download-jobs.mjs";
 import { _formatBytes } from "./format-helpers.mjs";
 import { loadFaceEmbedderPicker } from "./modals-face-embedders.mjs";
 import { esc, escapeAttr } from "./text-format.mjs";
@@ -217,8 +223,15 @@ export async function loadModelsList() {
                 body: JSON.stringify({ name }),
               });
               await waitForDownloadJob(started?.job, {
-                onProgress: (snap) =>
-                  (allBtn.textContent = `${name}: ${downloadProgressText(snap)}`),
+                onProgress: (snap) => {
+                  allBtn.textContent = `${name}: ${downloadProgressText(snap)}`;
+                  allBtn.title = ""; // moving again
+                },
+                onStall: () => {
+                  allBtn.textContent = `${name}: ${DOWNLOAD_STALLED_SHORT}`;
+                  allBtn.title = DOWNLOAD_STALLED_TEXT;
+                },
+                onRetry: (err) => (allBtn.textContent = `${name}: ${downloadRetryText(err)}`),
               });
             }
           }

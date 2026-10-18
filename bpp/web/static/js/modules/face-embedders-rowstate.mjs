@@ -9,6 +9,9 @@
  * back-calls into the picker module, so there is no import cycle.
  */
 
+import { LEGACY_FEATURE_MAP } from "./face-embedders-catalog.mjs";
+import { _withoutGuesses } from "./face-embedders-guesses.mjs";
+import { licenseFacts } from "./face-embedders-license.mjs";
 import { feState } from "./face-embedders-state.mjs";
 import { _formatBytes } from "./format-helpers.mjs";
 import { escapeAttr, esc } from "./text-format.mjs";
@@ -45,6 +48,7 @@ const _FACE_EMBEDDER_METHOD_VALUE = {
  *   | "needs-runtime"
  *   | "partial"
  *   | "not-downloaded"
+ *   | "unknown"
  * )} RowLifecycle
  */
 
@@ -79,6 +83,12 @@ export const ROW_LIFECYCLE = Object.freeze({
   PARTIAL: "partial",
   /** Weights aren't on this device (and aren't being downloaded right now). */
   NOT_DOWNLOADED: "not-downloaded",
+  /**
+   * Something this row's status depends on couldn't be loaded (install
+   * state, the acceptance list, the active face method): the picker says
+   * so above the list rather than guess.
+   */
+  UNKNOWN: "unknown",
 });
 
 /**
@@ -94,6 +104,9 @@ export const ROW_LIFECYCLE = Object.freeze({
  * @param {object | undefined} install  install state from /api/v1/models
  * @returns {{
  *   lifecycle: RowLifecycle,
+ *   installUnknown: boolean,
+ *   licenseUnknown: boolean,
+ *   methodUnknown: boolean,
  *   isFaceEmbedder: boolean,
  *   methodValue: string | undefined,
  *   isPicked: boolean,
@@ -138,24 +151,15 @@ export function _deriveRowState(entry, install) {
       (entry?.default_for_kind === true || entry?.runs_alongside_default === true));
 
   const restricted = entry?.requires_explicit_ack === true;
-  const accepted = feState.acceptedIds.has(entry?.id);
-  // The server's load-gate decision, when it sends one, is the truth:
-  // it also covers commercial use without the rights assertion and
-  // withdrawn / legally blocked entries, which the acceptance list
-  // can't see. Older servers: fall back to the acceptance list.
   const loadState = entry?.load_state;
-  const licenseBlocked = loadState ? loadState !== "ok" : restricted && !accepted;
-  // Accepted once, but under an older license text — the load gate
-  // refuses it, so it is NOT accepted; flag it so the row says
-  // "re-accept" instead of a generic "needs license".
-  const needsReaccept = loadState
-    ? loadState === "needs_reaccept"
-    : licenseBlocked && feState.reacceptIds.has(entry?.id);
-  // Accepted, but the use context is Commercial and the separate-rights
-  // assertion wasn't made — the dialog (in Commercial mode) asks for it.
-  const needsCommercialRights = loadState === "needs_commercial_rights";
-  // Withdrawn or legally blocked: accepting can't make it run.
-  const unavailable = loadState === "blocked";
+  const {
+    accepted,
+    licenseBlocked,
+    needsReaccept,
+    needsCommercialRights,
+    unavailable,
+    licenseUnknown,
+  } = licenseFacts(entry?.id, restricted, loadState);
 
   const files = Array.isArray(install?.files) ? install.files : [];
   const hasDownloadable = files.some((f) => f && f.name);
@@ -181,9 +185,19 @@ export function _deriveRowState(entry, install) {
   // states take priority over the not-picked equivalents because
   // they carry the cross-row narrative ("you picked this, here's
   // why it can't run").
+  // What this row needs but the last load couldn't fetch: its install
+  // record (rows linked to a legacy feature — catalog ones too: that
+  // record says "needs runtime" / "incomplete"); its acceptance (when the
+  // server sends no load state); whether it's the face model in use.
+  const installUnknown = !!feState.unknown.install && !!LEGACY_FEATURE_MAP[entry?.id]?.legacy_label;
+  const methodUnknown = !!feState.unknown.method && isFaceEmbedder && methodValue !== undefined;
+  const unknown = installUnknown || methodUnknown || licenseUnknown;
+
   /** @type {RowLifecycle} */
   let lifecycle;
-  if (isPicked && onDisk && !licenseBlocked) {
+  if (unknown) {
+    lifecycle = ROW_LIFECYCLE.UNKNOWN;
+  } else if (isPicked && onDisk && !licenseBlocked) {
     lifecycle = ROW_LIFECYCLE.RUNNING;
   } else if (isPicked && licenseBlocked) {
     // License gate takes priority over the download gate — license
@@ -219,6 +233,9 @@ export function _deriveRowState(entry, install) {
 
   return {
     lifecycle,
+    installUnknown,
+    licenseUnknown,
+    methodUnknown,
     isFaceEmbedder,
     methodValue,
     isPicked,
@@ -317,6 +334,7 @@ export function _buildMenuFromState(entry, state) {
     items.push({
       label: state.onDisk ? "Redownload" : "Download",
       sub: downloadSub,
+      needs: ["install", "license"],
       action: "redownloadFaceEmbedderEntry",
       args: [entry.id, state.installLabel],
       enabled: !downloadBlocked,
@@ -325,6 +343,7 @@ export function _buildMenuFromState(entry, state) {
     items.push({
       label: "Install runtime…",
       sub: state.installHint,
+      needs: ["install"],
       action: "installFaceEmbedderViaHint",
       args: [state.installHint, entry.display_name],
       enabled: true,
@@ -342,6 +361,7 @@ export function _buildMenuFromState(entry, state) {
     items.push({
       label: state.onDisk ? "Redownload" : `Download${sizeLabel}`,
       sub: downloadSub,
+      needs: ["install", "license"],
       action: "ensureCatalogWeights",
       args: [entry.id, entry.display_name],
       enabled: !downloadBlocked,
@@ -368,6 +388,8 @@ export function _buildMenuFromState(entry, state) {
       items.push({
         label: "Use this model",
         sub: useSub,
+        // ("Download it first" may be wrong; switching away may not be.)
+        needs: ["install", "license", "method"],
         action: "setActiveFaceEmbedder",
         args: [state.methodValue, entry.display_name, entry.id],
         enabled: !state.licenseBlocked && state.onDisk,
@@ -379,13 +401,14 @@ export function _buildMenuFromState(entry, state) {
   items.push({
     label: "Uninstall",
     sub: state.onDisk ? null : "Not installed",
+    needs: ["install"],
     action: "uninstallFaceEmbedderEntry",
     args: [entry.id, state.installLabel],
     enabled: state.onDisk,
     danger: true,
   });
 
-  return items;
+  return _withoutGuesses(items, state);
 }
 
 /**

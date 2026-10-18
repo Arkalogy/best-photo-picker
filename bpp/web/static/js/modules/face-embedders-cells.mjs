@@ -79,6 +79,12 @@ const _STATUS_BY_LIFECYCLE = {
     cls: "fe-status-warn",
     tip: "Weights are downloaded, but a runtime package is missing — open ⋯ → “Install runtime…”.",
   },
+  [ROW_LIFECYCLE.UNKNOWN]: {
+    main: "Unknown",
+    sub: "couldn’t load",
+    cls: "fe-status-muted",
+    tip: "Part of this model’s status couldn’t be loaded — see the note above the list, then Retry.",
+  },
   [ROW_LIFECYCLE.PARTIAL]: {
     main: "Incomplete",
     sub: "missing files",
@@ -127,6 +133,8 @@ const _UNAVAILABLE_STATUS = {
  * @returns {{main: string, sub: string | null, cls: string, tip: string}}
  */
 export function _statusFor(state) {
+  // The server's own license decisions come first: they don't rest on
+  // anything that may have failed to load (withdrawn is withdrawn).
   if (state.unavailable) return _UNAVAILABLE_STATUS;
   if (state.needsCommercialRights) return _COMMERCIAL_RIGHTS_STATUS;
   if (state.needsReaccept) return _REACCEPT_STATUS;
@@ -162,6 +170,8 @@ export function _statusCell(state) {
  * @param {ReturnType<typeof import("./face-embedders-rowstate.mjs")._deriveRowState>} state
  */
 export function _sizeCell(state) {
+  // Its install record didn't load: its size isn't known either.
+  if (state.installUnknown) return `<span class="fe-cell-size-val">—</span>`;
   if (state.sizeBytes > 0) {
     return `<span class="fe-cell-size-val">${_formatBytes(state.sizeBytes)}</span>`;
   }

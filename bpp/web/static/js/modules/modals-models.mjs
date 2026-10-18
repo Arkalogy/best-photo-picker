@@ -10,7 +10,12 @@
  */
 
 import { apiFetch } from "./api-client.mjs";
-import { downloadProgressText, waitForDownloadJob } from "./download-jobs.mjs";
+import {
+  DOWNLOAD_STALLED_TEXT,
+  downloadProgressText,
+  downloadRetryText,
+  waitForDownloadJob,
+} from "./download-jobs.mjs";
 import { appConfirm } from "./dialogs.mjs";
 import {
   followInstall,
@@ -119,6 +124,8 @@ export async function redownloadFeature(btn, files, label, desc) {
       });
       await waitForDownloadJob(started?.job, {
         onProgress: (snap) => (btn.title = downloadProgressText(snap)),
+        onStall: () => (btn.title = DOWNLOAD_STALLED_TEXT),
+        onRetry: (err) => (btn.title = downloadRetryText(err)),
       });
     }
     toast((label || "Model") + " downloaded" + detail);
