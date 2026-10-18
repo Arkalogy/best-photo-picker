@@ -27,8 +27,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     sub = parser.add_subparsers(dest="command", help="Available commands")
+    for add in (
+        _add_analyze,
+        _add_select,
+        _add_run,
+        _add_web,
+        _add_serve,
+        _add_demo,
+        _add_pick,
+        _add_model,
+        _add_db,
+    ):
+        add(sub)
+    return parser
 
-    # --- analyze ---
+
+def _add_analyze(sub: argparse._SubParsersAction) -> None:
+    """`bpp analyze`: scan images, extract features, compute scores."""
     p_analyze = sub.add_parser("analyze", help="Scan images, extract features, compute scores")
     p_analyze.add_argument("--input", required=True, help="Input folder of photos")
     p_analyze.add_argument("--out", required=True, help="Working directory for cache/results")
@@ -38,7 +53,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_analyze.add_argument("--debug", action="store_true", help="Enable debug logging")
     p_analyze.add_argument("--dry-run", action="store_true", help="Show what would be done")
 
-    # --- select ---
+
+def _add_select(sub: argparse._SubParsersAction) -> None:
+    """`bpp select`: select best photos from analyzed data."""
     p_select = sub.add_parser("select", help="Select best photos from analyzed data")
     p_select.add_argument("--workdir", required=True, help="Working directory from analyze step")
     p_select.add_argument("--k", type=int, default=50, help="Number of photos to select")
@@ -52,7 +69,9 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--symlink", action="store_const", const="symlink", dest="export_mode")
     p_select.set_defaults(export_mode="copy")
 
-    # --- run (one-shot) ---
+
+def _add_run(sub: argparse._SubParsersAction) -> None:
+    """`bpp run`: analyze + select in one shot."""
     p_run = sub.add_parser("run", help="Analyze + select in one shot")
     p_run.add_argument("--input", required=True, help="Input folder of photos")
     p_run.add_argument("--k", type=int, default=50, help="Number of photos to select")
@@ -69,7 +88,9 @@ def build_parser() -> argparse.ArgumentParser:
     run_mode.add_argument("--symlink", action="store_const", const="symlink", dest="export_mode")
     p_run.set_defaults(export_mode="copy")
 
-    # --- web ---
+
+def _add_web(sub: argparse._SubParsersAction) -> None:
+    """`bpp web`: the interactive web UI."""
     p_web = sub.add_parser("web", help="Launch interactive web UI")
     p_web.add_argument("--input", help="Input folder of photos")
     p_web.add_argument("--workdir", help="Working directory with existing analysis")
@@ -83,7 +104,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_web.add_argument("--config", help="Path to YAML config file")
     p_web.add_argument("--debug", action="store_true", help="Enable debug logging")
 
-    # --- serve ---
+
+def _add_serve(sub: argparse._SubParsersAction) -> None:
+    """`bpp serve`: the photo management server."""
     p_serve = sub.add_parser("serve", help="Start photo management server")
     p_serve.add_argument(
         "--library",
@@ -108,14 +131,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve.add_argument("--config", help="Path to YAML config file")
     p_serve.add_argument("--debug", action="store_true", help="Enable debug logging")
 
-    # --- demo ---
+
+def _add_demo(sub: argparse._SubParsersAction) -> None:
+    """`bpp demo`: the web UI on sample photos."""
     p_demo = sub.add_parser("demo", help="Launch demo with sample photos")
     p_demo.add_argument("--port", type=int, default=5001, help="Port for web server")
     p_demo.add_argument("--no-browser", action="store_true", help="Don't auto-open browser")
     p_demo.add_argument("--keep", action="store_true", help="Keep demo library after exit")
     p_demo.add_argument("--debug", action="store_true", help="Enable debug logging")
 
-    # --- pick (power-user one-liner) ---
+
+def _add_pick(sub: argparse._SubParsersAction) -> None:
+    """`bpp pick`: the power-user one-liner."""
     p_pick = sub.add_parser("pick", help="One-liner: score, select, and optionally export")
     p_pick.add_argument("library", help="Path to library directory")
     p_pick.add_argument("--top", "-k", type=int, default=50, help="Number of photos to select")
@@ -138,7 +165,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_pick.add_argument("--dry-run", action="store_true", help="Show selection without exporting")
 
-    # --- db restore-backup (recovery from a bad migration) ---
+
+def _add_model(sub: argparse._SubParsersAction) -> None:
+    """`bpp model`: registry + restricted-license acceptance."""
     p_model = sub.add_parser(
         "model",
         help=(
@@ -150,6 +179,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     _add_model_subparsers(model_sub)
 
+
+def _add_db(sub: argparse._SubParsersAction) -> None:
+    """`bpp db`: database utilities (restore-backup, a recovery path from a bad migration)."""
     p_db = sub.add_parser(
         "db",
         help="Database utilities (restore from backup, etc.)",
@@ -201,8 +233,6 @@ def build_parser() -> argparse.ArgumentParser:
             "with a server attached corrupts state silently."
         ),
     )
-
-    return parser
 
 
 def cmd_analyze(args: argparse.Namespace) -> int:

@@ -13,6 +13,7 @@ the CLI and tests (`test_db_restore_command`,
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import sys
 
@@ -47,8 +48,6 @@ def do_db_restore_backup(args: argparse.Namespace) -> int:
     but doesn't exist yet — for now the user is reminded to stop
     the server first).
     """
-    import contextlib
-
     from bpp.db.connection import check_integrity
 
     library = os.path.expanduser(args.library)
@@ -119,82 +118,8 @@ def do_db_restore_backup(args: argparse.Namespace) -> int:
     # window is gone.
     maintenance_lock = os.path.join(workdir, ".restore.lock")
     pid_str = str(os.getpid())
-    pid_bytes = pid_str.encode("utf-8")
     tmp_lock = maintenance_lock + f".tmp.{pid_str}"
-
-    def _try_link(_retry_after_stale: bool = False) -> int | None:
-        """Acquire the maintenance lock atomically. Returns rc on
-        failure, None on success."""
-        # Write PID-bearing tmp file
-        try:
-            fd = os.open(tmp_lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        except OSError as e:
-            print(
-                f"error: could not create maintenance-lock tmp file {tmp_lock}: {e}",
-                file=sys.stderr,
-            )
-            return 7
-        try:
-            with os.fdopen(fd, "wb") as f:
-                f.write(pid_bytes)
-        except OSError as e:
-            with contextlib.suppress(OSError):
-                os.remove(tmp_lock)
-            print(
-                f"error: could not write PID to maintenance-lock tmp: {e}",
-                file=sys.stderr,
-            )
-            return 7
-        # Atomic publish: link tmp → lockfile. Fails if lockfile
-        # exists. The published file ALWAYS contains the PID.
-        try:
-            os.link(tmp_lock, maintenance_lock)
-        except FileExistsError:
-            # Another restore got there first. Inspect their PID.
-            with contextlib.suppress(OSError):
-                os.remove(tmp_lock)
-            try:
-                with open(maintenance_lock, encoding="utf-8") as f:
-                    holder_raw = f.read().strip()
-                holder_pid = int(holder_raw)
-                os.kill(holder_pid, 0)
-            except (OSError, ValueError):
-                # Stale (PID gone, file unreadable, or empty content
-                # from an old non-atomic version). Remove + retry once.
-                if _retry_after_stale:
-                    print(
-                        "error: maintenance lock keeps being recreated; manual cleanup required.",
-                        file=sys.stderr,
-                    )
-                    return 7
-                with contextlib.suppress(OSError):
-                    os.remove(maintenance_lock)
-                return _try_link(_retry_after_stale=True)
-            else:
-                print(
-                    f"error: another `bpp db restore-backup` is already "
-                    f"running (PID {holder_pid}). Wait for it to finish, or "
-                    f"remove {maintenance_lock} if you're sure no restore is "
-                    "in progress.",
-                    file=sys.stderr,
-                )
-                return 7
-        except OSError as e:
-            with contextlib.suppress(OSError):
-                os.remove(tmp_lock)
-            print(
-                f"error: could not link maintenance lock at {maintenance_lock}: {e}",
-                file=sys.stderr,
-            )
-            return 7
-        # Linked successfully; tmp is no longer needed (lockfile is
-        # the same inode now via hardlink, but keep the lockfile
-        # canonical and remove the tmp).
-        with contextlib.suppress(OSError):
-            os.remove(tmp_lock)
-        return None
-
-    rc = _try_link()
+    rc = _acquire_maintenance_lock(maintenance_lock, tmp_lock, pid_str.encode("utf-8"))
     if rc is not None:
         return rc
 
@@ -208,6 +133,94 @@ def do_db_restore_backup(args: argparse.Namespace) -> int:
     finally:
         with contextlib.suppress(OSError):
             os.remove(maintenance_lock)
+
+
+def _acquire_maintenance_lock(
+    maintenance_lock: str, tmp_lock: str, pid_bytes: bytes, _retry_after_stale: bool = False
+) -> int | None:
+    """Acquire the maintenance lock atomically. Returns rc on
+    failure, None on success.
+
+    Writes the PID to a process-unique tmp file FIRST, then atomically
+    links it into place at .restore.lock. os.link fails-if-exists
+    (atomic on POSIX); the lockfile, when it appears, ALWAYS already
+    contains the PID — there is no empty-content window a racing
+    contender could read as stale.
+    """
+
+    # Write PID-bearing tmp file
+    try:
+        fd = os.open(tmp_lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except OSError as e:
+        print(
+            f"error: could not create maintenance-lock tmp file {tmp_lock}: {e}",
+            file=sys.stderr,
+        )
+        return 7
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(pid_bytes)
+    except OSError as e:
+        with contextlib.suppress(OSError):
+            os.remove(tmp_lock)
+        print(
+            f"error: could not write PID to maintenance-lock tmp: {e}",
+            file=sys.stderr,
+        )
+        return 7
+    # Atomic publish: link tmp → lockfile. Fails if lockfile
+    # exists. The published file ALWAYS contains the PID.
+    try:
+        os.link(tmp_lock, maintenance_lock)
+    except FileExistsError:
+        # Another restore got there first. Inspect their PID.
+        with contextlib.suppress(OSError):
+            os.remove(tmp_lock)
+        try:
+            with open(maintenance_lock, encoding="utf-8") as f:
+                holder_raw = f.read().strip()
+            holder_pid = int(holder_raw)
+            os.kill(holder_pid, 0)
+        except PermissionError:
+            # Alive, but another user's: held, not stale.
+            pass
+        except (ProcessLookupError, ValueError):
+            # Stale (PID gone, file unreadable, or empty content
+            # from an old non-atomic version). Remove + retry once.
+            if _retry_after_stale:
+                print(
+                    "error: maintenance lock keeps being recreated; manual cleanup required.",
+                    file=sys.stderr,
+                )
+                return 7
+            with contextlib.suppress(OSError):
+                os.remove(maintenance_lock)
+            return _acquire_maintenance_lock(
+                maintenance_lock, tmp_lock, pid_bytes, _retry_after_stale=True
+            )
+        else:
+            print(
+                f"error: another `bpp db restore-backup` is already "
+                f"running (PID {holder_pid}). Wait for it to finish, or "
+                f"remove {maintenance_lock} if you're sure no restore is "
+                "in progress.",
+                file=sys.stderr,
+            )
+            return 7
+    except OSError as e:
+        with contextlib.suppress(OSError):
+            os.remove(tmp_lock)
+        print(
+            f"error: could not link maintenance lock at {maintenance_lock}: {e}",
+            file=sys.stderr,
+        )
+        return 7
+    # Linked successfully; tmp is no longer needed (lockfile is
+    # the same inode now via hardlink, but keep the lockfile
+    # canonical and remove the tmp).
+    with contextlib.suppress(OSError):
+        os.remove(tmp_lock)
+    return None
 
 
 # Restore body lives in db_restore_impl.py since the v0.1 cleanup so this

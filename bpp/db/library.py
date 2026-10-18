@@ -199,48 +199,10 @@ def import_folder(
                     on_progress(i + 1, total, filename, "skipped")
                 continue
 
-            dest_path = os.path.join(batch_dir, filename)
-
-            # Handle filename collisions within batch
-            if retry_io(os.path.exists, dest_path, label="exists_check"):
-                name, ext = os.path.splitext(filename)
-                counter = 1
-                while retry_io(os.path.exists, dest_path, label="exists_check"):
-                    dest_path = os.path.join(batch_dir, f"{name}_{counter}{ext}")
-                    counter += 1
-
-            # Atomic copy: write to .tmp, verify size, then rename
+            dest_path = _unique_dest_path(batch_dir, filename)
             tmp_path = dest_path + ".tmp"
-            retry_io(shutil.copy2, src_path, tmp_path, label="copy")
-            src_size = retry_io(os.path.getsize, src_path, label="src_size")
-            tmp_size = retry_io(os.path.getsize, tmp_path, label="tmp_size")
-            if src_size != tmp_size:
-                os.remove(tmp_path)
-                raise OSError(f"Size mismatch after copy: {src_size} vs {tmp_size}")
-            os.rename(tmp_path, dest_path)
-
-            stat = retry_io(os.stat, dest_path, label="stat")
-            photo_rec: dict[str, Any] = {
-                "filepath": dest_path,
-                "original_filename": filename,
-                "import_batch": batch_name,
-                "sha256": sha,
-                "file_size": stat.st_size,
-                "file_mtime": stat.st_mtime,
-            }
-            if is_video_file(dest_path):
-                photo_rec["is_video"] = 1
-                from bpp.utils.video import extract_video_metadata
-
-                vmeta = extract_video_metadata(dest_path)
-                if vmeta:
-                    photo_rec["video_duration"] = vmeta["duration"]
-                    photo_rec["video_width"] = vmeta["width"]
-                    photo_rec["video_height"] = vmeta["height"]
-                    photo_rec["video_fps"] = vmeta["fps"]
-                    photo_rec["video_codec"] = vmeta["codec"]
-            if is_raw_file(dest_path):
-                photo_rec["is_raw"] = 1
+            _copy_atomically(src_path, tmp_path, dest_path)
+            photo_rec = _photo_record(dest_path, filename, batch_name, sha)
             imported_photos.append(photo_rec)
             seen_hashes.add(sha)
             result.imported += 1
@@ -272,16 +234,7 @@ def import_folder(
         # library may already contain unlinked sidecars from a prior
         # import that pre-dates this feature.
         detect_and_link_live_photo_sidecars(conn)
-
-        # Plugin event bus: post-import fires after the DB commit so
-        # plugins can react to the new filepaths (side-cache priming,
-        # EXIF enrichment, external mirroring). Best-effort.
-        from bpp.db.event_hooks import dispatch_post_import
-        from bpp.db.photos import get_photo_id_map_by_paths
-
-        id_map = get_photo_id_map_by_paths(conn, result.imported_paths)
-        imported_ids = [id_map[fp] for fp in result.imported_paths if fp in id_map]
-        dispatch_post_import(conn, imported_ids, list(result.imported_paths))
+        _dispatch_post_import(conn, result.imported_paths)
 
     # Always log the import outcome (not just when something was
     # imported) — when a user reports "import didn't do anything",
@@ -297,6 +250,81 @@ def import_folder(
     )
 
     return result
+
+
+def _unique_dest_path(batch_dir: str, filename: str) -> str:
+    """The destination for ``filename`` in the batch folder, numbered on
+    a collision within the batch."""
+    dest_path = os.path.join(batch_dir, filename)
+    if retry_io(os.path.exists, dest_path, label="exists_check"):
+        name, ext = os.path.splitext(filename)
+        counter = 1
+        while retry_io(os.path.exists, dest_path, label="exists_check"):
+            dest_path = os.path.join(batch_dir, f"{name}_{counter}{ext}")
+            counter += 1
+    return dest_path
+
+
+def _copy_atomically(src_path: str, tmp_path: str, dest_path: str) -> None:
+    """Atomic copy: write to .tmp, verify size, then rename. On any
+    failure the .tmp is removed, so a half-copied file never lingers in
+    the batch folder."""
+    try:
+        retry_io(shutil.copy2, src_path, tmp_path, label="copy")
+        src_size = retry_io(os.path.getsize, src_path, label="src_size")
+        tmp_size = retry_io(os.path.getsize, tmp_path, label="tmp_size")
+        if src_size != tmp_size:
+            raise OSError(f"Size mismatch after copy: {src_size} vs {tmp_size}")
+        os.rename(tmp_path, dest_path)
+    except OSError:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise
+
+
+def _photo_record(dest_path: str, filename: str, batch_name: str, sha: str) -> dict[str, Any]:
+    """The photos row for an imported file (video / RAW flags included)."""
+    stat = retry_io(os.stat, dest_path, label="stat")
+    photo_rec: dict[str, Any] = {
+        "filepath": dest_path,
+        "original_filename": filename,
+        "import_batch": batch_name,
+        "sha256": sha,
+        "file_size": stat.st_size,
+        "file_mtime": stat.st_mtime,
+    }
+    if is_video_file(dest_path):
+        photo_rec["is_video"] = 1
+        from bpp.utils.video import extract_video_metadata
+
+        # Optional: a probe failure must not orphan the file already in
+        # the batch folder (it would be re-copied as name_1 next time).
+        try:
+            vmeta = extract_video_metadata(dest_path)
+        except Exception:
+            log.warning("Could not read video metadata for %s", dest_path, exc_info=True)
+            vmeta = None
+        if vmeta:
+            photo_rec["video_duration"] = vmeta["duration"]
+            photo_rec["video_width"] = vmeta["width"]
+            photo_rec["video_height"] = vmeta["height"]
+            photo_rec["video_fps"] = vmeta["fps"]
+            photo_rec["video_codec"] = vmeta["codec"]
+    if is_raw_file(dest_path):
+        photo_rec["is_raw"] = 1
+    return photo_rec
+
+
+def _dispatch_post_import(conn: sqlite3.Connection, imported_paths: list[str]) -> None:
+    """Plugin event bus: post-import fires after the DB commit so
+    plugins can react to the new filepaths (side-cache priming, EXIF
+    enrichment, external mirroring). Best-effort."""
+    from bpp.db.event_hooks import dispatch_post_import
+    from bpp.db.photos import get_photo_id_map_by_paths
+
+    id_map = get_photo_id_map_by_paths(conn, imported_paths)
+    imported_ids = [id_map[fp] for fp in imported_paths if fp in id_map]
+    dispatch_post_import(conn, imported_ids, list(imported_paths))
 
 
 def clear_library(conn: sqlite3.Connection, library_path: str) -> dict[str, int]:

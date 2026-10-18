@@ -326,15 +326,60 @@ def split_scan_for_confirmed_sidecars(
     if compute_hashes is None:
         from bpp.dedupe.phash import compute_hashes_from_file as compute_hashes
 
+    pairs = _sidecar_candidate_pairs(image_paths, parent_alive)
+    if not pairs:
+        return list(image_paths), []
+
+    confirmed, cand_hashes = _confirm_sidecars_by_phash(
+        pairs, compute_hashes, max_hamming, on_progress
+    )
+    if not confirmed:
+        return list(image_paths), []
+
+    to_score = [p for p in image_paths if p not in confirmed]
+    records: list[dict] = []
+    for cand_path in confirmed:
+        try:
+            stat = os.stat(cand_path)
+        except OSError:
+            # Can't stat → leave it in the scoring list rather than write a
+            # half-row. Better to score a sidecar than to drop a file we
+            # can't even read the size of.
+            to_score.append(cand_path)
+            continue
+        c_dhash, c_ahash = cand_hashes[cand_path]
+        records.append(
+            {
+                "filepath": cand_path,
+                "original_filename": os.path.basename(cand_path),
+                "file_size": stat.st_size,
+                "file_mtime": stat.st_mtime,
+                "phash": c_dhash,
+                "ahash": c_ahash,
+            }
+        )
+
+    log.info(
+        "Live Photo pre-scan: %d phash-confirmed sidecar(s) skipped from scoring "
+        "(of %d '_N' candidate pairs)",
+        len(records),
+        len(pairs),
+    )
+    return to_score, records
+
+
+def _sidecar_candidate_pairs(image_paths: list[str], parent_alive) -> list[tuple[str, str]]:
+    """``(candidate_path, parent_path)`` for every ``_N`` file whose parent
+    is in the same directory of this batch (filename-only; nothing is
+    decoded yet). Collected up front so the decode total can be reported
+    and each parent decoded at most once."""
     # Map (dir, lower_filename) -> original path, so a candidate can find its
     # parent's real path within this batch (same directory only).
     by_dir: dict[tuple[str, str], str] = {}
     for p in image_paths:
         by_dir[(os.path.dirname(p), os.path.basename(p).lower())] = p
 
-    # Collect candidate→parent pairs first (filename-only), so we can report a
-    # decode total up front and decode each parent at most once.
-    pairs: list[tuple[str, str]] = []  # (candidate_path, parent_path)
+    pairs: list[tuple[str, str]] = []
     for p in image_paths:
         result = is_live_photo_sidecar_filename(os.path.basename(p))
         if result is None:
@@ -346,12 +391,15 @@ def split_scan_for_confirmed_sidecars(
         if parent_alive is not None and not parent_alive(parent_path):
             continue  # dead parent can never anchor a hidden child — score it
         pairs.append((p, parent_path))
+    return pairs
 
-    if not pairs:
-        return list(image_paths), []
 
-    # Decode each distinct parent once; cache candidate hashes so we reuse
-    # them when building the sidecar records below (no second decode).
+def _confirm_sidecars_by_phash(
+    pairs: list[tuple[str, str]], compute_hashes, max_hamming: int, on_progress
+) -> tuple[set[str], dict[str, tuple[int | None, int | None]]]:
+    """Decode each distinct parent once and every candidate once; returns
+    the confirmed candidate paths and the candidates' hashes (reused for
+    the sidecar records, so there is no second decode)."""
     parent_hashes: dict[str, tuple[int | None, int | None]] = {}
     cand_hashes: dict[str, tuple[int | None, int | None]] = {}
     confirmed: set[str] = set()
@@ -393,40 +441,7 @@ def split_scan_for_confirmed_sidecars(
         cand_hashes[cand_path] = (c_dhash, c_ahash)
         if _phash_confirms_sidecar(c_dhash, c_ahash, p_dhash, p_ahash, max_hamming):
             confirmed.add(cand_path)
-
-    if not confirmed:
-        return list(image_paths), []
-
-    to_score = [p for p in image_paths if p not in confirmed]
-    records: list[dict] = []
-    for cand_path in confirmed:
-        try:
-            stat = os.stat(cand_path)
-        except OSError:
-            # Can't stat → leave it in the scoring list rather than write a
-            # half-row. Better to score a sidecar than to drop a file we
-            # can't even read the size of.
-            to_score.append(cand_path)
-            continue
-        c_dhash, c_ahash = cand_hashes[cand_path]
-        records.append(
-            {
-                "filepath": cand_path,
-                "original_filename": os.path.basename(cand_path),
-                "file_size": stat.st_size,
-                "file_mtime": stat.st_mtime,
-                "phash": c_dhash,
-                "ahash": c_ahash,
-            }
-        )
-
-    log.info(
-        "Live Photo pre-scan: %d phash-confirmed sidecar(s) skipped from scoring "
-        "(of %d '_N' candidate pairs)",
-        len(records),
-        len(pairs),
-    )
-    return to_score, records
+    return confirmed, cand_hashes
 
 
 def filter_sidecar_paths(paths: list[str]) -> tuple[list[str], list[str]]:

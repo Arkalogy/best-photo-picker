@@ -68,57 +68,21 @@ def all_models() -> list[ModelEntry]:
 
     Importing the model modules below is cheap — the heavy ML library
     imports are deferred to ``ModelSingleton.create_fn`` which we don't
-    trigger here.
+    trigger here. URL / SHA / PATH constants live next to each model;
+    importing those modules just to read the strings is fine — model
+    libraries (mediapipe, onnxruntime, ai_edge_litert, dlib) are loaded
+    lazily via the ModelSingleton import_check + create_fn pattern.
     """
-    # URL / SHA / PATH constants live next to each model. Importing
-    # those modules just to read the strings is fine — model libraries
-    # (mediapipe, onnxruntime, ai_edge_litert, dlib) are loaded lazily
-    # via the ModelSingleton import_check + create_fn pattern.
+    return [*_face_models(), *_body_models(), *_pet_models(), *_clip_models()]
+
+
+def _face_models() -> list[ModelEntry]:
     from bpp.scoring import face as _face
     from bpp.scoring import face_blazeface_fr as _ffr
     from bpp.scoring import face_embed as _femb
     from bpp.scoring import face_expression as _fex
     from bpp.scoring import face_hand_filter as _fhf
     from bpp.scoring import face_scrfd as _fsc
-    from bpp.scoring.clip_embed import (
-        _MODEL_DIR as _CLIP_DIR,
-    )
-    from bpp.scoring.clip_embed import (
-        _MODEL_FILENAME as _CLIP_VISUAL_FN,
-    )
-    from bpp.scoring.clip_embed import (
-        _MODEL_SHA256 as _CLIP_VISUAL_SHA,
-    )
-    from bpp.scoring.clip_embed import (
-        _MODEL_URL as _CLIP_VISUAL_URL,
-    )
-    from bpp.scoring.clip_embed import (
-        _TEXT_MODEL_FILENAME as _CLIP_TEXT_FN,
-    )
-    from bpp.scoring.clip_embed import (
-        _TEXT_MODEL_SHA256 as _CLIP_TEXT_SHA,
-    )
-    from bpp.scoring.clip_embed import (
-        _TEXT_MODEL_URL as _CLIP_TEXT_URL,
-    )
-    from bpp.scoring.clip_tokenizer import (
-        _VOCAB_DIR,
-        _VOCAB_FILENAME,
-        _VOCAB_SHA256,
-        _VOCAB_URL,
-    )
-    from bpp.scoring.pets import _MODEL_FILENAME as _YOLO_FN
-    from bpp.scoring.pets import _MODEL_SHA256 as _YOLO_SHA
-    from bpp.scoring.pets import _MODEL_URL as _YOLO_URL
-    from bpp.scoring.pose import _POSE_MODEL_PATH, _POSE_MODEL_SHA256, _POSE_MODEL_URL
-    from bpp.scoring.segmentation import (
-        _SEGMENTER_PATH,
-        _SEGMENTER_SHA256,
-        _SEGMENTER_URL,
-    )
-    from bpp.utils.paths import models_dir
-
-    md = models_dir()
 
     return [
         # Face detection
@@ -198,6 +162,18 @@ def all_models() -> list[ModelEntry]:
             host=_host_of(_fhf._HAND_MODEL_URL),
             legal_entry_id="mediapipe_hand_landmarker",
         ),
+    ]
+
+
+def _body_models() -> list[ModelEntry]:
+    from bpp.scoring.pose import _POSE_MODEL_PATH, _POSE_MODEL_SHA256, _POSE_MODEL_URL
+    from bpp.scoring.segmentation import (
+        _SEGMENTER_PATH,
+        _SEGMENTER_SHA256,
+        _SEGMENTER_URL,
+    )
+
+    return [
         # Pose / composition
         ModelEntry(
             name="Pose landmarker",
@@ -217,7 +193,17 @@ def all_models() -> list[ModelEntry]:
             host=_host_of(_SEGMENTER_URL),
             legal_entry_id="mediapipe_selfie_segmenter",
         ),
-        # Pets
+    ]
+
+
+def _pet_models() -> list[ModelEntry]:
+    from bpp.scoring.pets import _MODEL_FILENAME as _YOLO_FN
+    from bpp.scoring.pets import _MODEL_SHA256 as _YOLO_SHA
+    from bpp.scoring.pets import _MODEL_URL as _YOLO_URL
+    from bpp.utils.paths import models_dir
+
+    md = models_dir()
+    return [
         ModelEntry(
             name="YOLO11n pet detector",
             path=md / _YOLO_FN,
@@ -228,7 +214,40 @@ def all_models() -> list[ModelEntry]:
             # AGPL-3.0 — restricted; needs click-through before download.
             legal_entry_id="ultralytics_yolov11n_pets",
         ),
-        # CLIP (semantic search + smart dedup) — large, optional
+    ]
+
+
+def _clip_models() -> list[ModelEntry]:
+    """CLIP (semantic search + smart dedup) — large, optional."""
+    from bpp.scoring.clip_embed import (
+        _MODEL_DIR as _CLIP_DIR,
+    )
+    from bpp.scoring.clip_embed import (
+        _MODEL_FILENAME as _CLIP_VISUAL_FN,
+    )
+    from bpp.scoring.clip_embed import (
+        _MODEL_SHA256 as _CLIP_VISUAL_SHA,
+    )
+    from bpp.scoring.clip_embed import (
+        _MODEL_URL as _CLIP_VISUAL_URL,
+    )
+    from bpp.scoring.clip_embed import (
+        _TEXT_MODEL_FILENAME as _CLIP_TEXT_FN,
+    )
+    from bpp.scoring.clip_embed import (
+        _TEXT_MODEL_SHA256 as _CLIP_TEXT_SHA,
+    )
+    from bpp.scoring.clip_embed import (
+        _TEXT_MODEL_URL as _CLIP_TEXT_URL,
+    )
+    from bpp.scoring.clip_tokenizer import (
+        _VOCAB_DIR,
+        _VOCAB_FILENAME,
+        _VOCAB_SHA256,
+        _VOCAB_URL,
+    )
+
+    return [
         ModelEntry(
             name="CLIP visual encoder",
             path=_CLIP_DIR / _CLIP_VISUAL_FN,

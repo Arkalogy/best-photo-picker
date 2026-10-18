@@ -14,7 +14,6 @@ from bpp.utils.logging import get_logger
 
 def do_pick(args: argparse.Namespace) -> int:
     """Power-user one-liner: load analysis, score, select, export."""
-    import json
     import sys
 
     from bpp.config import DEFAULTS
@@ -23,7 +22,6 @@ def do_pick(args: argparse.Namespace) -> int:
     from bpp.db.photos import get_all_photos
     from bpp.plugins import load_plugin_entry_points
     from bpp.selection.choose import choose
-    from bpp.utils.json_utils import safe_json_loads
 
     # ensure plugin scorers / config fields are registered
     # before we read the scoring registry.
@@ -59,111 +57,132 @@ def do_pick(args: argparse.Namespace) -> int:
 
         # Face boost: look up cluster IDs by name from smart_person albums
         boost_face_names = getattr(args, "boost_face", [])
-        selected_faces: list[int] = []
-        face_cluster_map: dict[str, list[int]] = {}
-
         if boost_face_names:
-            from bpp.web.face_worker import load_face_cluster_map
-
-            face_cluster_map = load_face_cluster_map(conn)
-
-            # Batch-fetch all named-person albums in one IN-clause query;
-            # missing names then surface in a single error message.
-            placeholders = ",".join("?" for _ in boost_face_names)
-            rows = conn.execute(
-                f"SELECT name, rule_json FROM albums "
-                f"WHERE album_type='smart_person' AND name IN ({placeholders})",
-                list(boost_face_names),
-            ).fetchall()
-            rules_by_name = {r[0]: r[1] for r in rows}
-            missing = [n for n in boost_face_names if n not in rules_by_name]
-            if missing:
-                print(
-                    f"Error: no face cluster named {', '.join(repr(n) for n in missing)}. "
-                    "Check named people in the web UI.",
-                    file=sys.stderr,
-                )
+            selected_faces = _boosted_cluster_ids(conn, boost_face_names)
+            if selected_faces is None:
                 return 1
-            for name in boost_face_names:
-                rule = safe_json_loads(
-                    rules_by_name[name], {}, context="face boost rule", expected_type=dict
-                )
-                cluster_id = rule.get("cluster_id")
-                if cluster_id is not None:
-                    selected_faces.append(cluster_id)
-
-            # Apply face boost to aggregate scores
-            face_boost = config.get("face_selection_boost", 0.15)
-            selected_set = set(selected_faces)
-            for item in analyzed:
-                fp = item["filepath"]
-                item_clusters = set(face_cluster_map.get(fp, []))
-                overlap = item_clusters & selected_set
-                if overlap:
-                    boost = face_boost * min(len(overlap), 3) / 3
-                    item["aggregate_score"] = min(1.0, item.get("aggregate_score", 0) + boost)
+            if selected_faces:
+                _apply_face_boost(conn, analyzed, selected_faces, config)
 
         # Select top K
         selected = choose(analyzed, k=args.top, config=config, seed=getattr(args, "seed", 42))
-
-        # Output
-        if getattr(args, "json", False):
-            output = [
-                {
-                    "filepath": s["filepath"],
-                    "aggregate_score": round(s.get("aggregate_score", 0), 4),
-                    "blur_score": round(s.get("blur_score", 0), 4),
-                    "exposure_score": round(s.get("exposure_score", 0), 4),
-                    "face_score": round(s.get("face_score", 0), 4),
-                    "composition_score": round(s.get("composition_score", 0), 4),
-                }
-                for s in selected
-            ]
-            print(json.dumps(output, indent=2))
-        elif getattr(args, "paths_only", False):
-            for s in selected:
-                print(s["filepath"])
-        else:
-            # Human-readable table
-            print(f"{'#':<4} {'Score':>7} {'Blur':>6} {'Expo':>6} {'Face':>6} {'Comp':>6}  Path")
-            print("-" * 80)
-            for i, s in enumerate(selected, 1):
-                print(
-                    f"{i:<4} {s.get('aggregate_score', 0):>7.4f} "
-                    f"{s.get('blur_score', 0):>6.3f} "
-                    f"{s.get('exposure_score', 0):>6.3f} "
-                    f"{s.get('face_score', 0):>6.3f} "
-                    f"{s.get('composition_score', 0):>6.3f}  "
-                    f"{s['filepath']}"
-                )
+        _print_selection(selected, args)
 
         # Export if --out specified and not --dry-run
         out_dir = getattr(args, "out", None)
         dry_run = getattr(args, "dry_run", False)
         if out_dir and not dry_run:
-            from bpp.output.export import export_selected
-
-            quality_map = {
-                "original": ("original", None, 85),
-                "high": ("jpeg", None, 92),
-                "medium": ("jpeg", 2048, 85),
-                "low": ("jpeg", 1024, 70),
-            }
-            fmt, max_size, quality = quality_map.get(args.quality, ("original", None, 85))
-
-            out_dir = os.path.abspath(out_dir)
-            export_selected(
-                selected,
-                analysis=analyzed,
-                outdir=out_dir,
-                fmt=fmt,
-                max_size=max_size,
-                quality=quality,
-            )
-            log.info("Exported %d photos to %s", len(selected), out_dir)
+            _export(selected, analyzed, os.path.abspath(out_dir), args.quality)
         elif out_dir and dry_run:
             log.info("[dry-run] Would export %d photos to %s", len(selected), out_dir)
 
         return 0
     finally:
         close_all_connections()
+
+
+def _boosted_cluster_ids(conn, boost_face_names: list[str]) -> list[int] | None:
+    """The cluster ids of the named people, or None (after printing the
+    error) when a name has no smart_person album."""
+    import sys
+
+    from bpp.utils.json_utils import safe_json_loads
+
+    # Batch-fetch all named-person albums in one IN-clause query;
+    # missing names then surface in a single error message.
+    placeholders = ",".join("?" for _ in boost_face_names)
+    rows = conn.execute(
+        f"SELECT name, rule_json FROM albums "
+        f"WHERE album_type='smart_person' AND name IN ({placeholders})",
+        list(boost_face_names),
+    ).fetchall()
+    rules_by_name = {r[0]: r[1] for r in rows}
+    missing = [n for n in boost_face_names if n not in rules_by_name]
+    if missing:
+        print(
+            f"Error: no face cluster named {', '.join(repr(n) for n in missing)}. "
+            "Check named people in the web UI.",
+            file=sys.stderr,
+        )
+        return None
+    selected_faces: list[int] = []
+    for name in boost_face_names:
+        rule = safe_json_loads(
+            rules_by_name[name], {}, context="face boost rule", expected_type=dict
+        )
+        cluster_id = rule.get("cluster_id")
+        if cluster_id is not None:
+            selected_faces.append(cluster_id)
+    return selected_faces
+
+
+def _apply_face_boost(conn, analyzed: list[dict], selected_faces: list[int], config: dict) -> None:
+    """Raise the aggregate score of photos showing the boosted people."""
+    from bpp.web.face_worker import load_face_cluster_map
+
+    face_cluster_map = load_face_cluster_map(conn)
+    face_boost = config.get("face_selection_boost", 0.15)
+    selected_set = set(selected_faces)
+    for item in analyzed:
+        fp = item["filepath"]
+        item_clusters = set(face_cluster_map.get(fp, []))
+        overlap = item_clusters & selected_set
+        if overlap:
+            boost = face_boost * min(len(overlap), 3) / 3
+            item["aggregate_score"] = min(1.0, item.get("aggregate_score", 0) + boost)
+
+
+def _print_selection(selected: list[dict], args: argparse.Namespace) -> None:
+    """JSON, paths only, or the human-readable table."""
+    import json
+
+    if getattr(args, "json", False):
+        output = [
+            {
+                "filepath": s["filepath"],
+                "aggregate_score": round(s.get("aggregate_score", 0), 4),
+                "blur_score": round(s.get("blur_score", 0), 4),
+                "exposure_score": round(s.get("exposure_score", 0), 4),
+                "face_score": round(s.get("face_score", 0), 4),
+                "composition_score": round(s.get("composition_score", 0), 4),
+            }
+            for s in selected
+        ]
+        print(json.dumps(output, indent=2))
+    elif getattr(args, "paths_only", False):
+        for s in selected:
+            print(s["filepath"])
+    else:
+        # Human-readable table
+        print(f"{'#':<4} {'Score':>7} {'Blur':>6} {'Expo':>6} {'Face':>6} {'Comp':>6}  Path")
+        print("-" * 80)
+        for i, s in enumerate(selected, 1):
+            print(
+                f"{i:<4} {s.get('aggregate_score', 0):>7.4f} "
+                f"{s.get('blur_score', 0):>6.3f} "
+                f"{s.get('exposure_score', 0):>6.3f} "
+                f"{s.get('face_score', 0):>6.3f} "
+                f"{s.get('composition_score', 0):>6.3f}  "
+                f"{s['filepath']}"
+            )
+
+
+def _export(selected: list[dict], analyzed: list[dict], out_dir: str, quality_preset: str) -> None:
+    from bpp.output.export import export_selected
+
+    quality_map = {
+        "original": ("original", None, 85),
+        "high": ("jpeg", None, 92),
+        "medium": ("jpeg", 2048, 85),
+        "low": ("jpeg", 1024, 70),
+    }
+    fmt, max_size, quality = quality_map.get(quality_preset, ("original", None, 85))
+    export_selected(
+        selected,
+        analysis=analyzed,
+        outdir=out_dir,
+        fmt=fmt,
+        max_size=max_size,
+        quality=quality,
+    )
+    get_logger(__name__).info("Exported %d photos to %s", len(selected), out_dir)
