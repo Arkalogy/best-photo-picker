@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import shutil
+from typing import Any
 
 from flask import Blueprint, Response, jsonify
 
@@ -94,6 +95,21 @@ def api_faces_retry() -> tuple[Response, int]:
             blocker="analysis",
         )
 
+    # The wipe below can't be undone: no install may start from here until
+    # the extraction has (it would refuse to, leaving no faces at all) —
+    # and if the extraction can't start now (an install running or waiting
+    # for a restart), nothing is wiped.
+    from bpp.web.base_worker import raise_if_blocked
+    from bpp.web.bp_install import no_install_during
+
+    with no_install_during("face detection to restart"):
+        raise_if_blocked(ctx.face_worker)
+        _wipe_faces_and_restart(ctx, analysis)
+    return jsonify({"status": "started"}), 202
+
+
+def _wipe_faces_and_restart(ctx: Any, analysis: Any) -> None:
+    """Wipe face embeddings, person tags and crops; restart the extraction."""
     # Clear existing face embeddings + manual person tags from main DB.
     # photo_person_tags references cluster IDs that the next extraction
     # will renumber. Without wiping them, _create_tag_only_clusters
@@ -155,7 +171,6 @@ def api_faces_retry() -> tuple[Response, int]:
             user_message="Could not start face extraction",
             diagnostic_message="face_worker.start returned False on retry path",
         )
-    return jsonify({"status": "started"}), 202
 
 
 @bp.get("/api/v1/faces/extract/progress")

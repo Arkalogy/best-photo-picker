@@ -42,6 +42,9 @@ afterEach(() => {
     "_inpaintCtx",
     "_inpaintPainting",
     "_inpaintAvailable",
+    "_inpaintRestartPending",
+    "_inpaintRepairNeeded",
+    "_inpaintInstallable",
     "_inpaintTool",
     "currentGridItems",
     "lightboxIdx",
@@ -209,6 +212,39 @@ describe("_checkInpaintAvailable", () => {
     expect(document.getElementById("inpaint-status")?.innerHTML).toContain(
       "AI removal model not available"
     );
+  });
+
+  test("says to restart, not to download again, after an install that needs one", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResp({ available: false, restart_pending: true }))
+    );
+    await _checkInpaintAvailable();
+    const status = document.getElementById("inpaint-status")?.innerHTML || "";
+    expect(status).toContain("Restart Best Photo Picker to finish installing AI removal");
+    expect(status).not.toContain("Download AI Model");
+  });
+
+  test("a stopped install offers the download again, saying why", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResp({ available: false, repair_needed: true }))
+    );
+    await _checkInpaintAvailable();
+    const status = document.getElementById("inpaint-status")?.innerHTML || "";
+    expect(status).toContain("didn't finish");
+    expect(status).toContain("Download AI Model");
+  });
+
+  test("a paired device gets no Download button (installing is the owner's)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResp({ available: false, installable: false }))
+    );
+    await _checkInpaintAvailable();
+    const status = document.getElementById("inpaint-status")?.innerHTML || "";
+    expect(status).toContain("not available");
+    expect(status).not.toContain("Download AI Model");
   });
 
   test("reuses cached value when already known", async () => {

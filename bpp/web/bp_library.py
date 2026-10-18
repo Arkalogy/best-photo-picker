@@ -17,6 +17,7 @@ from bpp.db.registry import (
 )
 from bpp.errors import ConflictError, ValidationError
 from bpp.utils.logging import get_logger
+from bpp.web.bp_install import no_install_during
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx
 
@@ -180,7 +181,10 @@ def api_libraries_switch() -> tuple[Response, int]:
     ctx = get_ctx()
     log.info("Library switch requested: -> %s", path)
     try:
-        ctx.switch_library(path)
+        # Opening a library starts recovery work (face extraction) that
+        # loads packages: not while pip is rewriting them.
+        with no_install_during("the library to finish opening"):
+            ctx.switch_library(path)
     except RuntimeError as e:
         raise ConflictError(
             "Failed to switch library",

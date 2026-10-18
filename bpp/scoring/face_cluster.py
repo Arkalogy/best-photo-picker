@@ -6,6 +6,7 @@ from collections import Counter
 
 import numpy as np
 
+from bpp.scoring.install_hold import import_gated
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -65,7 +66,8 @@ def cluster_faces(
     if len(embeddings) == 1:
         return [0]
 
-    from scipy.cluster.hierarchy import fcluster, linkage
+    hierarchy = import_gated("scipy.cluster.hierarchy")  # not mid-install
+    fcluster, linkage = hierarchy.fcluster, hierarchy.linkage
 
     matrix = np.stack(embeddings)
     linkage_matrix = linkage(matrix, method="average", metric="euclidean")

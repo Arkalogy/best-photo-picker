@@ -29,6 +29,7 @@ from typing import Any
 import cv2
 import numpy as np
 
+from bpp.scoring.install_hold import requires
 from bpp.scoring.model_base import ModelSingleton
 from bpp.scoring.model_load_gate import MemoizedLoadGate
 from bpp.scoring.onnx_providers import get_providers
@@ -99,7 +100,7 @@ _scrfd_model = ModelSingleton(
     model_sha256=_SCRFD_MODEL_SHA256,
     create_fn=_scrfd_create,
     registry_id="insightface_scrfd_25g",
-    import_check=lambda: __import__("onnxruntime"),
+    import_check=requires("onnxruntime"),
 )
 
 #: Load-time license gate. SCRFD is research-only, so until the user

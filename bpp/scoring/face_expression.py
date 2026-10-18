@@ -19,6 +19,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from bpp.scoring.install_hold import requires
 from bpp.scoring.model_base import ModelSingleton
 from bpp.utils.logging import get_logger
 from bpp.utils.paths import models_dir as _models_dir
@@ -74,7 +75,7 @@ _face_landmarker = ModelSingleton(
     model_sha256=_LANDMARKER_SHA256,
     create_fn=_create_landmarker,
     registry_id="mediapipe_face_landmarker",
-    import_check=lambda: __import__("mediapipe"),
+    import_check=requires("mediapipe.tasks"),  # what create imports
 )
 # Inference lock: MediaPipe detectors are NOT thread-safe — serialize .detect() calls.
 _landmarker_lock = threading.Lock()

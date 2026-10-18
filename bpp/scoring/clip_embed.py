@@ -21,6 +21,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from bpp.scoring.install_hold import requires
 from bpp.scoring.model_base import ModelSingleton
 from bpp.utils.logging import get_logger
 
@@ -83,7 +84,7 @@ _clip_visual = ModelSingleton(
     model_sha256=_MODEL_SHA256,
     create_fn=_make_ort_session,
     registry_id="openai_clip_vit_b32_onnx",
-    import_check=lambda: __import__("onnxruntime"),
+    import_check=requires("onnxruntime"),
 )
 
 _clip_text = ModelSingleton(
@@ -93,7 +94,7 @@ _clip_text = ModelSingleton(
     model_sha256=_TEXT_MODEL_SHA256,
     create_fn=_make_ort_session,
     registry_id="openai_clip_vit_b32_onnx",
-    import_check=lambda: __import__("onnxruntime"),
+    import_check=requires("onnxruntime"),
 )
 
 
@@ -114,12 +115,9 @@ def text_is_available() -> bool:
 
 def can_install() -> bool:
     """Return True if onnxruntime is importable (model can be downloaded)."""
-    try:
-        import onnxruntime  # noqa: F401
+    from bpp.scoring.install_hold import importable
 
-        return True
-    except ImportError:
-        return False
+    return importable("onnxruntime")
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +153,32 @@ def ensure_text_model() -> Path:
 def _get_session():
     """Return (and lazily create) the shared visual ONNX InferenceSession."""
     return _clip_visual.get()
+
+
+def visual_model_problem() -> str | None:
+    """Load the visual model now: None if it's usable, else why not (for
+    the user: the reason and what to do)."""
+    from bpp.registry.policy import ModelLoadBlockedError
+
+    if _clip_visual._available is False:
+        _clip_visual.reset()  # an earlier failure: really try again
+    try:
+        if _clip_visual.get_or_raise() is not None:
+            return None
+    except ModelLoadBlockedError:
+        return (
+            "its license isn't accepted — accept it in Settings → Models (or "
+            "re-accept it if its terms were updated), then try again"
+        )
+    if not can_install():
+        return (
+            "the ONNX runtime it runs on is missing or failed to load — install "
+            "it (pip install onnxruntime), then restart Best Photo Picker"
+        )
+    return (
+        "the model couldn't be downloaded or loaded — check your connection, "
+        "then try again (details in the server log)"
+    )
 
 
 def _get_text_session():

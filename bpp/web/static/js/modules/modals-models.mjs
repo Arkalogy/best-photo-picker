@@ -12,9 +12,13 @@
 import { apiFetch } from "./api-client.mjs";
 import { downloadProgressText, waitForDownloadJob } from "./download-jobs.mjs";
 import { appConfirm } from "./dialogs.mjs";
+import {
+  followInstall,
+  installAllowedNow,
+  showInstallDone,
+  toastInstallError,
+} from "./install-done.mjs";
 import { toast, toastError } from "./toast.mjs";
-import { authEventSource } from "./api-client.mjs";
-import { parseSSE } from "./format-helpers.mjs";
 import { hideStatusProgress, showStatusProgress } from "./analysis-status.mjs";
 import { loadModelsList } from "./modals-models-list.mjs";
 import { escapeAttr } from "./text-format.mjs";
@@ -217,6 +221,7 @@ export async function installPackage(btn, key, label) {
   /** @type {string[]} */
   let packages = [];
   let host = "pypi.org";
+  if (!(await installAllowedNow())) return;
   try {
     const info = await apiFetch("/api/v1/install/" + key + "/info");
     packages = info.packages || [];
@@ -256,56 +261,40 @@ export async function installPackage(btn, key, label) {
   // settings is open, but visible everywhere else.
   win.showStatusProgress?.("Installing " + label + "…", 0);
   try {
-    const resp = await apiFetch("/api/v1/install/" + key, { method: "POST" });
-    if (resp.status === "already_installed") {
-      toast(label + " is already installed");
-      loadModelsList();
-      return;
-    }
-    await new Promise((resolve, reject) => {
-      const src = authEventSource("/api/v1/install/" + key + "/progress");
-      src.onmessage = (ev) => {
-        const msg = /** @type {any} */ (parseSSE(ev.data));
-        if (!msg) return;
-        if (msg.type === "log") {
-          // pip prints "Collecting X", "Downloading X (.. MB)",
-          // "Installing collected packages: ...", "Successfully ..." —
-          // pull a short summary and surface it on the button + status bar.
-          const line = String(msg.message || "");
-          const m =
-            line.match(/^Collecting\s+(\S+)/) ||
-            line.match(/^\s*Downloading\s+(\S+)/) ||
-            line.match(/^Installing collected packages:\s*(.+)$/) ||
-            line.match(/^Successfully installed\s+(.+)$/);
-          if (m) {
-            const verb = line.startsWith("Successfully")
-              ? "Finalising"
-              : line.trimStart().startsWith("Downloading")
-                ? "Downloading"
-                : line.startsWith("Installing")
-                  ? "Installing"
-                  : "Resolving";
-            const stage = verb + " " + m[1].split(/[\s-]/)[0] + "…";
-            btn.textContent = stage;
-            win.showStatusProgress?.(stage, 0);
-          }
-        } else if (msg.type === "done") {
-          src.close();
-          toast(label + " installed successfully");
-          resolve(undefined);
-        } else if (msg.type === "error") {
-          src.close();
-          reject(new Error(msg.message || "Install failed"));
-        }
-      };
-      src.onerror = () => {
-        src.close();
-        reject(new Error("Connection lost"));
-      };
+    // (Everything there already: the stream's "done" says so.)
+    await apiFetch("/api/v1/install/" + key, { method: "POST" });
+    const done = await followInstall(key, (line) => {
+      // pip prints "Collecting X", "Downloading X (.. MB)",
+      // "Installing collected packages: ...", "Successfully ..." —
+      // pull a short summary and surface it on the button + status bar.
+      const m =
+        line.match(/^Collecting\s+(\S+)/) ||
+        line.match(/^\s*Downloading\s+(\S+)/) ||
+        line.match(/^Installing collected packages:\s*(.+)$/) ||
+        line.match(/^Successfully installed\s+(.+)$/);
+      if (m) {
+        const verb = line.startsWith("Successfully")
+          ? "Finalising"
+          : line.trimStart().startsWith("Downloading")
+            ? "Downloading"
+            : line.startsWith("Installing")
+              ? "Installing"
+              : "Resolving";
+        const stage = verb + " " + m[1].split(/[\s-]/)[0] + "…";
+        btn.textContent = stage;
+        win.showStatusProgress?.(stage, 0);
+      }
     });
+    showInstallDone(label, key, done);
     loadModelsList();
   } catch (e) {
-    toastError("install " + (label || "this feature"), e);
+    const reason = /** @type {any} */ (e)?.body?.context?.reason;
+    toastInstallError("install " + (label || "this feature"), e);
+    // A failed pip may still need a restart, or the server refused (a
+    // restart pending, busy): redraw so the buttons say what's true now.
+    if (/** @type {any} */ (e)?.restartRequired || reason === "restart_pending" || reason === "busy") {
+      loadModelsList();
+    }
   } finally {
     btn.disabled = false;
     btn.classList.remove("installing");

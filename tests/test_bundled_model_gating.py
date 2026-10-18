@@ -78,7 +78,7 @@ def test_face_recognition_package_needs_the_dlib_acceptance():
     try:
         with patch.dict(sys.modules, {"face_recognition": fake}):
             assert face_recognition_loader.load_face_recognition() is None
-            assert "not accepted" in face_recognition_loader.face_recognition_unavailable_reason()
+            assert "not accepted" in face_recognition_loader.load_face_recognition_or_reason()[1]
             assert face_fallback._dlib_detect(np.zeros((8, 8, 3), np.uint8)) == []
             draft = prepare_acceptance(get_entry("dlib_face_recognition_resnet_v1"))
             confirm_acceptance(

@@ -55,12 +55,20 @@ _lock = threading.Lock()
 _jobs: dict[str, DownloadJob] = {}
 
 
+def running_labels() -> list[str]:
+    """What's downloading right now (for the installer's "wait for …")."""
+    with _lock:
+        return [f"the {job.label} download" for job in _jobs.values() if job.status == "running"]
+
+
 def start(key: str, label: str, work: Callable[[], dict[str, Any]]) -> tuple[DownloadJob, bool]:
     """Run ``work`` in a background thread unless ``key`` is already running.
 
     Returns ``(job, started)``; ``started`` is False when an in-flight job
     for the same key was joined instead.
     """
+    # (An install waits for running downloads; a download's own package
+    # checks go through the install hold, so no blanket refusal here.)
     with _lock:
         existing = _jobs.get(key)
         if existing is not None and existing.status == "running":

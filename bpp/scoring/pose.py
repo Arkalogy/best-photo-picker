@@ -12,6 +12,7 @@ import os
 import cv2
 import numpy as np
 
+from bpp.scoring.install_hold import requires
 from bpp.scoring.model_base import ModelSingleton
 from bpp.utils.logging import get_logger
 from bpp.utils.paths import models_dir as _models_dir
@@ -60,7 +61,7 @@ _pose_model = ModelSingleton(
     model_sha256=_POSE_MODEL_SHA256,
     create_fn=_create_pose_detector,
     registry_id="mediapipe_pose_landmarker_lite",
-    import_check=lambda: __import__("mediapipe"),
+    import_check=requires("mediapipe.tasks"),  # what create imports
 )
 
 # MediaPipe pose landmark indices

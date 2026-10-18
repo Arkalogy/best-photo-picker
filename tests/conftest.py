@@ -24,6 +24,28 @@ def _isolate_config_home(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_install_state(tmp_path, monkeypatch):
+    """Nothing held for a restart, and the installer's hold file and notes
+    in this test's folder — never the real cache (or the venv's notes)."""
+    from bpp.scoring import install_hold
+    from bpp.web import pip_process
+
+    held_file = tmp_path / "install-held" / "held-app.txt"
+    monkeypatch.setattr(install_hold, "_installed", frozenset())
+    monkeypatch.setattr(install_hold, "_written", frozenset())
+    monkeypatch.setattr(install_hold, "_inherited", frozenset())
+    monkeypatch.setattr(install_hold, "_held", frozenset())
+    monkeypatch.setattr(install_hold, "_own_file", held_file)
+    monkeypatch.setattr(install_hold, "_own_file_path", lambda: held_file)  # (become_app)
+    monkeypatch.setenv(install_hold._ENV, str(held_file))
+    monkeypatch.setattr(pip_process, "MARKER_DIR", tmp_path / "install-notes")
+    monkeypatch.setattr(pip_process, "_notes_cache", None)
+    from bpp.web import install_status
+
+    monkeypatch.setattr(install_status, "_facts_cache", None)
+
+
+@pytest.fixture(autouse=True)
 def _resync_download_chokepoint():
     """Keep the download-chokepoint bookkeeping in sync with reality
     before each test, so orchestrator-driven tests don't trip a false

@@ -31,8 +31,30 @@ bp = Blueprint("inpaint", __name__)
 def api_inpaint_status() -> tuple[Response, int]:
     """Check if inpainting is available."""
     from bpp.ai.inpainting import is_available
+    from bpp.scoring.install_hold import held_keys
+    from bpp.web.bp_install import _pip_available
+    from bpp.web.pip_process import interrupted_installs
 
-    return jsonify({"available": is_available()}), 200
+    # restart_pending: LaMa was installed but loads only after a restart.
+    waiting = "inpaint" in held_keys()
+    # repair_needed: its install was stopped part way; installing it again
+    # (the Download button) repairs it, even if it looks importable. Both
+    # are the owner's to act on: a paired device can't install or restart.
+    from bpp.web.share import principal_is_local_app
+
+    owner = principal_is_local_app()
+    waiting = waiting and owner
+    repair = owner and "inpaint" in interrupted_installs()
+    return jsonify(
+        {
+            "available": is_available() and not repair,
+            "restart_pending": waiting,
+            "repair_needed": repair,
+            # Installing is the owner's, where pip exists (not in the desktop
+            # app): otherwise no Download button that can only fail.
+            "installable": owner and _pip_available(),
+        }
+    ), 200
 
 
 @bp.post("/api/v1/photos/<int:photo_id>/inpaint")
@@ -53,7 +75,11 @@ def api_inpaint(photo_id: int) -> tuple[Response, int]:
         NotFoundError,
         ValidationError,
     )
+    from bpp.scoring.install_hold import refuse_if_held
 
+    # Installed from the app (or being installed): "restart" / "wait" (409),
+    # not "pip install it".
+    refuse_if_held("simple_lama_inpainting")
     if not is_available():
         raise FeatureUnavailableError(
             "Inpainting not available. Install with: pip install bppicker[inpaint]",

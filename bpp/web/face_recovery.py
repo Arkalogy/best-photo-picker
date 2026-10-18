@@ -61,6 +61,15 @@ def recover_pending_face_extractions(conn: sqlite3.Connection) -> int:
     if not pending:
         return 0
 
+    from bpp.scoring.install_hold import held_keys
+
+    if held_keys():
+        # Installed from the app, waiting for the restart (a library switch
+        # before it): face code isn't loaded until then. Resume after the
+        # restart, without spending any run's retries.
+        log.info("Recovery: %d face extraction run(s) wait for the restart", len(pending))
+        return 0
+
     resumed = 0
     for entry in pending:
         run_id = entry["run_id"]
@@ -235,7 +244,13 @@ def register_face_extraction_retry_recovery(library_path: str | None = None) -> 
             # gets cleared by the worker's own success path.
             log.info("Recovery: face worker already running; skipping re-fire")
             return True
-        started = ctx.face_worker.start(analysis, ctx.db_path(), ctx.config)
+        from bpp.errors import ConflictError
+
+        try:
+            started = ctx.face_worker.start(analysis, ctx.db_path(), ctx.config)
+        except ConflictError as e:  # an install runs, or waits for a restart
+            log.info("Recovery: %s; leaving entry for later", e)
+            return False
         if not started:
             log.warning("Recovery: face_worker.start returned False; leaving entry")
             return False

@@ -34,6 +34,9 @@ class ExportWorker(BackgroundWorker):
     payload (the message carries them too for the streaming case).
     """
 
+    # Copies and renders files (Pillow, OpenCV): nothing an install changes.
+    loads_installable_packages = False
+
     _worker_name = "Export"
 
     def __init__(self) -> None:

@@ -52,6 +52,11 @@ def api_analyze() -> tuple[Response, int]:
             input_dir=input_dir,
         )
 
+    # Could the analysis start (no install running or waiting for a
+    # restart)? Asked before the session is pointed at the new folder.
+    from bpp.web.base_worker import raise_if_blocked
+
+    raise_if_blocked(ctx.worker)
     ctx.input_dir = os.path.abspath(input_dir)
     wd = ctx.ensure_workdir()
 
@@ -362,6 +367,9 @@ def api_import() -> tuple[Response, int]:
     # Default False — sidecars are filtered at scan time when the parent
     # exists in the same source directory.  See bpp/db/live_photo.py.
     import_live_photo_sidecars = bool(data.get("import_live_photo_sidecars", False))
+    from bpp.web.base_worker import raise_if_blocked
+
+    raise_if_blocked(ctx.import_worker)  # before preparing the library
     wd = ctx.ensure_workdir()
     lib = ctx.library_path
     os.makedirs(lib, exist_ok=True)

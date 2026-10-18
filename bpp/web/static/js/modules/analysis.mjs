@@ -92,11 +92,18 @@ export async function startReanalyze() {
 
   if (!(await analyzePreflightConsent())) return;
 
-  if (!win.faceRecognitionAvailable) {
+  // A face install stopped part way is offered again (that's the repair) —
+  // where the app can redo it, now or once what blocks installs ends (the
+  // prompt then says why): never with nothing to click (no pip at all).
+  const facesToRepair =
+    win.interruptedInstalls?.includes("faces") && (win.faceInstallable || !!win.installBlocked);
+  if (!win.faceRecognitionAvailable || facesToRepair) {
     const choice = await _promptFaceInstall();
     if (choice === "install") {
       const installed = await _doFaceInstall();
-      if (!installed) return;
+      // "restart": installed, usable after a restart — and analysis waits
+      // for it too (the toast and banner say so).
+      if (installed !== true) return;
       win.faceRecognitionAvailable = true;
     } else if (choice !== "continue") {
       return;

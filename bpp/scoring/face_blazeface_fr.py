@@ -18,6 +18,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from bpp.scoring.install_hold import requires
 from bpp.scoring.model_base import ModelSingleton
 from bpp.utils.paths import models_dir as _models_dir
 
@@ -82,7 +83,7 @@ _fr_detector = ModelSingleton(
     model_sha256=_FR_MODEL_SHA256,
     create_fn=_create_fr_interpreter,
     registry_id="mediapipe_blazeface_full_range",
-    import_check=lambda: __import__("ai_edge_litert"),
+    import_check=requires("ai_edge_litert.interpreter"),  # what create imports
 )
 # TFLite interpreters are NOT thread-safe — serialize inference calls.
 _fr_lock = threading.Lock()

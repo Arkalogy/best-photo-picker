@@ -20,6 +20,11 @@ def create_app(
     library_path: str | None = None,
 ) -> Flask:
     """Create and configure the Flask application."""
+    # The app: it lists what installs hold for the processes it starts
+    # (set before any worker thread runs).
+    from bpp.scoring.install_hold import become_app
+
+    become_app()
     # One-shot HEIF availability log. When pillow_heif is missing, HEIC
     # source files can't be decoded — face crops on HEIF photos fall
     # back to unrotated bbox coords (visible bug). Without this, the
@@ -64,6 +69,23 @@ def create_app(
     # full exception traceback. Filesystem paths or internal IDs that
     # belong only in the log stay out of the wire payload.
     from bpp.errors import BppError
+    from bpp.scoring.install_hold import HeldForRestart
+
+    @app.errorhandler(HeldForRestart)
+    def _handle_held_for_restart(exc: HeldForRestart):
+        # A request needed a package the in-app installer is writing, or
+        # wrote this session: a 409 saying so (wait, or restart), never a
+        # bare 500.
+        from bpp.errors import ConflictError
+        from bpp.scoring.install_hold import still_installing
+
+        # (No package name: the held one is often a dependency — scipy,
+        # torch — of the feature the owner actually installed.)
+        if still_installing(exc):
+            message = "A feature it needs is being installed — wait for the install to finish"
+            return _handle_bpp_error(ConflictError(message, blocker="install"))
+        message = "A feature it needs was just installed — restart Best Photo Picker to use it"
+        return _handle_bpp_error(ConflictError(message, reason="restart_pending"))
 
     @app.errorhandler(BppError)
     def _handle_bpp_error(exc: BppError):

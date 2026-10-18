@@ -93,6 +93,9 @@ _DEFAULT_FACE_CONF = DEFAULTS["face_detection_confidence"]
 class AnalyzeWorker(BackgroundWorker):
     """Runs image analysis in a background thread, reporting progress via a queue."""
 
+    # Scoring loads face, nudity, pet and CLIP models.
+    loads_installable_packages = True
+
     _worker_name = "Analysis"
 
     def __init__(self) -> None:

@@ -160,6 +160,21 @@ _ADVANCED_KEYS = (
 )
 
 
+def _gaussian_filter(arr, sigma: float):
+    """Gaussian blur of an HxWxC float image across its two image axes only:
+    each colour channel on its own, so colours stay true. (The scipy blur
+    used before also mixed neighbouring channels — saved Definition and
+    Noise reduction edits render with truer colours now.) No scipy: only
+    the faces extra installs it. Kernel and edges as scipy's
+    ``gaussian_filter(arr, (sigma, sigma, 0))``: 4-sigma radius, 'reflect'."""
+    if sigma <= 0:
+        return arr  # no blur (as scipy; the edit values aren't range-checked)
+    import cv2
+
+    size = 2 * int(4.0 * sigma + 0.5) + 1
+    return cv2.GaussianBlur(arr, (size, size), sigma, borderType=cv2.BORDER_REFLECT)
+
+
 def _apply_advanced(img: Image.Image, edits: dict) -> Image.Image:
     """All numpy-array based adjustments. Operates on a single numpy
     buffer so we don't pay the PIL→numpy round-trip per knob."""
@@ -230,18 +245,14 @@ def _apply_advanced(img: Image.Image, edits: dict) -> Image.Image:
 
     definition_val = edits.get("definition", 0.0)
     if definition_val:
-        from scipy.ndimage import gaussian_filter
-
-        blurred = gaussian_filter(arr, sigma=10)
+        blurred = _gaussian_filter(arr, 10)
         detail = arr - blurred
         arr = np.clip(arr + detail * definition_val * 1.5, 0, 255)
 
     noise_reduction_val = edits.get("noise_reduction", 0.0)
     if noise_reduction_val:
-        from scipy.ndimage import gaussian_filter
-
         sigma = noise_reduction_val * 3.0  # 0-3 pixel radius
-        arr = gaussian_filter(arr, sigma=sigma)
+        arr = _gaussian_filter(arr, sigma)
         arr = np.clip(arr, 0, 255)
 
     vignette_amt = edits.get("vignette", 0.0)

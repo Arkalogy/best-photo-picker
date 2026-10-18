@@ -11,9 +11,7 @@ metadata, the update check, and `recheck-missing`.
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +37,7 @@ from bpp.scoring.nudity import is_available as nudenet_available
 from bpp.scoring.pets import is_available as pets_available
 from bpp.utils.logging import get_logger
 from bpp.web.face_worker import has_face_data, needs_face_clustering
+from bpp.web.install_status import install_status_fields
 from bpp.web.share import (
     FP_COOKIE_MAX_AGE,
     FP_COOKIE_NAME,
@@ -81,19 +80,6 @@ bp = Blueprint("core", __name__)
 # href every render — when the file changes, browsers fetch fresh.
 _APP_CSS_PATH = Path(__file__).parent / "static" / "css" / "app.css"
 _JS_MODULES_PATH = Path(__file__).parent / "static" / "js"
-
-
-def _pip_available() -> bool:
-    """Return True if pip is callable from the current Python.
-
-    kept here as a thin local helper so api_status's
-    `face_installable` UI hint stays self-contained. The
-    full pip-install machinery lives in `bp_models`; this
-    predicate is too small to share-import for one bool.
-    """
-    if getattr(sys, "frozen", False):
-        return False  # frozen desktop app: sys.executable is the server, not Python
-    return shutil.which(sys.executable) is not None
 
 
 def _asset_version() -> str:
@@ -281,7 +267,7 @@ def api_status() -> Response:
         "serve_mode": ctx.serve_mode,
         "defaults": DEFAULTS,
         "face_recognition_available": face_recognition_available(),
-        "face_installable": not face_recognition_available() and _pip_available(),
+        **install_status_fields(owner=principal_is_local_app()),
         # ``nudenet_available``: detection CAN be enabled (runtime
         # present). ``nudenet_active``: it actually runs — accepted with
         # the current license text AND weights on disk.

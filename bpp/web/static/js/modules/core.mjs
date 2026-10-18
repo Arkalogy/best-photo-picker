@@ -21,6 +21,7 @@ import { state } from "./state.mjs";
 import { updateBreadcrumbs, saveNavState } from "./navigation.mjs";
 import { hide, show } from "./utils.mjs";
 import { toast, toastError } from "./toast.mjs";
+import { refreshInstallState } from "./install-done.mjs";
 
 export async function loadOverridesFromDB() {
   /** @type {any} */
@@ -300,6 +301,7 @@ export function startStorageHealthCheck() {
   const tick = () => {
     if (document.hidden) return;
     checkStorageHealth();
+    void refreshInstallState();
   };
   win.storageCheckInterval = setInterval(tick, 30000);
   setTimeout(tick, 5000);

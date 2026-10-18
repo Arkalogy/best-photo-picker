@@ -90,14 +90,11 @@ def _extract_dlib(
     # converts into a skipped photo (no embeddings) rather than a crash.
     _enforce_dlib_policy()
 
-    from bpp.scoring.face_recognition_loader import (
-        face_recognition_unavailable_reason,
-        load_face_recognition,
-    )
+    from bpp.scoring.face_recognition_loader import load_face_recognition_or_reason
 
-    face_recognition = load_face_recognition()
+    face_recognition, why = load_face_recognition_or_reason()
     if face_recognition is None:
-        raise ImportError(f"face_recognition {face_recognition_unavailable_reason()}")
+        raise ImportError(f"face_recognition {why}")
 
     from bpp.scoring.face import detect_faces_with_confidence
 

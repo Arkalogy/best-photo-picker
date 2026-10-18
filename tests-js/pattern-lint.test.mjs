@@ -353,7 +353,9 @@ describe("pattern-lint: error-toast on mutating apiFetch handlers", () => {
       // every handler). Comment removal still drops docstring mentions.
       const src = m.src.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
       for (const fn of namedFunctionBodies(src)) {
-        if (mutating.test(fn.body) && !/toastError\s*\(/.test(fn.body)) {
+        // toastInstallError (install-done.mjs) calls toastError for every
+        // error except "restart first", which it shows as a warning.
+        if (mutating.test(fn.body) && !/toast(?:Install)?Error\s*\(/.test(fn.body)) {
           found.add(`${file}:${fn.name}`);
         }
       }

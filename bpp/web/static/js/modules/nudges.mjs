@@ -31,6 +31,7 @@ import { getSetting, saveSetting } from "./settings-client.mjs";
  * @property {string} message    HTML — definitions are author-controlled.
  * @property {NudgeAction} [action]
  * @property {boolean} [dismiss]
+ * @property {boolean} [duringTour]  shown even while the product tour runs
  */
 
 /** @type {Record<string, NudgeDef>} */
@@ -46,6 +47,12 @@ export const NUDGE_DEFS = {
       "Faces detected! Select people in the sidebar to boost photos of them in your selection.",
     action: { label: "Open People", fn: "navigateToPeople" },
     dismiss: true,
+  },
+  // No dismiss: it stays until the restart (the server clears the flag).
+  restart_to_finish_install: {
+    message:
+      "<strong>Restart Best Photo Picker</strong> to finish installing. Until then, features that use the packages it added or updated won't work.",
+    duringTour: true, // shown once, never re-shown when the tour ends
   },
   export_ready: {
     message:
@@ -107,15 +114,15 @@ export function dismissNudge(id) {
  */
 export function showNudge(id, containerId) {
   if (_isNudgeDismissed(id)) return;
+  const def = NUDGE_DEFS[id];
+  if (!def) return;
   // Suppress nudges while the tour is active. tour.mjs exposes
   // `_isTourActive()` on window; missing → no tour, treat as inactive.
   /** @type {any} */
   const win = window;
-  if (typeof win._isTourActive === "function" && win._isTourActive()) return;
+  const touring = typeof win._isTourActive === "function" && win._isTourActive();
+  if (touring && !def.duringTour) return;
   if (document.getElementById("nudge-" + id)) return;
-
-  const def = NUDGE_DEFS[id];
-  if (!def) return;
 
   const container = document.getElementById(containerId);
   if (!container) return;

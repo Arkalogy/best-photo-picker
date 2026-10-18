@@ -18,6 +18,7 @@ from typing import Any
 import cv2
 import numpy as np
 
+from bpp.scoring.install_hold import requires
 from bpp.scoring.model_base import ModelSingleton
 from bpp.utils.logging import get_logger
 
@@ -94,7 +95,7 @@ _yolo = ModelSingleton(
     model_sha256=_MODEL_SHA256,
     create_fn=_create_yolo_session,
     registry_id="ultralytics_yolov11n_pets",
-    import_check=lambda: __import__("onnxruntime"),
+    import_check=requires("onnxruntime"),
 )
 
 

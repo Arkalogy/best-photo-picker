@@ -13,6 +13,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from bpp.scoring.install_hold import requires
 from bpp.scoring.model_base import ModelSingleton
 from bpp.utils.logging import get_logger
 from bpp.utils.paths import models_dir as _models_dir
@@ -62,7 +63,7 @@ _segmenter = ModelSingleton(
     model_sha256=_SEGMENTER_SHA256,
     create_fn=_create_segmenter,
     registry_id="mediapipe_selfie_segmenter",
-    import_check=lambda: __import__("mediapipe"),
+    import_check=requires("mediapipe.tasks"),  # what create imports
 )
 
 

@@ -169,6 +169,13 @@ intended call timing for `setup()`:
   instantiated once per `WebAppState.__init__` from the registry, so a
   worker registered AFTER `WebAppState` is constructed won't run.
   Always register in `setup()`, not in a deferred callback.
+  A `BackgroundWorker`'s `_start_thread()` returns False if it's already
+  running, and raises `bpp.errors.ConflictError` (an HTTP 409 with the
+  reason) while an in-app package install runs, or after one until the
+  app restarts (pip may upgrade shared libraries too). Set the class
+  attribute `loads_installable_packages = False` if your worker loads none
+  of the installable packages (or anything they pull in), so installs don't
+  hold it up; left `None` (unknown) or `True`, every install does.
 
 ## Custom ML models
 

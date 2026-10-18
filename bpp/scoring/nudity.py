@@ -36,6 +36,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from bpp.scoring.install_hold import requires
 from bpp.scoring.model_base import ModelSingleton
 from bpp.utils.logging import get_logger
 
@@ -272,7 +273,7 @@ _nudenet = ModelSingleton(
     create_fn=_create_nude_detector,
     registry_id=REGISTRY_ID,
     model_sha256=NUDENET_MODEL_SHA256,
-    import_check=lambda: __import__("onnxruntime"),
+    import_check=requires("onnxruntime"),
 )
 
 

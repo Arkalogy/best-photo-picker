@@ -90,12 +90,15 @@ describe("_nudgeKey", () => {
 });
 
 describe("NUDGE_DEFS", () => {
-  test("ships the three known nudge definitions", () => {
+  test("ships the four known nudge definitions", () => {
     expect(Object.keys(NUDGE_DEFS).sort()).toEqual([
       "analyze_photos",
       "export_ready",
       "pick_people",
+      "restart_to_finish_install",
     ]);
+    // Stays until the restart: no dismiss button to hide it for good.
+    expect(NUDGE_DEFS.restart_to_finish_install.dismiss).toBeUndefined();
     for (const def of Object.values(NUDGE_DEFS)) {
       expect(typeof def.message).toBe("string");
     }

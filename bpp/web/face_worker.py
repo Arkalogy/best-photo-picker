@@ -161,6 +161,9 @@ from bpp.web.face_recovery import (  # noqa: E402, F401
 class FaceWorker(BackgroundWorker):
     """Extracts face embeddings in a background thread, then clusters."""
 
+    # Face detection/embedding models, dlib, scipy grouping.
+    loads_installable_packages = True
+
     _worker_name = "Face extraction"
 
     def start(

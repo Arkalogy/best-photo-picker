@@ -66,14 +66,6 @@ def is_available() -> bool:
     return load_face_recognition() is not None
 
 
-def can_install() -> bool:
-    """Return True if pip is available (faces extra can be installed at runtime)."""
-    import shutil
-    import sys
-
-    return shutil.which(sys.executable) is not None
-
-
 MAX_FACES_PER_PHOTO = 20
 
 # Default minimum detector confidence for embedding extraction.

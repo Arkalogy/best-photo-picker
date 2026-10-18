@@ -17,7 +17,10 @@ from flask import Blueprint, Response, jsonify
 from bpp.db.clip import compute_adaptive_threshold, get_dedup_feedback
 from bpp.errors import ConflictError, FeatureUnavailableError, NotFoundError
 from bpp.scoring.clip_embed import is_available as clip_is_available
+from bpp.scoring.install_hold import refuse_if_held
 from bpp.utils.logging import get_logger
+from bpp.web.base_worker import raise_if_blocked
+from bpp.web.bp_install import no_install_during
 from bpp.web.share import requires_local_app
 from bpp.web.sse import stream_worker_progress
 from bpp.web.state import get_ctx
@@ -38,23 +41,31 @@ def api_clip_extract() -> tuple[Response, int]:
     analysis = ctx.load_analysis_if_needed()
     if analysis is None:
         raise NotFoundError("No analysis data")
-    if not clip_is_available():
-        try:
-            from bpp.scoring.clip_embed import ensure_model
+    # Marked busy through the (maybe long) model download and the start, so
+    # an install can't begin in between.
+    with no_install_during("the smart search setup (its model download)"):
+        # Installed from the app this session: say so, not "unavailable".
+        refuse_if_held("onnxruntime")
+        # Would the indexing be allowed to start (no install waiting for a
+        # restart)? Asked before the (maybe long) model download.
+        raise_if_blocked(ctx.clip_worker)
+        if not clip_is_available():
+            try:
+                from bpp.scoring.clip_embed import ensure_model
 
-            ensure_model()
-        except Exception as e:
-            # FeatureUnavailableError = 501; the CLIP model couldn't be
-            # installed/loaded, which is an environment issue, not a
-            # user error or transient failure.
-            raise FeatureUnavailableError(
-                "CLIP model unavailable",
-                user_message="CLIP model unavailable",
-                diagnostic_message=f"ensure_model failed: {e!s}",
-            ) from e
+                ensure_model()
+            except Exception as e:
+                # FeatureUnavailableError = 501; the CLIP model couldn't be
+                # installed/loaded, which is an environment issue, not a
+                # user error or transient failure.
+                raise FeatureUnavailableError(
+                    "CLIP model unavailable",
+                    user_message="CLIP model unavailable",
+                    diagnostic_message=f"ensure_model failed: {e!s}",
+                ) from e
 
-    db_p = ctx.db_path()
-    started = ctx.clip_worker.start(analysis, db_p)
+        db_p = ctx.db_path()
+        started = ctx.clip_worker.start(analysis, db_p)
     if not started:
         raise ConflictError("CLIP extraction already in progress")
     return jsonify({"status": "started"}), 202

@@ -24,6 +24,9 @@ log = get_logger(__name__)
 class ImportWorker(BackgroundWorker):
     """Runs photo import + analysis in a background thread, reporting progress via a queue."""
 
+    # Imports, then analyzes: the scoring models (faces, nudity, pets, CLIP).
+    loads_installable_packages = True
+
     _worker_name = "Import"
 
     def start(

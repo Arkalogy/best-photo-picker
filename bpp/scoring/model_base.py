@@ -14,7 +14,9 @@ Usage::
         model_url="https://...",
         create_fn=lambda path: ort.InferenceSession(str(path), ...),
         registry_id="openai_clip_vit_b32_onnx",  # legal-registry entry
-        import_check=lambda: __import__("onnxruntime"),
+        # Through the install hold: never imported while (or after) the
+        # in-app installer rewrites it, until the restart.
+        import_check=install_hold.requires("onnxruntime"),
     )
 
     session = _clip_visual.get()  # Thread-safe, lazy download + init
@@ -30,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from bpp.errors import IntegrityError as _IntegrityError
+from bpp.scoring.install_hold import HeldForRestart
 from bpp.scoring.model_load_gate import MemoizedLoadGate
 from bpp.utils.logging import get_logger
 
@@ -225,6 +228,11 @@ class ModelSingleton:
                     exc_info=True,
                 )
                 raise
+            except HeldForRestart as exc:
+                # Installed from the app: loads after a restart (or at once,
+                # if the hold is lifted) — not a verdict to cache.
+                log.debug("%s waits for a restart: %s", self.name, exc)
+                return None
             except (ImportError, Exception) as exc:
                 log.debug("%s unavailable: %s", self.name, exc)
                 self._available = False

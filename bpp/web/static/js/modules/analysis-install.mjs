@@ -10,32 +10,55 @@
  *     "Install faces" buttons (the latter only if the install path is
  *     viable, e.g. not a frozen Tauri sidecar).
  *   * _doFaceInstall — runs the install via /api/v1/install/faces,
- *     streams stdout into the overlay, resolves true on success.
+ *     streams stdout into the overlay, resolves true on success,
+ *     "restart" when it worked but needs an app restart to take effect.
  *
  * Re-exported from analysis.mjs.
  */
 
-import { apiFetch, authEventSource } from "./api-client.mjs";
+import { apiFetch } from "./api-client.mjs";
+import { esc } from "./text-format.mjs";
 import { appConfirm, _setConfirmResolve, _showConfirmOverlay } from "./dialogs.mjs";
-import { parseSSE } from "./format-helpers.mjs";
-import { toast, toastError } from "./toast.mjs";
+import {
+  followInstall,
+  installAllowedNow,
+  showInstallDone,
+  toastInstallError,
+} from "./install-done.mjs";
 
 export function _promptFaceInstall() {
   /** @type {any} */
   const win = window;
   return new Promise((resolve) => {
     _setConfirmResolve(resolve);
+    // While any install waits for a restart, analysis is refused (with or
+    // without faces): pip may have upgraded libraries its processes load.
+    const analysisBlocked = !!win.installRestartPending?.length;
+    const skipBtn = analysisBlocked
+      ? ""
+      : `<button data-action="resolveConfirm" data-arg0="continue">Skip faces</button>`;
     const installBtn = win.faceInstallable
       ? `<button class="primary" id="confirm-ok" data-action="resolveConfirm" data-arg0="install">Install faces</button>`
       : "";
     const sub = win.faceInstallable
       ? "Install now to detect and group people in your photos, or continue without face grouping."
-      : "To enable: pip install bppicker[faces], then restart.";
-    const html = `<p>Face grouping is not installed.</p>
+      : win.faceWaitingForRestart
+        ? "Restart Best Photo Picker to finish installing face recognition."
+        : win.faceLicenseNeeded
+          ? "Face recognition is installed but its license isn't accepted — review it in Settings → Models, then try again."
+          : win.installBlocked
+            ? `Face recognition can't be installed right now: ${esc(win.installBlocked)}.`
+            : win.installRestartPending?.length
+              ? "Restart Best Photo Picker to finish a recent install, then you can install face recognition."
+              : "To enable: pip install bppicker[faces], then restart.";
+    const title = win.interruptedInstalls?.includes("faces")
+      ? "The face recognition install didn't finish."
+      : "Face grouping is not installed.";
+    const html = `<p>${title}</p>
       <p class="confirm-sub">${sub}</p>
       <div class="confirm-actions">
         <button data-action="resolveConfirm" data-arg0="false">Cancel</button>
-        <button data-action="resolveConfirm" data-arg0="continue">Skip faces</button>
+        ${skipBtn}
         ${installBtn}
       </div>`;
     _showConfirmOverlay(html);
@@ -45,23 +68,18 @@ export function _promptFaceInstall() {
 export async function _doFaceInstall() {
   /** @type {any} */
   const win = window;
+  if (!(await installAllowedNow())) return false;
   const ok = await appConfirm(
     "Install face recognition?",
     "This will download and install a Python package from PyPI. Only proceed if you trust your network."
   );
   if (!ok) return false;
-  let resp;
   try {
-    resp = await apiFetch("/api/v1/install/faces", { method: "POST" });
+    await apiFetch("/api/v1/install/faces", { method: "POST" });
   } catch (e) {
-    toastError("install face recognition", e);
+    toastInstallError("install face recognition", e);
     return false;
   }
-  if (resp.error) {
-    toastError("install face recognition", new Error(resp.error));
-    return false;
-  }
-  if (resp.status === "already_installed") return true;
 
   return new Promise((resolve) => {
     _setConfirmResolve(null);
@@ -76,37 +94,34 @@ export async function _doFaceInstall() {
     const closeBtn = /** @type {HTMLButtonElement | null} */ (
       document.getElementById("install-close-btn")
     );
-    const src = authEventSource("/api/v1/install/faces/progress");
-    src.onmessage = (ev) => {
-      const msg = /** @type {any} */ (parseSSE(ev.data));
-      if (!msg) return;
-      if (msg.type === "log") {
-        if (logEl) {
-          logEl.textContent += msg.message + "\n";
-          logEl.scrollTop = logEl.scrollHeight;
-        }
-      } else if (msg.type === "done") {
-        src.close();
+    followInstall("faces", (line) => {
+      if (logEl) {
+        logEl.textContent += line + "\n";
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+    }).then(
+      (/** @type {any} */ done) => {
         win.resolveConfirm?.(false);
-        toast("Face recognition installed successfully");
-        resolve(true);
-      } else if (msg.type === "error") {
-        src.close();
-        if (logEl) logEl.textContent += "\nError: " + msg.message;
+        if (showInstallDone("Face recognition", "faces", done)) {
+          win.faceWaitingForRestart = true;
+          resolve("restart"); // usable after a restart (and analysis waits too)
+        } else {
+          resolve(true); // it was there already: nothing written, nothing waits
+        }
+      },
+      (/** @type {any} */ err) => {
+        if (logEl) {
+          logEl.textContent += "\nError: " + err.message;
+          if (err.restartRequired) {
+            logEl.textContent += "\nRestart Best Photo Picker, then try again.";
+          }
+        }
         if (closeBtn) {
           closeBtn.disabled = false;
           closeBtn.textContent = "Close";
         }
         _setConfirmResolve(() => resolve(false));
       }
-    };
-    src.onerror = () => {
-      src.close();
-      if (closeBtn) {
-        closeBtn.disabled = false;
-        closeBtn.textContent = "Close";
-      }
-      _setConfirmResolve(() => resolve(false));
-    };
+    );
   });
 }

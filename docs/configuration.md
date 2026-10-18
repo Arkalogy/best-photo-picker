@@ -122,6 +122,18 @@ without that model and the run's warning names it. It never affects
 the server process or later runs (see `skip_downloads_in_this_process()`
 in `bpp/utils/download.py`).
 
+## `BPP_INSTALL_HELD_FILE`
+
+**Internal — set by bpp, not by you.** Don't set it yourself.
+
+**What it does:** once the in-app installer runs pip for a feature (face
+recognition, AI removal, the ONNX runtime), what pip writes isn't loaded
+into the running app: the feature works after a restart. The app names a
+file here at startup (under the cache folder, `install-held/`) and lists
+the held packages in it, so the background processes it starts for an
+analysis hold them too. The file is removed when the app exits; a
+restarted app starts with nothing held (see `bpp/scoring/install_hold.py`).
+
 ## `BPP_ENABLE_PLUGINS`
 
 **Default:** *(unset)* — plugin loading is **off**. `bpp.plugins` entry-points

@@ -262,6 +262,9 @@ def shutdown(ctx: WebAppState) -> None:
         fire_on_library_close,
         fire_on_shutdown,
     )
+    from bpp.web.pip_process import stop_running_pip
+
+    stop_running_pip()  # it may be writing packages the next start loads
 
     try:
         fire_on_library_close(ctx)

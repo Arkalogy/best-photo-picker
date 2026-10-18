@@ -7,6 +7,7 @@ import errno
 import queue
 import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
 from bpp.constants import WORKER_JOIN_TIMEOUT_S
@@ -38,10 +39,44 @@ _PROGRESS_QUEUE_MAX = 1000
 _DROP_LOG_INTERVAL_S = 60.0
 
 
+#: Wraps every worker start (set by the in-app installer): raises while
+#: an install runs, and keeps one from starting until this start is done
+#: — pip swaps package files, and a worker loads packages as it goes.
+def _no_guard(_worker: Any) -> contextlib.AbstractContextManager[Any]:
+    return contextlib.nullcontext()
+
+
+_start_guard: Callable[[Any], contextlib.AbstractContextManager[Any]] = _no_guard
+
+
+def start_guard(worker: Any) -> contextlib.AbstractContextManager[Any]:
+    """The installer's guard for starting *worker* (None: work that may use
+    any installable package)."""
+    return _start_guard(worker)
+
+
+def raise_if_blocked(worker: Any) -> None:
+    """Raise ConflictError if *worker* couldn't start now (an install runs
+    or waits for a restart): asked before slow or irreversible preparation
+    (a model download, wiping data) rather than after it."""
+    with _start_guard(worker):
+        pass
+
+
+def set_start_guard(guard: Callable[[Any], contextlib.AbstractContextManager[Any]]) -> None:
+    global _start_guard
+    _start_guard = guard
+
+
 class BackgroundWorker:
     """Common boilerplate for background workers: thread lifecycle, queue, cancellation."""
 
     _worker_name: str = "Worker"
+    #: Whether this work may import packages an in-app install writes, or
+    #: libraries it upgrades (models, face/scipy code, numpy in the processes
+    #: it starts): if so it doesn't start while an install runs, or after one
+    #: before the restart. None (plugins' workers): unknown, so yes.
+    loads_installable_packages: bool | None = None
 
     def __init__(self) -> None:
         self.progress_queue: queue.Queue[dict[str, Any]] = queue.Queue(
@@ -69,8 +104,16 @@ class BackgroundWorker:
 
         Subclasses should expose a typed ``start()`` that validates arguments
         and delegates to ``_start_thread(*args)``.  Returns False if the
-        worker is already running.
+        worker is already running; raises ConflictError while an in-app
+        install it may load runs, or after one until a restart (see
+        ``loads_installable_packages``).
         """
+        if self.is_alive:
+            return False  # already running: that, not an install, is the answer
+        with _start_guard(self):
+            return self._start_thread_unguarded(*args)
+
+    def _start_thread_unguarded(self, *args: Any) -> bool:
         if self.is_alive:
             return False
 
@@ -200,9 +243,13 @@ class BackgroundWorker:
             else:
                 msg = f"{self._worker_name} encountered a filesystem error. Check server logs."
             self._emit({"type": "error", "message": msg})
-        except Exception:
-            log.error("%s failed", self._worker_name, exc_info=True)
-            msg = f"{self._worker_name} failed. Check server logs for details."
+        except Exception as e:
+            msg = _install_wait_message(self._worker_name, e)
+            if msg is not None:  # expected (installed, restart pending): no crash
+                log.info("%s waits for a restart: %s", self._worker_name, e)
+            else:
+                log.error("%s failed", self._worker_name, exc_info=True)
+                msg = f"{self._worker_name} failed. Check server logs for details."
             self._emit({"type": "error", "message": msg})
         finally:
             self.running = False
@@ -222,3 +269,20 @@ class BackgroundWorker:
 
     def _run(self, *args: Any) -> None:
         raise NotImplementedError
+
+
+def _install_wait_message(worker: str, exc: BaseException) -> str | None:
+    """A plain message when *exc* means "installed from the app, loads after
+    a restart" (not a failure to dig into the logs for)."""
+    from bpp.scoring.install_hold import HeldForRestart, still_installing
+
+    # No package name: paired devices follow the same progress stream, and
+    # what was installed is for the owner only.
+    if isinstance(exc, HeldForRestart) and still_installing(exc):
+        return f"{worker} stopped: a package is being installed — wait for it, then try again."
+    if isinstance(exc, HeldForRestart):
+        return (
+            f"{worker} stopped: a package was just installed — restart Best Photo "
+            "Picker, then try again."
+        )
+    return None

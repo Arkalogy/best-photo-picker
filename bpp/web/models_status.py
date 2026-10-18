@@ -29,15 +29,6 @@ def _file_info(name: str, path: str) -> dict[str, Any]:
     }
 
 
-def _ort_available() -> bool:
-    try:
-        import onnxruntime  # noqa: F401
-
-        return True
-    except ImportError:
-        return False
-
-
 # ── Per-group builders ──────────────────────────────────────────────
 
 
@@ -297,7 +288,13 @@ def build_model_features(ctx: Any) -> list[dict[str, Any]]:
     pets_path = _pets_model_path()
     face_embed_ok = face_recognition_available()
     pets_lib_ok = pets_available()
-    ort_ok = _ort_available()
+    from bpp.scoring.clip_embed import can_install as ort_usable
+    from bpp.scoring.install_hold import held_keys
+
+    # Installed: importable now — or just installed from the app, loading
+    # after the restart the banner asks for (not "missing": installing it
+    # again would only be refused).
+    ort_ok = ort_usable() or "onnxruntime" in held_keys()
 
     toggles = {key: bool(ctx.config.get(key, True)) for key in MODEL_TOGGLE_KEYS}
 

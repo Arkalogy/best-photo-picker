@@ -27,7 +27,7 @@ def broken_face_recognition(tmp_path, monkeypatch):
 
 def test_quit_on_import_is_contained(broken_face_recognition):
     assert loader.load_face_recognition() is None
-    assert "SystemExit" in loader.face_recognition_unavailable_reason()
+    assert "SystemExit" in loader.load_face_recognition_or_reason()[1]
 
 
 def test_callers_degrade_instead_of_exiting(broken_face_recognition, monkeypatch):
@@ -44,7 +44,7 @@ def test_missing_package_is_quietly_unavailable(tmp_path, monkeypatch):
     loader._reset_for_tests()
     try:
         assert loader.load_face_recognition() is None
-        assert loader.face_recognition_unavailable_reason().startswith("not installed")
+        assert loader.load_face_recognition_or_reason()[1].startswith("not installed")
     finally:
         loader._reset_for_tests()
 
@@ -58,3 +58,50 @@ def test_faces_extra_pins_setuptools_for_pkg_resources():
         "optional-dependencies"
     ]
     assert "setuptools<81" in extras["faces"]
+
+
+@pytest.fixture
+def import_counting_broken_package(tmp_path, monkeypatch):
+    """Installed but broken: importing it fails on a missing dependency."""
+    pkg = tmp_path / "face_recognition"
+    pkg.mkdir()
+    counter = tmp_path / "imports"
+    (pkg / "__init__.py").write_text(
+        f"open({str(counter)!r}, 'a').write('x')\nimport dlib_missing_for_this_test\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.delitem(sys.modules, "face_recognition", raising=False)
+    loader._reset_for_tests()
+    yield counter
+    sys.modules.pop("face_recognition", None)
+    loader._reset_for_tests()
+
+
+def test_an_installed_but_broken_package_is_imported_once(import_counting_broken_package):
+    for call in range(5):
+        assert loader.load_face_recognition() is None, f"call {call} loaded it"
+    assert import_counting_broken_package.read_text() == "x"
+    assert "failed to load" in loader.load_face_recognition_or_reason()[1]
+
+
+def test_a_missing_package_is_looked_up_once_not_per_photo(monkeypatch):
+    import importlib.abc
+
+    lookups = []
+
+    class Counting(importlib.abc.MetaPathFinder):
+        def find_spec(self, name, path=None, target=None):
+            if name == "face_recognition":
+                lookups.append(name)
+            return None
+
+    monkeypatch.delitem(sys.modules, "face_recognition", raising=False)
+    monkeypatch.setattr(sys, "meta_path", [Counting(), *sys.meta_path])
+    monkeypatch.setattr(sys, "path", [p for p in sys.path if "site-packages" not in p])
+    loader._reset_for_tests()
+    try:
+        for call in range(5):
+            assert loader.load_face_recognition() is None, f"call {call} loaded it"
+        assert lookups == ["face_recognition"]
+    finally:
+        loader._reset_for_tests()

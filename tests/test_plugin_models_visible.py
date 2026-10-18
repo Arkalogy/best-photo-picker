@@ -220,6 +220,10 @@ def test_bpp_module_imported_by_a_plugin_stays_builtin():
     import bpp.scoring.segmentation as seg
     from bpp.scoring.model_base import plugin_model_entries
 
+    # Its file path is read from the model cache dir at registration;
+    # an earlier test may have pointed that elsewhere, and re-registering
+    # a name at another path is refused. Only the origin matters here.
+    ModelRegistry._entries.pop("Selfie segmenter", None)
     importlib.reload(seg)  # bpp's own module registers again
     assert "Selfie segmenter" not in {e.name for e in plugin_model_entries()}
 

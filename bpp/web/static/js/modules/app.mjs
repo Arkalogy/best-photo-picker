@@ -56,6 +56,7 @@ import {
 import { maybeAutoStartTour } from "./tour.mjs";
 import { navigateToCalendar } from "./calendar.mjs";
 import { navigateToDeleted, navigateToHidden } from "./deleted.mjs";
+import { applyInstallState } from "./install-done.mjs";
 import { show } from "./utils.mjs";
 import { showOnboarding } from "./onboarding.mjs";
 import { toast, toastError } from "./toast.mjs";
@@ -195,7 +196,16 @@ async function _bootstrap() {
     }
 
     win.faceRecognitionAvailable = !!st.face_recognition_available;
-    win.faceInstallable = !!st.face_installable;
+    // The install state (restart banner, an interrupted install's repair)
+    // right away, not at the first 30-second check.
+    applyInstallState({
+      restart_pending: st.install_restart_pending,
+      face_installable: st.face_installable,
+      face_license_needed: st.face_license_needed,
+      install_blocked: st.install_blocked,
+      interrupted: st.install_interrupted,
+      interrupted_keys: st.install_interrupted_keys,
+    });
     win.nudenetAvailable = !!st.nudenet_available;
     win.nudenetActive = !!st.nudenet_active;
     win.petsAvailable = !!st.pets_available;

@@ -61,6 +61,7 @@ from typing import Any
 
 import numpy as np
 
+from bpp.scoring.install_hold import requires
 from bpp.scoring.model_base import ModelSingleton
 
 log = logging.getLogger(__name__)
@@ -141,11 +142,9 @@ def is_available() -> bool:
     the loader's job. ``is_available`` is the "could this run at
     all" probe used by the picker and CLI surface tests.
     """
-    try:
-        import onnxruntime  # noqa: F401
-    except ImportError:
-        return False
-    return True
+    from bpp.scoring.install_hold import importable
+
+    return importable("onnxruntime")
 
 
 def is_on_disk() -> bool:
@@ -285,7 +284,7 @@ _buffalo_s_model = ModelSingleton(
     model_url=None,  # ZIP-extract flow doesn't fit the stock download path
     create_fn=_buffalo_s_create,
     registry_id=REGISTRY_ID,
-    import_check=lambda: __import__("onnxruntime"),
+    import_check=requires("onnxruntime"),
 )
 
 

@@ -16,6 +16,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from bpp.scoring.install_hold import requires
 from bpp.scoring.model_base import ModelSingleton
 from bpp.utils.logging import get_logger
 from bpp.utils.paths import models_dir as _models_dir
@@ -69,7 +70,7 @@ _mp_blazeface = ModelSingleton(
     model_sha256=_MODEL_SHA256,
     create_fn=_create_mediapipe_detector,
     registry_id="mediapipe_blazeface_short_range",
-    import_check=lambda: __import__("mediapipe"),
+    import_check=requires("mediapipe.tasks"),  # what create imports
     bundled_path=os.path.join(_BUNDLED_DIR, "blaze_face_short_range.tflite"),
 )
 # Inference lock: MediaPipe detectors are NOT thread-safe — serialize .detect() calls.

@@ -26,6 +26,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from bpp.scoring.install_hold import requires
 from bpp.scoring.model_base import ModelSingleton
 from bpp.utils.logging import get_logger
 from bpp.utils.paths import models_dir as _models_dir
@@ -83,7 +84,7 @@ _hand_landmarker = ModelSingleton(
     model_sha256=_HAND_MODEL_SHA256,
     create_fn=_create_hand_detector,
     registry_id="mediapipe_hand_landmarker",
-    import_check=lambda: __import__("mediapipe"),
+    import_check=requires("mediapipe.tasks"),  # what create imports
 )
 # Inference lock: MediaPipe detectors are NOT thread-safe — serialize .detect() calls.
 _hand_lock = threading.Lock()

@@ -28,6 +28,7 @@ from io import BytesIO
 
 from PIL import Image
 
+from bpp.scoring.install_hold import requires
 from bpp.scoring.model_base import ModelSingleton
 from bpp.utils.logging import get_logger
 from bpp.utils.paths import models_dir
@@ -48,11 +49,6 @@ _LAMA_MODEL_URL = (
 # execution. Re-pin only after auditing the new upstream artifact.
 _LAMA_MODEL_SHA256 = "7ba7aa7ac37a4d41fdbbeba3a2af7ead18058552997e3a3cd1a3b2210c9e6b4c"
 _LAMA_MODEL_PATH = models_dir() / "big-lama.pt"
-
-
-def _import_check() -> None:
-    """Raise ImportError if simple_lama_inpainting is not installed."""
-    import simple_lama_inpainting  # noqa: F401
 
 
 def _create_lama(verified_path):
@@ -90,7 +86,9 @@ _LAMA = ModelSingleton(
     model_sha256=_LAMA_MODEL_SHA256,
     create_fn=_create_lama,
     registry_id="lama_inpaint_research",
-    import_check=_import_check,
+    # Gated: not imported while pip writes it, nor (with the torch it
+    # loads) after an install changed it, until a restart.
+    import_check=requires("simple_lama_inpainting"),
 )
 
 
