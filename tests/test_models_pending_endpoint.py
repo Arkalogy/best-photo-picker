@@ -16,6 +16,13 @@ from unittest.mock import patch
 
 import pytest
 
+from bpp.registry.acceptance import AcceptanceState
+
+#: "Never accepted" — the one judgement every license reader uses.
+_NOT_ACCEPTED = AcceptanceState(
+    latest=None, accepted=False, current=False, needs_reaccept=False, separate_rights_asserted=False
+)
+
 
 @pytest.fixture
 def app(tmp_path):
@@ -145,8 +152,7 @@ class TestModelsPendingEndpoint:
         surfaced in the Settings → Models hint instead of being dropped."""
         ctx = app.extensions["bpp"]
         with (
-            patch("bpp.registry.acceptance_log.has_accepted", return_value=False),
-            patch("bpp.registry.acceptance.is_acceptance_valid_for", return_value=False),
+            patch("bpp.registry.acceptance.acceptance_state", return_value=_NOT_ACCEPTED),
         ):
             r = _get(app, "/api/v1/models/pending", token=ctx.auth_token)
         assert r.status_code == 200
@@ -198,8 +204,7 @@ class TestModelsPendingEndpoint:
         ]
         with (
             patch("bpp.scoring.model_manifest.all_models", return_value=fake),
-            patch("bpp.registry.acceptance_log.has_accepted", return_value=False),
-            patch("bpp.registry.acceptance.is_acceptance_valid_for", return_value=False),
+            patch("bpp.registry.acceptance.acceptance_state", return_value=_NOT_ACCEPTED),
         ):
             ctx = app.extensions["bpp"]
             r = _get(app, "/api/v1/models/pending", token=ctx.auth_token)
@@ -238,8 +243,7 @@ class TestModelsPendingEndpoint:
         ]
         with (
             patch("bpp.scoring.model_manifest.all_models", return_value=fake),
-            patch("bpp.registry.acceptance_log.has_accepted", return_value=False),
-            patch("bpp.registry.acceptance.is_acceptance_valid_for", return_value=False),
+            patch("bpp.registry.acceptance.acceptance_state", return_value=_NOT_ACCEPTED),
             patch("bpp.web.model_filter._covered_kinds", return_value={"face_detector"}),
         ):
             ctx = app.extensions["bpp"]
@@ -427,8 +431,7 @@ def test_compute_pending_and_blocked_runs_without_http(tmp_path):
     ]
     with (
         patch("bpp.scoring.model_manifest.all_models", return_value=fake),
-        patch("bpp.registry.acceptance_log.has_accepted", return_value=False),
-        patch("bpp.registry.acceptance.is_acceptance_valid_for", return_value=False),
+        patch("bpp.registry.acceptance.acceptance_state", return_value=_NOT_ACCEPTED),
     ):
         items, blocked = compute_pending_and_blocked()
     (item,) = items

@@ -371,8 +371,9 @@ def has_accepted(model_id: str, *, path: Path | None = None) -> bool:
     most-recent row for ``model_id`` is an ``"accept"`` event, not a
     ``"revoke"`` withdrawal. A model the user accepted and then withdrew
     reads as not-accepted (the latest row wins)."""
-    latest = find_latest_for_model(model_id, path=path)
-    return latest is not None and latest.event == "accept"
+    from bpp.registry.acceptance import acceptance_state  # (circular at import time)
+
+    return acceptance_state(None, row=find_latest_for_model(model_id, path=path)).accepted
 
 
 def append_revocation(

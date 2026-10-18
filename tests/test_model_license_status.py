@@ -9,11 +9,23 @@ from unittest.mock import patch
 
 import pytest
 
+from bpp.registry.acceptance import AcceptanceState
 from bpp.registry.policy import ModelLoadDecision, PolicyResult
 
 
 def _result(decision):
     return PolicyResult(decision=decision, reason="test", entry_id="x")
+
+
+def _judged(accepted_before: bool) -> AcceptanceState:
+    """A refused model: accepted under an older text, or never."""
+    return AcceptanceState(
+        latest=None,
+        accepted=accepted_before,
+        current=False,
+        needs_reaccept=accepted_before,
+        separate_rights_asserted=False,
+    )
 
 
 @pytest.mark.parametrize(
@@ -33,7 +45,7 @@ def test_load_state_follows_the_load_gate(decision, accepted_before, expected):
 
     with (
         patch("bpp.registry.policy.check_model_load_allowed", return_value=_result(decision)),
-        patch("bpp.registry.acceptance_log.has_accepted", return_value=accepted_before),
+        patch("bpp.registry.acceptance.acceptance_state", return_value=_judged(accepted_before)),
     ):
         assert load_state(get_entry("nudenet_320n")) == expected
 

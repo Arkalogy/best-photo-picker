@@ -61,14 +61,12 @@ def license_state(legal) -> str:
       accepted.
     * ``"needs_license"`` — never accepted, or the user withdrew it.
     """
-    from bpp.registry.acceptance import is_acceptance_valid_for
-    from bpp.registry.acceptance_log import has_accepted
+    from bpp.registry.acceptance import acceptance_state
 
-    if not legal.requires_explicit_ack or is_acceptance_valid_for(legal):
+    st = acceptance_state(legal)  # the load gate's own judgement
+    if st.current:
         return "ok"
-    if has_accepted(legal.id):
-        return "needs_reaccept"
-    return "needs_license"
+    return "needs_reaccept" if st.accepted else "needs_license"
 
 
 def load_state(legal) -> str:
@@ -86,7 +84,6 @@ def load_state(legal) -> str:
     * ``"blocked"`` — the registry withdrew or legally blocked the model;
       accepting can't help.
     """
-    from bpp.registry.acceptance_log import has_accepted
     from bpp.registry.policy import ModelLoadDecision, check_model_load_allowed
     from bpp.registry.use_context_store import get_use_context
 
@@ -94,7 +91,7 @@ def load_state(legal) -> str:
     if decision is ModelLoadDecision.ALLOW:
         return "ok"
     if decision is ModelLoadDecision.BLOCKED_NEEDS_ACK:
-        return "needs_reaccept" if has_accepted(legal.id) else "needs_license"
+        return license_state(legal)  # which of "needs a license" / "re-accept"
     if decision is ModelLoadDecision.BLOCKED_COMMERCIAL_NO_RIGHTS:
         return "needs_commercial_rights"
     return "blocked"

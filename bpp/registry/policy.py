@@ -49,7 +49,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from bpp.registry.acceptance import is_acceptance_valid_for
+import bpp.registry.acceptance as acceptance_rules  # (module: one patch point)
 from bpp.registry.acceptance_log import find_latest_for_model
 from bpp.registry.model_registry import ModelEntry, ModelStatus
 from bpp.registry.use_context import UseContext
@@ -171,9 +171,10 @@ def check_model_load_allowed(
     # (commercial_use_restriction_known=False but
     # requires_explicit_ack=True) still hit the ack gate without
     # the policy short-circuiting to ALLOW first.
-    if entry.requires_explicit_ack and not is_acceptance_valid_for(
-        entry, log_path=acceptance_log_path
-    ):
+    # The one judgement every reader uses (a no-click-through entry is
+    # current without a log read); rule 4 reuses it.
+    acceptance = acceptance_rules.acceptance_state(entry, log_path=acceptance_log_path)
+    if not acceptance.current:
         return PolicyResult(
             decision=ModelLoadDecision.BLOCKED_NEEDS_ACK,
             reason=(
@@ -201,21 +202,25 @@ def check_model_load_allowed(
 
     # Rule 4: restricted-license entries in commercial mode need
     # the per-model separate-rights assertion.
-    if use_context is UseContext.COMMERCIAL:
-        latest = find_latest_for_model(entry.id, path=acceptance_log_path)
-        if latest is None or not latest.separate_rights_asserted:
-            return PolicyResult(
-                decision=ModelLoadDecision.BLOCKED_COMMERCIAL_NO_RIGHTS,
-                reason=(
-                    "use_context is 'commercial' and no separate-rights "
-                    "assertion is on file for this model. To proceed: "
-                    "re-run the acceptance flow under commercial mode "
-                    "and check the separate-rights box for "
-                    f"{entry.id}, or switch the use-context declaration "
-                    "to a non-commercial value."
-                ),
-                entry_id=entry.id,
-            )
+    # (An entry restricted for commercial use needs a click-through, so the
+    # judgement above read its row; should one not, judge its row now.)
+    if use_context is UseContext.COMMERCIAL and not entry.requires_explicit_ack:
+        acceptance = acceptance_rules.acceptance_state(
+            entry, row=find_latest_for_model(entry.id, path=acceptance_log_path)
+        )
+    if use_context is UseContext.COMMERCIAL and not acceptance.separate_rights_asserted:
+        return PolicyResult(
+            decision=ModelLoadDecision.BLOCKED_COMMERCIAL_NO_RIGHTS,
+            reason=(
+                "use_context is 'commercial' and no separate-rights "
+                "assertion is on file for this model. To proceed: "
+                "re-run the acceptance flow under commercial mode "
+                "and check the separate-rights box for "
+                f"{entry.id}, or switch the use-context declaration "
+                "to a non-commercial value."
+            ),
+            entry_id=entry.id,
+        )
 
     return PolicyResult(
         decision=ModelLoadDecision.ALLOW,

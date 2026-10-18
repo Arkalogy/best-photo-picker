@@ -456,16 +456,12 @@ def api_acceptance_list() -> tuple[Any, int]:
 
 def _acceptance_freshness(row: Any, entry: Any) -> dict[str, bool]:
     """``current`` / ``needs_reaccept`` flags for one acceptance-log row
-    (see :func:`api_acceptance_list`). A row for a model the registry
-    no longer knows is never current."""
-    is_accept = row.event == "accept"
-    if entry is None:
-        current = False
-    elif not entry.requires_explicit_ack:
-        current = is_accept
-    else:
-        current = is_accept and row.ack_text_sha256 == entry.ack_text_sha256
-    return {"current": current, "needs_reaccept": is_accept and not current}
+    (see :func:`api_acceptance_list`) — the load gate's own judgement
+    (:func:`acceptance_state`), so the list can't disagree with it."""
+    from bpp.registry.acceptance import acceptance_state
+
+    st = acceptance_state(entry, row=row)
+    return {"current": st.current, "needs_reaccept": st.needs_reaccept}
 
 
 @bp.post("/api/v1/model-registry/acceptance/revoke")

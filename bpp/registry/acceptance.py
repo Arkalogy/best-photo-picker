@@ -7,7 +7,7 @@ commercial-use-definition + biometric-note + rights-assertion gate.
 One implementation here keeps all surfaces in lock-step, so every
 surface shows the same warnings.
 
-Three entry points:
+Entry points:
 
 * :func:`prepare_acceptance` — given a :class:`ModelEntry` and the
   user's declared :class:`UseContext`, build a structured
@@ -17,11 +17,10 @@ Three entry points:
   the draft (all required boxes checked, the optional
   source-of-rights field is a string, and so on), write the
   audit row to the acceptance log, return the row.
-* :func:`is_acceptance_valid_for` — the model-load hard-block gate
-  (:mod:`bpp.registry.policy`) consults this before letting a restricted model load. ``True``
-  when an acceptance row exists for the entry's current
-  ``ack_text_sha256`` (i.e., the user accepted the wording
-  matching what BPP currently shows).
+* :func:`acceptance_state` — the one judgement of an acceptance (current /
+  needs re-accept / withdrawn) that every reader uses
+* :func:`is_acceptance_valid_for` — ``acceptance_state(entry).current``:
+  what the model-load hard-block gate (:mod:`bpp.registry.policy`) asks.
 """
 
 from __future__ import annotations
@@ -330,35 +329,85 @@ def confirm_acceptance(
     return row
 
 
+@dataclass(frozen=True)
+class AcceptanceState:
+    """One model's license acceptance, as every reader sees it — the load
+    gate, the acceptance list and the picker all decide from this, so a
+    change to the rule is made once.
+
+    * ``latest`` — the row judged (the model's latest, or the one given).
+    * ``accepted`` — that row is an acceptance, not a withdrawal.
+    * ``current`` — it may load: accepted under the entry's CURRENT
+      acknowledgment text (a registry update that changes the wording —
+      a :data:`CANONICAL_DISCLAIMER_VERSION` bump, a new model-specific
+      rationale — invalidates older acceptances and re-prompts the user;
+      that is the desired behaviour). An entry needing no click-through
+      is current without the log being read at all (the gate's own
+      short-circuit); a row given for one is current only if it is an
+      acceptance.
+    * ``needs_reaccept`` — accepted, but under an older text.
+    * ``separate_rights_asserted`` — the commercial-use rights assertion
+      on that row (rule 4 of the load policy).
+    """
+
+    latest: AcceptanceRow | None
+    accepted: bool
+    current: bool
+    needs_reaccept: bool
+    separate_rights_asserted: bool
+
+
+def acceptance_state(
+    entry: ModelEntry | None,
+    *,
+    row: AcceptanceRow | None = None,
+    log_path: Path | None = None,
+) -> AcceptanceState:
+    """Judge ``entry``'s acceptance: its latest log row (one read), or
+    ``row`` when given (the acceptance list judges every row). ``entry``
+    is None for a row whose model the registry no longer knows — never
+    current, but still an acceptance that would need re-accepting."""
+    if row is None and entry is not None and not entry.requires_explicit_ack:
+        # No click-through needed: it may load, and the log isn't read
+        # (a stray withdrawal row for it changes nothing).
+        return AcceptanceState(
+            latest=None,
+            accepted=False,
+            current=True,
+            needs_reaccept=False,
+            separate_rights_asserted=False,
+        )
+    if row is None and entry is not None:
+        row = find_latest_for_model(entry.id, path=log_path)
+    # A withdrawal (a revocation as the latest row) re-gates the model —
+    # the load policy blocks it until the user re-accepts.
+    accepted = row is not None and row.event == "accept"
+    if entry is None:
+        current = False
+    elif not entry.requires_explicit_ack:
+        # (A given row for a no-click-through entry: an acceptance is
+        # current; a withdrawal isn't one.)
+        current = accepted
+    else:
+        current = accepted and row is not None and row.ack_text_sha256 == entry.ack_text_sha256
+    return AcceptanceState(
+        latest=row,
+        accepted=accepted,
+        current=current,
+        needs_reaccept=accepted and not current,
+        separate_rights_asserted=row is not None and bool(row.separate_rights_asserted),
+    )
+
+
 def is_acceptance_valid_for(
     entry: ModelEntry,
     *,
     log_path: Path | None = None,
 ) -> bool:
-    """Return ``True`` when an acceptance row exists for ``entry``
-    whose acknowledgment-text hash matches the entry's current
-    ``ack_text_sha256``.
-
-    The model-load hard-block gate calls this before letting a restricted
-    model load. A registry update that changes the ack wording for
-    a model (incrementing :data:`CANONICAL_DISCLAIMER_VERSION` or
-    changing the model-specific rationale) invalidates older
-    acceptances and re-prompts the user — that is the desired
-    behaviour, not a bug.
-    """
-    if not entry.requires_explicit_ack:
-        # Permissive models do not require a click-through. Treat
-        # any call here as trivially valid so callers can use this
-        # function uniformly.
-        return True
-    latest = find_latest_for_model(entry.id, path=log_path)
-    if latest is None:
-        return False
-    # A withdrawal (the latest row is a revocation) re-gates the model —
-    # the server load-policy will block it until the user re-accepts.
-    if latest.event == "revoke":
-        return False
-    return latest.ack_text_sha256 == entry.ack_text_sha256
+    """Whether ``entry`` may load as far as its license goes — see
+    :class:`AcceptanceState.current`. The model-load hard-block gate
+    calls this before letting a restricted model load."""
+    return acceptance_state(entry, log_path=log_path).current
 
 
 def utc_now_iso() -> str:
