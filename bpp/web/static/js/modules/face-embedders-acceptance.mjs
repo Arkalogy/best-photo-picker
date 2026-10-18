@@ -12,6 +12,7 @@
  */
 
 import { apiFetch } from "./api-client.mjs";
+import { focusInto, restoreFocusFrom } from "./dialog-focus.mjs";
 import { appConfirm } from "./dialogs.mjs";
 import { licenseFacts } from "./face-embedders-license.mjs";
 import { _feInstallGlobalHandlers } from "./face-embedders-popover.mjs";
@@ -49,6 +50,7 @@ export async function openFaceEmbedderAcceptance(modelId, mode) {
     if (overlay) {
       overlay.classList.add("visible");
       overlay.setAttribute("style", "display: flex");
+      focusInto(overlay);
     }
   } catch (err) {
     toast(`Could not load acceptance dialog: ${err.message || err}`, "error");
@@ -311,6 +313,7 @@ export function closeFaceEmbedderAcceptance() {
   if (overlay) {
     overlay.classList.remove("visible");
     overlay.setAttribute("style", "display: none");
+    restoreFocusFrom(overlay);
   }
   feState.currentDraft = null;
 }

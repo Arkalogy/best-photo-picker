@@ -4178,7 +4178,8 @@
     padding: 7px 14px 7px 14px; cursor: pointer; color: var(--text);
     position: relative; padding-right: 36px;
   }
-  .ctx-menu-item:hover { background: var(--accent); color: #fff; }
+  .ctx-menu-item:hover,
+  .ctx-menu-item:focus-visible { background: var(--accent); color: #fff; outline: none; }
   .ctx-shortcut {
     position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
     font-size: 10px; color: var(--text3);
@@ -4196,7 +4197,8 @@
   #person-ctx-menu.with-face .ctx-menu-sep.ctx-face-only { display: block; }
   .ctx-header { padding: 6px 14px; font-size: 11px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; }
   .ctx-item { padding: 7px 14px; cursor: pointer; color: var(--text); font-size: 13px; }
-  .ctx-item:hover { background: var(--accent); color: #fff; }
+  .ctx-item:hover,
+  .ctx-item:focus-visible { background: var(--accent); color: #fff; outline: none; }
   .ctx-item-danger { color: var(--red); }
   .ctx-item-danger:hover { background: var(--red); color: #fff; }
   .ctx-item.disabled { color: var(--text3); cursor: default; }
@@ -7606,6 +7608,7 @@
   border-radius: 4px;
 }
 .fe-menu-item:hover:not(:disabled) { background: rgba(255, 255, 255, 0.08); }
+.fe-menu-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .fe-menu-label { font-size: 13px; line-height: 1.3; }
 .fe-menu-sub {
   font-size: 11px;

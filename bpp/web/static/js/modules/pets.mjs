@@ -14,6 +14,7 @@
 
 import { apiFetch, authedSrc } from "./api-client.mjs";
 import { appConfirm } from "./dialogs.mjs";
+import { menuClosed, menuOpened } from "./menu-a11y.mjs";
 import { esc } from "./text-format.mjs";
 import { refreshSmartAlbums } from "./faces.mjs";
 import { show } from "./utils.mjs";
@@ -297,10 +298,13 @@ export function showPetCtxMenu(e, clusterId) {
     if (rect.bottom > window.innerHeight)
       menu.style.top = window.innerHeight - rect.height - 8 + "px";
   });
+  menuOpened(menu, { trigger: e.target });
 }
 
 export function hidePetCtxMenu() {
-  document.getElementById("pet-ctx-menu")?.classList.add("hidden");
+  const menu = document.getElementById("pet-ctx-menu");
+  menu?.classList.add("hidden");
+  menuClosed(menu);
   petCtxClusterId = null;
 }
 

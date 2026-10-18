@@ -12,6 +12,7 @@
 
 import { esc } from "./text-format.mjs";
 import { toast } from "./toast.mjs";
+import { menuClosed, menuOpened } from "./menu-a11y.mjs";
 import {
   deleteFromCard,
   enhancePhotos,
@@ -119,11 +120,15 @@ export function showCardCtxMenu(e, filepath) {
   const vh = window.innerHeight;
   /** @type {HTMLElement} */ (menu).style.left = (mx + mw > vw ? vw - mw - 4 : mx) + "px";
   /** @type {HTMLElement} */ (menu).style.top = (my + mh > vh ? vh - mh - 4 : my) + "px";
+  menuOpened(menu, { trigger: e.target });
 }
 
 export function hideCardCtxMenu() {
   const menu = document.getElementById("card-ctx-menu");
-  if (menu) menu.classList.add("hidden");
+  if (menu) {
+    menu.classList.add("hidden");
+    menuClosed(menu);
+  }
   cardCtxFilepath = null;
 }
 

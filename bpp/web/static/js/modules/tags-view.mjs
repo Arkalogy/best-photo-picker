@@ -15,6 +15,7 @@
 
 import { apiFetch, authedSrc } from "./api-client.mjs";
 import { appConfirm, appPrompt } from "./dialogs.mjs";
+import { menuClosed, menuOpened } from "./menu-a11y.mjs";
 import { esc, escapeAttr } from "./text-format.mjs";
 import { renderCardHTML } from "./photos-card.mjs";
 import { toast, toastError } from "./toast.mjs";
@@ -175,7 +176,11 @@ export function _tagCardCtxMenu(e) {
       <div class="ctx-menu-item" data-action="_tagCtxMerge">Merge into&hellip; <span class="ctx-shortcut">M</span></div>
       <div class="ctx-menu-item danger" data-action="_tagCtxDelete">Delete <span class="ctx-shortcut">D</span></div>`;
     document.body.appendChild(menu);
-    document.addEventListener("click", () => menu?.classList.add("hidden"));
+    const hide = () => {
+      menu?.classList.add("hidden");
+      menuClosed(menu);
+    };
+    document.addEventListener("click", hide);
     document.addEventListener("keydown", (ke) => {
       if (menu?.classList.contains("hidden") || _ctxTagId === null) return;
       const map = /** @type {Record<string, string>} */ ({
@@ -187,15 +192,16 @@ export function _tagCardCtxMenu(e) {
         menu.querySelector(`[data-action="${action}"]`)?.dispatchEvent(
           new MouseEvent("click", { bubbles: true }),
         );
-        menu.classList.add("hidden");
+        hide();
       } else if (ke.key === "Escape") {
-        menu.classList.add("hidden");
+        hide();
       }
     });
   }
   menu.style.left = `${e.clientX}px`;
   menu.style.top = `${e.clientY}px`;
   menu.classList.remove("hidden");
+  menuOpened(menu, { trigger: this });
 }
 
 function _ctxTag() {

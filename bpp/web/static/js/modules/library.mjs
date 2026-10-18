@@ -9,6 +9,7 @@
  */
 
 import { apiFetch } from "./api-client.mjs";
+import { focusInto, restoreFocusFrom } from "./dialog-focus.mjs";
 import { appConfirm, appPrompt } from "./dialogs.mjs";
 import { formatDate } from "./date-format.mjs";
 import { esc, escapeAttr, escapeJsAttr } from "./text-format.mjs";
@@ -25,6 +26,7 @@ export function showLibraryPicker() {
   if (!overlay) return;
   overlay.classList.remove("hidden");
   libraryPickerOpen = true;
+  focusInto(overlay);
   loadLibraryList();
 }
 
@@ -33,6 +35,7 @@ export function hideLibraryPicker() {
   if (!overlay) return;
   overlay.classList.add("hidden");
   libraryPickerOpen = false;
+  restoreFocusFrom(overlay);
 }
 
 /** @param {string} iso */

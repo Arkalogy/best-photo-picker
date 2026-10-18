@@ -80,7 +80,7 @@
     </div>
   </div>
 </aside>
-<div class="sidebar-overlay" id="sidebar-overlay" data-action="toggleSidebar"></div>
+<div class="sidebar-overlay" id="sidebar-overlay" data-action="toggleSidebar" aria-hidden="true"></div>
 
 <main class="main">
   <div class="update-banner hidden" id="update-banner">
@@ -187,13 +187,13 @@
     <span id="tag-filter-chip" class="hidden"></span>
   </div>
 
-  <div class="confirm-overlay" id="confirm-overlay" role="alertdialog" aria-modal="true" data-action="_bppBackdropClose" data-backdrop-fn="resolveConfirm" data-backdrop-arg="false">
+  <div class="confirm-overlay" id="confirm-overlay" role="alertdialog" aria-modal="true" aria-labelledby="confirm-message" data-action="_bppBackdropClose" data-backdrop-fn="resolveConfirm" data-backdrop-arg="false">
     <div class="confirm-dialog"></div>
   </div>
 
   <div class="ctx-menu hidden" id="lb-ctx-menu">
-    <div class="ctx-menu-item" data-action="include" id="lb-ctx-include">Include <span class="ctx-shortcut">&uarr;</span></div>
-    <div class="ctx-menu-item" data-action="exclude" id="lb-ctx-exclude">Exclude <span class="ctx-shortcut">&darr;</span></div>
+    <div class="ctx-menu-item" data-action="include" id="lb-ctx-include">Include</div>
+    <div class="ctx-menu-item" data-action="exclude" id="lb-ctx-exclude">Exclude</div>
     <div class="ctx-menu-item" data-action="favorite" id="lb-ctx-fav">Favorite <span class="ctx-shortcut">F</span></div>
     <div class="ctx-menu-sep"></div>
     <div class="ctx-menu-item" data-action="edit">Edit <span class="ctx-shortcut">E</span></div>
@@ -473,7 +473,7 @@
 
 <div id="toast-container" role="status" aria-live="polite"></div>
 
-<div class="modal-overlay" id="modal-overlay" role="dialog" aria-modal="true" data-action="closeModal" data-pass-event="true">
+<div class="modal-overlay" id="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-title" data-action="closeModal" data-pass-event="true">
   <div class="modal">
     <div class="modal-icon" id="modal-icon"></div>
     <div class="modal-title" id="modal-title"></div>
@@ -545,7 +545,7 @@
 </div>
 
 <!-- Slideshow Overlay -->
-<div class="ss-overlay hidden" id="slideshow-overlay">
+<div class="ss-overlay hidden" id="slideshow-overlay" role="dialog" aria-modal="true" aria-label="Slideshow">
   <img class="ss-img ss-active" id="ss-img-a" alt="">
   <img class="ss-img" id="ss-img-b" alt="">
   <video class="ss-video hidden" id="ss-video" playsinline></video>
@@ -573,10 +573,10 @@
 </div>
 
 <!-- Library Picker Modal -->
-<div class="library-picker-overlay hidden" id="library-picker-overlay" data-action="_bppBackdropClose" data-backdrop-fn="hideLibraryPicker">
+<div class="library-picker-overlay hidden" id="library-picker-overlay" role="dialog" aria-modal="true" aria-labelledby="library-picker-title" data-action="_bppBackdropClose" data-backdrop-fn="hideLibraryPicker">
   <div class="library-picker-modal">
     <div class="library-picker-header">
-      <h2>Libraries</h2>
+      <h2 id="library-picker-title">Libraries</h2>
       <button class="library-picker-close" data-action="hideLibraryPicker">&times;</button>
     </div>
     <div class="library-picker-body" id="library-list"></div>
@@ -1255,9 +1255,9 @@
 </script>
 
 <script src="/static/js/globals.js?v={{ asset_version }}"></script>
-<div id="server-down-overlay" class="modal-overlay" style="z-index:99999">
+<div id="server-down-overlay" class="modal-overlay" role="alert" aria-live="assertive" aria-labelledby="server-down-title" style="z-index:99999">
   <div class="server-down-inner" style="text-align:center;color:var(--text-primary);font-family:var(--font)">
-    <h2 style="margin:0 0 8px">Reconnecting&hellip;</h2>
+    <h2 id="server-down-title" style="margin:0 0 8px">Reconnecting&hellip;</h2>
     <p style="color:var(--text-secondary);margin:0 0 16px">Waiting for the server to come back.</p>
     <button class="btn btn-primary" data-action="_bppReload" style="display:none">Retry</button>
   </div>

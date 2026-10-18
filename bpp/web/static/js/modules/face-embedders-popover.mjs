@@ -12,6 +12,7 @@
 
 import { closeFaceEmbedderAcceptance } from "./face-embedders-acceptance.mjs";
 import { feState } from "./face-embedders-state.mjs";
+import { menuClosed, menuOpened } from "./menu-a11y.mjs";
 import { escapeAttr, esc } from "./text-format.mjs";
 import { toast } from "./toast.mjs";
 
@@ -38,6 +39,7 @@ export function _feOverflowToggle(entryId) {
   _feCloseAllPopovers(menu);
   if (wasOpen) {
     menu.classList.remove("open", "fe-overflow-menu--up");
+    menuClosed(menu);
     return;
   }
   // Open downward by default, then flip up if it would be clipped by the
@@ -53,6 +55,20 @@ export function _feOverflowToggle(entryId) {
   } catch {
     /* positioning is best-effort; default (down) still works */
   }
+  menuOpened(menu, { trigger: _feTriggerFor(entryId) });
+}
+
+/**
+ * The ⋯ button of a row.
+ * @param {string} entryId
+ * @returns {HTMLElement | undefined}
+ */
+function _feTriggerFor(entryId) {
+  return /** @type {HTMLElement | undefined} */ (
+    [...document.querySelectorAll(".fe-overflow-trigger")].find(
+      (el) => /** @type {HTMLElement} */ (el).dataset.arg0 === entryId,
+    )
+  );
 }
 
 /**
@@ -114,7 +130,10 @@ function _feCloseAllPopovers(keepOpen) {
   for (const open of document.querySelectorAll(
     ".fe-overflow-menu.open, .fe-license-popover.open",
   )) {
-    if (open !== keepOpen) open.classList.remove("open", "fe-overflow-menu--up");
+    if (open !== keepOpen) {
+      open.classList.remove("open", "fe-overflow-menu--up");
+      menuClosed(/** @type {HTMLElement} */ (open));
+    }
   }
 }
 
@@ -142,13 +161,11 @@ function _feEscapeKeydown(e) {
   _feCloseAllPopovers();
   e.preventDefault();
   e.stopImmediatePropagation();
+  // Focus goes back to the row's ⋯ button — menuClosed did it for a menu
+  // opened through the toggle; this covers one opened any other way.
   const entryId = openMenu?.id.replace(/^fe-ovr-/, "");
-  if (entryId) {
-    const trigger = [...document.querySelectorAll(".fe-overflow-trigger")].find(
-      (el) => /** @type {HTMLElement} */ (el).dataset.arg0 === entryId,
-    );
-    /** @type {HTMLElement | undefined} */ (trigger)?.focus();
-  }
+  const trigger = entryId ? _feTriggerFor(entryId) : undefined;
+  if (trigger && document.activeElement !== trigger) trigger.focus({ preventScroll: true });
 }
 
 /** Close every open picker menu / popover (e.g. when Settings closes,

@@ -16,6 +16,7 @@
 
 import { state } from "./state.mjs";
 import { appConfirm } from "./dialogs.mjs";
+import { menuClosed, menuOpened } from "./menu-a11y.mjs";
 import { refreshLightboxIfOpen } from "./lightbox.mjs";
 import {
   dismissPerson,
@@ -108,6 +109,7 @@ export function showPersonCtxMenu(e, clusterId, faceContext) {
   menu.style.left = e.clientX + "px";
   menu.style.top = e.clientY + "px";
   menu.classList.remove("hidden");
+  menuOpened(menu, { trigger: e.target });
   // Keep menu in viewport
   requestAnimationFrame(() => {
     const rect = menu.getBoundingClientRect();
@@ -119,6 +121,7 @@ export function showPersonCtxMenu(e, clusterId, faceContext) {
 export function hidePersonCtxMenu() {
   const menu = document.getElementById("person-ctx-menu");
   menu.classList.add("hidden");
+  menuClosed(menu);
   menu.classList.remove("with-face");
   ctxClusterId = null;
   ctxFaceContext = null;

@@ -247,11 +247,6 @@ document.addEventListener("keydown", (e) => {
       hideAlbumPicker();
       return;
     }
-    const multiSelected = /** @type {Set<string>} */ (win.multiSelected || new Set());
-    if (multiSelected.size > 0) {
-      clearMultiSelect();
-      return;
-    }
     if (document.getElementById("settings-overlay")?.classList.contains("visible")) {
       hideSettings();
       return;
@@ -275,6 +270,13 @@ document.addEventListener("keydown", (e) => {
     const renameEl = document.getElementById("rename-overlay");
     if (renameEl && !renameEl.classList.contains("hidden")) {
       hideBatchRenameModal();
+      return;
+    }
+    // Last: the photo selection — with nothing open over it (an open
+    // lightbox closes first, below; the selection is kept).
+    const multiSelected = /** @type {Set<string>} */ (win.multiSelected || new Set());
+    if (multiSelected.size > 0 && win.lightboxIdx < 0) {
+      clearMultiSelect();
       return;
     }
   }
