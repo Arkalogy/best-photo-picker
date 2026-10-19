@@ -13,6 +13,17 @@ import cv2
 import numpy as np
 import pytest
 
+from tests._models import skip_unless_scoring_models
+
+
+@pytest.fixture(autouse=True)
+def _real_models_on_disk():
+    """This module runs the real detectors and landmarkers; tests never
+    download, so it skips where the weights aren't on disk (CI keeps
+    them in its model cache)."""
+    skip_unless_scoring_models()
+
+
 # ── Helpers ──
 
 

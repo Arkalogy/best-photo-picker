@@ -12,6 +12,11 @@
 import os as _os
 
 _os.environ.setdefault("OPENCV_IO_MAX_IMAGE_PIXELS", str(200_000_000))
+# albumentations (pulled in by the content filter's runtime) asks PyPI
+# for its latest version when imported. Nothing in this app phones home
+# but the model downloads and the opt-in update checker: say no before
+# the first import.
+_os.environ.setdefault("NO_ALBUMENTATIONS_UPDATE", "1")
 
 __version__ = "0.1.3"
 APP_NAME = "Best Photo Picker"

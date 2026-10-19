@@ -18,6 +18,7 @@ import time
 from unittest.mock import patch
 
 import numpy as np
+import pytest
 
 from bpp.constants import CLUSTER_DISMISSED, CLUSTER_UNASSIGNED
 from bpp.db.connection import init_db
@@ -388,6 +389,7 @@ class TestReclusterStability:
 # ===========================================================================
 
 
+@pytest.mark.usefixtures("real_face_pipeline")
 class TestExtractAndClusterPipeline:
     """Integration tests for extract_and_cluster_faces()."""
 
@@ -872,6 +874,7 @@ class TestReclusterOrderBy:
 # ===========================================================================
 
 
+@pytest.mark.usefixtures("real_face_pipeline")
 class TestSortFixRegression:
     """Verify sort fix holds in extract_and_cluster_faces."""
 
@@ -926,6 +929,7 @@ class TestSortFixRegression:
 # ===========================================================================
 
 
+@pytest.mark.usefixtures("real_face_pipeline")
 class TestSandboxRealThreadPool:
     """True sandbox: real ThreadPoolExecutor, random delays, no mocks.
 
@@ -1010,6 +1014,7 @@ _FETCH_CLUSTER_IDS = (
 )
 
 
+@pytest.mark.usefixtures("real_face_pipeline")
 class TestReanalysisPreservesClusterIds:
     """Verify that re-running extract_and_cluster_faces preserves cluster IDs.
 

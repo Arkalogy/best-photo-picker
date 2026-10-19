@@ -444,6 +444,7 @@ class TestTiledDetection:
                 {
                     "yunet": lambda img, conf: [],
                     "mediapipe_sr": lambda img, conf: [],
+                    "blazeface_fr": lambda img, conf: [],
                     "scrfd": lambda img, conf: [],
                 },
             ),
@@ -652,7 +653,10 @@ class TestEmbeddingConfidenceFilter:
 
         # Mock _collect_detections to return known faces with confidence
         mock_faces = [(50, 50, 80, 80, 0.95), (10, 10, 30, 30, 0.4)]
-        with patch("bpp.scoring.face._collect_detections", return_value=(mock_faces, True)):
+        with (
+            patch("bpp.scoring.face_pipeline._collect_detections", return_value=(mock_faces, True)),
+            patch("bpp.scoring.face_hand_filter._detect_hand_bboxes", return_value=[]),
+        ):
             results = detect_faces_with_confidence(img, min_confidence=0.3)
 
         # Should have tuples with 5 elements (including confidence)

@@ -7,6 +7,8 @@ import os
 import pytest
 from PIL import Image
 
+from tests._models import skip_unless_scoring_models
+
 
 def _make_photo(tmp_path, name="photo.jpg"):
     path = str(tmp_path / name)
@@ -574,7 +576,12 @@ class TestVideoExport:
 
 
 class TestVideoScoring:
-    """Tests for scoring videos by sampling frames."""
+    """Tests for scoring videos by sampling frames (the real scoring
+    pipeline: skipped where its weights aren't on disk)."""
+
+    @pytest.fixture(autouse=True)
+    def _real_models_on_disk(self):
+        skip_unless_scoring_models()
 
     def test_analyze_single_video_returns_scores(self, tmp_path):
         """analyze_single_video should return a result dict with scores."""

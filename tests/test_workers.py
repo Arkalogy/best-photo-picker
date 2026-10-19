@@ -8,6 +8,8 @@ import random
 
 import pytest
 
+from tests._models import skip_unless_analyze_models
+
 # AnalyzeWorker tests spawn a scoring subprocess that imports the entire ML
 # stack (cv2, dlib, face_recognition, onnxruntime, CLIP). On free GitHub
 # Actions runners that import takes 3-4 minutes per spawn — even with 180s
@@ -274,6 +276,7 @@ class TestFaceWorkerLifecycle:
         w._thread.join(timeout=10)
 
 
+@pytest.mark.usefixtures("offline_downloads")
 class TestClipWorkerLifecycle:
     """Test ClipWorker state transitions."""
 
@@ -332,6 +335,10 @@ class TestClipWorkerLifecycle:
 
 class TestAnalyzeWorkerHappyPath:
     """Test AnalyzeWorker with real images."""
+
+    @pytest.fixture(autouse=True)
+    def _real_models_on_disk(self):
+        skip_unless_analyze_models()  # runs a real analyze
 
     @_SKIP_SLOW_ANALYZE
     def test_analyze_single_image(self, tmp_path):
@@ -397,6 +404,10 @@ class TestAnalyzeWorkerHappyPath:
 class TestImportWorkerHappyPath:
     """Test ImportWorker with real images."""
 
+    @pytest.fixture(autouse=True)
+    def _real_models_on_disk(self):
+        skip_unless_analyze_models()  # runs a real analyze
+
     def test_import_and_analyze(self, tmp_path):
         from bpp.demo.generate import _bokeh_circles
         from bpp.web.import_worker import ImportWorker
@@ -459,6 +470,7 @@ class TestImportWorkerHappyPath:
 
 def _drain_queue(q: queue.Queue) -> list[dict]:
     """Drain all messages from a queue into a list."""
+
     msgs = []
     while not q.empty():
         try:

@@ -107,7 +107,9 @@ class TestProcessCancellation:
         proc.start()
         time.sleep(0.1)  # let the child reach .wait()
         tok.set()
-        proc.join(timeout=10)
+        # A spawn child re-imports this module (and bpp) before it can
+        # answer; on a saturated machine that alone has taken over 10 s.
+        proc.join(timeout=30)
         assert proc.exitcode == 0, f"child exited abnormally: {proc.exitcode}"
         tag, fired = result_q.get(timeout=1)
         assert tag == "ok"

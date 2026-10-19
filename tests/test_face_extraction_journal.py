@@ -89,6 +89,9 @@ def _build_schema(c: sqlite3.Connection) -> None:
     c.commit()
 
 
+pytestmark = pytest.mark.usefixtures("sface_configured")
+
+
 @pytest.fixture
 def conn():
     c = sqlite3.connect(":memory:")

@@ -167,6 +167,7 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "real_health_checks: opt out of the autouse health-check disabler; use on tests that directly exercise WebAppState file-health scanning",
     "no_preaccept_permissive: opt out of the autouse pre-acceptance of the permissive-attribution models (SFace/YuNet/dlib); use on tests that exercise the acceptance gate's reject path",
+    "network: opt out of the autouse network block (every other test fails on urllib.request.urlopen instead of downloading)",
 ]
 
 [tool.mypy]

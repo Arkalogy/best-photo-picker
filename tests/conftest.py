@@ -226,3 +226,195 @@ def _restore_face_backend_registries():
     detectors._store.update(saved[0])
     embedders._store.clear()
     embedders._store.update(saved[1])
+
+
+class NetworkBlockedInTests(BaseException):
+    """A test reached the network. Tests stub what they fetch; a test that
+    truly needs the network opts in with ``@pytest.mark.network``.
+
+    A ``BaseException``, not an ``Exception``: the model loaders catch
+    ``Exception`` and degrade to "model unavailable", which would let an
+    un-stubbed test pass (and sleep through the download retries)."""
+
+
+#: (thread, error) for every hit from a thread other than the main one;
+#: recorded here rather than through ``threading.excepthook``, which
+#: pytest swaps in and out around every test phase.
+_thread_hits: list[tuple[object, BaseException]] = []
+
+
+def _blocked(url, *args, **kwargs):
+    import threading
+
+    target = getattr(url, "full_url", url)
+    err = NetworkBlockedInTests(f"test tried to fetch {target}; stub it or mark the test network")
+    if threading.current_thread() is not threading.main_thread():
+        _thread_hits.append((threading.current_thread(), err))
+    raise err
+
+
+def _blocked_open(self, fullurl, *args, **kwargs):  # OpenerDirector.open is a method
+    _blocked(fullurl)
+
+
+class _NetworkBlock:
+    """The suite-wide refusal, installed once per process and never taken
+    down: a worker thread or child process that outlives its test (the
+    derived-recovery thread outlived a whole xdist session once and pulled
+    254 MB of CLIP after the last test) must stay covered. ``saved`` holds
+    the originals so a ``network`` test can have them back."""
+
+    def __init__(self) -> None:
+        self.saved: list[tuple[object, str, object]] = []
+
+    def install(self) -> None:
+        import multiprocessing.process as mp_process
+        import subprocess
+        import sys
+        import urllib.request
+
+        real_popen = subprocess.Popen
+        real_start = mp_process.BaseProcess.start
+
+        class _PopenNoDownloads(real_popen):
+            """Child processes (scoring / face workers) refuse every download."""
+
+            def __init__(  # Popen's own parameter order, so env may arrive positionally
+                self,
+                args,
+                bufsize=-1,
+                executable=None,
+                stdin=None,
+                stdout=None,
+                stderr=None,
+                preexec_fn=None,
+                close_fds=True,
+                shell=False,
+                cwd=None,
+                env=None,
+                *a,
+                **kw,
+            ):
+                env = dict(env if env is not None else os.environ)
+                env["BPP_SKIP_DOWNLOADS"] = "*"
+                super().__init__(
+                    args,
+                    bufsize,
+                    executable,
+                    stdin,
+                    stdout,
+                    stderr,
+                    preexec_fn,
+                    close_fds,
+                    shell,
+                    cwd,
+                    env,
+                    *a,
+                    **kw,
+                )
+
+        # multiprocessing children (spawn context) copy the parent's
+        # environment when they start: carry the refusal across that
+        # start, and only that start, so the parent's own download tests
+        # keep their fakes.
+        def _start_without_downloads(proc, *a, **kw):
+            before = os.environ.get("BPP_SKIP_DOWNLOADS")
+            os.environ["BPP_SKIP_DOWNLOADS"] = "*"
+            try:
+                return real_start(proc, *a, **kw)
+            finally:
+                if before is None:
+                    os.environ.pop("BPP_SKIP_DOWNLOADS", None)
+                else:
+                    os.environ["BPP_SKIP_DOWNLOADS"] = before
+
+        patches: list[tuple[object, str, object]] = [
+            (urllib.request, "urlopen", _blocked),
+            (urllib.request.OpenerDirector, "open", _blocked_open),
+            (subprocess, "Popen", _PopenNoDownloads),
+            (mp_process.BaseProcess, "start", _start_without_downloads),
+        ]
+        for name in ("torch.hub",):  # bound urlopen by name before the block
+            mod = sys.modules.get(name)
+            if mod is not None:
+                patches += [(mod, "urlopen", _blocked), (mod, "download_url_to_file", _blocked)]
+        self.saved = [(obj, attr, getattr(obj, attr)) for obj, attr, _ in patches]
+        for obj, attr, new in patches:
+            setattr(obj, attr, new)
+
+
+@pytest.fixture
+def real_face_pipeline():
+    """Skip unless the real face pipeline (detect → landmarks → embed) can
+    run from weights on disk; see ``tests/_models.py``."""
+    from tests._models import skip_unless_face_pipeline
+
+    skip_unless_face_pipeline()
+
+
+@pytest.fixture
+def sface_configured(monkeypatch):
+    """``embedding_method()`` loads the SFace recognizer just to answer
+    which backend is configured; without the weights that reads as a
+    switch to dlib. Tests about the orchestration don't need the weights."""
+    from bpp.scoring import face_embed
+    from bpp.web import face_phase_classes
+
+    monkeypatch.setattr(face_embed, "embedding_method", lambda conn=None: "sface")
+    monkeypatch.setattr(face_phase_classes, "embedding_method", lambda conn=None: "sface")
+
+
+@pytest.fixture
+def offline_downloads(monkeypatch):
+    """The app under test is offline, like a machine without network: a
+    model that isn't on disk is simply off for the run (download_file
+    refuses instead of fetching). For tests that run an import / analyze
+    in-process and aren't about the models."""
+    monkeypatch.setenv("BPP_SKIP_DOWNLOADS", "*")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _no_network_session():
+    """No test downloads anything. A fresh clone with an empty model cache
+    once pulled ~600 MB of models through the suite; now code that reaches
+    the network fails naming the URL, so the test gets a stub (or, for a
+    test about real weights, a skip when they're absent). Processes a test
+    starts inherit the refusal through ``BPP_SKIP_DOWNLOADS=*``. CI, which
+    keeps a model cache, opts out with ``BPP_TEST_ALLOW_DOWNLOADS=1`` so
+    the real-weight tests run there."""
+    from tests._models import downloads_allowed
+
+    if downloads_allowed():
+        return None
+    block = _NetworkBlock()
+    block.install()
+    return block
+
+
+@pytest.fixture(autouse=True)
+def _no_network(request, monkeypatch, _no_network_session):
+    """Per test: a ``network``-marked test gets the real network back for
+    its duration; every other test fails at teardown if a thread it
+    started reached the network (a thread an earlier test left running
+    is blocked too, but reported only on stderr). Tests that patch
+    ``urlopen`` themselves still can."""
+    import threading
+
+    block = _no_network_session
+    if block is None:
+        yield
+        return
+    if request.node.get_closest_marker("network"):
+        for obj, attr, old in block.saved:
+            monkeypatch.setattr(obj, attr, old)
+        yield
+        return
+    # A background thread (model download jobs run in one) that hits the
+    # block dies with the BaseException instead of reporting failure, so
+    # the test would only see a stuck job: fail it by URL at teardown.
+    already_running = set(threading.enumerate())  # by object: thread ids get recycled
+    _thread_hits.clear()
+    yield
+    own = [err for thread, err in _thread_hits if thread not in already_running]
+    if own:
+        pytest.fail(f"a thread this test started reached the network: {own[0]}")

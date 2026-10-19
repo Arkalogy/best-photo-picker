@@ -81,10 +81,15 @@ def test_downloads_use_the_token_safe_redirect_handler():
 def test_a_failed_source_fetch_is_a_clean_build_error(monkeypatch, tmp_path, capsys):
     import argparse
 
-    def boom(dest):
-        raise src.SourceFetchError("rawpy is not installed")
+    # _cmd_sources imports third_party_sources at call time, so patch the
+    # copy registered now: another test module (test_third_party_inventory)
+    # loads the scripts too and may have replaced ours in sys.modules.
+    live = sys.modules["third_party_sources"]
 
-    monkeypatch.setattr(src, "fetch_all", boom)
+    def boom(dest):
+        raise live.SourceFetchError("rawpy is not installed")
+
+    monkeypatch.setattr(live, "fetch_all", boom)
     rc = inv._cmd_sources(argparse.Namespace(out=tmp_path))
     assert rc == 1
     assert "::error::" in capsys.readouterr().out

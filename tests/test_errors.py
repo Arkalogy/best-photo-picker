@@ -241,7 +241,9 @@ class TestBppErrorPickling:
         q: mp.Queue = ctx.Queue()
         proc = ctx.Process(target=_raise_face_cap_in_child, args=(q,))
         proc.start()
-        proc.join(timeout=10)
+        # A spawn child re-imports bpp before it can answer; on a saturated
+        # machine that alone has taken over 10 s.
+        proc.join(timeout=30)
         assert proc.exitcode == 0, (
             f"spawn child crashed before queuing the exception (exitcode={proc.exitcode})"
         )

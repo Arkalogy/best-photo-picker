@@ -29,7 +29,7 @@ pre-commit install
 npm install
 
 # Verify everything works
-pytest -v                       # ~4,400 tests
+pytest -v                       # ~5,200 tests; never downloads models (tests about real weights skip when they aren't on disk)
 ruff check . && ruff format --check .
 npm run lint                    # ESLint + auto-generated globals
 npm run format:check            # Prettier (scoped to dev-tool JS)

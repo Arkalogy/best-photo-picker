@@ -90,6 +90,7 @@ class TestGetCascade:
         assert c1 is c2
 
 
+@pytest.mark.usefixtures("real_face_pipeline")
 class TestDetectFaces:
     """Tests for detect_faces."""
 
@@ -195,6 +196,7 @@ class TestNmsFaces:
         assert len(result) == 0
 
 
+@pytest.mark.usefixtures("real_face_pipeline")
 class TestScoreFace:
     """Tests for score_face — the main face-scoring entry point."""
 
@@ -546,6 +548,7 @@ class TestFaceEmbedAvailability:
             assert is_available() is False
 
 
+@pytest.mark.usefixtures("real_face_pipeline")
 class TestExtractFaceEmbeddings:
     """Tests for extract_face_embeddings."""
 

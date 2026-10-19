@@ -53,6 +53,25 @@ class TestJobRegistry:
         assert _wait("k1")["status"] == "done"
         assert _wait("k1")["result"] == {"size_bytes": 3}
 
+    def test_a_thread_killed_outside_the_handlers_is_not_left_running(self, monkeypatch):
+        """A BaseException (a KeyboardInterrupt, the test suite's network
+        block) escapes the handlers; the job must still end, or every
+        later start for that key would join a phantom "running" job."""
+        monkeypatch.setattr(threading, "excepthook", lambda args: None)  # expected death
+
+        class _Interrupted(BaseException):
+            pass
+
+        def work():
+            raise _Interrupted()
+
+        jobs.start("k-int", "Model", work)
+        snap = _wait("k-int")
+        assert snap["status"] == "error"
+        assert "interrupted" in snap["error"]
+        _job, started = jobs.start("k-int", "Model", lambda: {"size_bytes": 1})
+        assert started is True, "the dead job must not block a fresh start"
+
     def test_duplicate_start_joins_the_running_job(self):
         release = threading.Event()
         calls = []

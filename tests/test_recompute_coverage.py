@@ -8,6 +8,7 @@ import pytest
 from bpp.config import DEFAULTS
 from bpp.scoring.composition import score_composition
 from bpp.web.recompute import RecomputeOptions, optimize, recompute
+from tests._models import skip_unless_on_disk
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -527,6 +528,10 @@ class TestOptimize:
 
 class TestCompositionNoFaces:
     """score_composition with no faces."""
+
+    @pytest.fixture(autouse=True)
+    def _real_models_on_disk(self):
+        skip_unless_on_disk("Selfie segmenter")  # real segmentation
 
     def test_no_faces_returns_neutral(self):
         """With no face_boxes, score should be 0.5."""

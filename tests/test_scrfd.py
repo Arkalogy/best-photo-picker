@@ -18,6 +18,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from tests._models import skip_unless_face_pipeline
+
 try:
     import cv2
 except ImportError:
@@ -132,6 +134,7 @@ def test_scrfd_in_iterative_collect():
 
 def test_scrfd_toggle():
     """model_toggles={'model_scrfd': False} should skip SCRFD."""
+    skip_unless_face_pipeline()  # runs the real detectors
     from bpp.scoring.face import detect_faces_with_confidence
 
     img = np.zeros((200, 200, 3), dtype=np.uint8)

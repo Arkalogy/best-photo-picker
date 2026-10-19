@@ -18,6 +18,8 @@ import queue
 import pytest
 from PIL import Image
 
+from tests._models import skip_unless_analyze_models
+
 
 def _real(p):
     """Resolve macOS /var -> /private/var symlink."""
@@ -51,8 +53,9 @@ def _suppress_config(tmp_path, monkeypatch):
 
 
 @pytest.fixture()
-def integration_app(tmp_path, _suppress_config):
-    """Flask app with a real library directory structure, ready for import."""
+def integration_app(tmp_path, _suppress_config, offline_downloads):
+    """Flask app with a real library directory structure, ready for import
+    (offline: a model that isn't on disk is off for the run)."""
     from bpp.web.app import create_app
 
     lib = _real(tmp_path / "library")
@@ -60,7 +63,8 @@ def integration_app(tmp_path, _suppress_config):
 
     app = create_app(library_path=lib)
     app.config["TESTING"] = True
-    return app, lib
+    yield app, lib
+    app.extensions["bpp"].shutdown()  # no worker outlives its test
 
 
 @pytest.fixture()
@@ -163,6 +167,7 @@ class TestImportPipeline:
 
     def test_import_worker_full_pipeline(self, tmp_path):
         """ImportWorker: scan → copy → analyze → DB insert (all phases)."""
+        skip_unless_analyze_models()  # real workers
         from bpp.db.library import ensure_library_dirs
         from bpp.web.import_worker import ImportWorker
 
@@ -217,6 +222,7 @@ class TestAnalysisWorkflow:
     @_SKIP_SLOW_ANALYZE
     def test_analyze_produces_scores(self, tmp_path):
         """AnalyzeWorker produces aggregate_score for each photo."""
+        skip_unless_analyze_models()  # real workers
         from bpp.web.analyze_worker import AnalyzeWorker
 
         input_dir = str(tmp_path / "photos")
@@ -265,6 +271,7 @@ class TestAnalysisWorkflow:
     @_SKIP_SLOW_ANALYZE
     def test_analyze_worker_writes_to_db(self, tmp_path):
         """AnalyzeWorker writes results to photopicker.db."""
+        skip_unless_analyze_models()  # real workers
         from bpp.db.connection import get_db
         from bpp.web.analyze_worker import AnalyzeWorker
 
@@ -369,6 +376,7 @@ class TestFacePipelineIntegration:
     @pytest.mark.slow
     def test_face_worker_populates_embeddings(self, tmp_path):
         """FaceWorker with photos containing faces should populate face_embeddings."""
+        skip_unless_analyze_models()  # real workers
         from bpp.db.connection import init_db
         from bpp.db.photos import upsert_photo
         from bpp.web.face_worker import FaceWorker

@@ -23,6 +23,7 @@ from bpp.scoring.face_embed import (
     embedding_method,
     extract_face_embeddings,
 )
+from tests._models import skip_unless_on_disk
 
 
 def _blank_bgr(h: int = 200, w: int = 200):
@@ -35,6 +36,7 @@ class TestYuNetDetector:
 
     def test_no_faces_in_blank_image(self):
         """YuNet should find no faces in a solid-color image."""
+        skip_unless_on_disk("YuNet (primary)")  # real detector
         img = _blank_bgr()
         faces = _yunet_detect(img, min_confidence=0.5)
         assert faces == []
@@ -79,6 +81,7 @@ class TestYuNetDetectRaw:
 
     def test_returns_none_when_no_faces(self):
         """Should return None for blank images."""
+        skip_unless_on_disk("YuNet (primary)")  # real detector
         result = _yunet_detect_raw(_blank_bgr(), min_confidence=0.5)
         assert result is None
 
@@ -115,11 +118,12 @@ class TestSFaceEmbedding:
         # Detection now goes through detect_face_rows (full pipeline + per-face
         # landmark recovery). Mock it to isolate the SFace embedding step.
         with (
-            patch("bpp.scoring.face_embed._get_sface_recognizer") as mock_rec,
+            patch("bpp.scoring.face_embed_sface._get_sface_recognizer") as mock_rec,
             patch(
                 "bpp.scoring.face_embed_detect.detect_face_rows",
                 return_value=list(fake_faces),
             ),
+            patch("bpp.scoring.face_embed_detect.detect_inverted_face", return_value=None),
         ):
             rec = mock_rec.return_value
             rec.alignCrop.return_value = np.zeros((112, 112, 3), dtype=np.uint8)
@@ -136,7 +140,7 @@ class TestSFaceEmbedding:
 
     def test_sface_returns_none_when_unavailable(self):
         """_extract_sface returns None when SFace model is missing."""
-        with patch("bpp.scoring.face_embed._get_sface_recognizer", return_value=None):
+        with patch("bpp.scoring.face_embed_sface._get_sface_recognizer", return_value=None):
             result = _extract_sface(_blank_bgr(), 0.3)
         assert result is None
 
@@ -170,7 +174,8 @@ class TestSFaceEmbedding:
         assert float(rows[0][-1]) == pytest.approx(0.9)
 
     def test_blank_image_no_embeddings(self):
-        """Blank images should produce no embeddings."""
+        """Blank images should produce no embeddings (real detector + recognizer)."""
+        skip_unless_on_disk("SFace recognition", "YuNet (primary)")
         results = extract_face_embeddings(_blank_bgr(), min_confidence=0.3)
         assert results == []
 

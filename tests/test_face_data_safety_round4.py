@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from bpp.scoring.face_embedder_registry import _REGISTRY, FaceEmbedder, register_embedder
+from tests._models import skip_unless_buffalo_s
 from tests.test_embedding_size_contract import _add_row, _phase_conn
 
 
@@ -122,6 +123,7 @@ def test_older_library_switch_to_unlicensed_buffalo_keeps_faces(tag):
 
 
 def test_licensed_switch_still_runs():
+    skip_unless_buffalo_s()  # runs the real embedder
     conn = _phase_conn()
     conn.execute("INSERT INTO settings VALUES ('face_embedding_method_extracted', 'sface')")
     conn.execute("INSERT INTO settings VALUES ('face_embedding_method', 'buffalo_s')")

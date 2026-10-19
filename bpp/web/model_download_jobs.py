@@ -110,6 +110,11 @@ def start(key: str, label: str, work: Callable[[], dict[str, Any]]) -> tuple[Dow
             job.error = f"Couldn't download {label}: {plain_reason(exc)}"
             job.status = "error"
             log.warning("Download job failed: %s", key, exc_info=True)
+        finally:
+            if job.status == "running":  # the thread died outside the handlers
+                job.error = f"Couldn't download {label}: the download was interrupted"
+                job.status = "error"
+                log.warning("Download job interrupted: %s", key)
 
     threading.Thread(target=_run, name=f"download:{key}", daemon=True).start()
     return job, True

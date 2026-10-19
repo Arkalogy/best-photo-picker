@@ -66,7 +66,11 @@ jobs:
           pip install -e ".[dev,web,faces,heic,raw]"
 
       - name: Run tests (skip slow)
+        env:
+          BPP_TEST_ALLOW_DOWNLOADS: "1"  # tests never download; CI keeps a model cache and opts in
         run: pytest -n auto --dist=loadfile --tb=short -m "not slow"
 
       - name: Run slow tests
+        env:
+          BPP_TEST_ALLOW_DOWNLOADS: "1"  # tests never download; CI keeps a model cache and opts in
         run: pytest -m slow --tb=short

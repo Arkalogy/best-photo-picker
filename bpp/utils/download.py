@@ -156,6 +156,13 @@ def _skipped_downloads() -> set[str]:
     return {i for i in os.environ.get(_SKIP_ENV, "").split(",") if i}
 
 
+def _download_skipped(registry_id: str) -> bool:
+    """``*`` refuses every download (the test suite sets it for the
+    processes a test starts)."""
+    skipped = _skipped_downloads()
+    return "*" in skipped or registry_id in skipped
+
+
 def _copy_with_progress(resp, f) -> None:
     callback = getattr(_progress, "callback", None)
     total_header = getattr(resp, "headers", {}).get("Content-Length")
@@ -242,8 +249,13 @@ def download_file(
     runs the gate.
     """
     _run_policy_gate(registry_id)
-    if registry_id in _skipped_downloads():
-        raise DownloadSkippedError(f"{registry_id}: its download failed earlier in this run")
+    if _download_skipped(registry_id):
+        why = (
+            "downloads are disabled in this process"
+            if "*" in _skipped_downloads()
+            else "its download failed earlier in this run"
+        )
+        raise DownloadSkippedError(f"{registry_id}: {why}")
 
     # Late import for the same circular-import reason as in
     # _run_policy_gate above.

@@ -12,6 +12,7 @@ from bpp.scoring.face_detector_registry import _REGISTRY as _DET_REGISTRY
 from bpp.scoring.face_detector_registry import FaceDetector, register_detector
 from bpp.scoring.face_embedder_registry import _REGISTRY as _EMB_REGISTRY
 from bpp.scoring.face_embedder_registry import FaceEmbedder, register_embedder
+from tests._models import skip_unless_face_pipeline
 
 #: MIT, no click-through — a plugin model the gate lets through.
 _FREE_ID = "openai_clip_vit_b32_onnx"
@@ -50,6 +51,7 @@ def _blank():
 
 
 def test_plugin_detector_runs_and_its_faces_are_kept(plugin_detector):
+    skip_unless_face_pipeline()  # the built-in detectors run too
     calls = plugin_detector()
     faces, _ = face_pipeline._collect_detections(_blank(), 0.3, {})
     assert calls
@@ -57,6 +59,7 @@ def test_plugin_detector_runs_and_its_faces_are_kept(plugin_detector):
 
 
 def test_plugin_detector_respects_its_toggle(plugin_detector):
+    skip_unless_face_pipeline()  # the built-in detectors run too
     calls = plugin_detector(toggle_key="model_plugin_det")
     face_pipeline._collect_detections(_blank(), 0.3, {"model_plugin_det": False})
     assert calls == []

@@ -23,6 +23,8 @@ import sqlite3
 import numpy as np
 import pytest
 
+pytestmark = pytest.mark.usefixtures("sface_configured")
+
 
 @pytest.fixture()
 def faces_db(tmp_path):

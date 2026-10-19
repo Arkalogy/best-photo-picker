@@ -156,10 +156,12 @@ jobs:
           key: pip-3.11-${{ hashFiles('pyproject.toml') }}
           restore-keys: pip-3.11-
 
-      # ML model cache: bpp downloads several models on first import
-      # (BlazeFace, SCRFD, CLIP, dlib, FaceLandmarker, etc.) — ~200 MB
-      # total. Without this cache, every CI run re-downloads them, adding
-      # 1-2 min before tests can start. Keyed on the file paths in
+      # ML model cache: the suite never downloads models by itself
+      # (tests/conftest.py blocks the network; tests about real weights
+      # skip when they're absent). CI opts out with
+      # BPP_TEST_ALLOW_DOWNLOADS=1 on the pytest steps, so the first run
+      # after a cache miss fetches the models (~200 MB, 1-2 min) and the
+      # real-weight tests run here. Keyed on the file paths in
       # bpp/scoring/face*.py so a model URL change invalidates the cache.
       - name: Cache ML models
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -187,6 +189,8 @@ jobs:
       # Drop `-v`: per-test output adds ~5% overhead; keep --tb=short for
       # readable failure tracebacks.
       - name: Run tests
+        env:
+          BPP_TEST_ALLOW_DOWNLOADS: "1"
         run: pytest -n auto --dist=loadfile --tb=short -m "not slow"
 
   # Slow integration tests — spawn real subprocesses, load ML models,
@@ -233,6 +237,8 @@ jobs:
           pip install git+https://github.com/ageitgey/face_recognition_models
           pip install -e ".[dev,web,faces,heic,raw]"
       - name: Run slow tests
+        env:
+          BPP_TEST_ALLOW_DOWNLOADS: "1"
         run: pytest -m slow --tb=short
 
   # Smoke-test that `pip install -e ".[inpaint]"` works on a clean

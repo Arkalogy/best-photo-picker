@@ -62,6 +62,14 @@ def _setup_face_db(conn: sqlite3.Connection, analysis: list[dict]) -> None:
     conn.commit()
 
 
+@pytest.fixture(autouse=True)
+def _no_clip_text_model(monkeypatch):
+    """Semantic search needs the CLIP text encoder; these tests are about
+    the endpoint's name / date / album matching, so the encoder is
+    absent (as on a machine that never downloaded it)."""
+    monkeypatch.setattr("bpp.web.bp_search.compute_text_embedding", lambda q: None)
+
+
 @pytest.fixture
 def search_client(tmp_path):
     """Flask test client with photos, albums, and face clusters seeded."""

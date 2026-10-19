@@ -74,4 +74,6 @@ jobs:
       # Drop `-p no:cacheprovider` too — we want to see what fails first
       # and `--randomly-seed=last` works for re-runs.
       - name: Run tests with randomized order
+        env:
+          BPP_TEST_ALLOW_DOWNLOADS: "1"  # tests never download; CI keeps a model cache and opts in
         run: pytest -p randomly --tb=short -m "not slow"
