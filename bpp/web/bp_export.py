@@ -8,7 +8,6 @@ blueprint in app.py. Export progress state lives on the app context
 
 from __future__ import annotations
 
-import json
 import os
 
 from flask import Blueprint, Response, jsonify, request
@@ -18,6 +17,7 @@ from bpp.errors import BppError, ConflictError, NotFoundError, ValidationError
 from bpp.output.export import export_selected
 from bpp.utils.logging import get_logger
 from bpp.web.share import requires_local_app
+from bpp.web.sse import sse_event
 from bpp.web.state import get_ctx
 
 log = get_logger(__name__)
@@ -341,7 +341,7 @@ def api_export_progress() -> Response:
                 yield ": heartbeat\n\n"
                 continue
             last_event = time.time()
-            yield f"data: {json.dumps(msg)}\n\n"
+            yield sse_event(msg)
             if msg.get("type") in {"done", "error", "cancelled"}:
                 break
 

@@ -5,6 +5,7 @@ const apiFetchMock = vi.fn();
 vi.mock("../bpp/web/static/js/modules/api-client.mjs", () => ({
   apiFetch: apiFetchMock,
   authedSrc: (/** @type {string} */ p) => p,
+  faceCropUrl: (/** @type {string} */ h, /** @type {number} */ i) => `/api/v1/faces/crop/${h}/${i}`,
 }));
 
 const { DOWNLOAD_STALLED_TEXT, downloadProgressText, waitForDownloadJob } =

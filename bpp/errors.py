@@ -189,6 +189,14 @@ class ConflictError(BppError):
     code = "conflict"
 
 
+class PayloadTooLargeError(BppError):
+    """The request body or the full form of a request is over its cap
+    (HTTP 413). A subclass names the way out when there is one."""
+
+    http_status = 413
+    code = "payload_too_large"
+
+
 class ResourceExhaustedError(BppError):
     """A bounded resource is full / over limit (503)."""
 

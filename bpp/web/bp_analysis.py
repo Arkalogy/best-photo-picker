@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import json
 import os
 
 from flask import Blueprint, Response, jsonify, request
@@ -14,6 +13,7 @@ from bpp.db.settings import get_all_settings
 from bpp.errors import ConflictError, ValidationError
 from bpp.utils.logging import get_logger
 from bpp.web.share import requires_local_app
+from bpp.web.sse import sse_event
 from bpp.web.state import get_ctx
 
 log = get_logger(__name__)
@@ -168,7 +168,7 @@ def _stream_with_revoke_check(progress_queue, worker, fp, ctx, *, on_done):
     while True:
         try:
             msg = progress_queue.get(timeout=PROGRESS_QUEUE_TIMEOUT_S)
-            yield f"data: {json.dumps(msg)}\n\n"
+            yield sse_event(msg)
             if msg.get("type") in ("done", "error"):
                 if msg.get("type") == "done":
                     on_done(msg, ctx)
@@ -179,19 +179,18 @@ def _stream_with_revoke_check(progress_queue, worker, fp, ctx, *, on_done):
             if fp is not None and msgs_since_recheck >= 5:
                 msgs_since_recheck = 0
                 if not is_device_trusted(ctx.get_conn(), fp):
-                    yield f"data: {json.dumps({'type': 'error', 'message': 'auth_revoked'})}\n\n"
+                    yield sse_event({"type": "error", "message": "auth_revoked"})
                     break
         except Exception as exc:
             log.debug("SSE keepalive after %s: %s", type(exc).__name__, exc)
-            yield f"data: {json.dumps({'type': 'keepalive'})}\n\n"
+            yield sse_event({"type": "keepalive"})
             # On keepalive (queue starvation), recheck auth too — the
             # owner may have revoked while no progress was streaming.
             if fp is not None and not is_device_trusted(ctx.get_conn(), fp):
-                yield f"data: {json.dumps({'type': 'error', 'message': 'auth_revoked'})}\n\n"
+                yield sse_event({"type": "error", "message": "auth_revoked"})
                 break
             if not worker.is_alive:
-                err = {"type": "error", "message": "Worker stopped unexpectedly"}
-                yield f"data: {json.dumps(err)}\n\n"
+                yield sse_event({"type": "error", "message": "Worker stopped unexpectedly"})
                 break
 
 

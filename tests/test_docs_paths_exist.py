@@ -24,6 +24,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._git import tracked_files
+
 ROOT = Path(__file__).resolve().parents[1]
 
 # `bpp/web/foo.py`, `docs/API.md`, `_harness.mjs`, `demo.gif`, `x.sh:12`,
@@ -37,14 +39,11 @@ _CODE_RE = re.compile(rf"`(?P<path>{_PATH})?(?P<name>{_NAME})(?::(?P<line>\d+))?
 _LINK_RE = re.compile(rf"\]\((?P<path>{_PATH})?(?P<name>{_NAME})(?:#[^)]*)?\)")
 
 
-def _git_files() -> list[str]:
+def _git_files() -> tuple[str, ...]:
     try:
-        out = subprocess.run(
-            ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True
-        ).stdout
+        return tracked_files()
     except (OSError, subprocess.CalledProcessError):
         pytest.skip("needs a git checkout", allow_module_level=True)
-    return out.split("\n")
 
 
 TRACKED = {p for p in _git_files() if p}

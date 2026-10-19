@@ -175,6 +175,7 @@ included only for the local-app owner.
     "journals": { "pending": 0, "kinds": {} },
     "collaborators": { "analysis_store": { "phash_ready": true, "generation": 3, "...": "..." }, "caches": { "...": "..." }, "lifecycle": { "...": "..." } },
     "phase5": { "in_flight": false, "failed": false },
+    "derived_recovery": { "in_flight": false, "failed": false },
     "models": {
       "license_blocked": {
         "needs_license": ["insightface_scrfd_25g"],

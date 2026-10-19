@@ -124,6 +124,7 @@ def api_health() -> tuple[Response, int]:
     storage_check = _storage_check(ctx, is_owner)
     journals_check = _journals_check(conn)
     phase5_check = _phase5_check(ctx)
+    recovery_check = _recovery_check(ctx)
     models_check = _models_check()
 
     # Aggregate status: ok if everything reports clean, degraded if any
@@ -136,6 +137,7 @@ def api_health() -> tuple[Response, int]:
         or not storage_check.get("accessible", False)
         or journals_check.get("pending", 0) > 0
         or phase5_check["failed"]
+        or recovery_check["failed"]
         or "error" in models_check
     ):
         status = "degraded"
@@ -152,6 +154,7 @@ def api_health() -> tuple[Response, int]:
                     "journals": journals_check,
                     "collaborators": _collaborators_check(ctx, is_owner),
                     "phase5": phase5_check,
+                    "derived_recovery": recovery_check,
                     "models": models_check,
                 },
             }
@@ -341,6 +344,19 @@ def _phase5_check(ctx: Any) -> dict[str, bool]:
     return {
         "failed": bool(getattr(ctx, "phase5_failed", False)),
         "in_flight": bool(_backfill_event) and not _backfill_event.is_set(),
+    }
+
+
+def _recovery_check(ctx: Any) -> dict[str, bool]:
+    """The derived-recovery thread (hash backfill, sidecar tags, dup
+    clusters, Moments, smart albums — after an import or at startup):
+    ``failed`` when any step of its last run failed (near-duplicate and
+    smart-album state may be incomplete), ``in_flight`` while the whole
+    pipeline runs. Reset on every spawn and on a library switch."""
+    store = getattr(ctx, "analysis_store", None)
+    return {
+        "failed": bool(getattr(store, "recovery_failed", False)),
+        "in_flight": bool(getattr(store, "recovery_running", False)),
     }
 
 

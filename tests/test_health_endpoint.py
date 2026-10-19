@@ -403,3 +403,46 @@ class TestPhase5HealthCheck:
         finally:
             # Restore default so we don't pollute other tests.
             ctx.smart_album_backfill_done.set()
+
+
+class TestDerivedRecoveryHealthCheck:
+    """The derived-recovery thread (hash backfill, dup clusters, smart
+    albums) sets analysis_store.recovery_failed when it dies; the health
+    report shows it and degrades, like a failed Phase 5."""
+
+    def test_default_state_reports_no_failure(self, client, app):
+        data = client.get("/api/v1/health").get_json()
+        assert data["checks"]["derived_recovery"]["failed"] is False
+
+    def test_a_failed_recovery_degrades_the_report(self, client, app):
+        from bpp.web.state import get_ctx
+
+        with app.app_context():
+            get_ctx().analysis_store.recovery_failed = True
+        data = client.get("/api/v1/health").get_json()
+        assert data["status"] == "degraded"
+        assert data["checks"]["derived_recovery"]["failed"] is True
+
+    def test_a_step_that_fails_quietly_still_flags_the_run(self, app):
+        """Clustering and smart-album steps log and carry on; the run is
+        still reported as failed, and a library switch clears it."""
+        from bpp.web.derived_recovery import _cluster_derived_state
+        from bpp.web.state import get_ctx
+
+        class _Store:
+            recovery_failed = False
+
+        store = _Store()
+        with app.app_context():
+            ctx = get_ctx()
+
+            # A connection that fails the clustering SQL.
+            class _BadConn:
+                def execute(self, *a, **k):
+                    raise RuntimeError("database is locked")
+
+            _cluster_derived_state(_BadConn(), store)
+            assert store.recovery_failed is True
+            ctx.analysis_store.recovery_failed = True
+            ctx.analysis_store.bump_generation_and_reset_phash()
+            assert ctx.analysis_store.recovery_failed is False

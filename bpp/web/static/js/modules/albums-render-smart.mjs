@@ -9,7 +9,7 @@
  * every section reads.
  */
 
-import { authedSrc } from "./api-client.mjs";
+import { authedSrc, faceCropUrl } from "./api-client.mjs";
 import { _getTimelineFilter } from "./timeline.mjs";
 import { esc, escapeAttr, escapeJsAttr } from "./text-format.mjs";
 import { petDisplayName } from "./pets.mjs";
@@ -116,7 +116,7 @@ function _renderFacesFolder(ctx, faceAlbums, namedPetAlbums) {
     const rep = cluster && cluster.representative;
     const thumb =
       rep && rep.thumb_hash
-        ? `<img class="nav-face-thumb" src="${authedSrc(`/api/v1/faces/crop/${escapeAttr(rep.thumb_hash)}/${rep.face_index}`)}" loading="lazy">`
+        ? `<img class="nav-face-thumb" src="${faceCropUrl(rep.thumb_hash, rep.face_index)}" loading="lazy">`
         : `<span class="nav-face-thumb nav-face-placeholder">${ICONS.people || ""}</span>`;
     const cid = album.rule && album.rule.cluster_id;
     html += `<div class="nav-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${album.id}" data-album-id="${album.id}"

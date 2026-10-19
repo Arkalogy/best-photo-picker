@@ -16,7 +16,7 @@
  * window at call time.
  */
 
-import { apiFetch, authedSrc } from "./api-client.mjs";
+import { apiFetch, faceCropUrl } from "./api-client.mjs";
 import { showModal } from "./modal.mjs";
 import {getSetting, saveSetting} from "./settings-client.mjs";
 import { showNudge } from "./nudges.mjs";
@@ -234,7 +234,7 @@ export function renderFaceGallery() {
       const label = name || shortCount(c.photo_count);
       return `<div class="boost-chip${sel}" data-action="toggleFace" data-arg0="${c.cluster_id}"
                  title="${escapeAttr(tip)}">
-      <div class="boost-chip-img"><img src="${authedSrc(`/api/v1/faces/crop/${esc(rep.thumb_hash)}/${rep.face_index}`)}" loading="lazy"></div>
+      <div class="boost-chip-img"><img src="${faceCropUrl(rep.thumb_hash, rep.face_index)}" loading="lazy"></div>
       <span class="boost-chip-name">${esc(label)}</span>
     </div>`;
     })

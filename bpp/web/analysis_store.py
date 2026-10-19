@@ -84,6 +84,13 @@ class AnalysisStore:
     #: data is parked here and the running thread re-spawns with it at
     #: the end instead of two threads racing the same rows.
     recovery_rerun: list[Any] | None = None
+    #: The last derived-recovery run (hash backfill + dup clusters +
+    #: smart albums) died: shown by /api/v1/health, like phase5_failed.
+    #: Reset when a run starts.
+    recovery_failed: bool = False
+    #: The derived-recovery pipeline is running (all of it, not just the
+    #: hash phase): /api/v1/health ``derived_recovery.in_flight``.
+    recovery_running: bool = False
 
     def bump_generation_and_reset_phash(self) -> None:
         """Atomically: increment the generation counter and install a
@@ -105,6 +112,9 @@ class AnalysisStore:
         self.phash_running = False
         self.phash_done = 0
         self.phash_total = 0
+        # A failure in the old library says nothing about the new one.
+        self.recovery_failed = False
+        self.recovery_running = False
 
     def join_threads(self, timeout: float) -> None:
         """Signal cancel + join both daemon threads.

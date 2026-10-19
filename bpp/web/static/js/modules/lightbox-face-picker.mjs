@@ -16,7 +16,7 @@
  * readability — so they live side-by-side here.
  */
 
-import { authedSrc } from "./api-client.mjs";
+import { faceCropUrl } from "./api-client.mjs";
 import { esc } from "./text-format.mjs";
 import { CLUSTER_DISMISSED } from "./constants.mjs";
 import { _lbActiveCleanups, _lbPickerItems } from "./lightbox.mjs";
@@ -143,7 +143,7 @@ function _renderPeopleList(list, filter, personDisplayName, onChoose) {
     const rep = c.representative;
     const avatarUrl =
       rep && rep.thumb_hash
-        ? authedSrc(`/api/v1/faces/crop/${rep.thumb_hash}/${rep.face_index}`)
+        ? faceCropUrl(rep.thumb_hash, rep.face_index)
         : "";
     item.innerHTML =
       (avatarUrl
@@ -252,7 +252,7 @@ export function _lbShowFaceAssignPicker(e, face, thumbHash) {
 
   const header = document.createElement("div");
   header.className = "merge-picker-header";
-  const cropUrl = authedSrc(`/api/v1/faces/crop/${esc(thumbHash)}/${face.face_index}`);
+  const cropUrl = faceCropUrl(thumbHash, face.face_index);
   header.innerHTML =
     `<div style="display:flex;align-items:center;gap:10px">` +
     `<img src="${cropUrl}" style="width:40px;height:40px;border-radius:50%;object-fit:cover">` +
@@ -296,7 +296,7 @@ export function _lbShowFaceAssignPicker(e, face, thumbHash) {
       const rep = c.representative;
       const avatarUrl =
         rep && rep.thumb_hash
-          ? authedSrc(`/api/v1/faces/crop/${rep.thumb_hash}/${rep.face_index}`)
+          ? faceCropUrl(rep.thumb_hash, rep.face_index)
           : "";
       const numKey =
         idx < 9

@@ -12,7 +12,7 @@
  * Re-exported from people-review.mjs and (transitively) from people.mjs.
  */
 
-import { apiFetch, authedSrc } from "./api-client.mjs";
+import { apiFetch, authedSrc, faceCropUrl } from "./api-client.mjs";
 import { esc, escapeAttr } from "./text-format.mjs";
 import { loadFaceClusters } from "./faces.mjs";
 import {toast, toastError} from "./toast.mjs";
@@ -129,7 +129,7 @@ export function _renderPairReviewCard() {
   const cur = _pairReviewIndex + 1;
 
   const cropUrl = (c) => c.representative.thumb_hash
-    ? authedSrc(`/api/v1/faces/crop/${esc(c.representative.thumb_hash)}/${c.representative.face_index}`)
+    ? faceCropUrl(c.representative.thumb_hash, c.representative.face_index)
     : "";
   const fullUrl = (c) => c.representative.thumb_hash
     ? authedSrc(`/thumb/${esc(c.representative.thumb_hash)}`)

@@ -17,6 +17,7 @@ const apiFetchMock = vi.fn(async (/** @type {string} */ url) =>
 vi.mock("../bpp/web/static/js/modules/api-client.mjs", () => ({
   apiFetch: apiFetchMock,
   authedSrc: (/** @type {string} */ p) => p,
+  faceCropUrl: (/** @type {string} */ h, /** @type {number} */ i) => `/api/v1/faces/crop/${h}/${i}`,
 }));
 
 const { showModal, resolveModal } = await import("../bpp/web/static/js/modules/modal.mjs");

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 vi.mock("../bpp/web/static/js/modules/api-client.mjs", () => ({
   authedSrc: (/** @type {string} */ s) => s,
+  faceCropUrl: (/** @type {string} */ h, /** @type {number} */ i) => `/api/v1/faces/crop/${h}/${i}`,
 }));
 
 import { openPhotoPreview } from "../bpp/web/static/js/modules/photo-preview.mjs";

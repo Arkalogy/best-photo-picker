@@ -9,7 +9,6 @@ hold, the claim); ``install_progress`` streams it as server-sent events.
 from __future__ import annotations
 
 import contextlib
-import json
 import os
 import subprocess
 import sys
@@ -22,6 +21,7 @@ from bpp.errors import ValidationError
 from bpp.scoring.install_hold import hold_during_install, hold_until_restart, release
 from bpp.utils.logging import get_logger
 from bpp.web import pip_process
+from bpp.web.sse import sse_event
 
 log = get_logger(__name__)
 
@@ -34,10 +34,6 @@ _PIP_HARD_TIMEOUT_S = 1800  # 30 minutes
 # Grace period for pip to exit after we close its stdout (or after
 # the client disconnects mid-stream and we terminate the process).
 _PIP_TERM_GRACE_S = pip_process.GRACE_S
-
-
-def _event(payload: dict) -> str:
-    return f"data: {json.dumps(payload)}\n\n"
 
 
 class _PipRun:
@@ -231,19 +227,19 @@ def install_progress(key: str) -> Response:
         # taken (its reconnect refused) with no stream to release it.
         taken = _b.take_stream(token)
         if taken == "taken":  # another connection started first: it runs pip
-            yield _event({"type": "error", "message": "This install is already running"})
+            yield sse_event({"type": "error", "message": "This install is already running"})
             return
         if taken == "gone":  # released as stale between the GET and this start
             msg = "The install took too long to start and was cancelled — try again"
-            yield _event({"type": "error", "message": msg})
+            yield sse_event({"type": "error", "message": msg})
             return
         run = _PipRun(key, specs, token)
         try:
             log.info("pip install %s starting", " ".join(specs))
-            yield _event({"type": "start"})
+            yield sse_event({"type": "start"})
             run.start()
             for line in run.lines():
-                yield _event({"type": "log", "message": line})
+                yield sse_event({"type": "log", "message": line})
             run.wait()
             run.finish()
             assert run.proc is not None
@@ -251,11 +247,11 @@ def install_progress(key: str) -> Response:
                 log.info("pip install %s completed", " ".join(specs))
                 # Loaded after a restart: never into this running process.
                 # (Nothing written: it was all installed already.)
-                yield _event({"type": "done", "restart_required": run.restart})
+                yield sse_event({"type": "done", "restart_required": run.restart})
             else:
                 msg = run.failure_message()
                 log.error("pip install %s failed: %s", " ".join(specs), msg)
-                yield _event({"type": "error", "message": msg, "restart_required": run.restart})
+                yield sse_event({"type": "error", "message": msg, "restart_required": run.restart})
         except GeneratorExit:
             # Client disconnected mid-stream. Don't yield (the connection
             # is gone), but DO clean the subprocess in `finally` so it
@@ -268,7 +264,7 @@ def install_progress(key: str) -> Response:
             else:
                 msg = "Installation failed. Check server logs for details."
             run.finish()  # stops pip first
-            yield _event({"type": "error", "message": msg, "restart_required": run.restart})
+            yield sse_event({"type": "error", "message": msg, "restart_required": run.restart})
         finally:
             # Subprocess teardown runs on normal completion AND on
             # GeneratorExit (client disconnect) AND on exception, so

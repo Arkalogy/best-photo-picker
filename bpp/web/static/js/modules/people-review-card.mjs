@@ -6,7 +6,7 @@
  * manual naming) and the panel frame. Split out for the 500-LOC cap.
  */
 
-import { authedSrc } from "./api-client.mjs";
+import { authedSrc, faceCropUrl } from "./api-client.mjs";
 import { esc, escapeAttr, escapeJsAttr } from "./text-format.mjs";
 import { reviewMetaLine, reviewMetaText } from "./review-meta.mjs";
 
@@ -59,7 +59,7 @@ export function reviewSamplesHTML(c) {
 
 /** @param {any} rep */
 function _unknownAvatarUrl(rep) {
-  return authedSrc("/api/v1/faces/crop/" + esc(rep.thumb_hash) + "/" + rep.face_index);
+  return faceCropUrl(rep.thumb_hash, rep.face_index);
 }
 
 /**
@@ -70,7 +70,7 @@ function _unknownAvatarUrl(rep) {
 export function suggestionAvatarHTML(rep, suggestion) {
   const matchRep = suggestion.representative;
   const matchAvatarUrl = matchRep
-    ? authedSrc("/api/v1/faces/crop/" + esc(matchRep.thumb_hash) + "/" + matchRep.face_index)
+    ? faceCropUrl(matchRep.thumb_hash, matchRep.face_index)
     : "";
   const conf = suggestion.confidence || 0;
   return `

@@ -517,9 +517,9 @@ class TestAlbumRecompute:
             f"Expected 413 for >5000-photo non-delta payload, got {resp.status_code}"
         )
         data = resp.get_json()
-        assert data.get("delta_required") is True
+        assert data.get("code") == "delta_required"
         assert "delta" in data["error"].lower()
-        assert data.get("photo_count") == 5001
+        assert data["context"]["photo_count"] == 5001
 
     def test_recompute_manual_album_with_photos(self, client, bp_app):
         album_id = _create_manual_album(client, "RecompTest")

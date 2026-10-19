@@ -30,6 +30,12 @@ from typing import Any
 from bpp.constants import PROGRESS_QUEUE_TIMEOUT_S
 
 
+def sse_event(payload: dict[str, Any]) -> str:
+    """One Server-Sent Events ``data:`` frame carrying ``payload`` as
+    JSON — the only place the wire format is written."""
+    return f"data: {json.dumps(payload)}\n\n"
+
+
 def stream_worker_progress(
     worker: Any,
     *,
@@ -47,14 +53,13 @@ def stream_worker_progress(
     while True:
         try:
             msg = worker.progress_queue.get(timeout=PROGRESS_QUEUE_TIMEOUT_S)
-            yield f"data: {json.dumps(msg)}\n\n"
+            yield sse_event(msg)
             if msg.get("type") in terminal:
                 if msg.get("type") == "done" and on_done is not None:
                     on_done(msg)
                 break
         except queue.Empty:
-            yield f"data: {json.dumps({'type': 'keepalive'})}\n\n"
+            yield sse_event({"type": "keepalive"})
             if not worker.is_alive:
-                err = {"type": "error", "message": "Worker stopped unexpectedly"}
-                yield f"data: {json.dumps(err)}\n\n"
+                yield sse_event({"type": "error", "message": "Worker stopped unexpectedly"})
                 break

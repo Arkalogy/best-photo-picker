@@ -6,6 +6,7 @@ import { describe, expect, test, vi } from "vitest";
 vi.mock("../bpp/web/static/js/modules/api-client.mjs", () => ({
   apiFetch: vi.fn().mockResolvedValue({}),
   authedSrc: (/** @type {string} */ p) => p,
+  faceCropUrl: (/** @type {string} */ h, /** @type {number} */ i) => `/api/v1/faces/crop/${h}/${i}`,
 }));
 
 const onboarding = await import("../bpp/web/static/js/modules/onboarding.mjs");

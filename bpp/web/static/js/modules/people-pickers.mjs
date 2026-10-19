@@ -7,7 +7,7 @@
  * bridge keeps exposing every data-action handler on window unchanged.
  */
 
-import { apiFetch, authedSrc } from "./api-client.mjs";
+import { apiFetch, faceCropUrl } from "./api-client.mjs";
 import { state } from "./state.mjs";
 import { appConfirm } from "./dialogs.mjs";
 import { esc, escapeAttr } from "./text-format.mjs";
@@ -60,7 +60,7 @@ export async function showSplitPicker(clusterId) {
     cell.className = "face-select-cell";
     cell.style.cssText = "cursor:pointer;border-radius:8px;overflow:hidden;border:3px solid transparent;transition:border-color .15s;width:88px;height:88px;flex-shrink:0";
     const img = document.createElement("img");
-    img.src = authedSrc(`/api/v1/faces/crop/${esc(f.thumb_hash)}/${f.face_index}`);
+    img.src = faceCropUrl(f.thumb_hash, f.face_index);
     img.style.cssText = "width:100%;height:100%;object-fit:cover;display:block";
     img.loading = "lazy";
     cell.appendChild(img);
@@ -106,7 +106,7 @@ export async function showSplitPicker(clusterId) {
     mergeDropdown.innerHTML = matches.map(c => {
       const n = personDisplayName(c.cluster_id) || `Person ${c.cluster_id + 1}`;
       const rep = c.representative;
-      const src = authedSrc(`/api/v1/faces/crop/${esc(rep.thumb_hash)}/${rep.face_index}`);
+      const src = faceCropUrl(rep.thumb_hash, rep.face_index);
       return `<div class="review-ac-item" style="display:flex;align-items:center;gap:8px;padding:6px 8px;cursor:pointer" data-cid="${c.cluster_id}"><img src="${escapeAttr(src)}" style="width:28px;height:28px;border-radius:50%;object-fit:cover"><span>${esc(n)}</span></div>`;
     }).join("");
     /** @type {NodeListOf<HTMLElement>} */ (
@@ -255,7 +255,7 @@ export function showMergePicker(sourceClusterId) {
       item.className = "merge-picker-item";
       const rep = c.representative;
       const avatarUrl = rep && rep.thumb_hash
-        ? authedSrc(`/api/v1/faces/crop/${rep.thumb_hash}/${rep.face_index}`) : "";
+        ? faceCropUrl(rep.thumb_hash, rep.face_index) : "";
       item.innerHTML =
         (avatarUrl ? `<img class="merge-picker-avatar" src="${avatarUrl}" alt="">` : `<div class="merge-picker-avatar"></div>`) +
         `<div class="merge-picker-info"><div class="merge-picker-name">${esc(name)}</div>` +
@@ -357,7 +357,7 @@ export async function showAvatarPicker(clusterId) {
     const cell = document.createElement("div");
     cell.style.cssText = "cursor:pointer;border-radius:8px;overflow:hidden;border:2px solid transparent;transition:border-color .15s;width:88px;height:88px;flex-shrink:0";
     const img = document.createElement("img");
-    img.src = authedSrc(`/api/v1/faces/crop/${esc(f.thumb_hash)}/${f.face_index}`);
+    img.src = faceCropUrl(f.thumb_hash, f.face_index);
     img.style.cssText = "width:100%;height:100%;object-fit:cover;display:block";
     img.loading = "lazy";
     cell.appendChild(img);

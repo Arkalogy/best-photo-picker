@@ -10,7 +10,7 @@
  * dispatcher).
  */
 
-import { apiFetch, authedSrc } from "./api-client.mjs";
+import { apiFetch, faceCropUrl } from "./api-client.mjs";
 import { esc, escapeAttr } from "./text-format.mjs";
 import { toastError } from "./toast.mjs";
 
@@ -183,7 +183,7 @@ export function groupAvatarsHTML(group) {
   const avatars = shown
     .map((m, i) => {
       const src = m.thumb_hash
-        ? authedSrc(`/api/v1/faces/crop/${esc(m.thumb_hash)}/${m.face_index}`)
+        ? faceCropUrl(m.thumb_hash, m.face_index)
         : "";
       return src
         ? `<img class="group-stack-img" src="${escapeAttr(src)}" loading="lazy" style="z-index:${10 - i}" title="${escapeAttr(m.name)}">`

@@ -530,6 +530,7 @@
   "expandMomentStack": "writable",
   "explainPhotoFailure": "writable",
   "faceClusters": "writable",
+  "faceCropUrl": "writable",
   "faceInstallable": "writable",
   "faceRecognitionAvailable": "writable",
   "favorites": "writable",

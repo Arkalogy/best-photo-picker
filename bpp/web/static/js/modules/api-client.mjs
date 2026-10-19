@@ -43,6 +43,18 @@ export function authedSrc(url) {
 }
 
 /**
+ * The (authed) URL of one face's crop: built here, nowhere else.
+ * @param {string} thumbHash
+ * @param {number | string} faceIndex
+ * @returns {string}
+ */
+export function faceCropUrl(thumbHash, faceIndex) {
+  return authedSrc(
+    `/api/v1/faces/crop/${encodeURIComponent(thumbHash)}/${encodeURIComponent(String(faceIndex))}`
+  );
+}
+
+/**
  * Auth-aware JSON fetch with a default 30s timeout and structured
  * error throwing.
  *

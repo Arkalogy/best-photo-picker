@@ -29,7 +29,7 @@ from bpp.db.albums import (
     update_album,
 )
 from bpp.db.clip import compute_adaptive_threshold
-from bpp.errors import NotFoundError, ValidationError
+from bpp.errors import NotFoundError, PayloadTooLargeError, ValidationError
 from bpp.utils.logging import get_logger
 from bpp.web.recompute import (
     RECOMPUTE_FULL_PAYLOAD_LIMIT,
@@ -97,9 +97,7 @@ def api_recompute() -> tuple[Response, int]:
     # has no path to "send some photos but not all" — clients above
     # the cap must reissue with `delta: true`.
     if not params.get("delta"):
-        too_large = _full_payload_too_large(len(active) + len(deleted))
-        if too_large is not None:
-            return too_large
+        _refuse_full_payload_over_cap(len(active) + len(deleted))
 
     face_cluster_map = None
     if selected_faces:
@@ -221,22 +219,29 @@ def _filter_date_range(
     return active
 
 
-def _full_payload_too_large(photo_count: int) -> tuple[Response, int] | None:
-    """The 413 for a full-payload recompute over the cap, else None."""
+class _DeltaRequiredError(PayloadTooLargeError):
+    """The recompute cap's 413: re-issue with ``{"delta": true}``."""
+
+    code = "delta_required"
+
+
+def _refuse_full_payload_over_cap(
+    photo_count: int, *, what: str = "Library", photos_at: str = "/api/v1/photos"
+) -> None:
+    """A full-payload recompute over the cap is a 413 with
+    ``code: delta_required`` (the central handler shapes it)."""
     if photo_count <= RECOMPUTE_FULL_PAYLOAD_LIMIT:
-        return None
-    return jsonify(
-        {
-            "error": (
-                f"Library has {photo_count} photos; full-payload "
-                f"recompute is capped at {RECOMPUTE_FULL_PAYLOAD_LIMIT}. "
-                'Re-issue with {"delta": true} and load photos via '
-                "/api/v1/photos."
-            ),
-            "delta_required": True,
-            "photo_count": photo_count,
-        }
-    ), 413
+        return
+    raise _DeltaRequiredError(
+        "Full-payload recompute over the cap",
+        user_message=(
+            f"{what} has {photo_count} photos; full-payload "
+            f"recompute is capped at {RECOMPUTE_FULL_PAYLOAD_LIMIT}. "
+            f'Re-issue with {{"delta": true}} and load photos via {photos_at}.'
+        ),
+        photo_count=photo_count,
+        limit=RECOMPUTE_FULL_PAYLOAD_LIMIT,
+    )
 
 
 @bp.post("/api/v1/optimize")
@@ -323,20 +328,9 @@ def api_album_recompute(album_id: int) -> tuple[Response, int]:
     # all" — clients above the cap must reissue with `delta: true`
     # and load photos via /api/v1/albums/<id>/photos.
     if not params.get("delta"):
-        photo_count = len(active) + len(deleted)
-        if photo_count > RECOMPUTE_FULL_PAYLOAD_LIMIT:
-            return jsonify(
-                {
-                    "error": (
-                        f"Album has {photo_count} photos; full-payload "
-                        f"recompute is capped at {RECOMPUTE_FULL_PAYLOAD_LIMIT}. "
-                        'Re-issue with {"delta": true} and load photos via '
-                        "/api/v1/albums/<id>/photos."
-                    ),
-                    "delta_required": True,
-                    "photo_count": photo_count,
-                }
-            ), 413
+        _refuse_full_payload_over_cap(
+            len(active) + len(deleted), what="Album", photos_at="/api/v1/albums/<id>/photos"
+        )
 
     clip_embs = ctx.load_clip_embeddings() or None
     clip_threshold = None

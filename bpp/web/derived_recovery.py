@@ -60,6 +60,7 @@ def precompute_phashes(ctx: WebAppState, data: list[dict[str, Any]]) -> None:
     ]
     if not missing_fps:
         ctx.analysis_store.phash_ready.set()
+        ctx.analysis_store.recovery_failed = False  # nothing to recover: nothing failed
         return
 
     ctx.analysis_store.phash_ready.clear()
@@ -71,6 +72,7 @@ def precompute_phashes(ctx: WebAppState, data: list[dict[str, Any]]) -> None:
     # state.
     spawn_generation = ctx.analysis_store.phash_generation
     spawn_event = ctx.analysis_store.phash_ready
+    ctx.analysis_store.recovery_failed = False
 
     ctx.analysis_store.compute_thread = threading.Thread(
         target=_run_recovery, args=(ctx, missing_fps, spawn_generation, spawn_event), daemon=True
@@ -87,11 +89,16 @@ def _run_recovery(
     this logs it (Nothing Silent) and clears the running flag so the
     status endpoint doesn't show a backfill that is no longer there.
     """
+    store = ctx.analysis_store
+    store.recovery_running = True
     try:
         _recover(ctx, missing_fps, spawn_generation, spawn_event)
     except Exception:
         log.warning("Derived recovery failed; hashes may be incomplete", exc_info=True)
-        ctx.analysis_store.phash_running = False
+        store.recovery_failed = True  # /api/v1/health shows it
+        store.phash_running = False
+    finally:
+        store.recovery_running = False
 
 
 def _recover(
@@ -133,9 +140,9 @@ def _recover(
     log.info("Hash pre-computation done: %d computed, %d errors.", len(computed), errors)
 
     if computed:
-        _tag_live_photo_sidecars(conn)
-        _cluster_derived_state(conn)
-        _refresh_smart_albums(conn)
+        _tag_live_photo_sidecars(conn, ctx.analysis_store)
+        _cluster_derived_state(conn, ctx.analysis_store)
+        _refresh_smart_albums(conn, ctx.analysis_store)
     # Don't close — get_db() pool manages lifecycle via
     # close_all_connections() at shutdown.
 
@@ -236,7 +243,7 @@ def _apply_hashes_to_analysis(
     return True
 
 
-def _tag_live_photo_sidecars(conn: Any) -> None:
+def _tag_live_photo_sidecars(conn: Any, store: Any) -> None:
     """Now that every photo has a perceptual hash, tag Live Photo
     sidecars with phash confirmation.
 
@@ -265,13 +272,14 @@ def _tag_live_photo_sidecars(conn: Any) -> None:
                 n_sidecars,
             )
     except Exception:
+        store.recovery_failed = True
         log.warning(
             "Live Photo sidecar tagging failed after hashing",
             exc_info=True,
         )
 
 
-def _cluster_derived_state(conn: Any) -> None:
+def _cluster_derived_state(conn: Any, store: Any) -> None:
     """Ordered derived-state recovery (the wipe-incident fix, S4
     2026-06-12): the cluster columns MUST rebuild after hashes +
     sidecar tags exist and BEFORE the smart-album refresh reads
@@ -285,6 +293,7 @@ def _cluster_derived_state(conn: Any) -> None:
         n_dup = assign_near_duplicate_clusters(conn)
         log.info("Derived recovery: %d photos in dup clusters", n_dup)
     except Exception:
+        store.recovery_failed = True
         log.warning("Near-duplicate clustering failed after hashing", exc_info=True)
     try:
         from bpp.db.moments import assign_moment_clusters
@@ -293,10 +302,11 @@ def _cluster_derived_state(conn: Any) -> None:
         n_mom = assign_moment_clusters(conn)
         log.info("Derived recovery: %d photos in Moments", n_mom)
     except Exception:
+        store.recovery_failed = True
         log.warning("Moment clustering failed after hashing", exc_info=True)
 
 
-def _refresh_smart_albums(conn: Any) -> None:
+def _refresh_smart_albums(conn: Any, store: Any) -> None:
     """Refresh smart albums so the Duplicates album appears."""
     try:
         from bpp.db.smart_albums import refresh_smart_albums
@@ -304,6 +314,7 @@ def _refresh_smart_albums(conn: Any) -> None:
         refresh_smart_albums(conn)
         log.info("Smart albums refreshed after hash computation")
     except Exception:
+        store.recovery_failed = True
         log.warning(
             "Smart album refresh failed after hashing",
             exc_info=True,

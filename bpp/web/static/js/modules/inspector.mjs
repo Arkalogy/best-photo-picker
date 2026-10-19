@@ -14,7 +14,7 @@
  * `updateLightboxFaces` similarly.
  */
 
-import { apiFetch, authedSrc } from "./api-client.mjs";
+import { apiFetch, faceCropUrl } from "./api-client.mjs";
 import { appPrompt } from "./dialogs.mjs";
 import { esc, escapeAttr } from "./text-format.mjs";
 import { toast, toastError } from "./toast.mjs";
@@ -39,7 +39,7 @@ export async function _iphLoadFaces(thumbHash) {
 
     if (data.faces && data.faces.length > 0) {
       for (const f of data.faces) {
-        const cropUrl = authedSrc(`/api/v1/faces/crop/${thumbHash}/${f.face_index}`);
+        const cropUrl = faceCropUrl(thumbHash, f.face_index);
         const label = f.name || `Face ${f.face_index + 1}`;
         const small = f.bbox_w != null && f.bbox_w < 40;
         const clickable = f.cluster_id != null;
@@ -58,7 +58,7 @@ export async function _iphLoadFaces(thumbHash) {
         const cluster = faceClusters.find((c) => c.cluster_id === pt.cluster_id);
         const rep = cluster && cluster.representative;
         const avatarUrl = rep
-          ? authedSrc(`/api/v1/faces/crop/${esc(rep.thumb_hash)}/${rep.face_index}`)
+          ? faceCropUrl(rep.thumb_hash, rep.face_index)
           : "";
         html += `<div class="iph-face-chip iph-face-tagged" title="${escapeAttr(label + " (tagged)")}">`;
         if (avatarUrl) {
@@ -163,7 +163,7 @@ export function _iphShowTagPicker(e, thumbHash) {
       const rep = c.representative;
       const avatarUrl =
         rep && rep.thumb_hash
-          ? authedSrc(`/api/v1/faces/crop/${rep.thumb_hash}/${rep.face_index}`)
+          ? faceCropUrl(rep.thumb_hash, rep.face_index)
           : "";
       item.innerHTML =
         (avatarUrl ? `<img class="iph-tag-avatar" src="${avatarUrl}" alt="">` : "") +

@@ -9,7 +9,7 @@
  * people.mjs.
  */
 
-import { authedSrc } from "./api-client.mjs";
+import { faceCropUrl } from "./api-client.mjs";
 import { state } from "./state.mjs";
 import { esc, escapeAttr } from "./text-format.mjs";
 import { hide, show } from "./utils.mjs";
@@ -166,7 +166,7 @@ function _personCardHTML(c) {
         data-oncontextmenu="_personCtxMenuDispatch" data-arg0="${cid}"
         data-onpointerdown="_personPointerDownDispatch" data-arg0="${cid}">
         <div class="person-avatar">
-          <img src="${authedSrc(`/api/v1/faces/crop/${esc(rep.thumb_hash)}/${rep.face_index}`)}" loading="lazy" draggable="false">
+          <img src="${faceCropUrl(rep.thumb_hash, rep.face_index)}" loading="lazy" draggable="false">
         </div>
         <div class="person-label" id="person-label-${cid}">${personLabelHTML(cid, c.photo_count)}</div>
       </div>`;

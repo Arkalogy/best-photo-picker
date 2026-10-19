@@ -7,6 +7,7 @@ const appConfirm = vi.fn();
 vi.mock("../bpp/web/static/js/modules/api-client.mjs", () => ({
   apiFetch,
   authedSrc: (s) => s,
+  faceCropUrl: (/** @type {string} */ h, /** @type {number} */ i) => `/api/v1/faces/crop/${h}/${i}`,
   authEventSource: () => ({ close() {}, addEventListener() {}, onmessage: null, onerror: null }),
 }));
 vi.mock("../bpp/web/static/js/modules/dialogs.mjs", () => ({ appConfirm }));

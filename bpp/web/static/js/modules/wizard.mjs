@@ -10,7 +10,7 @@
  * `window.renderFaceGallery` once selections are confirmed.
  */
 
-import { apiFetch, authedSrc } from "./api-client.mjs";
+import { apiFetch, faceCropUrl } from "./api-client.mjs";
 import { state } from "./state.mjs";
 import { appPrompt as _appPrompt } from "./dialogs.mjs";  // unused — re-export safety
 import { applySettings, showPresetSaveForm } from "./presets.mjs";
@@ -83,7 +83,7 @@ export function wizardStep1() {
     const rep = c.representative;
     chipsHtml += `<div class="face-chip" id="wiz-chip-${c.cluster_id}"
       data-action="wizToggleFace" data-arg0="${c.cluster_id}" title="${c.photo_count} photos">
-      <img src="${authedSrc(`/api/v1/faces/crop/${esc(rep.thumb_hash)}/${rep.face_index}`)}" loading="lazy">
+      <img src="${faceCropUrl(rep.thumb_hash, rep.face_index)}" loading="lazy">
       <span class="face-count">${shortCount(c.photo_count)}</span>
     </div>`;
   }
