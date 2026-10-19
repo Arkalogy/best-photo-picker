@@ -102,7 +102,8 @@ export {
 
 /**
  * Fetch + render the unified picker into ``#face-embedder-picker``.
- * Called from ``loadModelsList`` whenever Settings → Models opens.
+ * Called whenever Settings → Models shows: the tab switch, which
+ * ``showSettings`` also goes through.
  */
 export async function loadFaceEmbedderPicker() {
   const container = document.getElementById("face-embedder-picker");

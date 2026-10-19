@@ -316,7 +316,6 @@ function openModelsSettings() {
   // Resolve the pre-flight confirm as cancelled — analyze MUST NOT
   // proceed while the user navigates to fix the licensing gap.
   /** @type {any} */ (window).resolveConfirm?.(false);
-  /** @type {any} */ (window).showSettings?.();
-  /** @type {any} */ (window).switchSettingsTab?.("models");
+  /** @type {any} */ (window).showSettings?.("models");
 }
 registerAction("openModelsSettings", openModelsSettings);

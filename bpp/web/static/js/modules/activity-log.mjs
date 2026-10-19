@@ -339,8 +339,7 @@ export function startActivityPolling() {
 export function showActivityLog() {
   /** @type {any} */
   const win = window;
-  win.showSettings?.();
-  win.switchSettingsTab?.("activity");
+  win.showSettings?.("activity");
   _renderActivityTab();
 }
 

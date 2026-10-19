@@ -20,9 +20,7 @@ const ROOT = path.resolve(__dirname, "..");
 const JS_ROOT = path.join(ROOT, "bpp/web/static/js");
 
 /** file -> function -> size when measured. Shrink-only; never raise one. */
-const BASELINE = new Map([
-  ["bpp/web/static/js/modules/modals-models-list.mjs:loadModelsList", 228],
-]);
+const BASELINE = new Map([]);
 
 /** @returns {string[]} every page module, vendor excluded, repo-relative */
 function sourceFiles() {

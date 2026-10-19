@@ -10,7 +10,6 @@ import {
   hideExportModal,
   hideImportModal,
   hideSettings,
-  loadModelsList,
   openImportBrowser,
   populateExportModes,
   showExportModal,
@@ -20,7 +19,6 @@ import {
   startImportFromModal,
   switchSettingsTab,
   toggleFollowSymlinks,
-  toggleModel,
   updateClipThresholdLabel,
   updateExportScope,
   updateFaceConfidenceLabel,
@@ -66,7 +64,6 @@ beforeEach(() => {
       <input id="thumbnail-size-slider" type="range" />
       <span id="thumbnail-size-val"></span>
       <input id="follow-symlinks-toggle" type="checkbox" />
-      <div id="models-list"></div>
       <p id="clear-photo-count" class="danger-warning"></p>
       <input id="clear-confirm-input" type="text" />
       <button id="btn-clear-library">Delete All</button>
@@ -245,91 +242,6 @@ describe("settings slider labels", () => {
     toggleFollowSymlinks(false);
     // Just verify it doesn't throw; saveSetting persists to internal cache
     expect(true).toBe(true);
-  });
-});
-
-describe("loadModelsList", () => {
-  test("renders one .model-row per model", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        jsonResp([
-          {
-            label: "Face Detector",
-            description: "Detects faces",
-            status: "ready",
-            files: [{ name: "model.pt", exists: true }],
-            size_bytes: 1024,
-            bundled: false,
-            lib_only: false,
-          },
-          {
-            label: "Pose Detector",
-            description: "Detects body pose",
-            status: "missing",
-            files: [{ name: "pose.pt", exists: false }],
-            size_bytes: 0,
-            bundled: false,
-            lib_only: false,
-          },
-        ])
-      )
-    );
-    await loadModelsList();
-    expect(document.querySelectorAll(".model-row")).toHaveLength(2);
-    // Second model is missing → "Download all missing" button shows
-    expect(document.querySelector(".model-download-all")).toBeTruthy();
-  });
-
-  test("falls back to error msg on fetch failure", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => {
-        throw new Error("boom");
-      })
-    );
-    await loadModelsList();
-    expect(document.getElementById("models-list")?.textContent).toContain("Could not load");
-  });
-});
-
-describe("toggleModel", () => {
-  test("POSTs and toasts on success", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => jsonResp({}))
-    );
-    document.body.innerHTML += `
-      <div class="model-row">
-        <span class="model-name">Face Detector</span>
-        <input type="checkbox" id="m1" data-toggle-key="face_detection" />
-      </div>
-    `;
-    const cb = /** @type {HTMLInputElement} */ (document.getElementById("m1"));
-    cb.checked = true;
-    await toggleModel(cb);
-    expect(document.querySelector("#toast-container .toast")?.textContent).toContain(
-      "Face Detector enabled"
-    );
-  });
-
-  test("reverts checkbox on API error", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => {
-        throw new Error("net");
-      })
-    );
-    document.body.innerHTML += `
-      <div class="model-row">
-        <span class="model-name">X</span>
-        <input type="checkbox" id="m2" data-toggle-key="x" />
-      </div>
-    `;
-    const cb = /** @type {HTMLInputElement} */ (document.getElementById("m2"));
-    cb.checked = true;
-    await toggleModel(cb);
-    expect(cb.checked).toBe(false);
   });
 });
 

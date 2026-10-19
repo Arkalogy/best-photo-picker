@@ -5,9 +5,6 @@ vi.mock("../bpp/web/static/js/modules/dialogs.mjs", async (importOriginal) => ({
   .../** @type {object} */ (await importOriginal()),
   appConfirm: vi.fn(async () => true),
 }));
-vi.mock("../bpp/web/static/js/modules/modals-models-list.mjs", () => ({
-  loadModelsList: vi.fn(),
-}));
 
 import { _promptFaceInstall } from "../bpp/web/static/js/modules/analysis-install.mjs";
 import {
@@ -22,10 +19,16 @@ import {
   showInterruptedInstalls,
   toastInstallError,
 } from "../bpp/web/static/js/modules/install-done.mjs";
-import { installPackage } from "../bpp/web/static/js/modules/modals-models.mjs";
+import { _installInpaintModel } from "../bpp/web/static/js/modules/editor-inpaint.mjs";
 import { restartBanner, stubState, toasts, useInstallDom } from "./_install-helpers.mjs";
 
 useInstallDom();
+afterEach(() => {
+  // The inpaint install path keeps its state on window; no test starts
+  // from another's.
+  delete (/** @type {any} */ (window)._inpaintRestartPending);
+  delete (/** @type {any} */ (window)._inpaintAvailable);
+});
 
 describe("installDoneMessage", () => {
   it("says the install works after a restart", () => {
@@ -51,45 +54,6 @@ describe("showInstallDone", () => {
     // Known at once: analysis (which loads it) is refused until the restart.
     expect(/** @type {any} */ (window).installRestartPending).toEqual(["onnxruntime"]);
     expect(toasts()).toEqual(["toast warning: X installed — restart Best Photo Picker to use it"]);
-  });
-});
-
-describe("Settings → Models install", () => {
-  it("tells the user to restart when the server says so", async () => {
-    /** @type {any} */
-    let source = null;
-    vi.stubGlobal(
-      "EventSource",
-      vi.fn(function FakeEventSource() {
-        source = this;
-        this.close = vi.fn();
-      })
-    );
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (/** @type {string} */ url) => {
-        const body = url.endsWith("/info")
-          ? { packages: ["onnxruntime"], host: "pypi.org" }
-          : { status: "started" };
-        return new Response(JSON.stringify(body), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      })
-    );
-    const btn = document.createElement("button");
-    const done = installPackage(btn, "onnxruntime", "ONNX Runtime");
-    await vi.waitFor(() => expect(source).not.toBeNull());
-    source.onmessage({
-      data: JSON.stringify({
-        type: "done",
-        restart_required: true,
-      }),
-    });
-    await done;
-    expect(toasts()).toEqual([
-      "toast warning: ONNX Runtime installed — restart Best Photo Picker to use it",
-    ]);
   });
 });
 
@@ -251,16 +215,15 @@ describe("an install whose progress connection drops", () => {
       vi.fn(async (/** @type {string} */ url) => {
         const body = url.includes("/install/state")
           ? { restart_pending: restartPending ? ["numpy"] : [] }
-          : url.endsWith("/info")
-            ? { packages: ["onnxruntime"], host: "pypi.org" }
-            : { status: "started" };
+          : { status: "started" };
         return new Response(JSON.stringify(body), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
       })
     );
-    const done = installPackage(document.createElement("button"), "onnxruntime", "ONNX Runtime");
+    document.body.innerHTML += '<div id="inpaint-status"></div>';
+    const done = _installInpaintModel(document.createElement("button"));
     await vi.waitFor(() => expect(source).not.toBeNull());
     source.onmessage({ data: JSON.stringify({ type: "start" }) });
     restartPending = true; // pip finished as the tab lost it

@@ -7,9 +7,6 @@ vi.mock("../bpp/web/static/js/modules/dialogs.mjs", async (importOriginal) => ({
   .../** @type {object} */ (await importOriginal()),
   appConfirm: vi.fn(async () => true),
 }));
-vi.mock("../bpp/web/static/js/modules/modals-models-list.mjs", () => ({
-  loadModelsList: vi.fn(),
-}));
 
 import { _promptFaceInstall } from "../bpp/web/static/js/modules/analysis-install.mjs";
 import { installAllowedNow, showInstallDone } from "../bpp/web/static/js/modules/install-done.mjs";

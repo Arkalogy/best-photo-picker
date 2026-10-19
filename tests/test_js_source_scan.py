@@ -196,31 +196,6 @@ class TestScoreFormatConsistency:
 
 
 # ---------------------------------------------------------------------------
-# Model install: generalized install endpoint and UI
-# ---------------------------------------------------------------------------
-
-
-class TestModelInstallUI:
-    """1-click model install UI must exist in modals.js."""
-
-    def test_installPackage_function_exists(self):
-        content = _modules_blob()
-        assert "function installPackage" in content
-
-    def test_install_button_rendered_for_pip_models(self):
-        """Models with install_key should get an Install button."""
-        content = _modules_blob()
-        assert "model-install-btn" in content
-        assert "canPipInstall" in content
-
-    def test_download_all_missing_button(self):
-        """A 'Download all missing models' batch button must exist."""
-        content = _modules_blob()
-        assert "model-download-all" in content
-        assert "Download all missing" in content
-
-
-# ---------------------------------------------------------------------------
 # Sidebar boost label
 # ---------------------------------------------------------------------------
 
