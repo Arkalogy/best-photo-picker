@@ -49,3 +49,40 @@ export function licenseFacts(id, restricted, loadState) {
       !!feState.unknown.license && restricted && !loadState && !feState.decided.has(id ?? ""),
   };
 }
+
+/**
+ * Why a row can't run or download, in the three places that say it
+ * (one wording each): the menu's sub-line (``short``), and the
+ * "Couldn't switch" toast's reason and fix.
+ *
+ * @param {{unavailable?: boolean, needsCommercialRights?: boolean, needsReaccept?: boolean}} state
+ * @returns {{short: string, reason: string, fix: string}}
+ */
+export function licenseBlocker(state) {
+  if (state.unavailable) {
+    return {
+      short: "No longer available",
+      reason: "it has been withdrawn",
+      fix: "pick another model",
+    };
+  }
+  if (state.needsCommercialRights) {
+    return {
+      short: "Confirm commercial-use rights first",
+      reason: "your commercial-use rights for it aren't confirmed",
+      fix: "confirm them in its ⋯ menu",
+    };
+  }
+  if (state.needsReaccept) {
+    return {
+      short: "Re-accept the license first",
+      reason: "its license terms changed",
+      fix: "re-accept them in its ⋯ menu",
+    };
+  }
+  return {
+    short: "Accept the license first",
+    reason: "its license isn't accepted",
+    fix: "accept it in its ⋯ menu",
+  };
+}

@@ -62,7 +62,7 @@ class ModelEntry:
     #: ``bpp.registry`` legal-entry id this file belongs to. ``None``
     #: only when the file's ModelSingleton supplies it; the redownload
     #: endpoint refuses a file that declares none (see
-    #: ``bpp.web.bp_models._resolve_legal_id``).
+    #: ``bpp.web.download_gates.resolve_legal_id``).
     legal_id: str | None = None
     #: The ModelSingleton that downloads this file, when ``reset`` isn't
     #: its bound method (uninstall waits on its download lock).

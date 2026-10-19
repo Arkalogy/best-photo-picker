@@ -8,7 +8,7 @@
 import { apiFetch } from "./api-client.mjs";
 
 /**
- * @typedef {{status?: string, bytes_done?: number, bytes_total?: number | null,
+ * @typedef {{status?: string, bytes_done?: number, bytes_total?: number | null, phase?: string, updated_at?: number,
  *            result?: any, error?: string | null, job?: string}} DownloadJobSnapshot
  */
 
@@ -20,10 +20,12 @@ import { apiFetch } from "./api-client.mjs";
 export function downloadProgressText(snap) {
   const done = snap.bytes_done || 0;
   const total = snap.bytes_total || 0;
-  // Every byte in: the server is checking (and maybe unpacking) the file.
-  if (total > 0 && done >= total) return "Finishing… (checking the download)";
+  // Every byte in: the server is checking, and maybe unpacking, the file.
+  if (snap.phase === "finishing") return "Finishing… (checking the download)";
   if (total > 0) return `Downloading… ${Math.floor((done / total) * 100)}%`;
   if (done > 0) return `Downloading… ${(done / (1024 * 1024)).toFixed(1)} MB`;
+  // Before the first byte: the checks and locks that come first.
+  if (snap.phase === "starting") return "Starting…";
   return "Downloading…";
 }
 
@@ -35,10 +37,12 @@ export function downloadProgressText(snap) {
  * being written) — a failed check is said at once through ``onRetry`` and
  * retried; only an answer that won't change (a 4xx such as "no such job":
  * the server restarted, nothing is running) ends the wait.
- * When it makes no progress for ``stallMs`` (5 minutes) it says so, once,
- * through ``onStall`` —
- * the row stays locked, honestly — also once every byte is in ("Finishing…"),
- * should checking or unpacking the file hang.
+ * When the job shows no sign of life for ``stallMs`` (5 minutes) — no
+ * byte, no phase change, no verification step (the server's
+ * ``updated_at``) — it says so, once, through ``onStall``; the row stays
+ * locked, honestly. A healthy wait before the first byte or a long
+ * verification after the last one keeps the clock moving; a check that
+ * truly hangs is still called stalled.
  * @param {string | undefined} jobKey
  * @param {{onProgress?: (snap: DownloadJobSnapshot) => void,
  *          onStall?: (snap: DownloadJobSnapshot) => void,
@@ -53,7 +57,8 @@ export async function waitForDownloadJob(jobKey, opts = {}) {
   const stallMs = opts.stallMs ?? 5 * 60 * 1000;
   const now = opts.now ?? (() => Date.now());
   const sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
-  let lastBytes = -1;
+  /** The job's last sign of life, as the server reports it. */
+  let lastSign = "";
   let lastChange = now();
   /** @type {DownloadJobSnapshot} */
   let snap = {};
@@ -78,9 +83,9 @@ export async function waitForDownloadJob(jobKey, opts = {}) {
     }
     if (snap.status === "done") return snap;
     if (snap.status === "error") throw new Error(snap.error || "Download failed");
-    const bytes = snap.bytes_done || 0;
-    if (bytes !== lastBytes) {
-      lastBytes = bytes;
+    const sign = `${snap.bytes_done}|${snap.phase}|${snap.updated_at}`;
+    if (sign !== lastSign) {
+      lastSign = sign;
       lastChange = now();
     }
     // (Elapsed time, not polls: a slow server stretches each poll.)

@@ -20,7 +20,7 @@ import {
 } from "./download-jobs.mjs";
 import { appConfirm } from "./dialogs.mjs";
 import { openFaceEmbedderAcceptance } from "./face-embedders-acceptance.mjs";
-import { licenseFacts } from "./face-embedders-license.mjs";
+import { licenseBlocker, licenseFacts } from "./face-embedders-license.mjs";
 import { feState } from "./face-embedders-state.mjs";
 import {
   _clearRowBusy,
@@ -48,14 +48,8 @@ function _endRowOperation(registryId, succeeded) {
  * @returns {string}
  */
 function _blockedMessage(displayName, row) {
-  const why = row.unavailable
-    ? "it has been withdrawn — pick another model."
-    : row.needsCommercialRights
-      ? "your commercial-use rights for it aren't confirmed — confirm them in its ⋯ menu."
-      : row.needsReaccept
-        ? "its license terms changed — re-accept them in its ⋯ menu."
-        : "its license isn't accepted — accept it in its ⋯ menu.";
-  return `Couldn't switch to ${displayName}: ${why}`;
+  const { reason, fix } = licenseBlocker(row);
+  return `Couldn't switch to ${displayName}: ${reason} — ${fix}.`;
 }
 
 // ── Install controls — delegate to the legacy /api/v1/models endpoints

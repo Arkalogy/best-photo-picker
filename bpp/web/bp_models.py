@@ -27,11 +27,12 @@ from typing import Any
 from flask import Blueprint, Response, jsonify, request
 
 from bpp.constants import MODEL_TOGGLE_KEYS
-from bpp.errors import BppError, ConflictError, ValidationError
+from bpp.errors import BppError, ValidationError
 
 # (Through the module, never bare names: one patch point for the tests.)
 from bpp.scoring import model_lifecycle
 from bpp.utils.logging import get_logger
+from bpp.web import download_gates
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx
 
@@ -168,99 +169,6 @@ def _model_path_url_sha(name: str) -> tuple[str, str, str | None]:
     return (os.path.expanduser(entry.path), entry.url or "", entry.sha256)
 
 
-def _resolve_legal_id(name: str) -> str:
-    """The legal-registry id a redownload file belongs to.
-
-    Read from what the scoring module declares when it registers the
-    file (``legal_id``, or its ModelSingleton's ``registry_id``) — the
-    only record of the link. Fails CLOSED: a file with no declared
-    registry entry is refused, so a download can never run ungated.
-    """
-    from bpp.scoring.model_base import ModelRegistry
-
-    model_lifecycle.ensure_builtin_model_files_registered()
-    declared = model_lifecycle.declared_legal_id(ModelRegistry.get(name))
-    if declared is None:
-        log.error("Redownload refused for %s: it declares no model-registry entry", name)
-        raise BppError(
-            f"Download refused for {name!r}",
-            user_message=(
-                f"Can't download {name} from here: its license check isn't wired up. "
-                "Use Settings → Models to review and accept the model instead."
-            ),
-            diagnostic_message=f"_resolve_legal_id: {name!r} declares no legal entry",
-            name=name,
-        )
-    return declared
-
-
-def _enforce_download_status_gate(name: str, legal_id: str | None = None) -> None:
-    """Refuse the download if the corresponding legal-registry entry's
-    ``status`` says new downloads are not allowed.
-
-    Closes the gap where a signed remote-registry
-    overlay can flip an entry to ``WITHDRAWN_NO_NEW_DOWNLOADS`` or
-    ``LEGALLY_BLOCKED`` but the Redownload button still re-fetches
-    silently. Without this gate the signed manifest's takedown power
-    is cosmetic — the user can always click Redownload to get the
-    file back.
-
-    """
-    if legal_id is None:
-        legal_id = _resolve_legal_id(name)
-    from bpp.registry import get_entry, status_behavior
-
-    entry = get_entry(legal_id)
-    if entry is None:
-        return
-    behavior = status_behavior(entry.status)
-    if behavior.new_download_allowed:
-        return
-    log.info(
-        "Download refused for %s (legal_id=%s) — status=%s",
-        name,
-        legal_id,
-        entry.status.value,
-    )
-    raise BppError(
-        f"Download refused for {name!r}",
-        user_message=(
-            f"This model is {entry.status.value.replace('_', ' ')} and new downloads are blocked."
-        ),
-        diagnostic_message=(
-            f"_enforce_download_status_gate: legal entry "
-            f"{legal_id} has status {entry.status.value} "
-            "(new_download_allowed=False)"
-        ),
-        name=name,
-        legal_entry_id=legal_id,
-        status=entry.status.value,
-    )
-
-
-def _enforce_download_license_gate(name: str, legal_id: str) -> None:
-    """Refuse BEFORE touching the existing file when the license gate
-    would block the load (not accepted, accepted under an older text,
-    or commercial mode without a rights assertion). ``download_file``
-    re-checks, but by then the old copy would already be deleted."""
-    from bpp.registry import ModelLoadBlockedError, enforce_load_policy_for
-
-    try:
-        enforce_load_policy_for(legal_id)
-    except ModelLoadBlockedError as exc:
-        log.info("Download refused for %s (legal_id=%s): %s", name, legal_id, exc)
-        raise ConflictError(
-            f"Download refused for {name!r}",
-            user_message=(
-                f"Accept the license for {name} in Settings → Models first "
-                "(or re-accept it if its terms were updated), then download."
-            ),
-            diagnostic_message=f"_enforce_download_license_gate: {exc}",
-            name=name,
-            legal_entry_id=legal_id,
-        ) from exc
-
-
 def _redownload_model(name: str) -> dict:
     """Re-download a model synchronously. Returns updated model info."""
     path, url, sha, legal_id = _prepare_redownload(name)
@@ -272,9 +180,9 @@ def _prepare_redownload(name: str) -> tuple[str, str, str | None, str]:
     path, url, sha = _model_path_url_sha(name)
     # Resolve the file name → legal entry id (fails closed when the
     # file declares none).
-    legal_id = _resolve_legal_id(name)
-    _enforce_download_status_gate(name, legal_id)
-    _enforce_download_license_gate(name, legal_id)
+    legal_id = download_gates.resolve_legal_id(name)
+    download_gates.enforce_download_status_gate(name, legal_id)
+    download_gates.enforce_download_license_gate(name, legal_id)
     return path, url, sha, legal_id
 
 

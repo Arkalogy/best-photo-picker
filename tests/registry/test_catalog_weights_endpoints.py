@@ -63,8 +63,8 @@ def gates_open():
     """The license / status checks run before the job starts; these
     tests exercise the download itself, so let them pass."""
     with (
-        patch("bpp.web.bp_models._enforce_download_license_gate"),
-        patch("bpp.web.bp_models._enforce_download_status_gate"),
+        patch("bpp.web.download_gates.enforce_download_license_gate"),
+        patch("bpp.web.download_gates.enforce_download_status_gate"),
     ):
         yield
 

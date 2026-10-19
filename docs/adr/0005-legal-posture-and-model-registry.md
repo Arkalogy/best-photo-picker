@@ -115,7 +115,7 @@ from the *rights* the MIT license grants downstream.
 - A real takedown mechanism. The signed remote manifest can transition
   any entry to `legally_blocked`, and the registry status enum is
   consumed by both the load gate (`bpp/registry/policy.py`) and the
-  download gate (`bpp/web/bp_models.py:_enforce_download_status_gate`).
+  download gate (`bpp/web/download_gates.py:enforce_download_status_gate`).
   A `legally_blocked` entry can't be downloaded or loaded, including
   copies already on disk; a withdrawn restricted entry is refused the
   same way.

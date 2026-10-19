@@ -11,7 +11,7 @@
 
 import { LEGACY_FEATURE_MAP } from "./face-embedders-catalog.mjs";
 import { _withoutGuesses } from "./face-embedders-guesses.mjs";
-import { licenseFacts } from "./face-embedders-license.mjs";
+import { licenseBlocker, licenseFacts } from "./face-embedders-license.mjs";
 import { feState } from "./face-embedders-state.mjs";
 import { _formatBytes } from "./format-helpers.mjs";
 import { escapeAttr, esc } from "./text-format.mjs";
@@ -329,13 +329,7 @@ export function _buildMenuFromState(entry, state) {
   // 2. Download / Redownload. Catalog entries route through a
   //    different action; installable entries hit the legacy
   //    redownload endpoint.
-  const acceptFirst = state.unavailable
-    ? "No longer available"
-    : state.needsCommercialRights
-      ? "Confirm commercial-use rights first"
-      : state.needsReaccept
-        ? "Re-accept the license first"
-        : "Accept the license first";
+  const acceptFirst = licenseBlocker(state).short;
   const downloadSub = downloadBlocked ? acceptFirst : null;
   if (state.hasDownloadable) {
     items.push({

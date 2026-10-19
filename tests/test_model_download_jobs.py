@@ -17,6 +17,7 @@ from unittest.mock import patch
 
 import pytest
 
+from bpp.web import download_gates
 from bpp.web import model_download_jobs as jobs
 
 
@@ -133,6 +134,59 @@ class TestJobRegistry:
         _wait("prog")
 
 
+class TestJobPhases:
+    def test_a_job_reports_where_it_is_and_its_last_sign_of_life(self, tmp_path):
+        """Before the fetch: starting. Bytes arriving: downloading.
+        Verifying the file: finishing, with the clock bumped per chunk —
+        the picker's stall clock runs from updated_at, not the bytes."""
+        import hashlib
+
+        from bpp.utils import download
+
+        body = b"y" * (2 * 1024 * 1024 + 7)
+
+        class _Resp(io.BytesIO):
+            # No Content-Length: the byte count alone can never say
+            # "finishing", so only the verification step can.
+            headers: ClassVar[dict[str, str]] = {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        gate = threading.Event()
+        seen: list[dict] = []
+
+        def work():
+            seen.append(jobs.snapshot("ph"))  # before the fetch
+            gate.wait(5)
+            with patch.object(download.urllib.request, "urlopen", return_value=_Resp(body)):
+                download.download_file(
+                    "https://x/m.onnx",
+                    str(tmp_path / "m"),
+                    registry_id="openai_clip_vit_b32_onnx",
+                    sha256=hashlib.sha256(body).hexdigest(),
+                )
+            seen.append(jobs.snapshot("ph"))  # after verification
+            return {}
+
+        jobs.start("ph", "Model", work)
+        deadline = time.time() + 5
+        while not seen and time.time() < deadline:
+            time.sleep(0.01)
+        before = seen[0]
+        assert before["phase"] == "starting"
+        gate.set()
+        _wait("ph")
+        after = seen[1]
+        assert after["bytes_total"] is None, "the size was unknown"
+        assert after["phase"] == "finishing", "set by the verification step, not the bytes"
+        assert after["bytes_done"] == len(body)
+        assert after["updated_at"] > before["updated_at"], "verification bumped the clock"
+
+
 class TestDownloadProgressCallback:
     def test_download_file_reports_progress_without_a_job(self, tmp_path):
         from bpp.utils import download
@@ -196,7 +250,9 @@ class TestRedownloadEndpoint:
             patch.object(
                 bp_models, "_model_path_url_sha", return_value=(str(target), "https://x/y", None)
             ),
-            patch.object(bp_models, "_resolve_legal_id", return_value="openai_clip_vit_b32_onnx"),
+            patch.object(
+                download_gates, "resolve_legal_id", return_value="openai_clip_vit_b32_onnx"
+            ),
             patch("bpp.scoring.model_lifecycle.reset_model_file"),
             patch("bpp.utils.download.download_file", side_effect=slow_download),
         ):
@@ -226,8 +282,8 @@ class TestEnsureWeightsEndpoint:
         weight = tmp_path / "w.onnx"
         weight.write_bytes(b"x" * 1024)
         with (
-            patch("bpp.web.bp_models._enforce_download_license_gate"),
-            patch("bpp.web.bp_models._enforce_download_status_gate"),
+            patch("bpp.web.download_gates.enforce_download_license_gate"),
+            patch("bpp.web.download_gates.enforce_download_status_gate"),
             patch(
                 "bpp.scoring.face_embed_buffalo_s.ensure_buffalo_s_model",
                 return_value=str(weight),

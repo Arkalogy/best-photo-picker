@@ -633,6 +633,7 @@
   "lbZoom": "writable",
   "lbZoomAt": "writable",
   "licenseBadge": "writable",
+  "licenseBlocker": "writable",
   "licenseFacts": "writable",
   "lightboxIdx": "writable",
   "lightboxNav": "writable",

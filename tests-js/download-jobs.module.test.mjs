@@ -24,7 +24,7 @@ describe("downloadProgressText", () => {
     );
   });
   test("every byte in: finishing (checking the files), not downloading", () => {
-    expect(downloadProgressText({ bytes_done: 100, bytes_total: 100 })).toBe(
+    expect(downloadProgressText({ phase: "finishing", bytes_done: 100, bytes_total: 100 })).toBe(
       "Finishing… (checking the download)"
     );
   });
@@ -127,6 +127,55 @@ describe("a download that stops making progress", () => {
   });
 });
 
+describe("a job's sign of life keeps the stall clock moving", () => {
+  test("a long verification (same bytes, updated_at moving) is not a stall", async () => {
+    let t = 0;
+    let polls = 0;
+    const stalls = vi.fn();
+    apiFetchMock.mockImplementation(async () =>
+      ++polls > 10
+        ? { status: "done" }
+        : {
+            status: "running",
+            phase: "finishing",
+            bytes_done: 100,
+            bytes_total: 100,
+            updated_at: polls,
+          }
+    );
+    await waitForDownloadJob("model:x", {
+      intervalMs: 1,
+      stallMs: 5,
+      now: () => (t += 1),
+      onStall: stalls,
+      sleep: noSleep,
+    });
+    expect(stalls).not.toHaveBeenCalled();
+  });
+
+  test("a wait before the first byte reads as starting and stalls only when it stops breathing", async () => {
+    let t = 0;
+    let polls = 0;
+    const stalls = vi.fn();
+    const seen = /** @type {string[]} */ ([]);
+    apiFetchMock.mockImplementation(async () =>
+      ++polls > 12
+        ? { status: "done" }
+        : { status: "running", phase: "starting", bytes_done: 0, updated_at: 1 }
+    );
+    await waitForDownloadJob("model:x", {
+      intervalMs: 1,
+      stallMs: 5,
+      now: () => (t += 1),
+      onProgress: (snap) => seen.push(downloadProgressText(snap)),
+      onStall: stalls,
+      sleep: noSleep,
+    });
+    expect(seen[0]).toBe("Starting…");
+    expect(stalls).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("a download whose bytes stop moving for a healthy reason", () => {
   test("every byte in: 'Finishing…' — and a check that hangs is still called stalled", async () => {
     let t = 0;
@@ -134,7 +183,15 @@ describe("a download whose bytes stop moving for a healthy reason", () => {
     const stalls = vi.fn();
     const seen = /** @type {string[]} */ ([]);
     apiFetchMock.mockImplementation(async () =>
-      ++polls > 10 ? { status: "done" } : { status: "running", bytes_done: 100, bytes_total: 100 }
+      ++polls > 10
+        ? { status: "done" }
+        : {
+            status: "running",
+            phase: "finishing",
+            bytes_done: 100,
+            bytes_total: 100,
+            updated_at: 1,
+          }
     );
     await waitForDownloadJob("model:x", {
       intervalMs: 1,

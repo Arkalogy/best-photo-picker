@@ -21,6 +21,7 @@ from flask import Blueprint, jsonify, request
 from bpp.errors import BppError, ValidationError
 from bpp.utils.download import plain_reason
 from bpp.utils.logging import get_logger
+from bpp.web import download_gates
 from bpp.web.share import requires_local_app
 
 log = get_logger(__name__)
@@ -147,13 +148,8 @@ def api_ensure_face_embedder_weights() -> tuple[Any, int]:
 
     # Refusals (withdrawn status, license not accepted / out of date)
     # answer immediately; only the fetch itself runs in the background.
-    from bpp.web.bp_models import (
-        _enforce_download_license_gate,
-        _enforce_download_status_gate,
-    )
-
-    _enforce_download_status_gate(registry_id, registry_id)
-    _enforce_download_license_gate(registry_id, registry_id)
+    download_gates.enforce_download_status_gate(registry_id, registry_id)
+    download_gates.enforce_download_license_gate(registry_id, registry_id)
 
     def _work() -> dict[str, Any]:
         try:

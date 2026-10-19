@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from bpp.scoring.model_base import ModelEntry, ModelRegistry
+from bpp.web import download_gates
 
 _NAME = "Plugin test model"
 
@@ -93,7 +94,7 @@ def test_plugin_model_can_be_redownloaded_by_name(plugin_model):
         "https://models.example.org/plugin.onnx",
         "0" * 64,
     )
-    assert bp_models._resolve_legal_id(_NAME) == "openai_clip_vit_b32_onnx"
+    assert download_gates.resolve_legal_id(_NAME) == "openai_clip_vit_b32_onnx"
 
 
 @pytest.mark.parametrize(

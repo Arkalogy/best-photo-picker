@@ -34,16 +34,33 @@ class DownloadJob:
     result: dict[str, Any] | None = None
     error: str | None = None
     started_at: float = field(default_factory=time.time)
+    #: Where the job is: ``starting`` (before the fetch: checks, locks),
+    #: ``downloading`` (bytes arriving), ``finishing`` (every byte in;
+    #: the file is being verified or unpacked). Set by the fetch itself.
+    phase: str = "starting"
+    #: Last sign of life (a byte, a phase change, a verification step):
+    #: the picker's stall clock runs from this, not from the byte count,
+    #: so a healthy wait before the first byte or after the last one
+    #: isn't called "no progress".
+    updated_at: float = field(default_factory=time.time)
 
     def _progress(self, done: int, total: int | None) -> None:
         self.bytes_done = done
         self.bytes_total = total
+        self.phase = "finishing" if total is not None and done >= total else "downloading"
+        self.updated_at = time.time()
+
+    def _phase(self, name: str) -> None:
+        self.phase = name
+        self.updated_at = time.time()
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "job": self.key,
             "label": self.label,
             "status": self.status,
+            "phase": self.phase,
+            "updated_at": self.updated_at,
             "bytes_done": self.bytes_done,
             "bytes_total": self.bytes_total,
             "result": self.result,
@@ -79,7 +96,7 @@ def start(key: str, label: str, work: Callable[[], dict[str, Any]]) -> tuple[Dow
     def _run() -> None:
         log.info("Download job started: %s (%s)", key, label)
         try:
-            with report_progress(job._progress):
+            with report_progress(job._progress, on_phase=job._phase):
                 job.result = work()
             job.status = "done"
             log.info("Download job finished: %s", key)

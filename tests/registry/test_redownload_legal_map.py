@@ -35,7 +35,7 @@ from bpp.registry import (
 from bpp.registry.acceptance_log import append_row, find_latest_for_model
 from bpp.scoring import model_lifecycle
 from bpp.scoring.model_base import ModelEntry, ModelRegistry
-from bpp.web import bp_models
+from bpp.web import bp_models, download_gates
 
 _ALL_SCORING_MODULES = (
     "bpp.scoring.face",
@@ -96,12 +96,12 @@ class TestStructuralLink:
 
     def test_nudenet_resolves(self) -> None:
         _import_everything()
-        assert bp_models._resolve_legal_id("NudeNet 320n") == "nudenet_320n"
+        assert download_gates.resolve_legal_id("NudeNet 320n") == "nudenet_320n"
 
     def test_mediapipe_files_resolve_to_their_entries(self) -> None:
         _import_everything()
-        assert bp_models._resolve_legal_id("Selfie segmenter") == "mediapipe_selfie_segmenter"
-        assert bp_models._resolve_legal_id("BlazeFace full-range") == (
+        assert download_gates.resolve_legal_id("Selfie segmenter") == "mediapipe_selfie_segmenter"
+        assert download_gates.resolve_legal_id("BlazeFace full-range") == (
             "mediapipe_blazeface_full_range"
         )
 

@@ -56,14 +56,30 @@ _progress = threading.local()
 
 
 @contextlib.contextmanager
-def report_progress(callback: Callable[[int, int | None], None]) -> Iterator[None]:
-    """Report bytes for every :func:`download_file` call on this thread."""
+def report_progress(
+    callback: Callable[[int, int | None], None],
+    *,
+    on_phase: Callable[[str], None] | None = None,
+) -> Iterator[None]:
+    """Report bytes for every :func:`download_file` call on this thread,
+    and (``on_phase``) where it is: ``downloading`` when the fetch
+    starts, ``finishing`` while the file is verified — repeated per
+    hashed chunk, as a sign of life for a long verification."""
     previous = getattr(_progress, "callback", None)
+    previous_phase = getattr(_progress, "on_phase", None)
     _progress.callback = callback
+    _progress.on_phase = on_phase
     try:
         yield
     finally:
         _progress.callback = previous
+        _progress.on_phase = previous_phase
+
+
+def _report_phase(name: str) -> None:
+    on_phase = getattr(_progress, "on_phase", None)
+    if on_phase is not None:
+        on_phase(name)
 
 
 #: Per-thread "a download is starting" callback set by
@@ -152,12 +168,16 @@ def _copy_with_progress(resp, f) -> None:
             callback(done, total)
 
 
-def _file_sha256(path: str) -> str:
-    """Stream-hash a file. Reads in 1 MB chunks to bound RAM."""
+def _file_sha256(path: str, *, beat: bool = False) -> str:
+    """Stream-hash a file. Reads in 1 MB chunks to bound RAM. With
+    ``beat``, each chunk is a sign of life for a job waiting on the
+    verification of what it just downloaded."""
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             h.update(chunk)
+            if beat:
+                _report_phase("finishing")
     return h.hexdigest()
 
 
@@ -236,6 +256,7 @@ def download_file(
     # take a minute on a slow network, and server.log must show whether
     # it started, finished, or died without relying on each caller.
     log.info("Downloading %s -> %s", url, dest)
+    _report_phase("downloading")
     enter_registry_download()
     try:
         try:
@@ -250,8 +271,9 @@ def download_file(
         exit_registry_download()
 
     if sha256 is not None:
+        _report_phase("finishing")
         expected = sha256.lower().strip()
-        actual = _file_sha256(dest)
+        actual = _file_sha256(dest, beat=True)
         if actual != expected:
             with contextlib.suppress(OSError):
                 os.remove(dest)

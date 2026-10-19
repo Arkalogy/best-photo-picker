@@ -1210,12 +1210,18 @@ Owner-only. Progress of a background download started by `redownload` or
 
 ```json
 { "job": "catalog:insightface_buffalo_s", "label": "insightface_buffalo_s",
-  "status": "running", "bytes_done": 52428800, "bytes_total": 127596032,
+  "status": "running", "phase": "downloading", "updated_at": 1792400000.5,
+  "bytes_done": 52428800, "bytes_total": 127596032,
   "result": null, "error": null }
 ```
 
 `status` is `running`, `done` (with `result`) or `error` (with a
-user-facing `error` message). Unknown jobs return `404`.
+user-facing `error` message). `phase` says where a running job is:
+`starting` (checks and locks before the fetch), `downloading`, or
+`finishing` (every byte in; the file is being verified or unpacked).
+`updated_at` is the job's last sign of life (a byte, a phase change, a
+verification step), so a client can tell a healthy wait before the
+first byte or after the last one from a stall. Unknown jobs return `404`.
 
 ### POST /api/v1/install/:key
 
