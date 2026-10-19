@@ -43,16 +43,28 @@ describe("pre-flight banner title (U7)", () => {
     expect(html).not.toContain("turned off");
   });
   const nudenet = { ...scrfd, name: "NudeNet", reason: "needs_reaccept" };
-  test("only stale acceptances → features were turned off", () => {
-    const html = blockedBannerHTML([nudenet]);
-    expect(html).toContain(">Some features were turned off<");
-    expect(html).not.toContain("available");
-    expect(html).toContain("license terms were updated");
+  test("only stale acceptances → features were turned off, singular for one", () => {
+    const one = blockedBannerHTML([nudenet]);
+    expect(one).toContain(">A feature was turned off<");
+    expect(one).toContain("run without it for now");
+    expect(one).not.toContain("available");
+    expect(one).toContain("license terms were updated");
+    const two = blockedBannerHTML([nudenet, { ...nudenet, name: "LaMa" }]);
+    expect(two).toContain(">Some features were turned off<");
+    expect(two).toContain("run without them for now");
   });
-  test("a stale acceptance next to a never-enabled extra says both", () => {
-    const html = blockedBannerHTML([scrfd, nudenet]);
-    expect(html).toContain("Some features were turned off; others are available");
-    expect(html).toContain("license terms were updated");
+  test("a stale acceptance next to never-enabled extras says both, by count", () => {
+    const one = blockedBannerHTML([scrfd, nudenet]);
+    expect(one).toContain(">A feature was turned off; another is available<");
+    expect(one).toContain("Its license terms were updated");
+    const more = blockedBannerHTML([
+      scrfd,
+      { ...scrfd, name: "LaMa" },
+      nudenet,
+      { ...nudenet, name: "X" },
+    ]);
+    expect(more).toContain(">Some features were turned off; others are available<");
+    expect(more).toContain("Some license terms were updated");
   });
 });
 
@@ -103,6 +115,22 @@ describe("toast after accepting (U8)", () => {
       acceptedIds: ["scrfd"],
       entries: { scrfd: { ...entry, catalog_on_disk: true } },
     });
+    expect(_acceptedToastText("scrfd", "SCRFD")).toBe("Acceptance recorded for SCRFD.");
+  });
+  test("reads the load state accept just set, not the entry's stale copy", () => {
+    // confirmFaceEmbedderAcceptance flips feState.loadStates to "ok"; the
+    // entry object still carries the pre-accept value until the picker
+    // reloads. The menu (and so the hint) must follow the fresh value.
+    const restricted = { ...entry, catalog_on_disk: false, load_state: "needs_license" };
+    _seedFaceEmbedderStateForTests({
+      requiresAckIds: ["scrfd"],
+      acceptedIds: ["scrfd"],
+      entries: { scrfd: restricted },
+    });
+    feState.loadStates.set("scrfd", "ok");
+    expect(_acceptedToastText("scrfd", "SCRFD")).toMatch(/Next: Download/);
+    // Not accepted yet (gate still refuses): Download is disabled → no hint.
+    feState.loadStates.set("scrfd", "needs_license");
     expect(_acceptedToastText("scrfd", "SCRFD")).toBe("Acceptance recorded for SCRFD.");
   });
   test("install state unknown → the menu has no Download, so no hint", () => {

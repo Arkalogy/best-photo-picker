@@ -236,7 +236,14 @@ export function _seedFaceEmbedderStateForTests(state) {
   feState.acceptedIds = new Set(state.acceptedIds || []);
   feState.reacceptIds = new Set(state.reacceptIds || []);
   feState.catalogEntryIds = new Set(state.catalogEntryIds || []);
-  if (state.entries) feState.entries = new Map(Object.entries(state.entries));
+  if (state.entries) {
+    feState.entries = new Map(Object.entries(state.entries));
+    // Mirror the picker's load: the load-gate map is filled from the
+    // same entries, so seeded tests run the path production runs.
+    for (const [id, e] of feState.entries) {
+      if (e && e.load_state) feState.loadStates.set(id, e.load_state);
+    }
+  }
   if (state.installState) {
     feState.installState = new Map(Object.entries(state.installState));
   }

@@ -359,3 +359,23 @@ def test_sidecar_build_collects_files_import_analysis_misses():
     assert ":cv2/data" in script  # Haar cascade for the last-resort detector
     for mod in ("face_recognition", "face_recognition_models", "dlib"):
         assert f'--exclude-module "{mod}"' in script, mod
+
+
+def test_download_refuses_a_dest_outside_the_output_folder(tmp_path, monkeypatch):
+    """A patch's ``dest`` is a string literal read out of the upstream
+    recipe; ``../`` in it must not write outside the sources folder."""
+    fetched = []
+    monkeypatch.setattr(src_mod, "fetch", lambda url: fetched.append(url) or b"data")
+    out = tmp_path / "third-party"
+    bad = {"component": "x", "version": "1", "url": "u", "kind": "patch", "dest": "../x.patch"}
+    fine = {**bad, "url": "first", "dest": "libheif/linux/first.patch"}
+    with pytest.raises(src_mod.SourceFetchError, match="outside"):
+        src_mod.download([fine, bad], out)
+    assert not (tmp_path / "x.patch").exists()
+    assert fetched == [], "a refused plan must not fetch anything first"
+    for folder_itself in ("", "."):
+        with pytest.raises(src_mod.SourceFetchError, match="outside"):
+            src_mod.download([{**bad, "dest": folder_itself}], out)
+    good = {**bad, "dest": "libheif/linux/x.patch"}
+    src_mod.download([good], out)
+    assert (out / "libheif/linux/x.patch").read_bytes() == b"data"

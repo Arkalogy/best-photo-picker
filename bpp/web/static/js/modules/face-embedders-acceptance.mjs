@@ -148,7 +148,9 @@ export function _acceptedToastText(modelId, displayName) {
   if (!entry) return done;
   const state = _deriveRowState(entry, feState.installState.get(modelId));
   if (state.onDisk) return done;
-  const fetch = _buildMenuFromState(entry, state).find((item) => _FETCH_ACTIONS.has(item.action));
+  const fetch = _buildMenuFromState(entry, state).find(
+    (item) => item.enabled && _FETCH_ACTIONS.has(item.action),
+  );
   return fetch ? `${done} Next: ${fetch.label} from its ⋯ menu.` : done;
 }
 

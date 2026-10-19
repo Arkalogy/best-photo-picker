@@ -151,7 +151,12 @@ export function _deriveRowState(entry, install) {
       (entry?.default_for_kind === true || entry?.runs_alongside_default === true));
 
   const restricted = entry?.requires_explicit_ack === true;
-  const loadState = entry?.load_state;
+  // One source for the load gate's decision: the picker's map, which
+  // accept / withdraw update on the spot (the entry object keeps the
+  // value from the last load until the picker reloads).
+  const loadState = feState.loadStates.has(entry?.id)
+    ? feState.loadStates.get(entry.id)
+    : entry?.load_state;
   const {
     accepted,
     licenseBlocked,

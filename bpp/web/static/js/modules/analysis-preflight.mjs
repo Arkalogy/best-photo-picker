@@ -69,18 +69,23 @@ export function blockedItemLabel(b) {
 export function blockedBannerHTML(analyzeBlocked) {
   if (!analyzeBlocked.length) return "";
   const offCount = analyzeBlocked.filter((b) => b.reason === "needs_reaccept").length;
-  const reaccept = offCount > 0;
+  const otherCount = analyzeBlocked.length - offCount;
   // Never-enabled extras next to a turned-off one: say both, so the
   // heading doesn't claim an extra that was never on got turned off.
+  // Singular / plural follow the counts, like the closing "it / them".
+  const off = offCount === 1 ? "A feature was turned off" : "Some features were turned off";
   const title =
-    offCount === analyzeBlocked.length
-      ? "Some features were turned off"
-      : reaccept
-        ? "Some features were turned off; others are available"
-        : "Optional features available";
-  const reacceptHint = reaccept
-    ? "Some license terms were updated since you accepted them — those features are off until you re-accept. "
-    : "";
+    offCount === 0
+      ? "Optional features available"
+      : otherCount === 0
+        ? off
+        : `${off}; ${otherCount === 1 ? "another is" : "others are"} available`;
+  const reacceptHint =
+    offCount === 0
+      ? ""
+      : offCount === 1
+        ? "Its license terms were updated since you accepted them — it is off until you re-accept. "
+        : "Some license terms were updated since you accepted them — those features are off until you re-accept. ";
   return `<div class="ml-consent-blocked">
         <p class="ml-consent-blocked-title">${title}</p>
         <ul class="ml-consent-blocked-list">${analyzeBlocked

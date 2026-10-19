@@ -182,11 +182,13 @@ def _best_score_per_label(output, labels: list[str]) -> dict[str, float]:
         return {}
     cx, cy, w, h = preds[keep, :4].T
     boxes = np.stack([cx - w / 2, cy - h / 2, w, h], axis=1).tolist()
-    kept = cv2.dnn.NMSBoxes(boxes, confs[keep].tolist(), _NMS_SCORE, _NMS_IOU)
+    kept_confs = confs[keep]
+    kept_ids = class_ids[keep]
+    kept = cv2.dnn.NMSBoxes(boxes, kept_confs.tolist(), _NMS_SCORE, _NMS_IOU)
     best: dict[str, float] = {}
     for i in np.asarray(kept).flatten():
-        label = labels[int(class_ids[keep][i])]
-        best[label] = max(best.get(label, 0.0), float(confs[keep][i]))
+        label = labels[int(kept_ids[i])]
+        best[label] = max(best.get(label, 0.0), float(kept_confs[i]))
     return best
 
 

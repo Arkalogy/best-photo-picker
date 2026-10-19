@@ -277,9 +277,16 @@ def rawpy_plan() -> list[dict]:
 
 def download(plan: list[dict], dest_dir: Path) -> list[dict]:
     dest_dir.mkdir(parents=True, exist_ok=True)
+    root = dest_dir.resolve()
+    # The ``dest`` of a patch is a string literal read out of the
+    # upstream recipe; keep every write inside the output folder — and
+    # refuse the whole plan before the first byte is fetched.
+    dests = [(dest_dir / item["dest"]).resolve() for item in plan]
+    for item, dest in zip(plan, dests, strict=True):
+        if dest == root or not dest.is_relative_to(root):
+            raise SourceFetchError(f"refusing {item['dest']!r}: outside {dest_dir}")
     done = []
-    for item in plan:
-        dest = dest_dir / item["dest"]
+    for item, dest in zip(plan, dests, strict=True):
         dest.parent.mkdir(parents=True, exist_ok=True)
         print(f"fetching {item['component']} {item['version']} from {item['url']}")
         data = fetch(item["url"])
