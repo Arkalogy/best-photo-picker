@@ -446,7 +446,7 @@ describe("_renderRowForTests — full row integrates the action menu", () => {
       id: "x",
       display_name: "X",
       kind: "face_detector",
-      default_for_kind: true,
+      primary_for_kind: true,
     });
     expect(html).not.toContain("fe-dot");
     // default_for_kind detector + on disk → Running, not Ready
@@ -909,7 +909,7 @@ describe("status cell + menu agree (via shared lifecycle)", () => {
       id: "insightface_scrfd_25g",
       display_name: "InsightFace SCRFD 2.5g",
       kind: "face_detector",
-      default_for_kind: true,
+      primary_for_kind: true,
     };
     const state = _deriveRowState(scrfd, {
       status: "ready",

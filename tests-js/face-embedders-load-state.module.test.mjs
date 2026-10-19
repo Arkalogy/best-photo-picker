@@ -19,7 +19,7 @@ const nudenet = {
   display_name: "NudeNet 320n",
   kind: "nudity_classifier",
   requires_explicit_ack: true,
-  default_for_kind: true,
+  primary_for_kind: true,
   is_catalog_entry: true,
   catalog_on_disk: true,
 };

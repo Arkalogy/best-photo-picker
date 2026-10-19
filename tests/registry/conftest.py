@@ -28,11 +28,16 @@ Files reset by the registry tests today:
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 
 from bpp.registry.builtins import register_builtins
 from bpp.registry.model_registry import _reset_registry_for_tests
 from bpp.registry.policy import _reset_reclassification_lock_for_tests
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture(autouse=True)
@@ -45,3 +50,18 @@ def _registry_isolation():
     _reset_registry_for_tests()
     _reset_reclassification_lock_for_tests()
     register_builtins()
+
+
+@pytest.fixture
+def registry_client(tmp_path: Path, monkeypatch):
+    """A test client over a fresh library, with the acceptance log kept
+    out of the real config dir. Shared by the registry endpoint tests."""
+    monkeypatch.setenv("BPP_ACCEPTANCE_LOG_PATH", str(tmp_path / "acceptance.jsonl"))
+    from bpp.web.app import create_app
+
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+    (workdir / "analysis.json").write_text("[]", encoding="utf-8")
+    app = create_app(workdir=str(workdir))
+    app.config["TESTING"] = True
+    return app.test_client()

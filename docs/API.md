@@ -2132,6 +2132,10 @@ removal. The two read endpoints (`acceptance/draft` and
 List every registered `ModelEntry`, grouped by license posture
 (permissive vs restricted). The Settings → Models picker renders
 this response.
+`primary_for_kind` says the runtime uses this entry for its kind: the
+kind's default, or, for a kind with no default (the content filter, the
+pet detector, object removal), the entry its loader selects; the picker
+shows a primary entry as running, other entries of the kind as backups.
 `runs_alongside_default` marks a supporting model that runs together
 with its kind's default (the BlazeFace detectors next to YuNet) rather
 than as a fallback; `ships_with_runtime` marks weights that come inside
@@ -2165,6 +2169,7 @@ withdrawn or legally blocked in the registry — accepting can't enable it, and
           "requires_explicit_ack": true,
           "commercial_use_restriction_known": false,
           "default_for_kind": true,
+          "primary_for_kind": true,
           "runs_alongside_default": false,
           "ships_with_runtime": false,
           "ack_text_kind": "permissive_attribution",

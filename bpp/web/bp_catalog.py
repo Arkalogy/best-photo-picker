@@ -11,6 +11,7 @@ acceptance/registry/BYOM endpoints stay in ``bp_model_registry``;
 
 from __future__ import annotations
 
+import functools
 import os
 from collections.abc import Callable
 from typing import Any
@@ -38,6 +39,18 @@ bp = Blueprint("catalog", __name__)
 #: catalog row has the same Review → Download → Use → Uninstall
 #: lifecycle as installable entries. Adding a new catalog entry
 #: means adding one row here.
+@functools.cache
+def _loader_selected_ids() -> frozenset[str]:
+    """Registry ids the loaders of kinds without a default select by
+    themselves (content filter, pet detector, object removal): what the
+    runtime uses, for the picker to show as running. Computed once; the
+    ids are module constants."""
+    from bpp.ai import inpainting
+    from bpp.scoring import nudity, pets
+
+    return frozenset({nudity.REGISTRY_ID, pets.REGISTRY_ID, inpainting.REGISTRY_ID})
+
+
 def _catalog_loaders() -> dict[
     str,
     tuple[Callable[[], bool], Callable[[], str], Callable[[], int]],

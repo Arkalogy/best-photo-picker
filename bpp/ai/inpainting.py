@@ -79,13 +79,16 @@ def _create_lama(verified_path):
 # panel reads this registration to surface a Redownload affordance,
 # Uninstall control, and the pinned-download consent prompt before
 # the first inpaint click.
+#: The registry entry this loader selects (its kind has no default).
+REGISTRY_ID = "lama_inpaint_research"
+
 _LAMA = ModelSingleton(
     name="LaMa inpainting",
     model_path=_LAMA_MODEL_PATH,
     model_url=_LAMA_MODEL_URL,
     model_sha256=_LAMA_MODEL_SHA256,
     create_fn=_create_lama,
-    registry_id="lama_inpaint_research",
+    registry_id=REGISTRY_ID,
     # Gated: not imported while pip writes it, nor (with the torch it
     # loads) after an install changed it, until a restart.
     import_check=requires("simple_lama_inpainting"),

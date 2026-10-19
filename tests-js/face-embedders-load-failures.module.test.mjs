@@ -129,7 +129,7 @@ describe("a supporting call that fails", () => {
     serve(["/api/v1/models"]);
     await fe.loadFaceEmbedderPicker();
     expect(picker()).toContain("Couldn't load install status");
-    const yunet = { id: "opencv_yunet", display_name: "YuNet", default_for_kind: true };
+    const yunet = { id: "opencv_yunet", display_name: "YuNet", primary_for_kind: true };
     expect(fe._deriveRowState(yunet, undefined).lifecycle).toBe(fe.ROW_LIFECYCLE.UNKNOWN);
     // Its menu offers no download or uninstall built on the guess.
     const menu = fe._buildActionMenu(yunet, undefined);

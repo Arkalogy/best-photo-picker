@@ -71,7 +71,7 @@ export const ROW_LIFECYCLE = Object.freeze({
    * Non-embedder row, on disk, license clear, NOT the kind's default.
    * Distinct from READY because the picker doesn't expose a switch
    * for non-embedder kinds (no setting names which one runs). The
-   * runtime uses default_for_kind as primary; non-default rows are
+   * server marks what runs as primary_for_kind; other rows are
    * available only as auto-fallback if the primary can't load. The
    * menu drops "Use this model" entirely for these rows so the user
    * doesn't expect an action that has no wiring.
@@ -137,10 +137,12 @@ export function _deriveRowState(entry, install) {
   //     names exactly one). The picked entry is "running" when its
   //     weights are on disk.
   //   * Other kinds (face_detector, pet, content filter, …): no
-  //     user-pickable setting. The entry marked default_for_kind in
-  //     the registry is THE one the runtime uses. Treat that as
-  //     picked so DEFAULT-marked rows read "Running" instead of
-  //     the misleading "Ready" once their weights arrive.
+  //     user-pickable setting. The server says which entry the runtime
+  //     uses (``primary_for_kind``: the kind's default, or — for a kind
+  //     with no default, like the content filter, pet detector and
+  //     object removal — the entry its loader selects). Treat that as
+  //     picked so the row reads "Running" once its weights arrive, not
+  //     "Backup". One signal, decided server-side.
   //   * Supporting models that run together with the default (the
   //     BlazeFace detectors next to YuNet) are in use too, not backups.
   const isPicked =
@@ -148,7 +150,7 @@ export function _deriveRowState(entry, install) {
       methodValue !== undefined &&
       methodValue === feState.activeFaceMethod) ||
     (!isFaceEmbedder &&
-      (entry?.default_for_kind === true || entry?.runs_alongside_default === true));
+      (entry?.primary_for_kind === true || entry?.runs_alongside_default === true));
 
   const restricted = entry?.requires_explicit_ack === true;
   // One source for the load gate's decision: the picker's map, which
@@ -224,8 +226,8 @@ export function _deriveRowState(entry, install) {
     // For face_embedder rows the user has a setting-driven switch
     // ("Use this model" → face_embedding_method) → READY signals the
     // model is pickable. For other kinds (face_detector, content
-    // filter, etc.) there's no user switch — the runtime picks the
-    // default_for_kind row, and non-default rows can only run as
+    // filter, etc.) there's no user switch — the server says which
+    // row runs (primary_for_kind), and other rows can only run as
     // auto-fallback. Reading those as READY misleads the user into
     // looking for an activate action that doesn't exist; mark them
     // BACKUP_AVAILABLE so the status + menu reflect reality.

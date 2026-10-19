@@ -45,6 +45,7 @@ _CLASS_NAMES = {_CAT_CLASS: "cat", _DOG_CLASS: "dog"}
 #         repo is named "ultralytics/assets" but ships YOLOv11
 #         alongside legacy YOLOv8 weights).
 # License: see the bpp.registry entry ``ultralytics_yolov11n_pets``.
+REGISTRY_ID = "ultralytics_yolov11n_pets"
 # To bump: replace v8.3.0 + filename + SHA together; class IDs 15
 #         and 16 are stable across COCO so no caller-side changes.
 _MODEL_URL = "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.onnx"
@@ -94,7 +95,7 @@ _yolo = ModelSingleton(
     model_url=_MODEL_URL,
     model_sha256=_MODEL_SHA256,
     create_fn=_create_yolo_session,
-    registry_id="ultralytics_yolov11n_pets",
+    registry_id=REGISTRY_ID,
     import_check=requires("onnxruntime"),
 )
 
@@ -134,7 +135,7 @@ def ensure_model() -> str:
             download_file(
                 _MODEL_URL,
                 tmp_path,
-                registry_id="ultralytics_yolov11n_pets",
+                registry_id=REGISTRY_ID,
                 sha256=_MODEL_SHA256,
             )
             os.rename(tmp_path, model_path)
@@ -456,6 +457,6 @@ ModelRegistry.register(
         url=_MODEL_URL,
         sha256=_MODEL_SHA256,
         reset=_yolo.reset,
-        legal_id="ultralytics_yolov11n_pets",
+        legal_id=REGISTRY_ID,
     )
 )

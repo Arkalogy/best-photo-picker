@@ -63,7 +63,7 @@ from bpp.registry import (
 )
 from bpp.registry.labels import group_for_entry, ui_label_for_entry
 from bpp.utils.logging import get_logger
-from bpp.web.bp_catalog import _catalog_loaders
+from bpp.web.bp_catalog import _catalog_loaders, _loader_selected_ids
 from bpp.web.share import requires_local_app
 
 log = get_logger(__name__)
@@ -100,6 +100,9 @@ def _entry_to_picker_dict(
         "commercial_use_restriction_known": (entry.commercial_use_restriction_known),
         "default_for_kind": entry.default_for_kind,
         "runs_alongside_default": getattr(entry, "runs_alongside_default", False),
+        # What the runtime uses for the kind: its default, or the entry a
+        # loader selects by id (kinds that have no default).
+        "primary_for_kind": bool(entry.default_for_kind) or entry.id in _loader_selected_ids(),
         "ships_with_runtime": getattr(entry, "ships_with_runtime", False),
         "ack_text_kind": entry.ack_text_kind,
         # The load gate's decision (ok / needs_license / needs_reaccept /
