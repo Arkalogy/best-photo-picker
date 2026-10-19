@@ -45,3 +45,26 @@ class TestPetCropCacheKey:
         assert path1 == path2
         # File not regenerated
         assert os.path.getmtime(path2) == mtime1
+
+    def test_a_database_row_keys_the_same_crop_as_a_tuple(self, tmp_path):
+        """The endpoint reads the box out of a sqlite3.Row; the key must
+        come from the four numbers, not the row object (whose str() is
+        its address, so no request ever hit the cache)."""
+        import sqlite3
+
+        from PIL import Image
+
+        img_path = str(tmp_path / "photo.jpg")
+        Image.new("RGB", (200, 200), "red").save(img_path, "JPEG")
+        crop_dir = str(tmp_path / "crops")
+        os.makedirs(crop_dir)
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT 10 AS bbox_x, 10 AS bbox_y, 50 AS bbox_w, 50 AS bbox_h"
+        ).fetchone()
+
+        from_row = _generate_pet_crop(img_path, row, crop_dir, "abc", 0)
+        from_tuple = _generate_pet_crop(img_path, (10, 10, 50, 50), crop_dir, "abc", 0)
+        assert from_row == from_tuple
+        assert len(os.listdir(crop_dir)) == 1

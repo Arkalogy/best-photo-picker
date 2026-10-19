@@ -204,7 +204,7 @@ def test_the_preview_endpoint_returns_reason_and_recovery(monkeypatch):
     from bpp.web import bp_media
 
     monkeypatch.setattr(raw, "RAWPY_AVAILABLE", False)
-    err = bp_media._raw_preview_error("abc123")
+    err = bp_media.raw_preview_error("abc123")
     assert isinstance(err, BppError)
     body = err.to_dict()
     assert body["error"] == "RAW support isn't available in this install"

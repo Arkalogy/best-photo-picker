@@ -15,12 +15,16 @@ can run them; LAN-paired phones don't get to mutate photos.
 from __future__ import annotations
 
 import os
+from typing import TYPE_CHECKING, Any
 
 from flask import Blueprint, Response, jsonify, request
 
 from bpp.utils.logging import get_logger
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx
+
+if TYPE_CHECKING:
+    from PIL import Image
 
 log = get_logger(__name__)
 
@@ -55,6 +59,36 @@ def api_inpaint_status() -> tuple[Response, int]:
             "installable": owner and _pip_available(),
         }
     ), 200
+
+
+def _open_source(ctx: Any, filepath: str, photo_id: int) -> Image.Image:
+    """The photo as an RGB image in display orientation, the space the
+    editor's mask was drawn in. A camera RAW comes through its cached
+    full-size conversion (shared with the viewer and the crops); when
+    that can't be made the error names the reason and the fix."""
+    from bpp.errors import BppError
+    from bpp.utils.raw import CHECK_FILE_RECOVERY
+    from bpp.web import box_crop
+    from bpp.web.bp_media import raw_full_jpeg_path, raw_preview_error
+
+    path_hash = ctx.thumbs.get_hash(filepath) if ctx.thumbs else ""
+    raw_full_jpeg = raw_full_jpeg_path(ctx, path_hash) if ctx.thumbs else None
+    try:
+        with box_crop.open_oriented(filepath, label="inpaint", raw_full_jpeg=raw_full_jpeg) as img:
+            return img.convert("RGB")
+    except box_crop.RawUnreadable:
+        raise raw_preview_error(path_hash, filepath, photo_id=photo_id) from None
+    except Exception as e:
+        # Anything PIL or the decoder throws (unreadable file, an image
+        # over the decompression limit, ...): one explained error, with
+        # the cause in the log.
+        raise BppError(
+            "Cannot read photo",
+            user_message="the photo couldn't be read",
+            diagnostic_message=f"open failed for photo {photo_id} ({filepath}): {e!r}",
+            photo_id=photo_id,
+            recovery=CHECK_FILE_RECOVERY,
+        ) from e
 
 
 @bp.post("/api/v1/photos/<int:photo_id>/inpaint")
@@ -118,6 +152,7 @@ def api_inpaint(photo_id: int) -> tuple[Response, int]:
             photo_id=photo_id,
         )
 
+    image = _open_source(ctx, filepath, photo_id)
     try:
         from io import BytesIO
 
@@ -125,10 +160,8 @@ def api_inpaint(photo_id: int) -> tuple[Response, int]:
 
         from bpp.ai.inpainting import inpaint
 
-        # Context managers release the file / buffer handles before
+        # The context manager releases the buffer handle before
         # inpaint() runs (which holds the converted Image objects).
-        with Image.open(filepath) as img_in:
-            image = img_in.convert("RGB")
         with Image.open(BytesIO(mask_bytes)) as mask_in:
             mask = mask_in.convert("L")
         result = inpaint(image, mask)
@@ -202,11 +235,10 @@ def api_auto_straighten(photo_id: int) -> tuple[Response, int]:
     if not os.path.isfile(filepath):
         raise NotFoundError("File not found on disk", photo_id=photo_id)
 
+    img = _open_source(ctx, filepath, photo_id)
     try:
         from PIL import Image
 
-        with Image.open(filepath) as img_in:
-            img = img_in.convert("RGB")
         # Downscale for fast analysis (max 512px on long side)
         img.thumbnail((512, 512), Image.LANCZOS)
         arr = np.array(img)

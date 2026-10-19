@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import os
 
-from bpp.constants import FACE_CROP_PADDING, FACE_CROP_SIZE, JPEG_QUALITY_CROP
+from bpp.constants import FACE_CROP_PADDING, FACE_CROP_SIZE
 from bpp.utils.logging import get_logger
+from bpp.web import box_crop
 
 log = get_logger(__name__)
 
@@ -24,8 +25,11 @@ def generate_face_crop(
     path_hash: str,
     face_index: int,
     max_long_side: int = 1024,
+    raw_full_jpeg: str | None = None,
 ) -> str | None:
-    """Generate a cropped face thumbnail. Returns the saved path, or None on failure."""
+    """Generate a cropped face thumbnail. Returns the saved path, or None
+    on failure. *raw_full_jpeg* is the cache path of a camera RAW's
+    full-size conversion (see ``box_crop.open_oriented``)."""
     bx, by, bw, bh = bbox
     bbox_tag = f"{bx}_{by}_{bw}_{bh}"
     crop_path = os.path.join(crop_dir, f"{path_hash}_{face_index}_{bbox_tag}.jpg")
@@ -42,40 +46,13 @@ def generate_face_crop(
             except OSError:
                 log.debug("Could not remove stale crop %s", old, exc_info=True)
 
-    try:
-        from PIL import Image, ImageOps
-
-        from bpp.utils.retry import retry_io
-
-        # Context manager closes the underlying file handle — these crops
-        # are generated on demand per request, so a leaked FD per crop
-        # accumulates under load.
-        with retry_io(Image.open, filepath, label="face_crop") as src:
-            img = ImageOps.exif_transpose(src)
-            orig_w, orig_h = img.size
-            long_side = max(orig_w, orig_h)
-            scale = long_side / max_long_side if long_side > max_long_side else 1.0
-
-            sx = int(bx * scale)
-            sy = int(by * scale)
-            sw = int(bw * scale)
-            sh = int(bh * scale)
-
-            pad_x = int(sw * FACE_CROP_PADDING)
-            pad_y = int(sh * FACE_CROP_PADDING)
-            x1 = max(0, sx - pad_x)
-            y1 = max(0, sy - pad_y)
-            x2 = min(orig_w, sx + sw + pad_x)
-            y2 = min(orig_h, sy + sh + pad_y)
-
-            if x1 >= x2 or y1 >= y2:
-                log.warning("Invalid crop region for %s face %d", filepath, face_index)
-                return None
-
-            crop = img.crop((x1, y1, x2, y2))
-        crop.thumbnail((FACE_CROP_SIZE, FACE_CROP_SIZE), Image.LANCZOS)
-        crop.convert("RGB").save(crop_path, "JPEG", quality=JPEG_QUALITY_CROP)
-        return crop_path
-    except Exception:
-        log.exception("Failed to generate face crop for %s", filepath)
-        return None
+    return box_crop.generate_box_crop(
+        filepath,
+        bbox,
+        crop_path,
+        padding=FACE_CROP_PADDING,
+        size=FACE_CROP_SIZE,
+        max_long_side=max_long_side,
+        label="face_crop",
+        raw_full_jpeg=raw_full_jpeg,
+    )

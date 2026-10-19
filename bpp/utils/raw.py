@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 from typing import TYPE_CHECKING
 
 from bpp.utils.logging import get_logger
@@ -39,6 +40,14 @@ def is_raw_file(filepath: str) -> bool:
     """Check if a filepath has a RAW image extension."""
     ext = os.path.splitext(filepath)[1].lower()
     return ext in RAW_EXTENSIONS
+
+
+#: The recovery hint for a photo file that can't be read right now; the
+#: viewer, the crop and the editor toasts all say the same thing.
+CHECK_FILE_RECOVERY = (
+    "check the file and that its drive is connected; details are in "
+    "Settings → Activity on this computer"
+)
 
 
 class RawSupportMissing(RuntimeError):
@@ -85,6 +94,41 @@ def decode_raw_rgb(raw_path: str, *, half_size: bool = False) -> np.ndarray:
     return retry_io(_decode_path, raw_path, half_size, label="decode_raw")
 
 
+def _read_sizes(raw_path: str) -> tuple[int, int, int]:
+    import rawpy
+
+    # open_file() alone: LibRaw fills the size table while identifying
+    # the file. imread() + postprocess() would unpack the whole frame.
+    r = rawpy.RawPy()
+    try:
+        r.open_file(raw_path)
+        sizes = r.sizes
+        return sizes.width, sizes.height, sizes.flip
+    finally:
+        r.close()
+
+
+def raw_dimensions(raw_path: str) -> tuple[int, int]:
+    """``(width, height)`` of the decoded photo in display orientation,
+    read from the RAW header without a pixel decode.
+
+    The camera's flip is applied the way :func:`decode_raw_rgb` applies
+    it: a 90 deg flip (LibRaw values 4-7) swaps the two, so these are
+    the dimensions of the decoded image that boxes were scaled from.
+    Raises :class:`RawSupportMissing` when RAW support isn't available
+    (after a one-time warning).
+    """
+    from bpp.utils.retry import retry_io
+
+    if not RAWPY_AVAILABLE:
+        _note_missing_rawpy(raw_path)
+        raise RawSupportMissing(raw_path)
+    width, height, flip = retry_io(_read_sizes, raw_path, label="raw_dimensions")
+    # LibRaw swaps the two whenever the flip has the "rotate 90" bit
+    # (values 4-7), the same test its postprocess output uses.
+    return (height, width) if flip & 4 else (width, height)
+
+
 def preview_failure() -> tuple[str, str]:
     """Why a RAW photo can't be shown, and what to do: ``(reason,
     recovery)`` for the viewer's error toast. Never the import error or a
@@ -94,11 +138,7 @@ def preview_failure() -> tuple[str, str]:
             "RAW support isn't available in this install",
             "reinstall the desktop app, or run: pip install 'bppicker[raw]'",
         )
-    return (
-        "the RAW file couldn't be converted",
-        "check the file and that its drive is connected; details are in "
-        "Settings → Activity on this computer",
-    )
+    return ("the RAW file couldn't be converted", CHECK_FILE_RECOVERY)
 
 
 def open_raw_as_pil(raw_path: str) -> Image.Image | None:
@@ -112,6 +152,106 @@ def open_raw_as_pil(raw_path: str) -> Image.Image | None:
     except Exception as e:
         log.warning("RAW open failed for %s: %s", raw_path, e)
         return None
+
+
+#: One conversion per RAW photo at a time: the viewer and a photo's face
+#: and pet crops arrive together, and each would otherwise decode the
+#: whole frame. One lock per conversion path for the life of the
+#: process (a few dozen bytes per RAW photo ever converted).
+_conversion_locks_guard = threading.Lock()
+_conversion_locks: dict[str, threading.Lock] = {}
+#: At most this many RAW decodes run at once across all requests: a
+#: People grid over a RAW library asks for dozens of crops together,
+#: and each decode holds a full-frame 16-bit buffer.
+_conversion_slots = threading.BoundedSemaphore(2)
+#: Conversions that failed, keyed by the conversion path: the RAW file's
+#: (mtime, size) and when it failed. A damaged file is not re-decoded on
+#: every request, only after it changes or, in case the failure was the
+#: environment's (disk full, drive gone), after a few minutes.
+_failed_conversions: dict[str, tuple[tuple[float, int], float]] = {}
+#: Short: the failure may have been the drive or the disk, which the
+#: toast tells the user to fix, and a retry must follow that soon.
+FAILED_CONVERSION_RETRY_SECONDS = 60.0
+#: The RAW file's (mtime, size) each conversion was made from, so a
+#: file dated in the future (where mtimes can't say) is still noticed
+#: when it is replaced.
+_converted_signatures: dict[str, tuple[float, int]] = {}
+
+
+def decode_slot() -> threading.BoundedSemaphore:
+    """The limit on simultaneous RAW decodes, for the few readers that
+    decode directly rather than through :func:`ensure_raw_jpeg`."""
+    return _conversion_slots
+
+
+def _conversion_lock(jpeg_path: str) -> threading.Lock:
+    with _conversion_locks_guard:
+        lock = _conversion_locks.get(jpeg_path)
+        if lock is None:
+            lock = _conversion_locks[jpeg_path] = threading.Lock()
+        return lock
+
+
+def _conversion_is_fresh(raw_path: str, jpeg_path: str) -> bool:
+    try:
+        jpeg_mtime = os.path.getmtime(jpeg_path)
+    except OSError:
+        return False
+    try:
+        raw_mtime = os.path.getmtime(raw_path)
+    except OSError:
+        # The RAW can't be checked right now (a drive hiccup): the
+        # conversion on disk is still the best answer.
+        return True
+    if raw_mtime > time.time():
+        # Dated in the future (camera clock ahead, mtime kept on copy):
+        # no conversion could ever be newer by mtime, so the one on disk
+        # stands unless the file it was made from has changed.
+        known = _converted_signatures.get(jpeg_path)
+        return known is None or known == _raw_signature(raw_path)
+    return jpeg_mtime >= raw_mtime
+
+
+def _raw_signature(raw_path: str) -> tuple[float, int] | None:
+    try:
+        st = os.stat(raw_path)
+    except OSError:
+        return None
+    return (st.st_mtime, st.st_size)
+
+
+def ensure_raw_jpeg(raw_path: str, jpeg_path: str) -> str | None:
+    """The full-size JPEG conversion of *raw_path* at *jpeg_path*,
+    converting when it is missing or older than the RAW file. One
+    decode then serves the viewer and every face / pet crop of the
+    photo: concurrent requests for the same photo wait for the first
+    conversion instead of each decoding, and a file whose conversion
+    failed isn't decoded again until it changes. Returns None when the
+    conversion fails (already logged)."""
+    if _conversion_is_fresh(raw_path, jpeg_path):
+        return jpeg_path
+    with _conversion_lock(jpeg_path):
+        if _conversion_is_fresh(raw_path, jpeg_path):
+            return jpeg_path  # converted by the request we waited for
+        signature = _raw_signature(raw_path)
+        failed = _failed_conversions.get(jpeg_path)
+        if (
+            signature is not None
+            and failed is not None
+            and failed[0] == signature
+            and time.monotonic() - failed[1] < FAILED_CONVERSION_RETRY_SECONDS
+        ):
+            return None  # same damaged file as a moment ago
+        with _conversion_slots:
+            out = convert_raw_to_jpeg(raw_path, jpeg_path)
+        if out is None:
+            if signature is not None:
+                _failed_conversions[jpeg_path] = (signature, time.monotonic())
+            return None
+        _failed_conversions.pop(jpeg_path, None)
+        if signature is not None:
+            _converted_signatures[jpeg_path] = signature
+        return out
 
 
 def convert_raw_to_jpeg(raw_path: str, output_path: str, quality: int = 92) -> str | None:

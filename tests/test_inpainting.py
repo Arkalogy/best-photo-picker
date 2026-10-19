@@ -8,6 +8,7 @@ import os
 from io import BytesIO
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 from PIL import Image
 
@@ -323,3 +324,75 @@ class TestLamaCatalogObservability:
             patch.object(inpainting._LAMA, "reset"),
         ):
             assert inpainting.remove_local_weights() == 0
+
+
+class TestRawSource:
+    def _add_raw_photo(self, inpaint_app, tmp_path):
+        nef = tmp_path / "library" / "shot.NEF"
+        nef.write_bytes(b"not really raw")
+        with inpaint_app.app_context():
+            from bpp.web.state import get_ctx
+
+            conn = get_ctx().get_conn()
+            conn.execute(
+                "INSERT INTO photos (filepath, original_filename, sha256, file_size, file_mtime)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (str(nef), "shot.NEF", "def456", 1024, 1700000000.0),
+            )
+            conn.commit()
+            return conn.execute("SELECT id FROM photos WHERE filepath = ?", (str(nef),)).fetchone()[
+                0
+            ]
+
+    def test_a_raw_photo_without_raw_support_says_why(
+        self, inpaint_app, inpaint_client, tmp_path, monkeypatch
+    ):
+        """The editor opened a RAW from its converted preview; the inpaint
+        tool used to open the RAW file itself with PIL and fail with a
+        bare 'Inpainting failed'."""
+        from bpp.utils import raw
+
+        monkeypatch.setattr(raw, "RAWPY_AVAILABLE", False)
+        monkeypatch.setattr(raw, "_missing_rawpy_once", __import__("threading").Lock())
+        photo_id = self._add_raw_photo(inpaint_app, tmp_path)
+        mask_b64 = base64.b64encode(_make_mask()).decode()
+        with patch("bpp.ai.inpainting.is_available", return_value=True):
+            resp = inpaint_client.post(
+                f"/api/v1/photos/{photo_id}/inpaint",
+                data=json.dumps({"mask": mask_b64}),
+                content_type="application/json",
+            )
+        reason, recovery = raw.preview_failure()
+        body = resp.get_data(as_text=True)
+        assert resp.status_code >= 400
+        assert reason in body and recovery in body
+        assert "Inpainting failed" not in body
+
+    def test_a_raw_photo_is_inpainted_from_its_conversion(
+        self, inpaint_app, inpaint_client, tmp_path, monkeypatch
+    ):
+        from bpp.utils import raw
+
+        decodes = []
+
+        def fake_decode(path, **kw):
+            decodes.append(path)
+            return np.full((64, 64, 3), 200, dtype=np.uint8)
+
+        monkeypatch.setattr(raw, "RAWPY_AVAILABLE", True)
+        monkeypatch.setattr(raw, "decode_raw_rgb", fake_decode)
+        photo_id = self._add_raw_photo(inpaint_app, tmp_path)
+        mask_b64 = base64.b64encode(_make_mask()).decode()
+        fake_result = Image.new("RGB", (64, 64), "blue")
+        with (
+            patch("bpp.ai.inpainting.is_available", return_value=True),
+            patch("bpp.ai.inpainting.inpaint", return_value=fake_result) as inp,
+        ):
+            resp = inpaint_client.post(
+                f"/api/v1/photos/{photo_id}/inpaint",
+                data=json.dumps({"mask": mask_b64}),
+                content_type="application/json",
+            )
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        assert decodes, "the RAW was decoded through the shared conversion"
+        assert inp.call_args[0][0].size == (64, 64)

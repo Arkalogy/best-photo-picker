@@ -127,8 +127,8 @@ export function _onMediaError(event) {
   const tag = target.tagName;
   if (tag !== "IMG" && tag !== "VIDEO") return;
   const url = String(target.src);
-  if (!/\/(thumb|photo|video)\//.test(url)) return;
-  if (tag === "IMG" && /\/photo\//.test(url)) explainPhotoFailure(url);
+  if (!/\/(thumb|photo|video|crop)\//.test(url)) return;
+  if (tag === "IMG" && (/\/photo\//.test(url) || _CROP_URL.test(url))) explainPhotoFailure(url);
   const now = Date.now();
   if (now - _lastMediaProbeAt < 5000) return;
   _lastMediaProbeAt = now;
@@ -137,8 +137,10 @@ export function _onMediaError(event) {
   apiFetch("/api/v1/status").catch(() => {});
 }
 
-/** Full-size photos whose load failure was already explained this session. */
+/** Full-size photos (or a photo's crops) whose load failure was already explained this session. */
 const _explainedPhotos = new Set();
+/** A face or pet crop URL: `/api/v1/faces/crop/<hash>/<index>` or `/api/v1/pets/crop/<hash>/<index>`. */
+const _CROP_URL = /\/api\/v1\/(faces|pets)\/crop\//;
 
 /**
  * Explain why a full-size photo failed to load, once per photo: an
@@ -153,8 +155,14 @@ const _explainedPhotos = new Set();
 export async function explainPhotoFailure(url) {
   const base = typeof location !== "undefined" && location.origin ? location.origin : "http://localhost";
   const u = new URL(url, base);
-  if (_explainedPhotos.has(u.pathname)) return;
-  _explainedPhotos.add(u.pathname);
+  // Crops fail together (an unplugged drive, RAW support missing: every
+  // person card at once): explain face crops once per session and pet
+  // crops once, not once per card.
+  const crop = _CROP_URL.exec(u.pathname);
+  const key = crop ? `crop:${crop[1]}` : u.pathname;
+  const action = crop ? (crop[1] === "faces" ? "show this face" : "show this pet") : "show this photo";
+  if (_explainedPhotos.has(key)) return;
+  _explainedPhotos.add(key);
   let resp;
   try {
     resp = await fetch(u.pathname + u.search, {
@@ -162,11 +170,11 @@ export async function explainPhotoFailure(url) {
       signal: AbortSignal.timeout(30000),
     });
   } catch {
-    _explainedPhotos.delete(u.pathname); // offline / timed out: nothing to explain yet
+    _explainedPhotos.delete(key); // offline / timed out: nothing to explain yet
     return;
   }
   if (resp.ok) {
-    _explainedPhotos.delete(u.pathname);
+    _explainedPhotos.delete(key);
     resp.body?.cancel().catch(() => {});
     return;
   }
@@ -177,7 +185,7 @@ export async function explainPhotoFailure(url) {
   );
   err.status = resp.status;
   err.body = body;
-  toastError("show this photo", err, body.context?.recovery || "try again");
+  toastError(action, err, body.context?.recovery || "try again");
 }
 
 if (typeof document !== "undefined") {

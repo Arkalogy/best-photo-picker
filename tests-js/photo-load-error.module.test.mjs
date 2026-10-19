@@ -29,7 +29,7 @@ describe("full-size photo load failure → explained once", () => {
     toastError.mockClear();
     vi.stubGlobal("location", { reload: vi.fn(), origin: "http://localhost" });
     fetchMock = vi.fn(async (url) =>
-      String(url).startsWith("/photo/")
+      /^\/(photo\/|api\/v1\/(faces|pets)\/crop\/)/.test(String(url))
         ? respond(500, {
             error: "RAW support isn't available in this install",
             code: "internal",
@@ -97,5 +97,17 @@ describe("full-size photo load failure → explained once", () => {
     const photoFetches = fetchMock.mock.calls.filter((c) => String(c[0]).startsWith("/photo/"));
     expect(photoFetches.map((c) => String(c[0]))).toEqual(["/photo/p1?_token=x"]);
     expect(fetchMock.mock.calls.some((c) => String(c[0]).startsWith("/thumb/"))).toBe(false);
+  });
+
+  test("failing crops are explained once per session, not once per card", async () => {
+    await api.explainPhotoFailure("http://localhost/api/v1/faces/crop/abc/0?_token=x");
+    await api.explainPhotoFailure("http://localhost/api/v1/faces/crop/abc/1?_token=x");
+    await api.explainPhotoFailure("http://localhost/api/v1/faces/crop/other/0?_token=x");
+    await api.explainPhotoFailure("http://localhost/api/v1/pets/crop/abc/0?_token=x");
+    await api.explainPhotoFailure("http://localhost/api/v1/pets/crop/third/2?_token=x");
+    expect(toastError).toHaveBeenCalledTimes(2);
+    expect(toastError.mock.calls[0][0]).toBe("show this face");
+    expect(toastError.mock.calls[1][0]).toBe("show this pet");
+    expect(toastError.mock.calls[0][2]).toBe("reinstall the desktop app");
   });
 });
