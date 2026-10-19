@@ -414,11 +414,19 @@ def do_registry_verify(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+    # json.loads on purpose, not safe_json_loads: this is the signer's
+    # own file and the decode error (line/column) is the point.
     try:
         manifest = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         print(
             f"bpp model registry verify: {path} is not valid JSON: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+    if not isinstance(manifest, dict):
+        print(
+            f"bpp model registry verify: {path} is not a JSON object",
             file=sys.stderr,
         )
         return 1
@@ -429,6 +437,7 @@ def do_registry_verify(args: argparse.Namespace) -> int:
             f"OK: manifest at {path} verifies against "
             f"{len(result.valid_signatures)} bundled key(s): "
             f"{', '.join(sorted(result.valid_signatures))}\n"
+            f"  manifest_version: {result.manifest_version}\n"
             f"  entries: {len(result.entries)}"
         )
         return 0

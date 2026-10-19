@@ -93,13 +93,14 @@ Every published manifest must:
 
 - Carry at least one Ed25519 signature from a key in `bpp.registry.trusted_keys.TRUSTED_KEYS`; any signature that fails to verify rejects the whole manifest
 - Meet the signature **quorum** (`overlay.DUAL_SIG_REQUIREMENT`, counted by *distinct* key) to relax any entry's `commercial_use_restriction_known`, `requires_explicit_ack`, or `bppicker_commercial_default_allowed`, or to introduce a new restricted or click-through entry
+- Carry a `manifest_version`, a positive integer strictly higher than the previously published manifest's (the publishing script checks this against the live manifest). Each machine remembers the highest version it has applied per registry URL (a small state file under the cache directory, `bpp.registry.manifest_rollback`) and refuses anything lower, so a replayed older signed manifest cannot bring back a state the maintainer has since tightened. A manifest without the field is refused outright. A refused manifest, like a failed fetch, leaves the bundled baseline; keeping the last applied manifest on disk for those cases is planned.
 - Be verified end-to-end via `bpp model registry verify <path>` before publication
 
 **Current state of the quorum.** One signing key is trusted today, and `DUAL_SIG_REQUIREMENT` is **1** to match. In practice that means any manifest signed by that one key can relax a restriction or add a new restricted or click-through entry. The dual-signature mechanism is built in: the verifier counts distinct keys (one key signing twice still counts once), so requiring two keys means adding a second key to `TRUSTED_KEYS` and raising `DUAL_SIG_REQUIREMENT` to 2 in the same release. Neither happens automatically.
 
 Two narrower points about what the overlay checks:
 
-- **Status is not quorum-gated.** A verified manifest can change an entry's `status` in either direction, including moving a `legally_blocked` entry back to `available`.
+- **Status is not quorum-gated.** A verified manifest can change an entry's `status` in either direction, including moving a `legally_blocked` entry back to `available` — but only a newer manifest can, never a replayed older one (see `manifest_version` above).
 - **The runtime reclassification lock is in-process only.** `bpp.registry.policy.assert_no_silent_reclassification` refuses a permissive version of an id that was applied as restricted earlier in the same process. Built-in entries are not seeded into it, so for built-ins the quorum is the only check.
 
 Trusted keys live in source (`bpp/registry/trusted_keys.py`). Rotating a key means shipping a new BPP release with an updated tuple.

@@ -74,7 +74,10 @@ convention; falls back to `~/.cache/bpp` if `XDG_CACHE_HOME` unset).
 
 **What it does:** roots the directory tree where bpp stores
 downloaded ML weights, CLIP image embeddings, tokenizer vocab files,
-and other per-host caches. Useful for:
+and other per-host caches, including the remote-registry state file
+(registry-overlay-state.json: the highest signed-manifest version this
+machine has applied from each registry URL, which the anti-rollback
+check in `bpp/registry/manifest_rollback.py` compares against). Useful for:
 
 - **Docker volumes:** mount a single named volume at a stable path
   (`-v bpp-cache:/var/lib/bpp/cache`) and point `BPP_CACHE_DIR` at it.
@@ -396,7 +399,10 @@ manifest. A misconfigured URL pointing at an attacker-controlled host
 still cannot inject malicious entries — every manifest must verify
 against the bundled trusted-key set, which the override does NOT
 change. The cryptographic boundary holds; the URL override only
-changes the transport.
+changes the transport. The anti-rollback check also still applies,
+per URL: a mock registry never shares a mark with the real one, but
+serving the same URL again with a lower `manifest_version` is refused
+until you delete registry-overlay-state.json under `BPP_CACHE_DIR`.
 
 The reader lives in `bpp/registry/remote_registry.py`.
 

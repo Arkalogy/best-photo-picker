@@ -65,7 +65,7 @@ restricted entries keep their own dialog. The same definitions are used in `MODE
 | Use-context gate | First-launch choice (Personal / Research / Commercial / Unspecified); restricted models are hard-blocked in commercial mode unless the user asserts separate rights per model |
 | Bring Your Own Model | User-supplied ONNX files, with a separate BYOM disclaimer + checkbox |
 | Model removal | Derived-data purge (face embeddings tagged with `producing_model_id`); `bpp model remove` and `POST /api/v1/model-registry/removal` both refuse to run without an explicit purge-or-keep choice |
-| Signed remote registry | Ed25519-signed manifest fetched from an allowlisted GitHub Pages domain; restriction-class relaxations and new restricted or click-through entries need a quorum of distinct trusted keys (`DUAL_SIG_REQUIREMENT`, currently 1 because one key is trusted) |
+| Signed remote registry | Ed25519-signed manifest fetched from an allowlisted GitHub Pages domain; restriction-class relaxations and new restricted or click-through entries need a quorum of distinct trusted keys (`DUAL_SIG_REQUIREMENT`, currently 1 because one key is trusted); each machine keeps the highest `manifest_version` it has applied and refuses a replayed older manifest |
 | Surface parity | One constant (`BPP_POSTURE_STATEMENT`) is rendered directly in the Settings → Models banner; tests check that the README (also the PyPI description) carries its opening sentence and closing clause and that the canonical disclaimer printed by the dialog and `bpp model accept` keeps its key phrases; restricted-model names are kept out of README and CHANGELOG |
 | Contributor policy | `MODEL_POLICY.md`, `CONTRIBUTING.md`, and `CODEOWNERS` routing reviews of `bpp/registry/**`, `bpp/scoring/face_*.py`, `bpp/scoring/*_embed*.py`, `bpp/utils/download.py` to the maintainer |
 
@@ -155,6 +155,9 @@ from the *rights* the MIT license grants downstream.
 - `tests/registry/test_signed_manifest.py` — signature verification,
   distinct-key counting, and the quorum on restriction-class
   relaxations (the below-quorum cases run once the quorum is above 1).
+- `tests/registry/test_manifest_rollback.py` — a manifest needs a
+  positive `manifest_version`; the startup overlay refuses one below
+  the highest applied on the machine and records a higher one.
 - `tests/registry/test_surface_parity.py` — the Settings banner
   renders the posture constant, the README carries its opening and
   closing, the canonical disclaimer keeps its key phrases; README and

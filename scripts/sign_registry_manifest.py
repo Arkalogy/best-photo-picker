@@ -34,10 +34,15 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 import sys
 from pathlib import Path
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+# A signing tool must not fetch + apply the live overlay (and bump the
+# local anti-rollback mark) just because it imports bpp.registry.
+os.environ.setdefault("BPP_DISABLE_REMOTE_REGISTRY", "1")
 
 from bpp.registry import sign_manifest
 

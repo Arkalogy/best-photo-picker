@@ -97,6 +97,7 @@ from bpp.registry.labels import (
     plain_english_status_label,
     ui_label_for_entry,
 )
+from bpp.registry.manifest_rollback import record_applied_version, rollback_reason
 from bpp.registry.model_registry import (
     LicenseClass,
     ModelEntry,
@@ -126,6 +127,7 @@ from bpp.registry.policy import (
 from bpp.registry.remote_registry import (
     ALLOWED_HOSTS,
     DEFAULT_REMOTE_REGISTRY_URL,
+    _resolve_effective_url,
     fetch_remote_manifest,
 )
 from bpp.registry.removal import (
@@ -186,11 +188,14 @@ def _try_apply_remote_overlay() -> None:
     for tests, CI runs, and air-gapped environments where the
     fetch attempt would just be wasted time.
     """
-    import json
     import os
+
+    from bpp.utils.json_utils import safe_json_loads
+    from bpp.utils.logging import get_logger
 
     if os.environ.get("BPP_DISABLE_REMOTE_REGISTRY"):
         return
+    log = get_logger(__name__)
     # If the bundled trust set is still all placeholders (i.e. this
     # checkout has not yet been re-keyed for a real release), the
     # verifier could never accept a remote manifest anyway — every
@@ -206,37 +211,37 @@ def _try_apply_remote_overlay() -> None:
         # caught and returns None. This catch handles the
         # genuinely-unexpected path (programming error) without
         # taking down BPP startup.
-        from bpp.utils.logging import get_logger as _get_logger
-
-        _get_logger(__name__).warning(
+        log.warning(
             "Unexpected error fetching remote registry; using bundled baseline only",
             exc_info=True,
         )
         return
     if data is None:
         return
-    try:
-        manifest = json.loads(data.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        from bpp.utils.logging import get_logger as _get_logger
-
-        _get_logger(__name__).warning(
-            "Remote registry response is not valid JSON: %s (using bundled baseline)",
-            exc,
-        )
+    manifest = safe_json_loads(data, expected_type=dict, context="remote registry manifest")
+    if manifest is None:
+        log.warning("Remote registry response is not a JSON object (using bundled baseline)")
         return
+    source_url = _resolve_effective_url()
     result = verify_manifest(manifest, trusted_keys=trusted_key_list())
     if not result.is_valid:
-        from bpp.utils.logging import get_logger as _get_logger
-
-        _get_logger(__name__).warning(
+        log.warning(
             "Remote registry manifest failed verification; using bundled baseline only. Errors: %s",
             result.errors,
         )
         return
+    rollback = rollback_reason(result.manifest_version, source_url=source_url)
+    if rollback:
+        log.warning("Remote registry manifest refused; using bundled baseline only. %s", rollback)
+        return
     apply_overlay(
         list(result.entries),
         valid_signature_count=len(result.valid_signatures),
+    )
+    record_applied_version(
+        result.manifest_version,
+        source_url=source_url,
+        generated_at=manifest.get("generated_at"),
     )
 
 

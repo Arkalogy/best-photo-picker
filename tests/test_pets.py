@@ -28,6 +28,8 @@ class TestIsAvailable:
 
 class TestModelManagement:
     def test_get_model_dir_creates_directory(self, tmp_path, monkeypatch):
+        # This pins the XDG fallback; an exported BPP_CACHE_DIR outranks it.
+        monkeypatch.delenv("BPP_CACHE_DIR", raising=False)
         monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
         from bpp.scoring.pets import _get_model_dir
 

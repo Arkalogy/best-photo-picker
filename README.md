@@ -412,8 +412,9 @@ photos; the only one that reveals anything about them is map tiles
   status changes to a model (for example, blocking one after a
   takedown) can reach you without a new release. It is a plain GET
   with a fixed User-Agent and no library data; it isn't cached on
-  disk, times out after 10 seconds, and falls back to the built-in
-  list on any failure. Turn it off by setting the environment
+  disk (only the number of the newest file applied is kept, so an
+  older one can't be replayed), times out after 10 seconds, and falls
+  back to the built-in list on any failure. Turn it off by setting the environment
   variable `BPP_DISABLE_REMOTE_REGISTRY=1` (see
   [docs/configuration.md](https://github.com/Arkalogy/best-photo-picker/blob/main/docs/configuration.md)); there is no
   Settings toggle.

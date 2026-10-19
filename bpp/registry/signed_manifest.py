@@ -29,7 +29,14 @@ What the verifier enforces
    guard in
    :func:`bpp.registry.policy.assert_no_silent_reclassification`
    is a narrower, in-process check.
-3. **Source-domain allowlist** — see :mod:`bpp.registry.remote_registry`
+3. **A positive integer ``manifest_version``.** The maintainer
+   raises it on every publication. The verifier only checks the
+   field is present and well-formed; :mod:`bpp.registry.manifest_rollback`
+   compares it with the highest version this machine has applied
+   from the same URL and refuses anything lower, so a replayed older
+   manifest cannot bring back a state the maintainer has since
+   tightened.
+4. **Source-domain allowlist** — see :mod:`bpp.registry.remote_registry`
    for the fetch-side check that the manifest URL itself comes
    from an allowed host.
 
@@ -58,10 +65,6 @@ Out of scope
 * Key rotation tooling. Rotation tooling is deferred to a later
   minor release. The bundled key set is committed; rotating it
   ships in a BPP release.
-* Anti-rollback nonces / monotonic timestamps. Today the
-  verifier accepts any signed manifest the bundled keys signed.
-  A future hardening pass can add timestamp-monotonic checks if
-  rollback becomes a realistic concern.
 * Network fetch. See :mod:`bpp.registry.remote_registry` for the
   fetch-side allowlist + TLS-only check.
 """
@@ -141,6 +144,8 @@ class ManifestVerificationResult:
     check a restriction relaxation against the signature quorum.
     ``entries`` — the entries as raw dicts. The overlay merger
     decodes them into :class:`ModelEntry` objects.
+    ``manifest_version`` — the manifest's publication number (0
+    when missing or malformed, which also makes ``is_valid`` False).
     ``errors`` — collected error strings when ``is_valid`` is
     ``False``.
     """
@@ -148,7 +153,20 @@ class ManifestVerificationResult:
     is_valid: bool
     valid_signatures: tuple[str, ...] = field(default_factory=tuple)
     entries: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    manifest_version: int = 0
     errors: tuple[str, ...] = field(default_factory=tuple)
+
+
+def _parse_manifest_version(raw: Any) -> tuple[int, str]:
+    """Returns ``(version, error_or_empty)``; ``version`` is 0 on error."""
+    if raw is None:
+        return 0, (
+            "manifest has no manifest_version; every published manifest carries a "
+            "positive integer that rises on each publication (anti-rollback)"
+        )
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1:
+        return 0, f"manifest_version must be a positive integer, got {raw!r}"
+    return raw, ""
 
 
 def canonical_manifest_bytes(manifest: dict[str, Any]) -> bytes:
@@ -284,6 +302,10 @@ def verify_manifest(
     if schema != MANIFEST_SCHEMA_VERSION:
         errors.append(f"manifest schema_version is {schema!r}; expected {MANIFEST_SCHEMA_VERSION}")
 
+    manifest_version, version_error = _parse_manifest_version(manifest.get("manifest_version"))
+    if version_error:
+        errors.append(version_error)
+
     entries_raw = manifest.get("entries")
     if not isinstance(entries_raw, list):
         errors.append("manifest entries field missing or not a list")
@@ -329,6 +351,7 @@ def verify_manifest(
             is_valid=False,
             valid_signatures=tuple(valid_sig_ids),
             entries=tuple(e for e in entries_raw if isinstance(e, dict)),
+            manifest_version=manifest_version,
             errors=tuple(errors),
         )
 
@@ -336,4 +359,5 @@ def verify_manifest(
         is_valid=True,
         valid_signatures=tuple(valid_sig_ids),
         entries=tuple(entries_raw),
+        manifest_version=manifest_version,
     )

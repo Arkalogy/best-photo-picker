@@ -96,6 +96,11 @@ def _build_mock_manifest() -> dict:
     applies."""
     return {
         "schema_version": 1,
+        # The app refuses a version below the highest it has applied
+        # from the same URL (bpp/registry/manifest_rollback.py). Raise
+        # this, or delete registry-overlay-state.json under the cache
+        # dir, when re-serving a changed mock at the same URL.
+        "manifest_version": 1,
         "generated_at": "2026-06-03T18:00:00+00:00",
         "entries": [
             {

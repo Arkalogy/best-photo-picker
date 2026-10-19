@@ -73,6 +73,7 @@ def _generate_key() -> tuple[str, Ed25519PrivateKey, TrustedKey]:
 def _base_manifest() -> dict:
     return {
         "schema_version": 1,
+        "manifest_version": 1,
         "generated_at": "2026-06-03T00:00:00+00:00",
         "entries": [
             {

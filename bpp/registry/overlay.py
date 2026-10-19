@@ -24,7 +24,9 @@ What the merger enforces
    ``withdrawn_no_new_downloads``, ``legally_blocked``) is the
    intended use; note that the merger does not compare status
    against the baseline, so a verified manifest can also move an
-   entry back to ``available``.
+   entry back to ``available`` — a newer one, that is: the startup
+   path refuses a manifest older than the last one applied
+   (:mod:`bpp.registry.manifest_rollback`), so a replay cannot.
 4. **Failing entries are skipped, not fatal.** An entry that
    misses the quorum (or trips the runtime reclassification lock)
    is logged and skipped; the rest of the overlay still applies.
