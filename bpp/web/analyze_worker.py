@@ -69,7 +69,7 @@ for _var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
 import os  # noqa: E402
 from typing import Any  # noqa: E402
 
-from bpp.config import DEFAULTS  # noqa: E402
+from bpp.config import DEFAULTS, cfg_get  # noqa: E402
 from bpp.io_scan import scan_images  # noqa: E402
 from bpp.scoring.aggregate import (  # noqa: E402
     DB_NAME,
@@ -255,7 +255,7 @@ class AnalyzeWorker(BackgroundWorker):
         return scan_images(
             input_dir,
             extensions=extensions,
-            follow_symlinks=config.get("follow_symlinks", False),
+            follow_symlinks=cfg_get(config, "follow_symlinks"),
             recursive=recursive,
             on_progress=_on_scan_progress,
         )
@@ -342,7 +342,7 @@ class AnalyzeWorker(BackgroundWorker):
             )
 
         # --- Phase 3: CLIP embedding extraction ---
-        if config.get("model_clip", True) and not self._cancelled.is_set():
+        if cfg_get(config, "model_clip") and not self._cancelled.is_set():
             self._emit(
                 {
                     "type": "phase",

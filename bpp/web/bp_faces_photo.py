@@ -20,6 +20,7 @@ import os
 
 from flask import Blueprint, Response, jsonify, send_file
 
+from bpp.config import cfg_get
 from bpp.db.photos import get_photo_id_by_path
 from bpp.errors import NotFoundError
 from bpp.media_types import MediaKind, media_kind_from_path
@@ -136,7 +137,7 @@ def api_faces_for_photo(path_hash: str) -> tuple[Response, int]:
     # Pre-v40 rows have extraction_max_long_side=NULL; we fall back to
     # the current config and log once per request so the user knows
     # to re-extract for correctness.
-    current_max_long = ctx.config.get("max_long_side", 1024) if ctx.config else 1024
+    current_max_long = cfg_get(ctx.config, "max_long_side")
     orig_w, orig_h = _oriented_dims(filepath)
 
     def _detector_dims(row_max_long: int | None) -> tuple[int, int]:
@@ -237,7 +238,7 @@ def api_face_crop(path_hash: str, face_index: int) -> Response | tuple[Response,
     # Pre-v40 rows have NULL → fall back to current config.
     max_long_side = row["extraction_max_long_side"]
     if max_long_side is None:
-        max_long_side = ctx.config.get("max_long_side", 1024)
+        max_long_side = cfg_get(ctx.config, "max_long_side")
 
     # Extract just the bbox columns — generate_face_crop expects a 4-tuple.
     # The full row also carries extraction_max_long_side (added in v40),

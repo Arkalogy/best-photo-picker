@@ -12,7 +12,7 @@ from __future__ import annotations
 import argparse
 import os
 
-from bpp.config import load_config
+from bpp.config import cfg_get, load_config
 from bpp.utils.logging import get_logger, setup_logging
 
 
@@ -48,7 +48,7 @@ def do_analyze(args: argparse.Namespace) -> int:
         images = scan_images(
             input_path,
             extensions=extensions,
-            follow_symlinks=cfg.get("follow_symlinks", False),
+            follow_symlinks=cfg_get(cfg, "follow_symlinks"),
             max_images=args.max,
         )
 

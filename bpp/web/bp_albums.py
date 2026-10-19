@@ -7,6 +7,7 @@ from typing import Any
 
 from flask import Blueprint, Response, jsonify, request
 
+from bpp.config_schema import validate_value
 from bpp.constants import ACTIVE_PHOTO_SQL, active_photo_sql
 from bpp.db.albums import (
     add_photos_to_album,
@@ -30,6 +31,7 @@ from bpp.web.recompute import (
 )
 from bpp.web.share import requires_local_app
 from bpp.web.state import clamp_k, get_ctx
+from bpp.web.state_helpers import clamp_override
 
 log = get_logger(__name__)
 
@@ -210,7 +212,14 @@ def api_album_update(album_id: int) -> tuple[Response, int]:
     if "config" in data:
         cfg_update = data["config"]
         if cfg_update is not None:
-            cfg_update = {k: v for k, v in cfg_update.items() if k in _ALLOWED_CONFIG_KEYS}
+            # Values pass the same gate as a recompute override: a weight
+            # clamped to its 0-1 range, anything else checked against the
+            # schema — a stored value is used unchecked at recompute time.
+            cfg_update = {
+                k: clamp_override(k, v) if k in RECOMPUTE_WEIGHT_KEYS else validate_value(k, v)
+                for k, v in cfg_update.items()
+                if k in _ALLOWED_CONFIG_KEYS
+            }
             existing = album.get("config") or {}
             kwargs["config"] = {**existing, **cfg_update}
     if "k" in data:

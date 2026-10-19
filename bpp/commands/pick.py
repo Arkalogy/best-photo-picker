@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import os
 
+from bpp.config import cfg_get
 from bpp.utils.logging import get_logger
 
 
@@ -121,7 +122,7 @@ def _apply_face_boost(conn, analyzed: list[dict], selected_faces: list[int], con
     from bpp.web.face_worker import load_face_cluster_map
 
     face_cluster_map = load_face_cluster_map(conn)
-    face_boost = config.get("face_selection_boost", 0.15)
+    face_boost = cfg_get(config, "face_selection_boost")
     selected_set = set(selected_faces)
     for item in analyzed:
         fp = item["filepath"]

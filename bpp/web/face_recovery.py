@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import sqlite3
 
+from bpp.config import cfg_get
 from bpp.errors import BppError
 from bpp.utils.logging import get_logger
 
@@ -116,8 +117,8 @@ def recover_pending_face_extractions(conn: sqlite3.Connection) -> int:
             from bpp.db.photos import get_photo_id_map_by_paths
 
             photo_map = get_photo_id_map_by_paths(conn, [a["filepath"] for a in with_faces])
-            max_long_side = ctx.config.get("max_long_side", 1024)
-            face_conf = float(ctx.config.get("face_detection_confidence", 0.3))
+            max_long_side = cfg_get(ctx.config, "max_long_side")
+            face_conf = float(cfg_get(ctx.config, "face_detection_confidence"))
             # Increment BEFORE the attempt so a crash mid-attempt still
             # counts. The next startup sees the incremented count and
             # gets one fewer retry.

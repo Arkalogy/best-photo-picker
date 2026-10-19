@@ -29,7 +29,7 @@ from typing import Any
 
 from flask import Blueprint, Response, jsonify, request
 
-from bpp.constants import FACE_CLUSTER_THRESHOLD_FALLBACK
+from bpp.config import cfg_get
 from bpp.db.face_cluster_ops import sync_face_count as _sync_face_count
 from bpp.db.photos import get_photo_id_by_path
 from bpp.db.smart_albums import get_affected_album_types, refresh_smart_albums
@@ -127,7 +127,7 @@ def api_faces_create() -> tuple[Response, int]:
             )
 
     # 2. Load image + extract embedding at the user's region.
-    max_long_side = ctx.config.get("max_long_side", 1024) if ctx.config else 1024
+    max_long_side = cfg_get(ctx.config, "max_long_side")
     image = load_and_downscale(filepath, max_long_side)
     if image is None:
         raise BppError(
@@ -143,7 +143,7 @@ def api_faces_create() -> tuple[Response, int]:
     new_quality = float(result["quality"])
 
     # 3. Duplicate guard.
-    emb_thresh = float(ctx.config.get("face_cluster_threshold", FACE_CLUSTER_THRESHOLD_FALLBACK))
+    emb_thresh = float(cfg_get(ctx.config, "face_cluster_threshold"))
     _detect_duplicate_face(conn, photo_id, new_bbox, new_emb, emb_thresh)
 
     # 4. Insert face row (+ optional smart_person album), commit.
@@ -275,7 +275,7 @@ def api_faces_update_bbox() -> tuple[Response, int]:
     filepath = row["filepath"]
     existing_cluster_id = int(row["cluster_id"])
 
-    max_long_side = ctx.config.get("max_long_side", 1024) if ctx.config else 1024
+    max_long_side = cfg_get(ctx.config, "max_long_side")
     image = load_and_downscale(filepath, max_long_side)
     if image is None:
         raise BppError(

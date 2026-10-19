@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from flask import Blueprint, Response, jsonify
 
+from bpp.config import cfg_get
 from bpp.db.clip import compute_adaptive_threshold, get_dedup_feedback
 from bpp.errors import ConflictError, FeatureUnavailableError, NotFoundError
 from bpp.scoring.clip_embed import is_available as clip_is_available
@@ -101,7 +102,7 @@ def api_dedup_feedback_stats() -> tuple[Response, int]:
     feedback samples observed so far."""
     ctx = get_ctx()
     conn = ctx.get_conn()
-    default_threshold = ctx.config.get("clip_similarity_threshold", 0.92)
+    default_threshold = cfg_get(ctx.config, "clip_similarity_threshold")
     threshold, info = compute_adaptive_threshold(conn, default=default_threshold)
     feedback = get_dedup_feedback(conn)
     return jsonify(

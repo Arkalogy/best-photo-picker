@@ -185,7 +185,20 @@ def register_scorer(scorer: ScorerDef, *, replace: bool = False) -> None:
             f"Scorer {scorer.key!r} already registered with a different "
             "definition (pass replace=True if intentional)."
         )
+    if scorer.weight_key:
+        _check_plugin_weight_key(scorer.weight_key)
     _SCORER_REGISTRY[scorer.key] = scorer
+    if scorer.weight_key:
+        # Its weight is a setting like the built-ins': in DEFAULTS (so
+        # cfg_get and YAML know it) and bounded 0.0-1.0 in the schema (so
+        # Config.set and load_config validate it). The recompute override
+        # allow-list is built at import time and doesn't see it: see
+        # RECOMPUTE_WEIGHT_KEYS in bpp/web/recompute.py.
+        from bpp.config import DEFAULTS
+        from bpp.config_schema import ConfigField, register_field
+
+        DEFAULTS.setdefault(scorer.weight_key, scorer.default_weight)
+        register_field(weight_field(ConfigField, scorer.weight_key))
     log.info(
         "Registered scorer %r (weight_key=%s, default_weight=%s, fields=%s)",
         scorer.key,
@@ -195,11 +208,33 @@ def register_scorer(scorer: ScorerDef, *, replace: bool = False) -> None:
     )
 
 
+def _check_plugin_weight_key(weight_key: str) -> None:
+    """A plugin's weight key names a new setting: ``<prefix>_weight``,
+    not one of the app's own (which its schema entry would overwrite)."""
+    from bpp.config import DEFAULTS
+
+    if not weight_key.endswith("_weight"):
+        raise ValueError(f"weight_key {weight_key!r} must end in '_weight'")
+    if weight_key in DEFAULTS and weight_key not in {
+        s.weight_key for s in _SCORER_REGISTRY.values() if s.key not in _BUILTIN_SCORER_KEYS
+    }:
+        raise ValueError(
+            f"weight_key {weight_key!r} is an existing setting; pick a plugin-prefixed name"
+        )
+
+
 def _reset_plugin_scorers_for_tests() -> None:
-    """Drop every non-built-in scorer from the registry. Test-only."""
+    """Drop every non-built-in scorer from the registry, with the weight
+    setting and schema entry it registered. Test-only."""
+    from bpp.config import DEFAULTS
+    from bpp.config_schema import _SCHEMA_REGISTRY
+
     for key in list(_SCORER_REGISTRY.keys()):
         if key not in _BUILTIN_SCORER_KEYS:
-            del _SCORER_REGISTRY[key]
+            scorer = _SCORER_REGISTRY.pop(key)
+            if scorer.weight_key:
+                DEFAULTS.pop(scorer.weight_key, None)
+                _SCHEMA_REGISTRY.pop(scorer.weight_key, None)
 
 
 def _wire_optional_scorers() -> None:
@@ -233,10 +268,11 @@ def _wire_optional_scorers() -> None:
             return {}
 
     def _pets_score_fn(img: Any, filepath: str, config: dict[str, Any]) -> dict[str, Any]:
+        from bpp.config import cfg_get  # (lazy: bpp.config imports this module)
         from bpp.registry import ModelLoadBlockedError
 
-        pet_conf = config.get("pet_detection_confidence", 0.2)
-        pet_size = int(config.get("pet_input_size", 1024))
+        pet_conf = cfg_get(config, "pet_detection_confidence")
+        pet_size = int(cfg_get(config, "pet_input_size"))
         try:
             r = _detect_pets(img, input_size=pet_size, conf_threshold=pet_conf)
         except ModelLoadBlockedError as exc:
@@ -316,6 +352,22 @@ def get_weighted_scorers() -> list[ScorerDef]:
 def get_weight_defaults() -> dict[str, float]:
     """Config DEFAULTS for scorer weights: {weight_key: default_weight}."""
     return {s.weight_key: s.default_weight for s in _SCORER_REGISTRY.values() if s.weight_key}
+
+
+def weight_field(ConfigField: Any, weight_key: str) -> Any:
+    """The config-schema field for a scorer weight: a 0.0-1.0 float.
+    Takes the field class so this module needn't import the schema
+    (which imports it)."""
+    return ConfigField(
+        key=weight_key,
+        type=float,
+        label=weight_key.removesuffix("_weight").replace("_", " ").capitalize() + " weight",
+        description="How much this score counts in the aggregate (0 = ignored).",
+        min=0.0,
+        max=1.0,
+        ui_type="slider",
+        category="Scoring",
+    )
 
 
 def get_score_db_columns() -> tuple[str, ...]:

@@ -22,6 +22,7 @@ def builtin_fields() -> list[ConfigField]:
     from bpp.config_schema import ConfigField
 
     return [
+        *_scoring_weights(ConfigField),
         *_performance_and_ui(ConfigField),
         *_selection(ConfigField),
         *_dedup(ConfigField),
@@ -32,6 +33,15 @@ def builtin_fields() -> list[ConfigField]:
         *_similarity(ConfigField),
         *_security_import_deployment(ConfigField),
     ]
+
+
+def _scoring_weights(ConfigField: type[ConfigField]) -> list[ConfigField]:
+    """One 0.0-1.0 field per weighted scorer (built-ins here; a plugin
+    scorer registers its own, see ``register_scorer``). Recompute
+    overrides clamp to this range — the only range the weights have."""
+    from bpp.scoring.registry import get_weight_defaults, weight_field
+
+    return [weight_field(ConfigField, key) for key in get_weight_defaults()]
 
 
 def _performance_and_ui(ConfigField: type[ConfigField]) -> list[ConfigField]:

@@ -17,8 +17,7 @@ from typing import Any
 
 from flask import Blueprint, Response, jsonify, make_response, render_template, request
 
-from bpp.config import DEFAULTS
-from bpp.constants import FACE_CLUSTER_THRESHOLD_FALLBACK
+from bpp.config import DEFAULTS, cfg_get
 from bpp.db.clip import (
     get_clip_embedding_count,
 )
@@ -277,9 +276,7 @@ def api_status() -> Response:
         "face_extraction_done": has_face_data(conn) if conn else False,
         "face_needs_clustering": needs_face_clustering(conn) if conn else False,
         "face_extracting": ctx.face_worker.is_alive,
-        "face_cluster_threshold": ctx.config.get(
-            "face_cluster_threshold", FACE_CLUSTER_THRESHOLD_FALLBACK
-        ),
+        "face_cluster_threshold": cfg_get(ctx.config, "face_cluster_threshold"),
         "clip_available": clip_avail,
         "clip_installable": clip_installable,
         "clip_ready": clip_ready,

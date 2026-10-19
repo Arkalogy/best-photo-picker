@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 from tqdm import tqdm
 
-from bpp.config import DEFAULTS
+from bpp.config import DEFAULTS, cfg_get
 
 try:
     from pillow_heif import register_heif_opener
@@ -225,7 +225,7 @@ def analyze_single_image(
         return None
 
     # Extract features — detect faces first so blur can weight face regions
-    _mfaf = float(config.get("min_face_area_pct", 0.20)) / 100.0
+    _mfaf = float(cfg_get(config, "min_face_area_pct")) / 100.0
     faces = detect_faces(
         img,
         min_confidence=face_detection_confidence,
@@ -399,8 +399,8 @@ def analyze_all(
     """Run full analysis pipeline on all images."""
     db_path = os.path.join(workdir, DB_NAME)
     init_analysis_db(db_path)
-    max_long_side = config.get("max_long_side", 1024)
-    face_confidence = float(config.get("face_detection_confidence", _DEFAULT_FACE_CONF))
+    max_long_side = cfg_get(config, "max_long_side")
+    face_confidence = float(cfg_get(config, "face_detection_confidence"))
 
     args_list = [(fp, max_long_side, db_path, face_confidence) for fp in image_paths]
 

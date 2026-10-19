@@ -30,6 +30,7 @@ from typing import Any
 
 import numpy as np
 
+from bpp.config import cfg_get
 from bpp.constants import CLUSTER_DISMISSED
 from bpp.scoring.face_embed import producing_model_id_for
 from bpp.utils.logging import get_logger
@@ -118,8 +119,8 @@ def extract_new_embeddings(
         )
 
     Pool, n_workers = _pool_for(config)
-    embed_conf = float(config.get("face_embedding_confidence", 0.65))
-    min_eq = float(config.get("min_embedding_quality", 0.25))
+    embed_conf = float(cfg_get(config, "face_embedding_confidence"))
+    min_eq = float(cfg_get(config, "min_embedding_quality"))
 
     log.info(
         "Face extract: %s pool, workers=%d, %d photos to extract",

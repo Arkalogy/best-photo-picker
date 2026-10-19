@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from flask import Blueprint, Response, jsonify, request
 
+from bpp.config import cfg_get
 from bpp.db.albums import (
     ensure_all_photos_album,
     get_album_overrides_and_favorites,
@@ -302,9 +303,8 @@ def api_set_sensitive_override() -> tuple[Response, int]:
     from bpp.db.smart_albums import refresh_smart_albums
 
     refresh_smart_albums(conn, kinds={"smart_sensitive"})
-    from bpp.constants import SENSITIVE_NUDITY_THRESHOLD
 
-    threshold = ctx.config.get("sensitive_nudity_threshold", SENSITIVE_NUDITY_THRESHOLD)
+    threshold = cfg_get(ctx.config, "sensitive_nudity_threshold")
     return jsonify({"status": "ok", "is_sensitive": is_sensitive_item(new_item, threshold)}), 200
 
 

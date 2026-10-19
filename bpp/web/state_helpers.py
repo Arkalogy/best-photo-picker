@@ -29,21 +29,16 @@ class AppState(TypedDict):
 
 
 # Bounds for API parameter validation
-_WEIGHT_MIN, _WEIGHT_MAX = 0.0, 10.0
 _K_MIN, _K_MAX = 1, 10000
-
-
-def clamp_weight(val: Any) -> float:
-    """Clamp a weight parameter to valid range."""
-    return max(_WEIGHT_MIN, min(float(val), _WEIGHT_MAX))
 
 
 def clamp_override(key: str, val: Any) -> float | int:
     """Clamp a recompute override to ITS key's range: the config schema's
-    (``hash_distance_threshold`` 0-64, ``time_window_seconds`` 0-600, …),
-    or the weight range for the scoring weights, which have none. (One
-    clamp for every key once squeezed a threshold of 20 to 10 — silently
-    stricter than not passing it at all.)"""
+    (``hash_distance_threshold`` 0-64, ``time_window_seconds`` 0-600, the
+    scoring weights 0-1, …). A key with no range registered can't be
+    overridden: a 400, not a guess. (One clamp for every key once
+    squeezed a threshold of 20 to 10 — silently stricter than not
+    passing it at all.)"""
     from bpp.config_schema import get_schema
     from bpp.errors import ValidationError
 
@@ -53,7 +48,7 @@ def clamp_override(key: str, val: Any) -> float | int:
         raise ValidationError(f"{key} must be a number", field=key, value=val) from exc
     field = get_schema(key)
     if field is None or field.min is None or field.max is None:
-        return clamp_weight(value)
+        raise ValidationError(f"{key} can't be overridden: it has no range", field=key, value=val)
     clamped = max(float(field.min), min(value, float(field.max)))
     # (int() like the Settings path, so one value never becomes two integers.)
     return int(clamped) if field.type is int else clamped

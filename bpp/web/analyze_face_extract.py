@@ -33,6 +33,7 @@ import multiprocessing
 import traceback
 from typing import Any
 
+from bpp.config import cfg_get
 from bpp.utils.logging import get_logger
 from bpp.utils.subprocess_runner import (
     SENTINEL,
@@ -90,8 +91,8 @@ def _face_extraction_worker(
             conn,
             [item["filepath"] for item in with_faces],
         )
-        max_long_side = config.get("max_long_side", 1024)
-        face_conf = float(config.get("face_detection_confidence", 0.3))
+        max_long_side = cfg_get(config, "max_long_side")
+        face_conf = float(cfg_get(config, "face_detection_confidence"))
 
         def _progress(msg: dict) -> None:
             result_queue.put(msg)

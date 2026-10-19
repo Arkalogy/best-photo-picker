@@ -20,6 +20,7 @@ import os
 import sqlite3
 from typing import TYPE_CHECKING, Any
 
+from bpp.config import cfg_get
 from bpp.db.clip import record_dedup_feedback
 from bpp.db.photos import purge_old_deleted
 from bpp.scoring.clip_embed import cosine_similarity as clip_cosine_similarity
@@ -79,9 +80,8 @@ def build_photo_dict(
     item: dict[str, Any],
     selected: bool | None = None,
 ) -> dict[str, Any]:
-    from bpp.constants import SENSITIVE_NUDITY_THRESHOLD
 
-    threshold = ctx.config.get("sensitive_nudity_threshold", SENSITIVE_NUDITY_THRESHOLD)
+    threshold = cfg_get(ctx.config, "sensitive_nudity_threshold")
     d = _build_photo_dict_impl(item, ctx.thumbs, selected, sensitive_threshold=threshold)
     # Lazy-fill the enhanced/auto-enhanced caches under ctx.lock so a
     # concurrent invalidate_enhanced_cache() can't null the field
@@ -126,7 +126,7 @@ def check_dedup_feedback(
     if photo_emb is None:
         return False
 
-    threshold = ctx.config.get("clip_similarity_threshold", 0.92)
+    threshold = cfg_get(ctx.config, "clip_similarity_threshold")
     verdict = "same" if mode == "exclude" else "different"
     recorded = False
 

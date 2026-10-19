@@ -28,7 +28,6 @@ from bpp.web.state_compat import _LegacyDelegateMixin
 from bpp.web.state_helpers import (  # noqa: F401
     AppState,
     clamp_k,
-    clamp_weight,
     heic_available,
 )
 from bpp.web.thumbnails import ThumbnailCache

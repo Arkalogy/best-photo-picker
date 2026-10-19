@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from bpp.config import cfg_get
 from bpp.db.albums import sync_all_photos_album
 from bpp.db.connection import init_db
 from bpp.db.library import import_folder
@@ -155,7 +156,7 @@ class ImportWorker(BackgroundWorker):
 
         cache_db_path = os.path.join(workdir, DB_NAME)
         init_analysis_db(cache_db_path)
-        max_long_side = config.get("max_long_side", 1024)
+        max_long_side = cfg_get(config, "max_long_side")
 
         valid: list[dict[str, Any]] = []
         total_analyze = len(result.imported_paths)

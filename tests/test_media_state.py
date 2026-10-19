@@ -1206,22 +1206,7 @@ class TestLoadAnalysisIfNeeded:
 
 
 class TestClampHelpers:
-    """Test clamp_weight and clamp_k."""
-
-    def testclamp_weight_within_range(self):
-        from bpp.web.state import clamp_weight
-
-        assert clamp_weight(5.0) == 5.0
-
-    def testclamp_weight_below_min(self):
-        from bpp.web.state import clamp_weight
-
-        assert clamp_weight(-1.0) == 0.0
-
-    def testclamp_weight_above_max(self):
-        from bpp.web.state import clamp_weight
-
-        assert clamp_weight(99.0) == 10.0
+    """Test clamp_k."""
 
     def testclamp_k_within_range(self):
         from bpp.web.state import clamp_k

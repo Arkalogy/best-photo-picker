@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 
-from bpp.config import DEFAULTS
+from bpp.config import cfg_get
 from bpp.selection.diversity import DiversityTracker
 from bpp.utils.logging import get_logger
 
@@ -37,12 +37,10 @@ def choose(
     # A partial config falls back to the app's own defaults (a private
     # fallback here once left the similarity check off while the default
     # had it on).
-    max_per_day = config.get("max_per_day", DEFAULTS["max_per_day"])
-    min_per_month = config.get("min_per_month", DEFAULTS["min_per_month"])
-    max_per_month = config.get("max_per_month", DEFAULTS["max_per_month"])
-    similarity_threshold = config.get(
-        "selection_similarity_threshold", DEFAULTS["selection_similarity_threshold"]
-    )
+    max_per_day = cfg_get(config, "max_per_day")
+    min_per_month = cfg_get(config, "min_per_month")
+    max_per_month = cfg_get(config, "max_per_month")
+    similarity_threshold = cfg_get(config, "selection_similarity_threshold")
 
     tracker = DiversityTracker(
         max_per_day=max_per_day,

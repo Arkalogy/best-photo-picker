@@ -23,7 +23,7 @@ from typing import Any
 import numpy as np
 from flask import Blueprint, Response, jsonify, request
 
-from bpp.constants import FACE_CLUSTER_THRESHOLD_FALLBACK
+from bpp.config import cfg_get
 from bpp.db.face_feedback import (
     compute_adaptive_face_threshold,
     count_ambiguous_pairs,
@@ -48,7 +48,7 @@ def api_faces_threshold() -> tuple[Response, int]:
     """Return the current adaptive face clustering threshold and metadata."""
     ctx = get_ctx()
     conn = ctx.get_conn()
-    config_threshold = ctx.config.get("face_cluster_threshold", FACE_CLUSTER_THRESHOLD_FALLBACK)
+    config_threshold = cfg_get(ctx.config, "face_cluster_threshold")
     threshold, info = compute_adaptive_face_threshold(conn, default=config_threshold)
     return jsonify(
         {
@@ -93,7 +93,7 @@ def api_faces_review_pairs_next() -> tuple[Response, int]:
     except ValueError:
         limit = 20
 
-    config_threshold = ctx.config.get("face_cluster_threshold", FACE_CLUSTER_THRESHOLD_FALLBACK)
+    config_threshold = cfg_get(ctx.config, "face_cluster_threshold")
     threshold, _ = compute_adaptive_face_threshold(conn, default=config_threshold)
 
     # Fetch all pairs to know the true total, then slice for the response
@@ -463,7 +463,7 @@ def api_faces_feedback_stats() -> tuple[Response, int]:
 
     ctx = get_ctx()
     conn = ctx.get_conn()
-    config_threshold = ctx.config.get("face_cluster_threshold", FACE_CLUSTER_THRESHOLD_FALLBACK)
+    config_threshold = cfg_get(ctx.config, "face_cluster_threshold")
     threshold, info = compute_adaptive_face_threshold(conn, default=config_threshold)
     feedback = get_face_feedback(conn)
     nudge = should_suggest_recluster(

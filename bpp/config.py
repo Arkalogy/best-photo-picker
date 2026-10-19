@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from typing import Any
 
 from bpp.constants import CLIP_MODEL_NAME, FACE_CLUSTER_THRESHOLD_FALLBACK, MODEL_TOGGLE_KEYS
@@ -72,6 +73,19 @@ DEFAULTS: dict[str, Any] = {
     # Model toggles (all enabled by default)
     **{k: True for k in MODEL_TOGGLE_KEYS},
 }
+
+
+def cfg_get(config: Mapping[str, Any] | None, key: str) -> Any:
+    """``config[key]``, or ``DEFAULTS[key]`` when the mapping lacks it (or
+    there is no mapping yet). The one way to read a setting with a
+    fallback: a second copy of the default at the call site drifts, as
+    the dedup thresholds, the selection similarity threshold and the
+    face-cluster constant once did. A key DEFAULTS doesn't know is a
+    typo, not a setting: ``KeyError``."""
+    default = DEFAULTS[key]
+    if config is None:
+        return default
+    return config.get(key, default)
 
 
 def parse_scan_extensions(value: str | list[str] | None) -> list[str]:

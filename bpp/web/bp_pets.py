@@ -7,6 +7,7 @@ import os
 
 from flask import Blueprint, Response, jsonify, request, send_file
 
+from bpp.config import cfg_get
 from bpp.constants import ACTIVE_PHOTO_SQL, PET_CROP_PADDING, PET_CROP_SIZE
 from bpp.db.albums import list_albums as db_list_albums
 from bpp.db.pets import (
@@ -99,7 +100,7 @@ def api_pet_crop(path_hash: str, detection_index: int) -> Response | tuple[Respo
 
     crop_dir = ctx.dirs["pet_crops"]
     os.makedirs(crop_dir, exist_ok=True)
-    max_long_side = ctx.config.get("max_long_side", 1024)
+    max_long_side = cfg_get(ctx.config, "max_long_side")
 
     bbox = (row["bbox_x"], row["bbox_y"], row["bbox_w"], row["bbox_h"])
     try:

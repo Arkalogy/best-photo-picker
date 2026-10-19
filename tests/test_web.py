@@ -126,26 +126,6 @@ class TestRecompute:
 
 
 class TestInputValidation:
-    def testclamp_weight_normal(self):
-        from bpp.web.state import clamp_weight
-
-        assert clamp_weight(5.0) == 5.0
-        assert clamp_weight(0) == 0.0
-        assert clamp_weight(10) == 10.0
-
-    def testclamp_weight_out_of_range(self):
-        from bpp.web.state import clamp_weight
-
-        assert clamp_weight(-5) == 0.0
-        assert clamp_weight(999) == 10.0
-        assert clamp_weight(-0.001) == 0.0
-
-    def testclamp_weight_string_input(self):
-        from bpp.web.state import clamp_weight
-
-        assert clamp_weight("3.5") == 3.5
-        assert clamp_weight("-1") == 0.0
-
     def testclamp_k_normal(self):
         from bpp.web.state import clamp_k
 

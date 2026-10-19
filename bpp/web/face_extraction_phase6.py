@@ -20,7 +20,8 @@ from typing import Any
 
 import numpy as np
 
-from bpp.constants import CLUSTER_UNASSIGNED, FACE_CLUSTER_THRESHOLD_FALLBACK
+from bpp.config import cfg_get
+from bpp.constants import CLUSTER_UNASSIGNED
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -50,7 +51,7 @@ def cluster_faces(
         return 0
 
     all_records.sort(key=lambda r: (r[1], r[2]))
-    config_threshold = config.get("face_cluster_threshold", FACE_CLUSTER_THRESHOLD_FALLBACK)
+    config_threshold = cfg_get(config, "face_cluster_threshold")
 
     from bpp.db.face_feedback import (
         compute_adaptive_face_threshold,

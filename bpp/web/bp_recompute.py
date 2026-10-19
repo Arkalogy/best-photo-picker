@@ -20,6 +20,7 @@ from typing import Any
 
 from flask import Blueprint, Response, jsonify, request
 
+from bpp.config import cfg_get
 from bpp.db.albums import (
     ensure_all_photos_album,
     get_album,
@@ -69,8 +70,8 @@ def api_recompute() -> tuple[Response, int]:
     params = request.get_json(silent=True) or {}
     cfg = _config_with_overrides(ctx.config, params)
 
-    k = clamp_k(params.get("k", cfg.get("default_selection_k", 50)))
-    seed = int(params.get("seed", cfg.get("default_selection_seed", 42)))
+    k = clamp_k(params.get("k", cfg_get(cfg, "default_selection_k")))
+    seed = int(params.get("seed", cfg_get(cfg, "default_selection_seed")))
     selected_faces = params.get("selected_faces", [])
 
     conn = ctx.get_conn()
@@ -110,7 +111,7 @@ def api_recompute() -> tuple[Response, int]:
     if clip_embs:
         conn2 = ctx.get_conn()
         clip_threshold, threshold_info = compute_adaptive_threshold(
-            conn2, default=cfg.get("clip_similarity_threshold", 0.92)
+            conn2, default=cfg_get(cfg, "clip_similarity_threshold")
         )
 
     result = recompute(
@@ -252,7 +253,7 @@ def api_optimize() -> tuple[Response, int]:
     params = request.get_json(silent=True) or {}
     selected_faces = params.get("selected_faces", [])
     cfg = dict(ctx.config)
-    k = clamp_k(params.get("k", cfg.get("default_selection_k", 50)))
+    k = clamp_k(params.get("k", cfg_get(cfg, "default_selection_k")))
 
     face_cluster_map = None
     face_filepaths = None
@@ -305,13 +306,9 @@ def api_album_recompute(album_id: int) -> tuple[Response, int]:
     cfg = dict(ctx.config)
     if album.get("config"):
         cfg.update(album["config"])
-    for key in RECOMPUTE_WEIGHT_KEYS:
-        if key in params:
-            cfg[key] = clamp_override(key, params[key])
-    # Sensitive-photo policy is a string enum, not a clampable weight.
-    # Persisted with the album config via update_album() below.
-    if params.get("sensitive_in_picks") in ("allow", "exclude"):
-        cfg["sensitive_in_picks"] = params["sensitive_in_picks"]
+    # (The sensitive-photo policy is persisted with the album config via
+    # update_album() below.)
+    cfg = _config_with_overrides(cfg, params)
 
     k = clamp_k(params.get("k", album.get("k", 50)))
 
@@ -347,7 +344,7 @@ def api_album_recompute(album_id: int) -> tuple[Response, int]:
         conn_t = ctx.get_conn()
         clip_threshold, _ = compute_adaptive_threshold(
             conn_t,
-            default=cfg.get("clip_similarity_threshold", 0.92),
+            default=cfg_get(cfg, "clip_similarity_threshold"),
             album_id=album_id,
         )
 

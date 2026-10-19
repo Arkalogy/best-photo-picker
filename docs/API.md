@@ -439,10 +439,10 @@ Recompute the photo selection with given weights and parameters.
 |-------|------|---------|-------------|
 | `k` | int | 50 | Number of photos to select |
 | `seed` | int | 42 | Random seed for reproducibility |
-| `blur_weight` | float | config (0.30) | Sharpness weight, clamped to 0–10 |
-| `exposure_weight` | float | config (0.20) | Lighting weight, clamped to 0–10 |
-| `face_weight` | float | config (0.35) | Face quality weight, clamped to 0–10 |
-| `composition_weight` | float | config (0.15) | Composition weight, clamped to 0–10 |
+| `blur_weight` | float | config (0.30) | Sharpness weight, clamped to 0–1 |
+| `exposure_weight` | float | config (0.20) | Lighting weight, clamped to 0–1 |
+| `face_weight` | float | config (0.35) | Face quality weight, clamped to 0–1 |
+| `composition_weight` | float | config (0.15) | Composition weight, clamped to 0–1 |
 | `face_selection_boost` | float | | Boost for photos containing selected faces |
 | `sensitive_in_picks` | string | `allow` | Sensitive-photo pick policy: `allow` (compete normally) or `exclude` (filter from auto-picks; manual includes still win) |
 | `selected_faces` | int[] | `[]` | Cluster IDs of people to prioritize |

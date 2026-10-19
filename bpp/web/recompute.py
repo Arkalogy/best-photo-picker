@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 
-from bpp.config import DEFAULTS
+from bpp.config import DEFAULTS, cfg_get
 from bpp.constants import (
     OPTIMIZE_FACE_COVERAGE_W,
     OPTIMIZE_MAX_FACE_OVERLAP,
@@ -102,7 +102,7 @@ def recompute(opts: RecomputeOptions) -> dict[str, Any]:
     # Apply face selection boost
     if opts.selected_faces and opts.face_cluster_map:
         selected_set = set(opts.selected_faces)
-        face_boost = config.get("face_selection_boost", 0.15)
+        face_boost = cfg_get(config, "face_selection_boost")
         for item in data:
             fp = item["filepath"]
             item_clusters = set(opts.face_cluster_map.get(fp, []))
@@ -129,10 +129,8 @@ def recompute(opts: RecomputeOptions) -> dict[str, Any]:
     # pool. Force-included sensitive photos are NOT filtered (they were
     # split into `forced_in` above) — manual include always wins. In the
     # default "allow" mode sensitive photos compete normally.
-    if config.get("sensitive_in_picks", "allow") == "exclude":
-        from bpp.constants import SENSITIVE_NUDITY_THRESHOLD
-
-        sens_threshold = config.get("sensitive_nudity_threshold", SENSITIVE_NUDITY_THRESHOLD)
+    if cfg_get(config, "sensitive_in_picks") == "exclude":
+        sens_threshold = cfg_get(config, "sensitive_nudity_threshold")
         normal_for_dedupe = [
             d for d in normal_for_dedupe if not is_sensitive_item(d, sens_threshold)
         ]
@@ -161,7 +159,7 @@ def recompute(opts: RecomputeOptions) -> dict[str, Any]:
             "plugin" if not plugin_strategy.is_builtin else "built-in",
         )
     elif opts.clip_embeddings:
-        threshold = opts.clip_threshold or config.get("clip_similarity_threshold", 0.92)
+        threshold = opts.clip_threshold or cfg_get(config, "clip_similarity_threshold")
         candidates = semantic_deduplicate(
             normal_for_dedupe, opts.clip_embeddings, threshold=threshold, config=config
         )
