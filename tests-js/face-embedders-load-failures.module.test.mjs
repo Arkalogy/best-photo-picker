@@ -110,8 +110,8 @@ describe("a supporting call that fails", () => {
   test("the acceptance list: switching to a model the server says may load goes ahead", async () => {
     serve(["/api/v1/model-registry/acceptance/list"]);
     await fe.loadFaceEmbedderPicker();
-    const { feState } = await import("../bpp/web/static/js/modules/face-embedders-state.mjs");
-    feState.loadStates.set("restricted_model", "ok");
+    const { setLoadState } = await import("../bpp/web/static/js/modules/face-embedders-state.mjs");
+    setLoadState("restricted_model", "ok");
     apiFetchMock.mockClear();
     serve([]);
     await fe.setActiveFaceEmbedder("arcface", "Restricted", "restricted_model");
@@ -233,8 +233,8 @@ describe("a supporting call that fails", () => {
   test("a withdrawn model can't be switched to, restricted or not", async () => {
     serve([]);
     await fe.loadFaceEmbedderPicker();
-    const { feState } = await import("../bpp/web/static/js/modules/face-embedders-state.mjs");
-    feState.loadStates.set("plain_model", "blocked");
+    const { setLoadState } = await import("../bpp/web/static/js/modules/face-embedders-state.mjs");
+    setLoadState("plain_model", "blocked");
     apiFetchMock.mockClear();
     await fe.setActiveFaceEmbedder("plain", "Plain", "plain_model");
     expect(apiFetchMock).not.toHaveBeenCalled();
@@ -266,8 +266,8 @@ describe("a supporting call that fails", () => {
   test("a withdrawn model's refusal says so, not 'accept the license'", async () => {
     serve([]);
     await fe.loadFaceEmbedderPicker();
-    const { feState } = await import("../bpp/web/static/js/modules/face-embedders-state.mjs");
-    feState.loadStates.set("plain_model", "blocked");
+    const { setLoadState } = await import("../bpp/web/static/js/modules/face-embedders-state.mjs");
+    setLoadState("plain_model", "blocked");
     await fe.setActiveFaceEmbedder("plain", "Plain", "plain_model");
     // The refused action, the reason, the way on.
     expect(document.getElementById("toast-container")?.textContent).toContain(
@@ -314,17 +314,13 @@ describe("a supporting call that fails", () => {
   });
 
   test("'restricted' is decided the same way for the row, the dialog and the switch", async () => {
-    const { _collectRequiresAckIds } =
+    const { feState, requiresAck } =
       await import("../bpp/web/static/js/modules/face-embedders-state.mjs");
-    const ids = _collectRequiresAckIds([
-      {
-        entries: [
-          { id: "a", requires_explicit_ack: 1 },
-          { id: "b", requires_explicit_ack: true },
-        ],
-      },
+    feState.entries = new Map([
+      ["a", { id: "a", requires_explicit_ack: 1 }],
+      ["b", { id: "b", requires_explicit_ack: true }],
     ]);
-    expect([...ids]).toEqual(["b"]); // the row's own rule: === true
+    expect([requiresAck("a"), requiresAck("b")]).toEqual([false, true]); // the row's own rule: === true
   });
 
   test("the notice is a status, not an alert re-read on every reload", async () => {
@@ -375,8 +371,8 @@ describe("the license dialog when the acceptance list didn't load", () => {
         : base?.(url, o)
     );
     await fe.loadFaceEmbedderPicker();
-    const { feState } = await import("../bpp/web/static/js/modules/face-embedders-state.mjs");
-    if (loadState) feState.loadStates.set("restricted_model", loadState);
+    const { setLoadState } = await import("../bpp/web/static/js/modules/face-embedders-state.mjs");
+    if (loadState) setLoadState("restricted_model", loadState);
     const entry = { ...ENTRIES.groups[0].entries[0], load_state: loadState };
     const item = fe
       ._buildActionMenu(entry, undefined)

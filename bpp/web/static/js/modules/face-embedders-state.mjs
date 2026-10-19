@@ -21,16 +21,15 @@
  * @property {string} currentUseContext    Declared use-context value.
  * @property {string | null} activeFaceMethod  Active face_embedding_method (null: it couldn't be loaded).
  * @property {Map<string, object>} installState  registry id → /api/v1/models install state.
- * @property {Set<string>} requiresAckIds   Ids needing click-through before use.
  * @property {Set<string>} acceptedIds      Ids accepted under the CURRENT license text.
  * @property {Set<string>} reacceptIds      Ids accepted under an OLDER text — need re-accepting.
- * @property {Set<string>} catalogEntryIds  Ids fetched via the catalog endpoint.
- * @property {Map<string, object>} entries  Registry entries by id, as last loaded.
+ * @property {Map<string, object>} entries  Registry entries by id, as last loaded: the one
+ *   source for what needs a click-through (``requires_explicit_ack``), what comes via
+ *   the catalog (``is_catalog_entry``) and the server's load-gate decision
+ *   (``load_state``: ``ok`` / ``needs_license`` / ``needs_reaccept`` /
+ *   ``needs_commercial_rights`` / ``blocked``), which accept / withdraw update in place.
  * @property {Set<string>} busyRowIds       Ids mid-operation (download/uninstall).
  * @property {Map<string, string>} busyText  Their in-row status ("Downloading… 40%").
- * @property {Map<string, string>} loadStates  Id → the server's load-gate decision
- *   (``ok`` / ``needs_license`` / ``needs_reaccept`` /
- *   ``needs_commercial_rights`` / ``blocked``).
  * @property {{install: string, license: string, method: string}} unknown
  *   What the last load couldn't fetch (install state, the acceptance list,
  *   the active face method) — why, or "" when it loaded: rows that need
@@ -48,54 +47,56 @@ export const feState = {
   currentUseContext: "unspecified",
   activeFaceMethod: "sface",
   installState: new Map(),
-  requiresAckIds: new Set(),
   acceptedIds: new Set(),
   reacceptIds: new Set(),
-  catalogEntryIds: new Set(),
   entries: new Map(),
   busyRowIds: new Set(),
   busyText: new Map(),
-  loadStates: new Map(),
   /** What the last load couldn't fetch (why): rows needing it read "Unknown". */
   unknown: { install: "", license: "", method: "" },
   decided: new Map(),
 };
 
 /**
- * Walk the picker groups and collect every entry id with
- * ``requires_explicit_ack=true``. Used by the ``setActiveFaceEmbedder``
- * pre-gate.
- *
- * @param {Array<{entries?: Array<object>}>} groups
- * @returns {Set<string>}
+ * Whether the entry needs a click-through before use (``=== true``: the
+ * row's own rule, so the dialog can't disagree with it).
+ * @param {string | undefined} id
  */
-export function _collectRequiresAckIds(groups) {
-  const out = new Set();
-  for (const g of groups || []) {
-    for (const e of g.entries || []) {
-      // (=== true: the row's own rule, so the dialog can't disagree with it.)
-      if (e && e.requires_explicit_ack === true && e.id) out.add(e.id);
-    }
-  }
-  return out;
+export function requiresAck(id) {
+  return feState.entries.get(id ?? "")?.requires_explicit_ack === true;
 }
 
 /**
- * Collect every entry id flagged ``is_catalog_entry`` by the backend.
- * Drives catalog-vs-legacy routing in the Download / Uninstall handlers
- * (which only receive a registry id, not the full entry).
- *
- * @param {Array<{entries?: Array<object>}>} groups
- * @returns {Set<string>}
+ * Whether the entry's weights come via the catalog ensure-weights
+ * endpoint (drives catalog-vs-legacy routing in Download / Uninstall,
+ * which only receive a registry id).
+ * @param {string | undefined} id
  */
-export function _collectCatalogEntryIds(groups) {
-  const out = new Set();
-  for (const g of groups || []) {
-    for (const e of g.entries || []) {
-      if (e && e.is_catalog_entry === true && e.id) out.add(e.id);
-    }
-  }
-  return out;
+export function isCatalogEntry(id) {
+  return feState.entries.get(id ?? "")?.is_catalog_entry === true;
+}
+
+/**
+ * The server's load-gate decision for the entry, as last loaded or as
+ * accept / withdraw updated it.
+ * @param {string | undefined} id
+ * @returns {string | undefined}
+ */
+export function loadStateOf(id) {
+  return feState.entries.get(id ?? "")?.load_state;
+}
+
+/**
+ * Record a load-gate decision made on this page (accept → ``ok``,
+ * withdraw → ``needs_license``): the map gets an updated copy of the
+ * entry (the server's payload object is never mutated), and the rows
+ * read the map, so the change shows at once. An id the picker hasn't
+ * loaded gets a bare entry (tests seed that way).
+ * @param {string} id
+ * @param {string} state
+ */
+export function setLoadState(id, state) {
+  feState.entries.set(id, { ...(feState.entries.get(id) || { id }), load_state: state });
 }
 
 /**
@@ -205,15 +206,12 @@ export function loadFailureNoticeHTML(failures) {
  * empty baseline. Not used in production code.
  */
 export function _resetFaceEmbedderStateForTests() {
-  feState.requiresAckIds = new Set();
   feState.acceptedIds = new Set();
   feState.reacceptIds = new Set();
-  feState.catalogEntryIds = new Set();
   feState.entries = new Map();
   feState.installState = new Map();
   feState.busyRowIds = new Set();
   feState.busyText = new Map();
-  feState.loadStates = new Map();
   feState.currentUseContext = "unspecified";
   feState.activeFaceMethod = "sface";
   feState.currentDraft = null;
@@ -223,7 +221,9 @@ export function _resetFaceEmbedderStateForTests() {
 
 /**
  * Test seam: seed the picker state directly so unit tests can exercise
- * the picker without standing up the network sequence.
+ * the picker without standing up the network sequence. ``requiresAckIds``
+ * and ``catalogEntryIds`` are shorthand: they mark (or create) entries in
+ * the one map, the way a loaded registry would.
  *
  * @param {{requiresAckIds?: string[], acceptedIds?: string[],
  *          reacceptIds?: string[], catalogEntryIds?: string[],
@@ -232,16 +232,19 @@ export function _resetFaceEmbedderStateForTests() {
  *          useContext?: string}} state
  */
 export function _seedFaceEmbedderStateForTests(state) {
-  feState.requiresAckIds = new Set(state.requiresAckIds || []);
   feState.acceptedIds = new Set(state.acceptedIds || []);
   feState.reacceptIds = new Set(state.reacceptIds || []);
-  feState.catalogEntryIds = new Set(state.catalogEntryIds || []);
-  if (state.entries) {
-    feState.entries = new Map(Object.entries(state.entries));
-    // Mirror the picker's load: the load-gate map is filled from the
-    // same entries, so seeded tests run the path production runs.
-    for (const [id, e] of feState.entries) {
-      if (e && e.load_state) feState.loadStates.set(id, e.load_state);
+  if (state.entries) feState.entries = new Map(Object.entries(state.entries));
+  // Like the other keys, these replace the whole set: an id not listed
+  // loses the flag. Copies, never the caller's objects (a shared fixture
+  // must not change under the next test).
+  for (const flag of /** @type {const} */ (["requires_explicit_ack", "is_catalog_entry"])) {
+    const ids = new Set(flag === "requires_explicit_ack" ? state.requiresAckIds : state.catalogEntryIds);
+    for (const id of new Set([...feState.entries.keys(), ...ids])) {
+      const entry = /** @type {any} */ (feState.entries.get(id) || { id });
+      if (entry[flag] === true || ids.has(id)) {
+        feState.entries.set(id, { ...entry, [flag]: ids.has(id) });
+      }
     }
   }
   if (state.installState) {

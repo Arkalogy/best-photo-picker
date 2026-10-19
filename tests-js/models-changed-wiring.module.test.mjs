@@ -19,7 +19,8 @@ vi.mock("../bpp/web/static/js/modules/dialogs.mjs", () => ({
 const fe = await import("../bpp/web/static/js/modules/modals-face-embedders.mjs");
 const { MODELS_CHANGED_EVENT, notifyModelsChanged } =
   await import("../bpp/web/static/js/modules/models-changed.mjs");
-const { feState } = await import("../bpp/web/static/js/modules/face-embedders-state.mjs");
+const { feState, loadStateOf, setLoadState } =
+  await import("../bpp/web/static/js/modules/face-embedders-state.mjs");
 const { setFaceEmbedderUseContext } =
   await import("../bpp/web/static/js/modules/face-embedders-actions.mjs");
 
@@ -121,7 +122,7 @@ describe("commercial-use rights", () => {
     });
     await fe.loadFaceEmbedderPicker();
     expect(feState.acceptedIds.has("nudenet_320n")).toBe(true);
-    expect(feState.loadStates.get("nudenet_320n")).toBe("needs_commercial_rights");
+    expect(loadStateOf("nudenet_320n")).toBe("needs_commercial_rights");
   });
 });
 
@@ -154,7 +155,7 @@ describe("license dialog modes", () => {
 
   test("missing commercial rights: asks for them, keeps withdraw available", async () => {
     fe._seedFaceEmbedderStateForTests({ acceptedIds: ["nudenet_320n"], useContext: "commercial" });
-    feState.loadStates = new Map([["nudenet_320n", "needs_commercial_rights"]]);
+    setLoadState("nudenet_320n", "needs_commercial_rights");
     await fe.openFaceEmbedderAcceptance("nudenet_320n");
     const rights = /** @type {HTMLInputElement} */ (document.getElementById("fe-separate-rights"));
     expect(rights.disabled).toBe(false);
@@ -184,7 +185,7 @@ describe("license dialog modes", () => {
   });
 
   test("the rights state without an acceptance on file opens a fresh acceptance", async () => {
-    feState.loadStates = new Map([["nudenet_320n", "needs_commercial_rights"]]);
+    setLoadState("nudenet_320n", "needs_commercial_rights");
     await fe.openFaceEmbedderAcceptance("nudenet_320n");
     const box = /** @type {HTMLInputElement} */ (
       document.querySelector("#fe-acceptance-body input[data-checkbox-id]")
@@ -195,7 +196,7 @@ describe("license dialog modes", () => {
 
   test("rights mode: I accept waits for the rights box, then sends it", async () => {
     fe._seedFaceEmbedderStateForTests({ acceptedIds: ["nudenet_320n"], useContext: "commercial" });
-    feState.loadStates = new Map([["nudenet_320n", "needs_commercial_rights"]]);
+    setLoadState("nudenet_320n", "needs_commercial_rights");
     await fe.openFaceEmbedderAcceptance("nudenet_320n");
     expect(accept().disabled).toBe(true);
     const rights = /** @type {HTMLInputElement} */ (document.getElementById("fe-separate-rights"));
@@ -217,10 +218,10 @@ describe("license dialog modes", () => {
   test("withdrawing replaces the row's cached load state: it needs a license", async () => {
     // (Not the stale "needs commercial rights": the dialog asks to accept.)
     fe._seedFaceEmbedderStateForTests({ acceptedIds: ["nudenet_320n"] });
-    feState.loadStates = new Map([["nudenet_320n", "needs_commercial_rights"]]);
+    setLoadState("nudenet_320n", "needs_commercial_rights");
     apiFetchMock.mockResolvedValue({});
     await fe.revokeFaceEmbedderAcceptance("nudenet_320n");
-    expect(feState.loadStates.get("nudenet_320n")).toBe("needs_license");
+    expect(loadStateOf("nudenet_320n")).toBe("needs_license");
   });
 
   test("accepted and fine: review with Withdraw", async () => {
@@ -233,7 +234,7 @@ describe("license dialog modes", () => {
 
 describe("accepting or withdrawing a license updates the row at once", () => {
   test("accepted: it may load, even before (or without) a successful reload", async () => {
-    feState.loadStates.set("nudenet_320n", "needs_license");
+    setLoadState("nudenet_320n", "needs_license");
     feState.currentDraft = {
       model_id: "nudenet_320n",
       model_display_name: "NudeNet",
@@ -241,6 +242,6 @@ describe("accepting or withdrawing a license updates the row at once", () => {
     };
     document.body.innerHTML += '<input type="checkbox" id="fe-ack-dummy" checked>';
     await fe.confirmFaceEmbedderAcceptance();
-    expect(feState.loadStates.get("nudenet_320n")).toBe("ok");
+    expect(loadStateOf("nudenet_320n")).toBe("ok");
   });
 });

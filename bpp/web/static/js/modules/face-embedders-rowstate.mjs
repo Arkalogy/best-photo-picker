@@ -152,13 +152,12 @@ export function _deriveRowState(entry, install) {
     (!isFaceEmbedder &&
       (entry?.primary_for_kind === true || entry?.runs_alongside_default === true));
 
-  const restricted = entry?.requires_explicit_ack === true;
-  // One source for the load gate's decision: the picker's map, which
-  // accept / withdraw update on the spot (the entry object keeps the
-  // value from the last load until the picker reloads).
-  const loadState = feState.loadStates.has(entry?.id)
-    ? feState.loadStates.get(entry.id)
-    : entry?.load_state;
+  // The picker's map is the source for the row's registry facts (accept /
+  // withdraw update it); an entry the map doesn't hold is read as given,
+  // as is a load-gate decision the map has none of.
+  const live = /** @type {any} */ (feState.entries.get(entry?.id ?? "") ?? entry);
+  const restricted = live?.requires_explicit_ack === true;
+  const loadState = live?.load_state ?? entry?.load_state;
   const {
     accepted,
     licenseBlocked,
@@ -177,7 +176,7 @@ export function _deriveRowState(entry, install) {
   // install record is attached — LaMa / NudeNet have BOTH a legacy row
   // (empty file list) AND catalog fetch, so the old `!install` inference
   // misrouted them and dropped their Download action.
-  const isCatalogEntry = entry?.is_catalog_entry === true;
+  const isCatalogEntry = live?.is_catalog_entry === true;
   const catalogOnDisk = entry?.catalog_on_disk === true;
   // OR, not "isCatalog && catalogOnDisk": catalog_on_disk is the real
   // on-disk truth for catalog entries and is false for non-catalog ones,

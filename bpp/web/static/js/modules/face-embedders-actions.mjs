@@ -21,7 +21,7 @@ import {
 import { appConfirm } from "./dialogs.mjs";
 import { openFaceEmbedderAcceptance } from "./face-embedders-acceptance.mjs";
 import { licenseBlocker, licenseFacts } from "./face-embedders-license.mjs";
-import { feState } from "./face-embedders-state.mjs";
+import { feState, isCatalogEntry, loadStateOf, requiresAck } from "./face-embedders-state.mjs";
 import {
   _clearRowBusy,
   _setRowStatusBusy,
@@ -91,7 +91,7 @@ export async function uninstallFaceEmbedderEntry(registryId, legacyLabel) {
   // is_catalog_entry flag, NOT by "no install record": LaMa / NudeNet
   // DO have a (fileless) legacy install row, so the old `!install`
   // check misfired and reported them as "not installed".
-  const isCatalogPath = feState.catalogEntryIds.has(registryId) || !install;
+  const isCatalogPath = isCatalogEntry(registryId) || !install;
   if (files.length === 0 && !isCatalogPath) {
     toast(`${legacyLabel} is not installed.`, "error");
     return;
@@ -283,7 +283,7 @@ export async function setActiveFaceEmbedder(
   // analyze-time error.
   //
   // The pre-gate uses two sets populated by ``loadFaceEmbedderPicker``
-  // (``feState.requiresAckIds`` and ``feState.acceptedIds``) rather than fetching
+  // (the entries map and ``feState.acceptedIds``) rather than fetching
   // entry metadata on demand. The previous design called a stub
   // that always returned undefined and treated a Promise as a boolean,
   // so the gate never fired — runtime enforcement on the backend
@@ -295,11 +295,7 @@ export async function setActiveFaceEmbedder(
   // own, so don't switch on a guess). From the same license facts as the
   // row's own status, so the menu and this check can't disagree.
   const row = registryId
-    ? licenseFacts(
-        registryId,
-        feState.requiresAckIds.has(registryId),
-        feState.loadStates.get(registryId),
-      )
+    ? licenseFacts(registryId, requiresAck(registryId), loadStateOf(registryId))
     : null;
   if (row?.licenseUnknown || feState.unknown.method) {
     // (Which model is in use didn't load either: don't overwrite a setting

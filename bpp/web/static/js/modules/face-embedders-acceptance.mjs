@@ -17,7 +17,7 @@ import { appConfirm } from "./dialogs.mjs";
 import { licenseFacts } from "./face-embedders-license.mjs";
 import { _feInstallGlobalHandlers } from "./face-embedders-popover.mjs";
 import { _buildMenuFromState, _deriveRowState } from "./face-embedders-rowstate.mjs";
-import { feState } from "./face-embedders-state.mjs";
+import { feState, loadStateOf, requiresAck, setLoadState } from "./face-embedders-state.mjs";
 import { loadFaceEmbedderPicker } from "./modals-face-embedders.mjs";
 import { escapeAttr, esc } from "./text-format.mjs";
 import { notifyModelsChanged } from "./models-changed.mjs";
@@ -77,7 +77,7 @@ export async function openFaceEmbedderAcceptance(modelId, mode) {
  */
 function _dialogMode(modelId, requested) {
   if (requested === "view" || requested === "unknown") return requested;
-  const row = licenseFacts(modelId, feState.requiresAckIds.has(modelId), feState.loadStates.get(modelId));
+  const row = licenseFacts(modelId, requiresAck(modelId), loadStateOf(modelId));
   if (row.licenseUnknown) return "unknown"; // however it was opened
   // Rights mode re-uses the acceptance on file — only if there is one.
   if (row.accepted && row.needsCommercialRights) return "rights";
@@ -116,7 +116,7 @@ export function _acceptanceNotice(mode, draft) {
       // load_state first), so the dialog never disagrees with the menu
       // item that opened it.
       const id = draft.model_id;
-      const row = licenseFacts(id, feState.requiresAckIds.has(id), feState.loadStates.get(id));
+      const row = licenseFacts(id, requiresAck(id), loadStateOf(id));
       return row.needsReaccept
         ? `<div class="fe-notice-banner">These license terms were updated after you accepted them, so the model is off. Review the new terms and accept again to turn it back on.</div>`
         : "";
@@ -444,8 +444,8 @@ export async function confirmFaceEmbedderAcceptance() {
       // (Only a decision the server made is replaced: an older server
       // sends none, and the acceptance list decides there.)
       const id = feState.currentDraft.model_id;
-      const was = feState.loadStates.get(id);
-      if (was && was !== "blocked") feState.loadStates.set(id, "ok");
+      const was = loadStateOf(id);
+      if (was && was !== "blocked") setLoadState(id, "ok");
       feState.reacceptIds.delete(feState.currentDraft.model_id);
     }
     toast(
@@ -487,8 +487,8 @@ export async function revokeFaceEmbedderAcceptance(modelId) {
     feState.reacceptIds.delete(modelId);
     // Acceptance withdrawn: it may not load (a withdrawn model stays so;
     // with no server decision, the acceptance list decides).
-    const was = feState.loadStates.get(modelId);
-    if (was && was !== "blocked") feState.loadStates.set(modelId, "needs_license");
+    const was = loadStateOf(modelId);
+    if (was && was !== "blocked") setLoadState(modelId, "needs_license");
     toast("License acceptance withdrawn.");
     closeFaceEmbedderAcceptance();
     notifyModelsChanged();

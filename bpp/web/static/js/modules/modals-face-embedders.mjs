@@ -61,11 +61,9 @@ import {
 import { _sizeCell, _statusCell, licenseBadge } from "./face-embedders-cells.mjs";
 import {
   _collectAcceptedIds,
-  _collectCatalogEntryIds,
   _collectReacceptIds,
   damagedLogNoticeHTML,
   loadFailureNoticeHTML,
-  _collectRequiresAckIds,
   _resetFaceEmbedderStateForTests,
   _seedFaceEmbedderStateForTests,
   feState,
@@ -145,24 +143,19 @@ export async function loadFaceEmbedderPicker() {
     // (Settings didn't load: no guess — embedder rows read "Unknown".)
     feState.activeFaceMethod = settings ? settings.face_embedding_method || "sface" : null;
     feState.installState = _buildInstallStateMap(legacy);
-    feState.requiresAckIds = _collectRequiresAckIds(registry.groups || []);
     feState.acceptedIds = _collectAcceptedIds(acceptances);
     // The list is the truth once it loads; until then, what was accepted
     // or withdrawn on this page stands.
     if (acceptances) feState.decided = new Map();
     for (const [id, ok] of feState.decided) if (ok) feState.acceptedIds.add(id);
-    // The server's load-gate decision per row: picks the acceptance
-    // dialog's mode (e.g. ask for commercial-use rights).
-    feState.loadStates = new Map();
+    // The entries by id: the one source for click-through, catalog
+    // routing and the server's load-gate decision (which picks the
+    // acceptance dialog's mode, e.g. ask for commercial-use rights).
     feState.entries = new Map();
     for (const group of registry.groups || []) {
-      for (const e of group.entries || []) {
-        feState.entries.set(e.id, e);
-        if (e.load_state) feState.loadStates.set(e.id, e.load_state);
-      }
+      for (const e of group.entries || []) if (e && e.id) feState.entries.set(e.id, e);
     }
     feState.reacceptIds = _collectReacceptIds(acceptances);
-    feState.catalogEntryIds = _collectCatalogEntryIds(registry.groups || []);
     container.innerHTML =
       loadFailureNoticeHTML(failures) +
       damagedLogNoticeHTML(acceptances) +

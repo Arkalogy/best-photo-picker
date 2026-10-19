@@ -10,8 +10,10 @@ import {
   _collectReacceptIds,
   damagedLogNoticeHTML,
   feState,
+  loadStateOf,
   _resetFaceEmbedderStateForTests,
   _seedFaceEmbedderStateForTests,
+  setLoadState,
 } from "../bpp/web/static/js/modules/face-embedders-state.mjs";
 import {
   ROW_LIFECYCLE,
@@ -84,9 +86,9 @@ describe("acceptance dialog notice for a stale acceptance (U8)", () => {
     // Acceptance list didn't load (reacceptIds empty) but the server says
     // needs_reaccept: the menu reads "Re-accept…", so must the dialog.
     _seedFaceEmbedderStateForTests({ requiresAckIds: ["scrfd"] });
-    feState.loadStates.set("scrfd", "needs_reaccept");
+    setLoadState("scrfd", "needs_reaccept");
     expect(_acceptanceNotice("accept", draft)).toMatch(/accept again/);
-    feState.loadStates.set("scrfd", "needs_license");
+    setLoadState("scrfd", "needs_license");
     expect(_acceptanceNotice("accept", draft)).toBe("");
   });
   test("review mode keeps its accepted banner", () => {
@@ -118,7 +120,7 @@ describe("toast after accepting (U8)", () => {
     expect(_acceptedToastText("scrfd", "SCRFD")).toBe("Acceptance recorded for SCRFD.");
   });
   test("reads the load state accept just set, not the entry's stale copy", () => {
-    // confirmFaceEmbedderAcceptance flips feState.loadStates to "ok"; the
+    // confirmFaceEmbedderAcceptance flips the entry's load_state to "ok"; the
     // entry object still carries the pre-accept value until the picker
     // reloads. The menu (and so the hint) must follow the fresh value.
     const restricted = { ...entry, catalog_on_disk: false, load_state: "needs_license" };
@@ -127,10 +129,10 @@ describe("toast after accepting (U8)", () => {
       acceptedIds: ["scrfd"],
       entries: { scrfd: restricted },
     });
-    feState.loadStates.set("scrfd", "ok");
+    setLoadState("scrfd", "ok");
     expect(_acceptedToastText("scrfd", "SCRFD")).toMatch(/Next: Download/);
     // Not accepted yet (gate still refuses): Download is disabled → no hint.
-    feState.loadStates.set("scrfd", "needs_license");
+    setLoadState("scrfd", "needs_license");
     expect(_acceptedToastText("scrfd", "SCRFD")).toBe("Acceptance recorded for SCRFD.");
   });
   test("install state unknown → the menu has no Download, so no hint", () => {
