@@ -22,17 +22,6 @@ const JS_ROOT = path.join(ROOT, "bpp/web/static/js");
 /** file -> function -> size when measured. Shrink-only; never raise one. */
 const BASELINE = new Map([
   ["bpp/web/static/js/modules/modals-models-list.mjs:loadModelsList", 228],
-  ["bpp/web/static/js/modules/app.mjs:_bootstrap", 227],
-  ["bpp/web/static/js/modules/pets-pickers.mjs:showIdentifyPicker", 220],
-  ["bpp/web/static/js/modules/photos.mjs:_doRenderGrid", 182],
-  ["bpp/web/static/js/modules/lightbox.mjs:addEventListener:keydown", 177],
-  ["bpp/web/static/js/modules/search.mjs:renderSearchResults", 176],
-  ["bpp/web/static/js/modules/lightbox-face-edit.mjs:_lbCommitBboxUpdate", 170],
-  ["bpp/web/static/js/modules/people-view.mjs:showPeopleView", 166],
-  ["bpp/web/static/js/modules/people-review.mjs:_renderReviewCard", 165],
-  ["bpp/web/static/js/modules/lightbox-face-picker.mjs:_lbShowAddFacePersonPicker", 162],
-  ["bpp/web/static/js/modules/analysis-preflight.mjs:analyzePreflightConsent", 156],
-  ["bpp/web/static/js/modules/lightbox-open.mjs:_doOpenLightbox", 154],
 ]);
 
 /** @returns {string[]} every page module, vendor excluded, repo-relative */

@@ -86,49 +86,11 @@ export function _lbShowAddFacePersonPicker(e, onPick) {
     }
   };
 
-  /** @param {string} filter */
-  function renderList(filter) {
-    list.innerHTML = "";
-    const q = (filter || "").toLowerCase();
-    const faceClusters = /** @type {any[]} */ (win.faceClusters || []);
-    const sorted = [...faceClusters].sort((a, b) => {
-      const na = personDisplayName(a.cluster_id) || "";
-      const nb = personDisplayName(b.cluster_id) || "";
-      if (na && !nb) return -1;
-      if (!na && nb) return 1;
-      return b.photo_count - a.photo_count;
+  const renderList = (/** @type {string} */ filter) =>
+    _renderPeopleList(list, filter, personDisplayName, (c, name) => {
+      cleanup();
+      onPick(c.cluster_id, name, false);
     });
-    for (const c of sorted) {
-      const name = personDisplayName(c.cluster_id) || "Person " + (c.cluster_id + 1);
-      if (q && !name.toLowerCase().includes(q)) continue;
-      const item = document.createElement("div");
-      item.className = "merge-picker-item";
-      const rep = c.representative;
-      const avatarUrl =
-        rep && rep.thumb_hash
-          ? authedSrc(`/api/v1/faces/crop/${rep.thumb_hash}/${rep.face_index}`)
-          : "";
-      item.innerHTML =
-        (avatarUrl
-          ? `<img class="merge-picker-avatar" src="${avatarUrl}" alt="">`
-          : `<div class="merge-picker-avatar"></div>`) +
-        `<div class="merge-picker-info"><div class="merge-picker-name">${esc(name)}</div>` +
-        `<div class="merge-picker-count">${c.photo_count} photo${c.photo_count === 1 ? "" : "s"}</div></div>`;
-      item.onclick = () => {
-        cleanup();
-        onPick(c.cluster_id, name, false);
-      };
-      list.appendChild(item);
-    }
-    if (list.children.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "merge-picker-empty";
-      empty.style.padding = "12px";
-      empty.style.color = "var(--text3)";
-      empty.textContent = "No matches";
-      list.appendChild(empty);
-    }
-  }
 
   search.addEventListener("input", () => renderList(search.value));
   search.addEventListener("keydown", (ev) => ev.stopPropagation());
@@ -140,6 +102,81 @@ export function _lbShowAddFacePersonPicker(e, onPick) {
   // saves create a fresh cluster_id locally and continues into the
   // placeholder drag flow. The new person album gets renamed after
   // POST /faces/create commits.
+  const newPerson = _newPersonRow(picker, search, list, cleanup, onPick);
+  picker.appendChild(newPerson);
+
+  overlay.appendChild(picker);
+  overlay.addEventListener("click", (ev) => {
+    if (ev.target === overlay) cleanup();
+  });
+  document.body.appendChild(overlay);
+  document.addEventListener("keydown", keyHandler, true);
+  setTimeout(() => search.focus(), 50);
+}
+
+/**
+ * Fill the picker's list with the people matching `filter`, named first.
+ * @param {HTMLElement} list
+ * @param {string} filter
+ * @param {(id: any) => string | null} personDisplayName
+ * @param {(c: any, name: string) => void} onChoose
+ */
+function _renderPeopleList(list, filter, personDisplayName, onChoose) {
+  /** @type {any} */
+  const win = window;
+  list.innerHTML = "";
+  const q = (filter || "").toLowerCase();
+  const faceClusters = /** @type {any[]} */ (win.faceClusters || []);
+  // Name each cluster once (a name lookup scans the album list), then
+  // sort: named first, then by photo count.
+  const named = faceClusters.map((c) => ({ c, given: personDisplayName(c.cluster_id) || "" }));
+  named.sort((a, b) => {
+    if (a.given && !b.given) return -1;
+    if (!a.given && b.given) return 1;
+    return b.c.photo_count - a.c.photo_count;
+  });
+  for (const { c, given } of named) {
+    const name = given || "Person " + (c.cluster_id + 1);
+    if (q && !name.toLowerCase().includes(q)) continue;
+    const item = document.createElement("div");
+    item.className = "merge-picker-item";
+    const rep = c.representative;
+    const avatarUrl =
+      rep && rep.thumb_hash
+        ? authedSrc(`/api/v1/faces/crop/${rep.thumb_hash}/${rep.face_index}`)
+        : "";
+    item.innerHTML =
+      (avatarUrl
+        ? `<img class="merge-picker-avatar" src="${avatarUrl}" alt="">`
+        : `<div class="merge-picker-avatar"></div>`) +
+      `<div class="merge-picker-info"><div class="merge-picker-name">${esc(name)}</div>` +
+      `<div class="merge-picker-count">${c.photo_count} photo${c.photo_count === 1 ? "" : "s"}</div></div>`;
+    item.onclick = () => onChoose(c, name);
+    list.appendChild(item);
+  }
+  if (list.children.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "merge-picker-empty";
+    empty.style.padding = "12px";
+    empty.style.color = "var(--text3)";
+    empty.textContent = "No matches";
+    list.appendChild(empty);
+  }
+}
+
+/**
+ * Sticky "+ New person…" affordance. Mirrors the pattern from
+ * _lbShowFaceAssignPicker: click expands an inline name input,
+ * saves create a fresh cluster_id locally and continues into the
+ * placeholder drag flow. The new person album gets renamed after
+ * POST /faces/create commits.
+ * @param {HTMLElement} picker
+ * @param {HTMLInputElement} search
+ * @param {HTMLElement} list
+ * @param {() => void} cleanup
+ * @param {(clusterId: number, personName: string, isNew: boolean) => void} onPick
+ */
+function _newPersonRow(picker, search, list, cleanup, onPick) {
   const newPerson = document.createElement("div");
   newPerson.className = "merge-picker-item";
   newPerson.style.borderTop = "1px solid var(--border)";
@@ -188,15 +225,7 @@ export function _lbShowAddFacePersonPicker(e, onPick) {
     picker.appendChild(nameRow);
     setTimeout(() => nameInput.focus(), 30);
   };
-  picker.appendChild(newPerson);
-
-  overlay.appendChild(picker);
-  overlay.addEventListener("click", (ev) => {
-    if (ev.target === overlay) cleanup();
-  });
-  document.body.appendChild(overlay);
-  document.addEventListener("keydown", keyHandler, true);
-  setTimeout(() => search.focus(), 50);
+  return newPerson;
 }
 
 /**

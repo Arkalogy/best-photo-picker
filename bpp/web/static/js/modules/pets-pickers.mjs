@@ -87,31 +87,7 @@ export async function showIdentifyPicker(clusterId) {
   const confirmBtn = document.createElement("button");
 
   for (const d of detections) {
-    const cell = document.createElement("div");
-    cell.style.cssText =
-      "cursor:pointer;border-radius:8px;overflow:hidden;border:2px solid transparent;transition:border-color .15s;width:88px;height:88px;flex-shrink:0";
-    cell.dataset.detectionId = String(d.detection_id);
-    cell.dataset.thumbHash = d.thumb_hash || "";
-    const img = document.createElement("img");
-    img.src = authedSrc(`/api/v1/pets/crop/${esc(d.thumb_hash)}/${d.detection_index}`);
-    img.style.cssText = "width:100%;height:100%;object-fit:cover;display:block";
-    img.loading = "lazy";
-    cell.appendChild(img);
-
-    cell.onclick = () => {
-      const id = d.detection_id;
-      if (selected.has(id)) {
-        selected.delete(id);
-        cell.style.borderColor = "transparent";
-      } else {
-        selected.add(id);
-        cell.style.borderColor = "var(--accent)";
-      }
-      confirmBtn.disabled = selected.size === 0;
-      confirmBtn.textContent =
-        selected.size > 0 ? `Name this pet (${selected.size})` : "Name this pet";
-    };
-    grid.appendChild(cell);
+    grid.appendChild(_identifyCell(d, selected, confirmBtn));
   }
   picker.appendChild(grid);
 
@@ -127,47 +103,7 @@ export async function showIdentifyPicker(clusterId) {
   confirmBtn.className = "btn btn-primary";
   confirmBtn.textContent = "Name this pet";
   confirmBtn.disabled = true;
-  confirmBtn.onclick = async () => {
-    /** @type {any} */
-    const win = window;
-    if (selected.size === 0) return;
-    overlay.remove();
-    if (selected.size === detections.length && total === detections.length) {
-      const labelEl = document.getElementById(`pet-label-${clusterId}`);
-      if (labelEl) startPetRename(clusterId, labelEl);
-      return;
-    }
-    // In-progress in the status bar (indeterminate); the success toast below
-    // is a "name it" prompt, not just a confirmation, so it stays.
-    win.showStatusProgress?.("Splitting pet group…", 0);
-    try {
-      const resp = await apiFetch("/api/v1/pets/split", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ detection_ids: [...selected] }),
-      });
-      if (resp.error) {
-        toast(resp.error, true);
-        return;
-      }
-      if (resp.albums) {
-        win.albumList = resp.albums;
-        win.renderAlbumNav?.();
-      }
-      await loadPetClusters();
-      showPetsView();
-      const newCid = resp.cluster_id;
-      const labelEl = document.getElementById(`pet-label-${newCid}`);
-      if (labelEl) {
-        setTimeout(() => startPetRename(newCid, labelEl), 100);
-      }
-      toast("Pet identified — give it a name!");
-    } catch (e) {
-      toastError("split the pet group", e);
-    } finally {
-      win.hideStatusProgress?.();
-    }
-  };
+  confirmBtn.onclick = () => _confirmIdentify(selected, detections, total, clusterId, overlay);
 
   footer.appendChild(cancelBtn);
   footer.appendChild(confirmBtn);
@@ -193,6 +129,101 @@ export async function showIdentifyPicker(clusterId) {
   }
   document.addEventListener("keydown", onKey, true);
 
+  _installPreviewOnRightClick(grid);
+
+  document.body.appendChild(overlay);
+}
+
+/**
+ * One selectable crop in the identify grid.
+ * @param {any} d
+ * @param {Set<number>} selected
+ * @param {HTMLButtonElement} confirmBtn
+ */
+function _identifyCell(d, selected, confirmBtn) {
+  const cell = document.createElement("div");
+  cell.style.cssText =
+    "cursor:pointer;border-radius:8px;overflow:hidden;border:2px solid transparent;transition:border-color .15s;width:88px;height:88px;flex-shrink:0";
+  cell.dataset.detectionId = String(d.detection_id);
+  cell.dataset.thumbHash = d.thumb_hash || "";
+  const img = document.createElement("img");
+  img.src = authedSrc(`/api/v1/pets/crop/${esc(d.thumb_hash)}/${d.detection_index}`);
+  img.style.cssText = "width:100%;height:100%;object-fit:cover;display:block";
+  img.loading = "lazy";
+  cell.appendChild(img);
+
+  cell.onclick = () => {
+    const id = d.detection_id;
+    if (selected.has(id)) {
+      selected.delete(id);
+      cell.style.borderColor = "transparent";
+    } else {
+      selected.add(id);
+      cell.style.borderColor = "var(--accent)";
+    }
+    confirmBtn.disabled = selected.size === 0;
+    confirmBtn.textContent =
+      selected.size > 0 ? `Name this pet (${selected.size})` : "Name this pet";
+  };
+  return cell;
+}
+
+/**
+ * Name the selected crops: the whole group is a rename; a subset is split
+ * into a new group that is then named.
+ * @param {Set<number>} selected
+ * @param {any[]} detections
+ * @param {number} total
+ * @param {number} clusterId
+ * @param {HTMLElement} overlay
+ */
+async function _confirmIdentify(selected, detections, total, clusterId, overlay) {
+  /** @type {any} */
+  const win = window;
+  if (selected.size === 0) return;
+  overlay.remove();
+  if (selected.size === detections.length && total === detections.length) {
+    const labelEl = document.getElementById(`pet-label-${clusterId}`);
+    if (labelEl) startPetRename(clusterId, labelEl);
+    return;
+  }
+  // In-progress in the status bar (indeterminate); the success toast below
+  // is a "name it" prompt, not just a confirmation, so it stays.
+  win.showStatusProgress?.("Splitting pet group…", 0);
+  try {
+    const resp = await apiFetch("/api/v1/pets/split", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ detection_ids: [...selected] }),
+    });
+    if (resp.error) {
+      toast(resp.error, true);
+      return;
+    }
+    if (resp.albums) {
+      win.albumList = resp.albums;
+      win.renderAlbumNav?.();
+    }
+    await loadPetClusters();
+    showPetsView();
+    const newCid = resp.cluster_id;
+    const labelEl = document.getElementById(`pet-label-${newCid}`);
+    if (labelEl) {
+      setTimeout(() => startPetRename(newCid, labelEl), 100);
+    }
+    toast("Pet identified — give it a name!");
+  } catch (e) {
+    toastError("split the pet group", e);
+  } finally {
+    win.hideStatusProgress?.();
+  }
+}
+
+/**
+ * Right-click a crop to see the full photo; Esc or click closes it.
+ * @param {HTMLElement} grid
+ */
+function _installPreviewOnRightClick(grid) {
   /** @type {HTMLElement | null} */
   let previewEl = null;
   function closePreview() {
@@ -245,8 +276,6 @@ export async function showIdentifyPicker(clusterId) {
     document.body.appendChild(previewEl);
     document.addEventListener("keydown", previewKey, true);
   });
-
-  document.body.appendChild(overlay);
 }
 
 /**

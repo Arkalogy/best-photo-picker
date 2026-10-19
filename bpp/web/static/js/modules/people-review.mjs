@@ -23,30 +23,23 @@
  * window unchanged.
  */
 
-import { apiFetch, authedSrc } from "./api-client.mjs";
+import { apiFetch } from "./api-client.mjs";
 import { state } from "./state.mjs";
-import { esc, escapeAttr, escapeJsAttr } from "./text-format.mjs";
+import { esc, escapeAttr } from "./text-format.mjs";
 import { loadAlbumList } from "./albums.mjs";
 import { loadFaceClusters, refreshSmartAlbums } from "./faces.mjs";
 import { toast, toastError } from "./toast.mjs";
-import { getPersonAlbumId, getPersonName, personDisplayName } from "./people.mjs";
-import { reviewMetaLine, reviewMetaText } from "./review-meta.mjs";
-
-
-/**
- * Build `data-arg1..3` (filename/date/score) for an openPhotoPreview crop,
- * so the full-photo preview can caption itself. Empty string when no meta.
- * @param {{filename?:string, date?:string, score?:number}|null|undefined} m
- * @returns {string}
- */
-function _previewArgs(m) {
-  if (!m) return "";
-  return (
-    ` data-arg1="${escapeAttr(m.filename || "")}"` +
-    ` data-arg2="${escapeAttr(m.date || "")}"` +
-    ` data-arg3="${escapeAttr(m.score == null ? "" : String(m.score))}"`
-  );
-}
+import { getPersonAlbumId, personDisplayName } from "./people.mjs";
+import {
+  _previewArgs,
+  manualActionsHTML,
+  reviewCompleteHTML,
+  reviewPanelHTML,
+  reviewSamplesHTML,
+  singleAvatarHTML,
+  suggestionActionsHTML,
+  suggestionAvatarHTML,
+} from "./people-review-card.mjs";
 
 
 // ── Face Review Mode ──
@@ -120,17 +113,7 @@ export function _renderReviewCard() {
 
   const { unreviewed, total, reviewed } = _reviewData;
   if (_reviewIndex >= unreviewed.length) {
-    overlay.innerHTML = `<div class="review-panel">
-      <div class="review-header">
-        <h2>Review Complete</h2>
-        <button class="review-close-btn" data-action="_closeReviewOverlay">&times;</button>
-      </div>
-      <div class="review-done">
-        <div class="review-done-icon">&#10003;</div>
-        <p>All ${total} people have been reviewed.</p>
-        <button class="btn btn-primary" data-action="_closeReviewOverlay">Done</button>
-      </div>
-    </div>`;
+    overlay.innerHTML = reviewCompleteHTML(total);
     return;
   }
 
@@ -138,136 +121,17 @@ export function _renderReviewCard() {
   const c = unreviewed[_reviewIndex];
   const rep = c.representative;
   const cid = c.cluster_id;
-  const progress = reviewed + _reviewIndex;
-  const pct = ((progress / total) * 100).toFixed(0);
-  const currentName = personDisplayName(cid) || "";
-  const defaultName = getPersonName(cid) || `Person ${cid + 1}`;
-
-  // Build sample photo grid — each opens the full photo so the user can
-  // actually judge "is this Kai?" (the round avatar is a tiny face crop).
-  // Tooltip carries filename · timestamp · score so a thumbnail is
-  // self-describing. Back-compat: old `sample_hashes` (list of strings).
-  const sampleItems = c.samples
-    || (c.sample_hashes || []).map((/** @type {string} */ h) => ({ hash: h }));
-  const samples = sampleItems.map((/** @type {any} */ s) => {
-    const tip = reviewMetaText(s) || "Click to see the full photo";
-    return `<img class="review-sample-img review-clickable" src="${authedSrc("/thumb/" + s.hash)}" loading="lazy"
-       data-action="openPhotoPreview" data-arg0="${escapeAttr(s.hash)}"${_previewArgs(s)} title="${escapeAttr(tip)}">`;
-  }).join("");
-
   const suggestion = c.suggested_match;
-  let actionHTML;
-  let avatarHTML;
-  const unknownAvatarUrl = authedSrc(
-    "/api/v1/faces/crop/" + esc(rep.thumb_hash) + "/" + rep.face_index
-  );
-
-  if (suggestion) {
-    // Build side-by-side avatar comparison with confidence
-    const matchRep = suggestion.representative;
-    const matchAvatarUrl = matchRep
-      ? authedSrc("/api/v1/faces/crop/" + esc(matchRep.thumb_hash) + "/" + matchRep.face_index)
-      : "";
-    const conf = suggestion.confidence || 0;
-    avatarHTML = `
-      <div class="review-avatar-compare">
-        <div class="review-avatar-side">
-          <img class="review-clickable" src="${unknownAvatarUrl}"
-            data-action="openPhotoPreview" data-arg0="${escapeAttr(rep.thumb_hash)}"${_previewArgs(rep)}
-            title="Click to see the full photo">
-          <div class="review-avatar-label">Unknown</div>
-          ${reviewMetaLine(rep)}
-        </div>
-        <div class="review-match-indicator">
-          <div class="review-match-pct">${conf}%</div>
-          <div class="review-match-label">match</div>
-        </div>
-        <div class="review-avatar-side">
-          <img class="${matchRep ? "review-clickable" : ""}" src="${matchAvatarUrl}"
-            ${matchRep ? `data-action="openPhotoPreview" data-arg0="${escapeAttr(matchRep.thumb_hash)}"${_previewArgs(matchRep)} title="Click to see the full photo"` : ""}>
-          <div class="review-avatar-label is-person">${esc(suggestion.name)}</div>
-          ${reviewMetaLine(matchRep)}
-        </div>
-      </div>`;
-    actionHTML = `
-      <div class="review-suggestion">
-        <div class="review-suggestion-label">Is this <strong>${esc(suggestion.name)}</strong>?</div>
-        <div class="review-actions">
-          <button class="btn btn-primary" title="Combine these faces into one person"
-            data-action="_reviewMergeInto" data-arg0="${suggestion.cluster_id}" data-arg1="${escapeJsAttr(suggestion.name)}">Yes, merge</button>
-          <button class="btn btn-secondary" title="Not the same person \u2014 let me name manually"
-            data-action="_reviewShowManual">No</button>
-          <button class="btn btn-secondary" title="Skip for now, come back later"
-            data-action="_reviewSkip">Skip</button>
-          <button class="btn btn-secondary btn-danger-text" title="Hide this face permanently"
-            data-action="_reviewDismiss" data-arg0="${cid}">Dismiss</button>
-        </div>
-      </div>
-      <div class="review-manual" id="review-manual" style="display:none">
-        <div class="review-name-input">
-          <input type="text" id="review-name-field" placeholder="Type name or search existing\u2026"
-            value="" autocomplete="off"
-            data-oninput="_reviewAutocomplete"
-            data-onkeydown="_reviewInputKey">
-          <div class="review-autocomplete" id="review-autocomplete"></div>
-        </div>
-        <div class="review-actions">
-          <button class="btn btn-primary" title="Assign this name and move to next"
-            data-action="_reviewConfirm">Name &amp; Confirm</button>
-          <button class="btn btn-secondary" title="Skip for now, come back later"
-            data-action="_reviewSkip">Skip</button>
-          <button class="btn btn-secondary btn-danger-text" title="Hide this face permanently"
-            data-action="_reviewDismiss" data-arg0="${cid}">Dismiss</button>
-        </div>
-      </div>`;
-  } else {
-    // No suggestion — single avatar, manual mode directly
-    avatarHTML = `
-      <div class="review-avatar">
-        <img class="review-clickable" src="${unknownAvatarUrl}"
-          data-action="openPhotoPreview" data-arg0="${escapeAttr(rep.thumb_hash)}"${_previewArgs(rep)}
-          title="Click to see the full photo">
-        ${reviewMetaLine(rep)}
-      </div>`;
-    actionHTML = `
-      <div class="review-manual">
-        <div class="review-name-input">
-          <input type="text" id="review-name-field" placeholder="Type name or search existing\u2026"
-            value="${escapeAttr(currentName)}" autocomplete="off"
-            data-oninput="_reviewAutocomplete"
-            data-onkeydown="_reviewInputKey">
-          <div class="review-autocomplete" id="review-autocomplete"></div>
-        </div>
-        <div class="review-actions">
-          <button class="btn btn-primary" title="Assign this name and move to next"
-            data-action="_reviewConfirm">Name &amp; Confirm</button>
-          <button class="btn btn-secondary" title="Skip for now, come back later"
-            data-action="_reviewSkip">Skip</button>
-          <button class="btn btn-secondary btn-danger-text" title="Hide this face permanently"
-            data-action="_reviewDismiss" data-arg0="${cid}">Dismiss</button>
-        </div>
-      </div>`;
-  }
-
-  overlay.innerHTML = `<div class="review-panel">
-    <div class="review-header">
-      <h2>Review People</h2>
-      <span class="review-progress">${progress + 1} of ${total}</span>
-      <button class="review-close-btn" title="Close review"
-        data-action="_closeReviewOverlay">&times;</button>
-    </div>
-    <div class="review-progress-bar">
-      <div class="review-progress-fill" style="width: ${pct}%"></div>
-    </div>
-    <div class="review-body">
-      ${avatarHTML}
-      <div class="review-info">
-        <div class="review-cluster-label">${c.photo_count} photo${c.photo_count !== 1 ? 's' : ''}</div>
-        <div class="review-sample-grid">${samples}</div>
-      </div>
-      ${actionHTML}
-    </div>
-  </div>`;
+  overlay.innerHTML = reviewPanelHTML({
+    progress: reviewed + _reviewIndex,
+    total,
+    photoCount: c.photo_count,
+    avatarHTML: suggestion ? suggestionAvatarHTML(rep, suggestion) : singleAvatarHTML(rep),
+    samplesHTML: reviewSamplesHTML(c),
+    actionHTML: suggestion
+      ? suggestionActionsHTML(suggestion, cid)
+      : manualActionsHTML(cid, personDisplayName(cid) || ""),
+  });
 
   // Focus name input if in manual mode (no suggestion)
   if (!suggestion) {

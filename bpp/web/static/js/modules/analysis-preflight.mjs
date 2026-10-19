@@ -118,76 +118,7 @@ export async function analyzePreflightConsent() {
     const attributionDownloads = (data && data.attribution) || [];
     const bundleModels = (bundle && bundle.models) || [];
     if (pending.length > 0 || blocked.length > 0 || bundleModels.length > 0) {
-      const totalMb = (data.total_mb || 0) + (data.attribution_mb || 0);
-      const totalLabel = downloadTotalLabel(
-        totalMb,
-        [...pending, ...attributionDownloads].some((m) => !m.size_mb),
-      );
-      const row = (m, suffix) => {
-        const sizeLabel = downloadSizeLabel(m.size_mb);
-        return `<li>
-            <span class="ml-name">${esc(m.name)}</span>
-            <span class="ml-meta">${esc(sizeLabel)} · ${esc(m.host)}${suffix}</span>
-          </li>`;
-      };
-      const rows =
-        pending.map((m) => row(m, "")).join("") +
-        attributionDownloads.map((m) => row(m, " · only if you accept its license below")).join("");
-      const allDownloads = pending.length + attributionDownloads.length;
-      // Kinds analyze actually exercises — used to split blocked
-      // entries into "this affects what analysis can do" vs
-      // "irrelevant to analysis." Inpainting (LaMa) is the user's
-      // manual editor flow, NOT analyze, so it shouldn't appear in
-      // the analyze pre-flight at all.
-      const _ANALYZE_KINDS = new Set([
-        "face_embedder",
-        "face_detector",
-        "semantic_search",
-        "pet_detector",
-        "nudity_classifier",
-      ]);
-      // Plugin models are shown whatever their kind — they're held back
-      // by their license just like the built-ins, and must say so.
-      const analyzeBlocked = blocked.filter((b) => _ANALYZE_KINDS.has(b.kind) || b.from_plugin);
-
-      // Banner framing: these are OPTIONAL features the user can
-      // enable, not blockers. "Needs your review before use" read
-      // contradictorily with the next line saying "analysis will run
-      // without it" — same sentence said the opposite things.
-      // "Optional features available" matches reality: analyze runs
-      // either way; the user CAN turn these on by reviewing their
-      // licenses.
-      const blockedBanner = analyzeBlocked.length
-        ? `<div class="ml-consent-blocked">
-            <p class="ml-consent-blocked-title">Optional features available</p>
-            <ul class="ml-consent-blocked-list">${analyzeBlocked
-              .map((b) => `<li>${esc(blockedItemLabel(b))}</li>`)
-              .join("")}</ul>
-            <p class="ml-consent-blocked-hint">${analyzeBlocked.some((b) => b.reason === "needs_reaccept") ? "Some license terms were updated since you accepted them — those features are off until you re-accept. " : ""}To enable, review the license in <a href="#" class="ml-consent-blocked-link" data-action="openModelsSettings">Settings → Models</a>. Analysis will run without ${analyzeBlocked.length === 1 ? "it" : "them"} for now.</p>
-          </div>`
-        : "";
-      // Intros — drop "Required" because none of these models are
-      // strictly required (analyze runs with whatever is on disk +
-      // accepted, falling back when something is missing). The
-      // older "Required ML models will download now" implied
-      // mandatory + contradicted the cancel button.
-      let downloadBody;
-      if (allDownloads) {
-        downloadBody = `<p class="ml-consent-intro">These models will download to your machine (${esc(totalLabel)}). Cached locally, no photos leave your machine.</p>
-            <ul class="ml-consent-list">${rows}</ul>`;
-      } else if (analyzeBlocked.length) {
-        // Analyze runs given current state — describe that
-        // honestly, the banner below offers the optional features.
-        downloadBody = `<p class="ml-consent-intro">Analysis runs on your device — no photos leave your machine.</p>`;
-      } else {
-        downloadBody = `<p class="ml-consent-intro">Ready to analyze. Runs on your device — no photos leave your machine.</p>`;
-      }
-      const attributionHTML = bundleModels.length ? attributionSectionHTML(bundle) : "";
-      const bodyHTML = downloadBody + attributionHTML + blockedBanner;
-      const title = allDownloads ? "Download ML models?" : "Start analysis?";
-      const hasAttrDownloads = attributionDownloads.length > 0;
-      let okLabel = pending.length ? "Download & analyze" : "Analyze";
-      if (bundleModels.length) okLabel = attributionOkLabel(false, hasAttrDownloads);
+      const { title, okLabel, bodyHTML, hasAttrDownloads } = _consentDialog(data, bundle);
       // appConfirm renders synchronously, so the checkbox exists now.
       const answer = win.appConfirm?.(title, null, { okLabel, bodyHTML });
       let accepted = false;
@@ -199,22 +130,7 @@ export async function analyzePreflightConsent() {
       });
       const ok = await answer;
       if (!ok) return false;
-      if (accepted) {
-        try {
-          await apiFetch("/api/v1/model-registry/acceptance/attribution-bundle/confirm", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              model_ids: bundleModels.map((m) => m.id),
-              checkbox_responses: { [box?.dataset.checkboxId || ""]: true },
-            }),
-          });
-          notifyModelsChanged();
-        } catch (e) {
-          toastError("accept the model licenses", e);
-          return false;
-        }
-      }
+      if (accepted && !(await _confirmAttributionBundle(bundleModels, box))) return false;
     }
   } catch (e) {
     // If the manifest endpoint is unreachable, fall back to the old
@@ -224,22 +140,145 @@ export async function analyzePreflightConsent() {
     // misconfigured build (and bug-report screenshots from users)
     // carry the breadcrumb instead of hiding it in browser DevTools.
     console.warn("Failed to load model manifest:", e);
-    const errMsg = /** @type {any} */ (e)?.message || String(e);
-    const bodyHTML =
-      `<p>Best Photo Picker will download ML models for face detection, scoring, ` +
-      `and (optional) pets / CLIP search the first time it needs them. ` +
-      `Cached at ~/.cache/bpp. Runs on-device — no data leaves your machine.</p>` +
-      `<p class="confirm-sub ml-consent-foot ml-consent-degraded">` +
-      `Couldn't reach the model registry — using the generic prompt. ` +
-      `(${esc(errMsg)})</p>`;
-    const ok = await win.appConfirm?.(
-      "Download ML models?",
-      null,
-      { okLabel: "Continue", cancelLabel: "Cancel", bodyHTML },
-    );
+    const ok = await _degradedConsent(win, e);
     if (!ok) return false;
   }
   return true;
+}
+
+/**
+ * The consent dialog's title, OK label and body for what the pending
+ * list says is pending and blocked, and what the attribution bundle
+ * holds.
+ * @param {any} data  the /api/v1/models/pending response
+ * @param {any} bundle  the attribution bundle, or null
+ */
+function _consentDialog(data, bundle) {
+  const pending = data.models || [];
+  const blocked = data.blocked || [];
+  // Downloads that happen only if the user accepts the bundle below.
+  const attributionDownloads = data.attribution || [];
+  const bundleModels = (bundle && bundle.models) || [];
+  const totalMb = (data.total_mb || 0) + (data.attribution_mb || 0);
+  const totalLabel = downloadTotalLabel(
+    totalMb,
+    [...pending, ...attributionDownloads].some((m) => !m.size_mb),
+  );
+  const row = (m, suffix) => {
+    const sizeLabel = downloadSizeLabel(m.size_mb);
+    return `<li>
+        <span class="ml-name">${esc(m.name)}</span>
+        <span class="ml-meta">${esc(sizeLabel)} · ${esc(m.host)}${suffix}</span>
+      </li>`;
+  };
+  const rows =
+    pending.map((m) => row(m, "")).join("") +
+    attributionDownloads.map((m) => row(m, " · only if you accept its license below")).join("");
+  const allDownloads = pending.length + attributionDownloads.length;
+  // Kinds analyze actually exercises — used to split blocked
+  // entries into "this affects what analysis can do" vs
+  // "irrelevant to analysis." Inpainting (LaMa) is the user's
+  // manual editor flow, NOT analyze, so it shouldn't appear in
+  // the analyze pre-flight at all.
+  const _ANALYZE_KINDS = new Set([
+    "face_embedder",
+    "face_detector",
+    "semantic_search",
+    "pet_detector",
+    "nudity_classifier",
+  ]);
+  // Plugin models are shown whatever their kind — they're held back
+  // by their license just like the built-ins, and must say so.
+  const analyzeBlocked = blocked.filter((b) => _ANALYZE_KINDS.has(b.kind) || b.from_plugin);
+
+  // Banner framing: these are OPTIONAL features the user can
+  // enable, not blockers. "Needs your review before use" read
+  // contradictorily with the next line saying "analysis will run
+  // without it" — same sentence said the opposite things.
+  // "Optional features available" matches reality: analyze runs
+  // either way; the user CAN turn these on by reviewing their
+  // licenses.
+  const blockedBanner = analyzeBlocked.length
+    ? `<div class="ml-consent-blocked">
+        <p class="ml-consent-blocked-title">Optional features available</p>
+        <ul class="ml-consent-blocked-list">${analyzeBlocked
+          .map((b) => `<li>${esc(blockedItemLabel(b))}</li>`)
+          .join("")}</ul>
+        <p class="ml-consent-blocked-hint">${analyzeBlocked.some((b) => b.reason === "needs_reaccept") ? "Some license terms were updated since you accepted them — those features are off until you re-accept. " : ""}To enable, review the license in <a href="#" class="ml-consent-blocked-link" data-action="openModelsSettings">Settings → Models</a>. Analysis will run without ${analyzeBlocked.length === 1 ? "it" : "them"} for now.</p>
+      </div>`
+    : "";
+  // Intros — drop "Required" because none of these models are
+  // strictly required (analyze runs with whatever is on disk +
+  // accepted, falling back when something is missing). The
+  // older "Required ML models will download now" implied
+  // mandatory + contradicted the cancel button.
+  let downloadBody;
+  if (allDownloads) {
+    downloadBody = `<p class="ml-consent-intro">These models will download to your machine (${esc(totalLabel)}). Cached locally, no photos leave your machine.</p>
+        <ul class="ml-consent-list">${rows}</ul>`;
+  } else if (analyzeBlocked.length) {
+    // Analyze runs given current state — describe that
+    // honestly, the banner below offers the optional features.
+    downloadBody = `<p class="ml-consent-intro">Analysis runs on your device — no photos leave your machine.</p>`;
+  } else {
+    downloadBody = `<p class="ml-consent-intro">Ready to analyze. Runs on your device — no photos leave your machine.</p>`;
+  }
+  const attributionHTML = bundleModels.length ? attributionSectionHTML(bundle) : "";
+  const bodyHTML = downloadBody + attributionHTML + blockedBanner;
+  const title = allDownloads ? "Download ML models?" : "Start analysis?";
+  const hasAttrDownloads = attributionDownloads.length > 0;
+  let okLabel = pending.length ? "Download & analyze" : "Analyze";
+  if (bundleModels.length) okLabel = attributionOkLabel(false, hasAttrDownloads);
+  return { title, okLabel, bodyHTML, hasAttrDownloads };
+}
+
+/**
+ * Record the user's acceptance of the attribution bundle. False (after
+ * a toast) when the server refused.
+ * @param {any[]} bundleModels
+ * @param {HTMLInputElement | null} box
+ */
+async function _confirmAttributionBundle(bundleModels, box) {
+  try {
+    await apiFetch("/api/v1/model-registry/acceptance/attribution-bundle/confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model_ids: bundleModels.map((m) => m.id),
+        checkbox_responses: { [box?.dataset.checkboxId || ""]: true },
+      }),
+    });
+    notifyModelsChanged();
+    return true;
+  } catch (e) {
+    toastError("accept the model licenses", e);
+    return false;
+  }
+}
+
+/**
+ * The manifest endpoint was unreachable: the generic prompt, so the user
+ * is still asked before downloads happen — degraded UX, not silent
+ * network calls. The failure reason rides in a faint footer so a
+ * maintainer testing a misconfigured build (and bug-report screenshots
+ * from users) carry the breadcrumb instead of hiding it in DevTools.
+ * @param {any} win
+ * @param {unknown} e
+ */
+function _degradedConsent(win, e) {
+  const errMsg = /** @type {any} */ (e)?.message || String(e);
+  const bodyHTML =
+    `<p>Best Photo Picker will download ML models for face detection, scoring, ` +
+    `and (optional) pets / CLIP search the first time it needs them. ` +
+    `Cached at ~/.cache/bpp. Runs on-device — no data leaves your machine.</p>` +
+    `<p class="confirm-sub ml-consent-foot ml-consent-degraded">` +
+    `Couldn't reach the model registry — using the generic prompt. ` +
+    `(${esc(errMsg)})</p>`;
+  return win.appConfirm?.(
+    "Download ML models?",
+    null,
+    { okLabel: "Continue", cancelLabel: "Cancel", bodyHTML },
+  );
 }
 
 /**

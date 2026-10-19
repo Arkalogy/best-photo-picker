@@ -161,6 +161,18 @@ export async function _lbUntagPerson(e, thumbHash, clusterId) {
  * @param {MouseEvent} e
  * @param {number} clusterId
  */
+/**
+ * Place a face overlay at its bbox (percent of the image).
+ * @param {HTMLElement} box
+ * @param {{x: number, y: number, w: number, h: number}} bboxPct
+ */
+export function applyBboxStyle(box, bboxPct) {
+  box.style.left = bboxPct.x + "%";
+  box.style.top = bboxPct.y + "%";
+  box.style.width = bboxPct.w + "%";
+  box.style.height = bboxPct.h + "%";
+}
+
 export function _lbOpenPersonAlbum(e, clusterId) {
   e.stopPropagation();
   /** @type {any} */
@@ -284,10 +296,7 @@ export function _lbRenderFaceOverlays(faces, thumbHash) {
     if (f.cluster_id !== null && f.cluster_id >= 0) {
       box.classList.add("lb-face-overlay-assigned");
     }
-    box.style.left = f.bbox_pct.x + "%";
-    box.style.top = f.bbox_pct.y + "%";
-    box.style.width = f.bbox_pct.w + "%";
-    box.style.height = f.bbox_pct.h + "%";
+    applyBboxStyle(box, f.bbox_pct);
     box.dataset.faceId = f.face_id;
     box.dataset.faceIndex = f.face_index;
     box.dataset.clusterId = String(f.cluster_id ?? CLUSTER_UNASSIGNED);

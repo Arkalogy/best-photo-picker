@@ -12,8 +12,8 @@
  * array stays module-private.
  */
 
-import { apiFetch, authedSrc } from "./api-client.mjs";
-import { esc } from "./text-format.mjs";
+import { apiFetch } from "./api-client.mjs";
+import { searchResultsHTML } from "./search-results-html.mjs";
 
 /** @type {ReturnType<typeof setTimeout> | null} */
 let searchDebounce = null;
@@ -179,176 +179,10 @@ export function _resetSearchSeqForTests() {
 export function renderSearchResults(data) {
   /** @type {any} */
   const win = window;
-  const ICONS = win.ICONS || {};
   const container = document.getElementById("search-results");
   if (!container) return;
-  let html = "";
   searchResultItems = [];
-
-  if (data._quickActionsMatch && data._quickActionsMatch.length) {
-    html += '<div class="search-category">Actions</div>';
-    /** @type {Record<string, string>} */
-    const actionIcons = {
-      gear: ICONS.settings,
-      import: ICONS.importArrow,
-      export: ICONS.exportArrow,
-      search: ICONS.search,
-      folder: ICONS.folder,
-      analyze: ICONS.analyze,
-    };
-    for (const a of data._quickActionsMatch) {
-      const idx = searchResultItems.length;
-      searchResultItems.push({ type: "action", action: a.action });
-      const icon = actionIcons[a.icon] || ICONS.settings || "";
-      html +=
-        `<div class="search-result-item" data-idx="${idx}" ` +
-        `data-action="executeSearchResult" data-arg0="${idx}">
-        <div class="sr-icon">${icon}</div>
-        <div class="sr-text">
-          <div class="sr-title">${esc(a.label)}</div>
-        </div>
-      </div>`;
-    }
-  }
-
-  if (data.people && data.people.length) {
-    html += '<div class="search-category">People</div>';
-    for (const p of data.people) {
-      const idx = searchResultItems.length;
-      searchResultItems.push({ type: "person", ...p });
-      html +=
-        `<div class="search-result-item" data-idx="${idx}" ` +
-        `data-action="executeSearchResult" data-arg0="${idx}">
-        <div class="sr-icon">${ICONS.people || ""}</div>
-        <div class="sr-text">
-          <div class="sr-title">${esc(p.name)}</div>
-          <div class="sr-subtitle">${p.photo_count} photos</div>
-        </div>
-      </div>`;
-    }
-  }
-
-  if (data.albums && data.albums.length) {
-    html += '<div class="search-category">Albums</div>';
-    for (const a of data.albums) {
-      const idx = searchResultItems.length;
-      searchResultItems.push({ type: "album", ...a });
-      html +=
-        `<div class="search-result-item" data-idx="${idx}" ` +
-        `data-action="executeSearchResult" data-arg0="${idx}">
-        <div class="sr-icon">${ICONS.folder || ""}</div>
-        <div class="sr-text">
-          <div class="sr-title">${esc(a.name)}</div>
-          <div class="sr-subtitle">${a.photo_count} photos</div>
-        </div>
-      </div>`;
-    }
-  }
-
-  if (data.dates && data.dates.length) {
-    html += '<div class="search-category">Dates</div>';
-    for (const d of data.dates) {
-      const idx = searchResultItems.length;
-      searchResultItems.push({ type: "date", ...d });
-      html +=
-        `<div class="search-result-item" data-idx="${idx}" ` +
-        `data-action="executeSearchResult" data-arg0="${idx}">
-        <div class="sr-icon">${ICONS.calendar || ""}</div>
-        <div class="sr-text">
-          <div class="sr-title">${esc(d.label)}</div>
-          <div class="sr-subtitle">Jump to time period</div>
-        </div>
-      </div>`;
-    }
-  }
-
-  if (data.tags && data.tags.length) {
-    html += '<div class="search-category">Tags</div>';
-    for (const t of data.tags) {
-      const idx = searchResultItems.length;
-      searchResultItems.push({ type: "tag", ...t });
-      html +=
-        `<div class="search-result-item" data-idx="${idx}" ` +
-        `data-action="executeSearchResult" data-arg0="${idx}">
-        <div class="sr-icon">${ICONS.tag || ""}</div>
-        <div class="sr-text">
-          <div class="sr-title">${esc(t.name)}</div>
-          <div class="sr-subtitle">${t.photo_count} photos</div>
-        </div>
-      </div>`;
-    }
-  }
-
-  if (data.semantic && data.semantic.length) {
-    html +=
-      '<div class="search-category">' +
-      '<span class="search-category-ai">AI</span> ' +
-      `Visual Match (${data.semantic.length})</div>`;
-    for (const p of data.semantic.slice(0, 12)) {
-      const idx = searchResultItems.length;
-      searchResultItems.push({ type: "photo", ...p });
-      const sim = Math.round((p.similarity || 0) * 100);
-      const fname = p.filename || p.filepath.split("/").pop();
-      const thumbSrc = p.thumb_hash ? authedSrc(`/thumb/${p.thumb_hash}`) : "";
-      const imgTag = thumbSrc
-        ? `<img src="${thumbSrc}" alt="" loading="lazy">`
-        : ICONS.library || "";
-      html +=
-        `<div class="search-result-item" data-idx="${idx}" ` +
-        `data-action="executeSearchResult" data-arg0="${idx}">
-        <div class="sr-icon">${imgTag}</div>
-        <div class="sr-text">
-          <div class="sr-title">${esc(fname)}</div>
-          <div class="sr-subtitle">${esc(p.date_day || "")}</div>
-        </div>
-        <span class="sr-badge sr-badge-ai">${sim}%</span>
-      </div>`;
-    }
-  }
-
-  if (data.photos && data.photos.length) {
-    html += '<div class="search-category">' + `Photos (${data.photos.length})</div>`;
-    for (const p of data.photos.slice(0, 20)) {
-      const idx = searchResultItems.length;
-      searchResultItems.push({ type: "photo", ...p });
-      const score = Math.round((p.aggregate_score || 0) * 100);
-      const fname = p.filename || p.filepath.split("/").pop();
-      const thumbSrc = p.thumb_hash ? authedSrc(`/thumb/${p.thumb_hash}`) : "";
-      const imgTag = thumbSrc
-        ? `<img src="${thumbSrc}" alt="" loading="lazy">`
-        : ICONS.library || "";
-      html +=
-        `<div class="search-result-item" data-idx="${idx}" ` +
-        `data-action="executeSearchResult" data-arg0="${idx}">
-        <div class="sr-icon">${imgTag}</div>
-        <div class="sr-text">
-          <div class="sr-title">${esc(fname)}</div>
-          <div class="sr-subtitle">${esc(p.date_day || "")}</div>
-        </div>
-        <span class="sr-badge">${score}%</span>
-      </div>`;
-    }
-  }
-
-  if (!html) {
-    let hint = "";
-    const cs = data.clip_status;
-    if (cs && !cs.ready) {
-      if (!cs.models_available) {
-        hint =
-          "Visual search needs CLIP models. Run <strong>Analyze All</strong> to download and enable.";
-      } else if (cs.embedding_count === 0) {
-        hint =
-          "Visual search is available but no photos have been indexed yet. Run <strong>Analyze All</strong> to enable visual search.";
-      }
-    }
-    html =
-      '<div class="search-no-results">' +
-      "<div>No results found</div>" +
-      (hint ? `<div class="search-hint">${hint}</div>` : "") +
-      "</div>";
-  }
-  container.innerHTML = html;
+  container.innerHTML = searchResultsHTML(data, win.ICONS || {}, searchResultItems);
   searchActiveIdx = searchResultItems.length > 0 ? 0 : -1;
   updateSearchActive();
 }
