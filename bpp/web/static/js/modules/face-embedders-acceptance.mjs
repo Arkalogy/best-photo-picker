@@ -16,6 +16,7 @@ import { focusInto, restoreFocusFrom } from "./dialog-focus.mjs";
 import { appConfirm } from "./dialogs.mjs";
 import { licenseFacts } from "./face-embedders-license.mjs";
 import { _feInstallGlobalHandlers } from "./face-embedders-popover.mjs";
+import { _buildMenuFromState, _deriveRowState } from "./face-embedders-rowstate.mjs";
 import { feState } from "./face-embedders-state.mjs";
 import { loadFaceEmbedderPicker } from "./modals-face-embedders.mjs";
 import { escapeAttr, esc } from "./text-format.mjs";
@@ -84,6 +85,74 @@ function _dialogMode(modelId, requested) {
 }
 
 /**
+ * The notice above the terms: what state this acceptance is in. A
+ * first acceptance has none; a re-accept (the terms changed since the
+ * user accepted, so the model is off) says so — otherwise the dialog
+ * looks identical to the first time and the user can't tell why it
+ * is back.
+ * @param {"view" | "rights" | "review" | "unknown" | "accept"} mode
+ * @param {{model_id: string}} draft
+ * @returns {string}
+ */
+export function _acceptanceNotice(mode, draft) {
+  const withdraw = `<button type="button" class="fe-link-btn" data-action="revokeFaceEmbedderAcceptance" data-arg0="${escapeAttr(draft.model_id)}">withdraw your acceptance</button>`;
+  switch (mode) {
+    case "review":
+      return `<div class="fe-accepted-banner">✓ You've accepted these terms. Shown here for your reference.</div>`;
+    case "unknown":
+      return `<div class="fe-notice-banner">Couldn't check whether you've accepted these terms — load the list again to accept or withdraw. Shown here for reference.</div>`;
+    case "view":
+      return `<div class="fe-notice-banner">This model has been withdrawn or blocked in the model registry, so it can't be enabled. Its terms are shown for reference.${
+        feState.acceptedIds.has(draft.model_id)
+          ? ` You can still ${withdraw}.`
+          : feState.unknown.license && !feState.decided.has(draft.model_id)
+            ? " Couldn't check whether you'd accepted it — load the list again to withdraw an acceptance."
+            : ""
+      }</div>`;
+    case "rights":
+      return `<div class="fe-notice-banner">You've accepted these terms, but your use context is Commercial: confirm below that you hold separate rights, or ${withdraw}.</div>`;
+    default: {
+      // Same source as the row menu and _dialogMode (the server's
+      // load_state first), so the dialog never disagrees with the menu
+      // item that opened it.
+      const id = draft.model_id;
+      const row = licenseFacts(id, feState.requiresAckIds.has(id), feState.loadStates.get(id));
+      return row.needsReaccept
+        ? `<div class="fe-notice-banner">These license terms were updated after you accepted them, so the model is off. Review the new terms and accept again to turn it back on.</div>`
+        : "";
+    }
+  }
+}
+
+const _FETCH_ACTIONS = new Set([
+  "redownloadFaceEmbedderEntry",
+  "ensureCatalogWeights",
+  "installFaceEmbedderViaHint",
+]);
+
+/**
+ * The confirmation after an acceptance. Accepting doesn't fetch the
+ * weights: when they aren't on this device yet, say what comes next
+ * (the row shows "Not downloaded", but nothing spelled out the step).
+ * The step is read off the row's own menu — the item that fetches —
+ * so the toast names the action the menu actually offers (Download,
+ * Install runtime…) and stays silent when the menu has none (install
+ * state unknown, nothing to fetch, or the picker never loaded).
+ * @param {string} modelId
+ * @param {string} displayName
+ * @returns {string}
+ */
+export function _acceptedToastText(modelId, displayName) {
+  const done = `Acceptance recorded for ${displayName}.`;
+  const entry = feState.entries.get(modelId);
+  if (!entry) return done;
+  const state = _deriveRowState(entry, feState.installState.get(modelId));
+  if (state.onDisk) return done;
+  const fetch = _buildMenuFromState(entry, state).find((item) => _FETCH_ACTIONS.has(item.action));
+  return fetch ? `${done} Next: ${fetch.label} from its ⋯ menu.` : done;
+}
+
+/**
  * @param {object} draft
  * @param {"view" | "rights" | "review" | "unknown" | "accept"} [mode]
  */
@@ -104,22 +173,7 @@ function _renderAcceptanceDialog(draft, mode = "accept") {
       </label>`,
     )
     .join("");
-  const acceptedBanner =
-    mode === "review"
-      ? `<div class="fe-accepted-banner">✓ You've accepted these terms. Shown here for your reference.</div>`
-      : mode === "unknown"
-        ? `<div class="fe-notice-banner">Couldn't check whether you've accepted these terms — load the list again to accept or withdraw. Shown here for reference.</div>`
-      : mode === "view"
-        ? `<div class="fe-notice-banner">This model has been withdrawn or blocked in the model registry, so it can't be enabled. Its terms are shown for reference.${
-            feState.acceptedIds.has(draft.model_id)
-              ? ` You can still <button type="button" class="fe-link-btn" data-action="revokeFaceEmbedderAcceptance" data-arg0="${escapeAttr(draft.model_id)}">withdraw your acceptance</button>.`
-              : feState.unknown.license && !feState.decided.has(draft.model_id)
-                ? " Couldn't check whether you'd accepted it — load the list again to withdraw an acceptance."
-                : ""
-          }</div>`
-        : mode === "rights"
-          ? `<div class="fe-notice-banner">You've accepted these terms, but your use context is Commercial: confirm below that you hold separate rights, or <button type="button" class="fe-link-btn" data-action="revokeFaceEmbedderAcceptance" data-arg0="${escapeAttr(draft.model_id)}">withdraw your acceptance</button>.</div>`
-          : "";
+  const acceptedBanner = _acceptanceNotice(mode, draft);
   const commercialBlock =
     feState.currentUseContext === "commercial"
       ? `<div class="fe-section fe-section-rights">
@@ -392,7 +446,9 @@ export async function confirmFaceEmbedderAcceptance() {
       if (was && was !== "blocked") feState.loadStates.set(id, "ok");
       feState.reacceptIds.delete(feState.currentDraft.model_id);
     }
-    toast(`Acceptance recorded for ${feState.currentDraft.model_display_name}.`);
+    toast(
+      _acceptedToastText(feState.currentDraft.model_id, feState.currentDraft.model_display_name),
+    );
     closeFaceEmbedderAcceptance();
     notifyModelsChanged();
     return result;

@@ -19,17 +19,38 @@ import { escapeAttr, esc } from "./text-format.mjs";
  * acknowledges attribution terms (Apache-2.0 etc.) → "Attribution"; no
  * click-through at all → "Permissive".
  *
+ * ``tip`` is the hover text: the badge word alone ("Attribution") does
+ * not say what it asks of the user. No double quotes in a tip — it is
+ * rendered as a ``title`` attribute.
+ *
  * @param {{commercial_use_restriction_known?: boolean, requires_explicit_ack?: boolean}} entry
- * @returns {{text: string, cls: string}}
+ * @returns {{text: string, cls: string, tip: string}}
  */
 export function licenseBadge(entry) {
   if (entry.commercial_use_restriction_known === true) {
-    return { text: "Restricted", cls: "fe-license-restricted" };
+    return {
+      text: "Restricted",
+      cls: "fe-license-restricted",
+      tip:
+        "The model’s own license limits commercial use. You accept its terms before " +
+        "it downloads, and with a Commercial use context you also confirm you hold " +
+        "separate rights.",
+    };
   }
   if (entry.requires_explicit_ack === true) {
-    return { text: "Attribution", cls: "fe-license-attribution" };
+    return {
+      text: "Attribution",
+      cls: "fe-license-attribution",
+      tip:
+        "The model’s license allows use but asks for attribution. You acknowledge " +
+        "its terms once before it downloads.",
+    };
   }
-  return { text: "Permissive", cls: "fe-license-permissive" };
+  return {
+    text: "Permissive",
+    cls: "fe-license-permissive",
+    tip: "No click-through: the model’s license places no conditions on using it here.",
+  };
 }
 
 // ── Status cell ─────────────────────────────────────────────────────

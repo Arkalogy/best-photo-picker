@@ -56,6 +56,41 @@ export function blockedItemLabel(b) {
 }
 
 /**
+ * Pure: the pre-flight banner for the entries analysis will run
+ * without. These are OPTIONAL features the user can enable, not
+ * blockers: "Needs your review before use" read contradictorily with
+ * the next line saying "analysis will run without it". A feature that
+ * WAS on and stopped because its license terms changed is not "available"
+ * though — it was turned off, and the title says so.
+ *
+ * @param {Array<{reason?: string}>} analyzeBlocked
+ * @returns {string} "" when nothing is blocked
+ */
+export function blockedBannerHTML(analyzeBlocked) {
+  if (!analyzeBlocked.length) return "";
+  const offCount = analyzeBlocked.filter((b) => b.reason === "needs_reaccept").length;
+  const reaccept = offCount > 0;
+  // Never-enabled extras next to a turned-off one: say both, so the
+  // heading doesn't claim an extra that was never on got turned off.
+  const title =
+    offCount === analyzeBlocked.length
+      ? "Some features were turned off"
+      : reaccept
+        ? "Some features were turned off; others are available"
+        : "Optional features available";
+  const reacceptHint = reaccept
+    ? "Some license terms were updated since you accepted them — those features are off until you re-accept. "
+    : "";
+  return `<div class="ml-consent-blocked">
+        <p class="ml-consent-blocked-title">${title}</p>
+        <ul class="ml-consent-blocked-list">${analyzeBlocked
+          .map((b) => `<li>${esc(blockedItemLabel(b))}</li>`)
+          .join("")}</ul>
+        <p class="ml-consent-blocked-hint">${reacceptHint}To enable, review the license in <a href="#" class="ml-consent-blocked-link" data-action="openModelsSettings">Settings → Models</a>. Analysis will run without ${analyzeBlocked.length === 1 ? "it" : "them"} for now.</p>
+      </div>`;
+}
+
+/**
  * Size shown for one pending download. A plugin model's size comes from
  * its registry entry's ``expected_download_size_bytes``; 0 = not declared.
  * @param {number} mb
@@ -191,22 +226,7 @@ function _consentDialog(data, bundle) {
   // by their license just like the built-ins, and must say so.
   const analyzeBlocked = blocked.filter((b) => _ANALYZE_KINDS.has(b.kind) || b.from_plugin);
 
-  // Banner framing: these are OPTIONAL features the user can
-  // enable, not blockers. "Needs your review before use" read
-  // contradictorily with the next line saying "analysis will run
-  // without it" — same sentence said the opposite things.
-  // "Optional features available" matches reality: analyze runs
-  // either way; the user CAN turn these on by reviewing their
-  // licenses.
-  const blockedBanner = analyzeBlocked.length
-    ? `<div class="ml-consent-blocked">
-        <p class="ml-consent-blocked-title">Optional features available</p>
-        <ul class="ml-consent-blocked-list">${analyzeBlocked
-          .map((b) => `<li>${esc(blockedItemLabel(b))}</li>`)
-          .join("")}</ul>
-        <p class="ml-consent-blocked-hint">${analyzeBlocked.some((b) => b.reason === "needs_reaccept") ? "Some license terms were updated since you accepted them — those features are off until you re-accept. " : ""}To enable, review the license in <a href="#" class="ml-consent-blocked-link" data-action="openModelsSettings">Settings → Models</a>. Analysis will run without ${analyzeBlocked.length === 1 ? "it" : "them"} for now.</p>
-      </div>`
-    : "";
+  const blockedBanner = blockedBannerHTML(analyzeBlocked);
   // Intros — drop "Required" because none of these models are
   // strictly required (analyze runs with whatever is on disk +
   // accepted, falling back when something is missing). The

@@ -9,6 +9,7 @@ import {
   _collectAcceptedIds,
   _collectReacceptIds,
   damagedLogNoticeHTML,
+  feState,
   _resetFaceEmbedderStateForTests,
   _seedFaceEmbedderStateForTests,
 } from "../bpp/web/static/js/modules/face-embedders-state.mjs";
@@ -18,10 +19,103 @@ import {
   _deriveRowState,
 } from "../bpp/web/static/js/modules/face-embedders-rowstate.mjs";
 import { _statusCell, _statusFor } from "../bpp/web/static/js/modules/face-embedders-cells.mjs";
-import { blockedItemLabel } from "../bpp/web/static/js/modules/analysis-preflight.mjs";
+import {
+  blockedBannerHTML,
+  blockedItemLabel,
+} from "../bpp/web/static/js/modules/analysis-preflight.mjs";
+import {
+  _acceptanceNotice,
+  _acceptedToastText,
+} from "../bpp/web/static/js/modules/face-embedders-acceptance.mjs";
 
 beforeEach(() => {
   _resetFaceEmbedderStateForTests();
+});
+
+describe("pre-flight banner title (U7)", () => {
+  const scrfd = { kind: "face_detector", name: "SCRFD", reason: "needs_license" };
+  test("nothing blocked → no banner", () => {
+    expect(blockedBannerHTML([])).toBe("");
+  });
+  test("never-accepted extras are 'Optional features available'", () => {
+    const html = blockedBannerHTML([scrfd]);
+    expect(html).toContain("Optional features available");
+    expect(html).not.toContain("turned off");
+  });
+  const nudenet = { ...scrfd, name: "NudeNet", reason: "needs_reaccept" };
+  test("only stale acceptances → features were turned off", () => {
+    const html = blockedBannerHTML([nudenet]);
+    expect(html).toContain(">Some features were turned off<");
+    expect(html).not.toContain("available");
+    expect(html).toContain("license terms were updated");
+  });
+  test("a stale acceptance next to a never-enabled extra says both", () => {
+    const html = blockedBannerHTML([scrfd, nudenet]);
+    expect(html).toContain("Some features were turned off; others are available");
+    expect(html).toContain("license terms were updated");
+  });
+});
+
+describe("acceptance dialog notice for a stale acceptance (U8)", () => {
+  const draft = { model_id: "scrfd" };
+  test("first acceptance has no notice", () => {
+    expect(_acceptanceNotice("accept", draft)).toBe("");
+  });
+  test("re-accept says the terms changed since you accepted", () => {
+    _seedFaceEmbedderStateForTests({ requiresAckIds: ["scrfd"], reacceptIds: ["scrfd"] });
+    const html = _acceptanceNotice("accept", draft);
+    expect(html).toContain("fe-notice-banner");
+    expect(html).toMatch(/updated .* you accepted/);
+    expect(html).toMatch(/accept again/);
+  });
+  test("the server's load_state decides, like the row menu does", () => {
+    // Acceptance list didn't load (reacceptIds empty) but the server says
+    // needs_reaccept: the menu reads "Re-accept…", so must the dialog.
+    _seedFaceEmbedderStateForTests({ requiresAckIds: ["scrfd"] });
+    feState.loadStates.set("scrfd", "needs_reaccept");
+    expect(_acceptanceNotice("accept", draft)).toMatch(/accept again/);
+    feState.loadStates.set("scrfd", "needs_license");
+    expect(_acceptanceNotice("accept", draft)).toBe("");
+  });
+  test("review mode keeps its accepted banner", () => {
+    expect(_acceptanceNotice("review", draft)).toContain("fe-accepted-banner");
+  });
+});
+
+describe("toast after accepting (U8)", () => {
+  const entry = {
+    id: "scrfd",
+    display_name: "SCRFD",
+    kind: "face_detector",
+    is_catalog_entry: true,
+  };
+  test("weights not on disk → names the menu's own fetch action", () => {
+    _seedFaceEmbedderStateForTests({
+      acceptedIds: ["scrfd"],
+      entries: { scrfd: { ...entry, catalog_on_disk: false } },
+    });
+    expect(_acceptedToastText("scrfd", "SCRFD")).toMatch(
+      /^Acceptance recorded for SCRFD\. Next: Download.* from its ⋯ menu\.$/
+    );
+  });
+  test("weights on disk → done", () => {
+    _seedFaceEmbedderStateForTests({
+      acceptedIds: ["scrfd"],
+      entries: { scrfd: { ...entry, catalog_on_disk: true } },
+    });
+    expect(_acceptedToastText("scrfd", "SCRFD")).toBe("Acceptance recorded for SCRFD.");
+  });
+  test("install state unknown → the menu has no Download, so no hint", () => {
+    _seedFaceEmbedderStateForTests({
+      acceptedIds: ["sface_yunet"],
+      entries: { sface_yunet: { id: "sface_yunet", display_name: "SFace", kind: "face_embedder" } },
+    });
+    feState.unknown.install = "HTTP 500";
+    expect(_acceptedToastText("sface_yunet", "SFace")).toBe("Acceptance recorded for SFace.");
+  });
+  test("unknown entry → no guess", () => {
+    expect(_acceptedToastText("nope", "Nope")).toBe("Acceptance recorded for Nope.");
+  });
 });
 
 describe("_collectAcceptedIds / _collectReacceptIds", () => {

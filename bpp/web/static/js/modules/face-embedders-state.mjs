@@ -25,6 +25,7 @@
  * @property {Set<string>} acceptedIds      Ids accepted under the CURRENT license text.
  * @property {Set<string>} reacceptIds      Ids accepted under an OLDER text — need re-accepting.
  * @property {Set<string>} catalogEntryIds  Ids fetched via the catalog endpoint.
+ * @property {Map<string, object>} entries  Registry entries by id, as last loaded.
  * @property {Set<string>} busyRowIds       Ids mid-operation (download/uninstall).
  * @property {Map<string, string>} busyText  Their in-row status ("Downloading… 40%").
  * @property {Map<string, string>} loadStates  Id → the server's load-gate decision
@@ -51,6 +52,7 @@ export const feState = {
   acceptedIds: new Set(),
   reacceptIds: new Set(),
   catalogEntryIds: new Set(),
+  entries: new Map(),
   busyRowIds: new Set(),
   busyText: new Map(),
   loadStates: new Map(),
@@ -207,6 +209,7 @@ export function _resetFaceEmbedderStateForTests() {
   feState.acceptedIds = new Set();
   feState.reacceptIds = new Set();
   feState.catalogEntryIds = new Set();
+  feState.entries = new Map();
   feState.installState = new Map();
   feState.busyRowIds = new Set();
   feState.busyText = new Map();
@@ -224,6 +227,7 @@ export function _resetFaceEmbedderStateForTests() {
  *
  * @param {{requiresAckIds?: string[], acceptedIds?: string[],
  *          reacceptIds?: string[], catalogEntryIds?: string[],
+ *          entries?: Record<string, object>,
  *          installState?: Record<string, object>, activeFaceMethod?: string,
  *          useContext?: string}} state
  */
@@ -232,6 +236,7 @@ export function _seedFaceEmbedderStateForTests(state) {
   feState.acceptedIds = new Set(state.acceptedIds || []);
   feState.reacceptIds = new Set(state.reacceptIds || []);
   feState.catalogEntryIds = new Set(state.catalogEntryIds || []);
+  if (state.entries) feState.entries = new Map(Object.entries(state.entries));
   if (state.installState) {
     feState.installState = new Map(Object.entries(state.installState));
   }

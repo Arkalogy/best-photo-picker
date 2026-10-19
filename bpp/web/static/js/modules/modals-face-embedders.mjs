@@ -153,8 +153,10 @@ export async function loadFaceEmbedderPicker() {
     // The server's load-gate decision per row: picks the acceptance
     // dialog's mode (e.g. ask for commercial-use rights).
     feState.loadStates = new Map();
+    feState.entries = new Map();
     for (const group of registry.groups || []) {
       for (const e of group.entries || []) {
+        feState.entries.set(e.id, e);
         if (e.load_state) feState.loadStates.set(e.id, e.load_state);
       }
     }
@@ -306,7 +308,7 @@ function _renderRow(entry) {
   // per cell, no chance of the halves disagreeing.
   const state = _deriveRowState(entry, install);
 
-  const { text: licenseText, cls: licenseClass } = licenseBadge(entry);
+  const { text: licenseText, cls: licenseClass, tip: licenseTip } = licenseBadge(entry);
   const licenseDetail = entry.license_summary
     ? `<button class="fe-license-tip"
               data-action="_feLicenseInfoToggle"
@@ -340,7 +342,7 @@ function _renderRow(entry) {
       </div>
     </td>
     <td class="fe-cell-license">
-      <span class="${licenseClass}">${licenseText}</span>
+      <span class="${licenseClass}" title="${escapeAttr(licenseTip)}">${licenseText}</span>
       ${licenseDetail}
     </td>
     <td class="fe-cell-status">${_statusCell(state)}</td>
