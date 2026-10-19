@@ -100,9 +100,9 @@
     </div>
     <div class="toolbar-center">
       <div class="zoom-control" id="zoom-control">
-        <svg data-action="stepZoom" data-arg0="-10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" role="button" tabindex="0" aria-label="Zoom out"><rect x="1" y="1" width="14" height="14" rx="2"/><line x1="5" y1="8" x2="11" y2="8"/></svg>
+        <svg data-action="stepZoom" data-arg0="-10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" role="button" tabindex="0" data-key-activate="true" aria-label="Zoom out"><rect x="1" y="1" width="14" height="14" rx="2"/><line x1="5" y1="8" x2="11" y2="8"/></svg>
         <input type="range" id="zoom-slider" min="40" max="300" value="80" data-oninput="applyZoom" aria-label="Zoom level">
-        <svg data-action="stepZoom" data-arg0="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" role="button" tabindex="0" aria-label="Zoom in"><rect x="1" y="1" width="14" height="14" rx="2"/><line x1="5" y1="8" x2="11" y2="8"/><line x1="8" y1="5" x2="8" y2="11"/></svg>
+        <svg data-action="stepZoom" data-arg0="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" role="button" tabindex="0" data-key-activate="true" aria-label="Zoom in"><rect x="1" y="1" width="14" height="14" rx="2"/><line x1="5" y1="8" x2="11" y2="8"/><line x1="8" y1="5" x2="8" y2="11"/></svg>
         <span class="zoom-pct" id="zoom-pct">80%</span>
       </div>
     </div>
@@ -297,7 +297,7 @@
   </div>
 </main>
 
-<div class="lightbox-overlay" id="lightbox" role="dialog" aria-modal="true" aria-label="Photo viewer" data-action="closeLightbox" data-arg0="event">
+<div class="lightbox-overlay" id="lightbox" role="dialog" aria-modal="true" aria-label="Photo viewer" tabindex="-1" data-action="closeLightbox" data-arg0="event">
   <button class="lightbox-close" data-action="closeLightbox" aria-label="Close">&times;</button>
   <button class="lightbox-nav prev" data-stop-propagation="true" data-action="lightboxNav" data-arg0="-1" aria-label="Previous photo">&#8249;</button>
   <button class="lightbox-nav next" data-stop-propagation="true" data-action="lightboxNav" data-arg0="1" aria-label="Next photo">&#8250;</button>

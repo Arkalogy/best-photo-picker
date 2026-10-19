@@ -111,7 +111,7 @@ export async function loadYearMonths(detailsEl) {
       const filterVal = `${year}-${mo}`;
       const active =
         win.currentAlbumId === albumId && _getTimelineFilter() === filterVal ? " active" : "";
-      html += `<div class="nav-item nav-month-item${active}" data-action="switchToMonth" data-arg0="${albumId}" data-arg1="${filterVal}">
+      html += `<div class="nav-item nav-month-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchToMonth" data-arg0="${albumId}" data-arg1="${filterVal}">
         <span>${MONTHS_SHORT[m.month - 1]}</span>
         <span class="nav-count">${m.count}</span>
       </div>`;

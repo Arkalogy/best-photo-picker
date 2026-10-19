@@ -67,7 +67,7 @@ export function renderSmartAlbums(ctx, smartAlbums) {
     const icon = smartAlbumIcon(album.album_type, ctx.ICONS);
     const active = _isActive(ctx, album) ? " active" : "";
     const tip = smartAlbumTip(album.album_type);
-    html += `<div class="nav-item${active}" data-action="switchAlbum" data-arg0="${album.id}" data-album-id="${album.id}"
+    html += `<div class="nav-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${album.id}" data-album-id="${album.id}"
         ${tip ? `title="${escapeAttr(tip)}"` : ""}
         data-oncontextmenu="showSmartAlbumMenu" data-arg0="${album.id}" data-arg1="${escapeJsAttr(album.name)}">
         <span><span class="nav-icon-svg">${icon || ""}</span>${esc(album.name)}</span>
@@ -119,14 +119,14 @@ function _renderFacesFolder(ctx, faceAlbums, namedPetAlbums) {
         ? `<img class="nav-face-thumb" src="${authedSrc(`/api/v1/faces/crop/${escapeAttr(rep.thumb_hash)}/${rep.face_index}`)}" loading="lazy">`
         : `<span class="nav-face-thumb nav-face-placeholder">${ICONS.people || ""}</span>`;
     const cid = album.rule && album.rule.cluster_id;
-    html += `<div class="nav-item${active}" data-action="switchAlbum" data-arg0="${album.id}" data-album-id="${album.id}"
+    html += `<div class="nav-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${album.id}" data-album-id="${album.id}"
           data-oncontextmenu="${cid != null ? "showPersonCtxMenu" : "showSmartAlbumMenu"}" data-arg0="${cid != null ? cid : album.id}" data-arg1="${escapeJsAttr(album.name)}">
           <span class="nav-face-label">${thumb}<span class="nav-face-name">${esc(album.name)}</span></span>
           <span class="nav-count">${album.photo_count || 0}</span>
         </div>`;
   }
   if (hiddenCount > 0) {
-    html += `<div class="nav-item nav-show-more" data-action="navigateTo" data-arg0="people">
+    html += `<div class="nav-item nav-show-more" role="button" tabindex="0" data-key-activate="true" data-action="navigateTo" data-arg0="people">
           <span class="nav-face-label"><span class="nav-face-thumb nav-face-placeholder">…</span><span class="nav-face-name">${hiddenCount} more</span></span>
         </div>`;
   }
@@ -138,7 +138,7 @@ function _renderFacesFolder(ctx, faceAlbums, namedPetAlbums) {
       petRep && petRep.thumb_hash
         ? `<img class="nav-face-thumb" src="${authedSrc(`/api/v1/pets/crop/${escapeAttr(petRep.thumb_hash)}/${petRep.detection_index}`)}" loading="lazy">`
         : `<span class="nav-face-thumb nav-face-placeholder">${ICONS.paw || ""}</span>`;
-    html += `<div class="nav-item${active}" data-action="switchAlbum" data-arg0="${album.id}" data-album-id="${album.id}"
+    html += `<div class="nav-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${album.id}" data-album-id="${album.id}"
           data-oncontextmenu="showPetCtxMenu" data-arg0="${album.rule.cluster_id}">
           <span class="nav-face-label">${petThumb}<span class="nav-face-name">${esc(album.name)}</span></span>
           <span class="nav-count">${album.photo_count || 0}</span>
@@ -167,7 +167,7 @@ function _renderGroupsFolder(ctx, groupAlbums) {
         <summary><span class="nav-icon-svg">${ctx.ICONS.group || ""}</span>Groups <span class="nav-count nav-folder-count">${groupAlbums.length}</span></summary>`;
   for (const album of groupAlbums) {
     const active = _isActive(ctx, album) ? " active" : "";
-    html += `<div class="nav-item${active}" data-action="switchAlbum" data-arg0="${album.id}" data-album-id="${album.id}"
+    html += `<div class="nav-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${album.id}" data-album-id="${album.id}"
           data-oncontextmenu="showSmartAlbumMenu" data-arg0="${album.id}" data-arg1="${escapeJsAttr(album.name)}">
           <span>${esc(album.name)}</span>
           <span class="nav-count">${album.photo_count || 0}</span>
@@ -189,7 +189,7 @@ function _renderTagsFolder(ctx, tagAlbums) {
   for (const album of tagAlbums) {
     const active = _isActive(ctx, album) ? " active" : "";
     const tagId = album.rule && album.rule.tag_id;
-    html += `<div class="nav-item${active}" data-action="switchAlbum" data-arg0="${album.id}" data-album-id="${album.id}"
+    html += `<div class="nav-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${album.id}" data-album-id="${album.id}"
           data-oncontextmenu="showTagAlbumMenu" data-arg0="${album.id}" data-arg1="${escapeJsAttr(album.name)}" data-arg2="${tagId || 0}">
           <span><span class="nav-icon-svg">${ctx.ICONS.tag || ""}</span>${esc(album.name)}</span>
           <span class="nav-count">${album.photo_count || 0}</span>
@@ -222,7 +222,7 @@ function _renderTimelineFolder(ctx, timeAlbums) {
             <div class="nav-year-months" id="year-months-${escapeAttr(album.rule.year)}"></div>
           </details>`;
     } else {
-      html += `<div class="nav-item${active}" data-action="switchAlbum" data-arg0="${album.id}" data-album-id="${album.id}">
+      html += `<div class="nav-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${album.id}" data-album-id="${album.id}">
             <span>${esc(album.name)}</span>
             <span class="nav-count">${album.photo_count || 0}</span>
           </div>`;

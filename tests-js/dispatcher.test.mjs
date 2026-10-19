@@ -434,3 +434,62 @@ describe("data-stop-propagation does not starve descendants (capture-phase regre
     }
   });
 });
+
+describe("Enter / Space on a div that acts as a button", () => {
+  test("dispatches its data-action like a click", () => {
+    const spy = vi.fn();
+    /** @type {any} */ (window)._testRowAction = spy;
+    const row = document.createElement("div");
+    row.setAttribute("role", "button");
+    row.tabIndex = 0;
+    row.dataset.keyActivate = "true";
+    row.dataset.action = "_testRowAction";
+    row.dataset.arg0 = "7";
+    document.body.appendChild(row);
+    row.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    row.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(spy).toHaveBeenLastCalledWith(7);
+  });
+
+  test("a real button inside the row keeps its own activation", () => {
+    const rowSpy = vi.fn();
+    /** @type {any} */ (window)._testRowAction2 = rowSpy;
+    const row = document.createElement("div");
+    row.setAttribute("role", "button");
+    row.dataset.keyActivate = "true";
+    row.dataset.action = "_testRowAction2";
+    const inner = document.createElement("button");
+    row.appendChild(inner);
+    document.body.appendChild(row);
+    inner.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(rowSpy).not.toHaveBeenCalled();
+  });
+
+  test("an element with its own keydown handler keeps it", () => {
+    const spy = vi.fn();
+    const own = vi.fn();
+    /** @type {any} */ (window)._testRowAction3 = spy;
+    /** @type {any} */ (window)._testOwnKeys = own;
+    const el = document.createElement("span");
+    el.dataset.keyActivate = "true";
+    el.dataset.action = "_testRowAction3";
+    el.dataset.onkeydown = "_testOwnKeys";
+    document.body.appendChild(el);
+    el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(spy).not.toHaveBeenCalled();
+    expect(own).toHaveBeenCalledTimes(1);
+  });
+
+  test("an SVG icon activates too (it has no click method)", () => {
+    const spy = vi.fn();
+    /** @type {any} */ (window)._testZoom = spy;
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("role", "button");
+    svg.setAttribute("data-key-activate", "true");
+    svg.setAttribute("data-action", "_testZoom");
+    document.body.appendChild(svg);
+    svg.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+});

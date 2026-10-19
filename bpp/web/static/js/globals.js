@@ -279,6 +279,16 @@ document.addEventListener("change", function _bppChangeDispatch(e) { if (!e || !
   fn.call(el, el.value, e);
 });
 document.addEventListener("keydown", function _bppKeydownDispatch(e) { if (!e || !e.target) return; var _t = typeof e.target.closest === "function" ? e.target : (e.target.parentElement || null); if (!_t) return;
+  // An element acting as a button (photo cards, sidebar rows, the zoom
+  // icons: data-key-activate + data-action) activates on Enter / Space
+  // like a real one. Only when the key lands on that element itself — a
+  // button inside it keeps its own — and not when it has its own keydown
+  // handler. A dispatched click, not .click(): SVG elements have none.
+  if ((e.key === "Enter" || e.key === " ") && _t.matches("[data-key-activate][data-action]") && !_t.hasAttribute("data-onkeydown")) {
+    e.preventDefault();
+    _t.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    return;
+  }
   var el = _t.closest("[data-onkeydown]");
   if (!el) return;
   var fn = window[el.dataset.onkeydown];

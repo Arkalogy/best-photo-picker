@@ -138,24 +138,24 @@ function _renderLibraryAndViews(ctx, allAlbums) {
     const active = libActive && win.currentView !== "favorites" ? " active" : "";
     const picksActive = win.currentView === "picks" ? " active" : "";
     const picksCount = album.selected_count || 0;
-    html += `<div class="nav-item${active}" data-action="switchAlbum" data-arg0="${album.id}" data-album-id="${album.id}">
+    html += `<div class="nav-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${album.id}" data-album-id="${album.id}">
       <span><span class="nav-icon-svg">${ICONS.library || ""}</span>Library</span>
       <span class="nav-count">${album.photo_count || 0}</span>
     </div>
-    <div class="nav-subitem nav-subitem-picks${picksActive}" data-action="navigateToLibraryPicks" title="Best K photos across the full library">
+    <div class="nav-subitem nav-subitem-picks${picksActive}" role="button" tabindex="0" data-key-activate="true" data-action="navigateToLibraryPicks" title="Best K photos across the full library">
       <span><span class="nav-icon-svg">${ICONS.picks || ""}</span>BPP Picks</span>
       <span class="nav-count">${picksCount || ""}</span>
     </div>`;
   }
   if (allAlbums.length === 0) {
-    html += `<div class="nav-item" data-action="switchToLibrary">
+    html += `<div class="nav-item" role="button" tabindex="0" data-key-activate="true" data-action="switchToLibrary">
       <span><span class="nav-icon-svg">${ICONS.library || ""}</span>Library</span>
       <span class="nav-count">0</span>
     </div>`;
   }
 
   const peopleActive = win.currentView === "people" ? " active" : "";
-  html += `<div class="nav-item${peopleActive}" data-action="navigateToPeople">
+  html += `<div class="nav-item${peopleActive}" role="button" tabindex="0" data-key-activate="true" data-action="navigateToPeople">
     <span><span class="nav-icon-svg">${ICONS.people || ""}</span>Faces</span>
   </div>`;
   // Render an inline error pill if the faces loader
@@ -163,7 +163,7 @@ function _renderLibraryAndViews(ctx, allAlbums) {
   // "couldn't load, retry" affordance.
   const facesErr = getSectionError("faces");
   if (facesErr) {
-    html += `<div class="nav-item nav-item-error" title="${escapeAttr(facesErr.message)}" data-action="_retrySectionLoader" data-arg0="faces">
+    html += `<div class="nav-item nav-item-error" role="button" tabindex="0" data-key-activate="true" title="${escapeAttr(facesErr.message)}" data-action="_retrySectionLoader" data-arg0="faces">
       <span class="nav-error-icon">⚠</span>
       <span class="nav-error-label">${esc(facesErr.message)}</span>
       <span class="nav-error-retry">Retry</span>
@@ -173,7 +173,7 @@ function _renderLibraryAndViews(ctx, allAlbums) {
   if (ctx.petClusters.length > 0 || win.petsAvailable) {
     const petsActive = win.currentView === "pets" ? " active" : "";
     const petCount = ctx.petClusters.reduce((sum, c) => sum + c.photo_count, 0);
-    html += `<div class="nav-item${petsActive}" data-action="navigateToPets">
+    html += `<div class="nav-item${petsActive}" role="button" tabindex="0" data-key-activate="true" data-action="navigateToPets">
       <span><span class="nav-icon-svg">${ICONS.paw || ""}</span>Pets</span>
       ${petCount > 0 ? `<span class="nav-count">${petCount}</span>` : ""}
     </div>`;
@@ -182,7 +182,7 @@ function _renderLibraryAndViews(ctx, allAlbums) {
   const _faceGroups = _getFaceGroups();
   if (_faceGroups.length > 0) {
     const groupsActive = win.currentView === "groups" ? " active" : "";
-    html += `<div class="nav-item${groupsActive}" data-action="navigateToGroups">
+    html += `<div class="nav-item${groupsActive}" role="button" tabindex="0" data-key-activate="true" data-action="navigateToGroups">
       <span><span class="nav-icon-svg">${ICONS.group || ""}</span>Groups</span>
       <span class="nav-count">${_faceGroups.length}</span>
     </div>`;
@@ -191,25 +191,25 @@ function _renderLibraryAndViews(ctx, allAlbums) {
   const _tags = /** @type {any[]} */ (win._getTags?.() || []);
   if (_tags.length > 0) {
     const tagsActive = win.currentView === "tags" || win.currentView === "tag-photos" ? " active" : "";
-    html += `<div class="nav-item${tagsActive}" data-action="navigateToTags">
+    html += `<div class="nav-item${tagsActive}" role="button" tabindex="0" data-key-activate="true" data-action="navigateToTags">
       <span><span class="nav-icon-svg">${ICONS.tag || ""}</span>Tags</span>
       <span class="nav-count">${_tags.length}</span>
     </div>`;
   }
 
   const mapActive = win.currentView === "map" ? " active" : "";
-  html += `<div class="nav-item${mapActive}" data-action="navigateToMap">
+  html += `<div class="nav-item${mapActive}" role="button" tabindex="0" data-key-activate="true" data-action="navigateToMap">
     <span><span class="nav-icon-svg">${ICONS.map || ICONS.calendar || ""}</span>Map</span>
   </div>`;
 
   const calActive = win.currentView === "calendar" ? " active" : "";
-  html += `<div class="nav-item${calActive}" data-action="navigateToCalendar">
+  html += `<div class="nav-item${calActive}" role="button" tabindex="0" data-key-activate="true" data-action="navigateToCalendar">
     <span><span class="nav-icon-svg">${ICONS.calendar || ""}</span>Calendar</span>
   </div>`;
 
   html += `<div class="nav-group-header"><span>Favorites</span></div>`;
   const favActive = win.currentView === "favorites" ? " active" : "";
-  html += `<div class="nav-item${favActive}" data-action="navigateToFavorites">
+  html += `<div class="nav-item${favActive}" role="button" tabindex="0" data-key-activate="true" data-action="navigateToFavorites">
     <span><span class="nav-icon-svg">${ICONS.heart || ""}</span>Favorites</span>
     <span class="nav-count">${ctx.favorites.size || 0}</span>
   </div>`;
@@ -307,7 +307,7 @@ function _renderManualAlbums(ctx, manualAlbums) {
       }
       out += `</details>`;
     } else {
-      out += `<div class="nav-item${active}" data-action="switchAlbum" data-arg0="${album.id}" data-album-id="${album.id}" style="padding-left:${12 + indent * 16}px"
+      out += `<div class="nav-item${active}" role="group" aria-roledescription="album" aria-label="${escapeAttr(album.name)}, Enter opens" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${album.id}" data-album-id="${album.id}" style="padding-left:${12 + indent * 16}px"
         data-oncontextmenu="showAlbumMoveMenu" data-arg0="${album.id}">
         <span><span class="nav-icon-svg">${ICONS.folder || ""}</span>${esc(album.name)}</span>
         <span class="nav-item-right">${badge}<span class="nav-count">${album.photo_count || 0}</span>${actions}</span>
@@ -337,13 +337,13 @@ function _renderHiddenAndDeleted(ctx) {
   let html = `<div class="nav-group-header" style="margin-top:12px"><span></span></div>`;
 
   const hidActive = win.currentView === "hidden" ? " active" : "";
-  html += `<div class="nav-item${hidActive}" data-action="navigateToHidden">
+  html += `<div class="nav-item${hidActive}" role="button" tabindex="0" data-key-activate="true" data-action="navigateToHidden">
     <span><span class="nav-icon-svg">${ICONS.hidden || ""}</span>Hidden</span>
     <span class="nav-count" id="hidden-count"></span>
   </div>`;
 
   const delActive = win.currentView === "deleted" ? " active" : "";
-  html += `<div class="nav-item${delActive}" data-action="navigateToDeleted">
+  html += `<div class="nav-item${delActive}" role="button" tabindex="0" data-key-activate="true" data-action="navigateToDeleted">
     <span><span class="nav-icon-svg">${ICONS.trash || ""}</span>Recently Deleted</span>
     <span class="nav-count" id="deleted-count"></span>
   </div>`;

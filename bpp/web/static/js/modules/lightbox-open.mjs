@@ -9,6 +9,7 @@
  */
 
 import { authedSrc } from "./api-client.mjs";
+import { focusInto } from "./dialog-focus.mjs";
 import { formatDate } from "./date-format.mjs";
 import { qualityLabel } from "./score-format.mjs";
 import { saveNavState } from "./navigation.mjs";
@@ -163,7 +164,14 @@ function _doOpenLightbox(idx, animClass) {
 
   updateLightboxSimilar(p);
   lbSwitchTab();
-  document.getElementById("lightbox")?.classList.add("visible");
+  const lb = document.getElementById("lightbox");
+  const opening = !!lb && !lb.classList.contains("visible");
+  lb?.classList.add("visible");
+  // On the open transition only (not on every photo step): remember what
+  // had focus, move it into the dialog and keep Tab inside — a card
+  // opened from the keyboard would otherwise keep focus and its arrow /
+  // Enter keys would act on the grid behind. closeLightbox gives it back.
+  if (opening) focusInto(lb);
   saveNavState();
 
   if (animClass) {

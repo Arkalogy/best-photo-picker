@@ -392,7 +392,7 @@ export function renderTagsSidebar() {
     html +=
       '<div class="nav-item' +
       active +
-      '" data-action="applyTagFilter" data-arg0="' +
+      '" role="button" tabindex="0" data-key-activate="true" data-action="applyTagFilter" data-arg0="' +
       t.id +
       '" data-arg1="' +
       escapeJsAttr(t.name) +
