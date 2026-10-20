@@ -11,7 +11,7 @@ Gaps covered:
 * ``api_video_trim`` overwrote the video file but didn't invalidate
   the content-addressed sprite/thumbnail cache, so the next
   /video/sprite request served frames cut off the head/tail. Fix
-  adds an explicit ``_invalidate_photo_cache`` call after the DB
+  adds an explicit ``invalidate_photo_cache`` call after the DB
   duration update.
 
 Both fixes are structural — locking them with these tests means a
@@ -176,8 +176,8 @@ class TestVideoTrimInvalidatesPhotoCache:
         m = re.search(r"\n(@bp\.|def )", src[idx + 10 :])
         end = idx + 10 + m.start() if m else len(src)
         body = src[idx:end]
-        assert "_invalidate_photo_cache" in body, (
-            "api_video_trim must call _invalidate_photo_cache after "
+        assert "invalidate_photo_cache" in body, (
+            "api_video_trim must call invalidate_photo_cache after "
             "the trim overwrites the file on disk — otherwise the "
             "cached sprite serves frames from the pre-trim video"
         )

@@ -11,7 +11,7 @@ The detector implementations and NMS/filter/tiling helpers live in
 sibling modules so this file stays at the documented 500-LOC cap:
 
 - :mod:`bpp.scoring.face_fallback` — dlib HOG + Haar cascade
-- :mod:`bpp.scoring.face_pipeline` — ``_DETECTORS`` registry, NMS,
+- :mod:`bpp.scoring.face_pipeline` — detector dispatch, NMS,
   size filters, tiled detection, ``_collect_detections``,
   ``_iterative_collect``
 - :mod:`bpp.scoring.face_yunet` / :mod:`bpp.scoring.face_mediapipe` /
@@ -98,7 +98,6 @@ from bpp.scoring.face_mediapipe import (  # noqa: E402, F401
 # six register_detector(...) calls). Keep this import even if the
 # symbols below were unused locally.
 from bpp.scoring.face_pipeline import (  # noqa: E402, F401
-    _DETECTORS,
     _TILE_MIN_IMAGE_PX,
     _TILE_OVERLAP,
     _TILE_SIZE,

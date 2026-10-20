@@ -55,6 +55,17 @@ export function faceCropUrl(thumbHash, faceIndex) {
 }
 
 /**
+ * The pet crop URL for a detection, the counterpart of faceCropUrl.
+ * @param {string} thumbHash
+ * @param {number|string} detectionIndex
+ */
+export function petCropUrl(thumbHash, detectionIndex) {
+  return authedSrc(
+    `/api/v1/pets/crop/${encodeURIComponent(thumbHash)}/${encodeURIComponent(String(detectionIndex))}`
+  );
+}
+
+/**
  * Auth-aware JSON fetch with a default 30s timeout and structured
  * error throwing.
  *

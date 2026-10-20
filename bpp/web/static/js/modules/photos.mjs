@@ -288,41 +288,42 @@ export async function setOverride(filepath, mode) {
   const selectedPaths = /** @type {Set<string>} */ (win.selectedPaths || new Set());
   const prevMode = overrides[filepath] || null;
   const newMode = prevMode === mode ? null : mode;
-  if (newMode) overrides[filepath] = newMode;
-  else delete overrides[filepath];
-  saveOverrides();
-  scheduleRecompute();
   const url = win.currentAlbumId ? `/api/v1/albums/${win.currentAlbumId}/override` : "/api/v1/override";
-  try {
-    const data = await apiFetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        filepath,
-        mode: newMode,
-        selected_paths: Array.from(selectedPaths),
-      }),
-    });
-    if (data.feedback_recorded) showToast("Noted — this helps tune duplicate detection");
-  } catch (e) {
-    toastError("save the override", e);
-  }
-  const label =
-    newMode === "include" ? "Included" : newMode === "exclude" ? "Excluded" : "Override cleared";
-  showToast(label, 4000, () => {
-    if (prevMode) overrides[filepath] = prevMode;
+  /** Show ``m`` locally (optimistic) and schedule the recompute. */
+  const apply = (m) => {
+    if (m) overrides[filepath] = m;
     else delete overrides[filepath];
     saveOverrides();
     scheduleRecompute();
+  };
+  const save = (m) =>
     apiFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        filepath,
-        mode: prevMode,
-        selected_paths: Array.from(selectedPaths),
-      }),
-    }).catch((e) => console.warn("Override sync failed:", e));
+      body: JSON.stringify({ filepath, mode: m, selected_paths: Array.from(selectedPaths) }),
+    });
+
+  apply(newMode);
+  try {
+    const data = await save(newMode);
+    if (data.feedback_recorded) showToast("Noted — this helps tune duplicate detection");
+  } catch (e) {
+    // The server didn't take it: show what the server has, and no undo
+    // for a change that never happened.
+    apply(prevMode);
+    toastError("save the override", e);
+    return;
+  }
+  const label =
+    newMode === "include" ? "Included" : newMode === "exclude" ? "Excluded" : "Override cleared";
+  showToast(label, 4000, async () => {
+    apply(prevMode);
+    try {
+      await save(prevMode);
+    } catch (e) {
+      apply(newMode); // the server still has the change
+      toastError("undo the override", e);
+    }
   });
 }
 

@@ -3,7 +3,7 @@
 Extracted from :mod:`bpp.scoring.face` as part of the 500-LOC cap split.
 This module owns the multi-detector pipeline:
 
-- ``_DETECTORS`` registry dict bound at module load (single point of
+- detector lookup through ``face_detector_registry`` (single point of
   swap for plugin authors; public-API hook also via
   :func:`bpp.scoring.face_detector_registry.register_detector`).
 - ``_nms_faces`` — confidence-weighted Non-Maximum Suppression
@@ -23,7 +23,7 @@ points stay in :mod:`bpp.scoring.face`; they call into this module.
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Callable
 
 import cv2
 import numpy as np
@@ -39,6 +39,7 @@ from bpp.constants import (
 from bpp.scoring.face_blazeface_fr import blazeface_fr_detect as _blazeface_fr_detect
 from bpp.scoring.face_detector_registry import (
     FaceDetector,
+    get_detector,
     register_detector,
     run_plugin_detectors,
 )
@@ -52,17 +53,24 @@ log = get_logger(__name__)
 
 
 # ── Detector registry ──
-# Single point of binding for detector implementations. The orchestrator
-# below references detectors by name via this dict instead of bare function
-# symbols, so a swap is one line at module load.
+# Detectors are bound through ``face_detector_registry`` alone: the
+# orchestrator below looks each one up by name at call time, so a
+# replacement registered later (a plugin, a test) is what runs.
 #
 # Adding a new detector:
 #   1. Implement `def my_detect(image, min_confidence) -> list[(x,y,w,h,conf)]`
 #      in its own module (extension pattern: see face_scrfd.py / face_blazeface_fr.py).
-#   2. Add an entry: `_DETECTORS["my_kind"] = my_detect`.
-#   3. Reference `_DETECTORS["my_kind"]` from _collect_detections() at the
+#   2. ``register_detector(FaceDetector(name="my_kind", detect=my_detect, ...))``.
+#   3. Reference ``_detect("my_kind")`` from _collect_detections() at the
 #      appropriate priority (fast / slow / rotation).
-_DETECTORS: dict[str, Any] = {}
+
+
+def _detect(name: str) -> Callable[[np.ndarray, float], list[tuple[int, int, int, int, float]]]:
+    """The registered detector's function, by name."""
+    det = get_detector(name)
+    if det is None:
+        raise KeyError(f"face detector {name!r} is not registered")
+    return det.detect
 
 
 def _scrfd_detect_wrapper(
@@ -82,13 +90,6 @@ def _haar_detect_wrapper(
 ) -> list[tuple[int, int, int, int, float]]:
     return _haar_detect(img)
 
-
-_DETECTORS["yunet"] = _yunet_detect
-_DETECTORS["mediapipe_sr"] = _mediapipe_detect
-_DETECTORS["blazeface_fr"] = _blazeface_fr_detect
-_DETECTORS["scrfd"] = _scrfd_detect_wrapper
-_DETECTORS["dlib"] = _dlib_detect_wrapper
-_DETECTORS["haar"] = _haar_detect_wrapper
 
 register_detector(
     FaceDetector(
@@ -311,7 +312,7 @@ def _collect_builtin_detections(
     found_upright = False
     # YuNet is off only for a run whose preflight couldn't fetch it, so
     # scoring doesn't retry that download.
-    yunet = _DETECTORS["yunet"] if mt.get("model_yunet", True) else _no_faces
+    yunet = _detect("yunet") if mt.get("model_yunet", True) else _no_faces
 
     # 0. SCRFD (InsightFace, research-only — runs only once accepted; see
     #    face_scrfd.scrfd_accepted) — strong multi-scale detector for small faces
@@ -341,7 +342,7 @@ def _collect_builtin_detections(
         found_upright = True
 
     # 2. MediaPipe BlazeFace short-range — fast, complementary for close-ups
-    mp_faces = _DETECTORS["mediapipe_sr"](image, min_confidence)
+    mp_faces = _detect("mediapipe_sr")(image, min_confidence)
     all_faces.extend(mp_faces)
     if mp_faces:
         found_upright = True
@@ -353,7 +354,7 @@ def _collect_builtin_detections(
     if not has_confident:
         # 3. BlazeFace full-range — profiles, angled, 2-10m distance
         if mt.get("model_blazeface_fr", True):
-            fr_faces = _DETECTORS["blazeface_fr"](image, min_confidence)
+            fr_faces = _detect("blazeface_fr")(image, min_confidence)
             all_faces.extend(fr_faces)
             if fr_faces:
                 found_upright = True
@@ -362,7 +363,7 @@ def _collect_builtin_detections(
 
         # 4. dlib HOG — good for standard adult faces
         if _has_face_recognition():
-            dlib_faces = _DETECTORS["dlib"](image, min_confidence)
+            dlib_faces = _detect("dlib")(image, min_confidence)
             all_faces.extend(dlib_faces)
             if dlib_faces:
                 found_upright = True
@@ -375,13 +376,13 @@ def _collect_builtin_detections(
             all_faces.extend(
                 (w - x - fw, h - y - fh, fw, fh, conf) for x, y, fw, fh, conf in yunet_rot
             )
-        mp_rot = _DETECTORS["mediapipe_sr"](rotated, min_confidence)
+        mp_rot = _detect("mediapipe_sr")(rotated, min_confidence)
         if mp_rot:
             all_faces.extend(
                 (w - x - fw, h - y - fh, fw, fh, conf) for x, y, fw, fh, conf in mp_rot
             )
         if _has_face_recognition():
-            dlib_rot = _DETECTORS["dlib"](rotated, min_confidence)
+            dlib_rot = _detect("dlib")(rotated, min_confidence)
             if dlib_rot:
                 all_faces.extend(
                     (w - x - fw, h - y - fh, fw, fh, conf) for x, y, fw, fh, conf in dlib_rot

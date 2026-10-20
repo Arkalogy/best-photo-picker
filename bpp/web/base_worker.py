@@ -90,6 +90,18 @@ class BackgroundWorker:
         self._thread: threading.Thread | None = None
         self.running = False
         self._cancelled = threading.Event()
+        # The run's event log: every progress message of the current run,
+        # for the SSE streams. Each reader keeps its own position, so two
+        # tabs (or a tab that reloads) each see every message; the queue
+        # above stays for in-process consumers. Bounded like the queue.
+        self._events: list[dict[str, Any]] = []
+        self._events_base = 0  # sequence number of _events[0]
+        self._events_cond = threading.Condition()
+        self.run_id = 0
+        self._finalized_run: int | None = None
+        #: The previous run's log, kept so a reader still on it gets the
+        #: run's end (done / cancelled) before it moves to the new run.
+        self._prev_events: tuple[int, int, list[dict[str, Any]]] | None = None
         # Drop-warning rate limiter: (last_log_time, drops_since_last_log)
         self._drop_log_state: tuple[float, int] = (0.0, 0)
         self._drop_log_lock = threading.Lock()
@@ -125,12 +137,19 @@ class BackgroundWorker:
         self.running = True
         self._cancelled.clear()
 
-        # Drain any stale progress messages
+        # Drain any stale progress messages; a new run starts a new log.
         while not self.progress_queue.empty():
             try:
                 self.progress_queue.get_nowait()
             except queue.Empty:
                 break
+        with self._events_cond:
+            if self._events:
+                self._prev_events = (self.run_id, self._events_base, self._events)
+            self._events = []
+            self._events_base = 0
+            self.run_id += 1
+            self._events_cond.notify_all()
 
         self._thread = threading.Thread(
             target=self._safe_run,
@@ -184,6 +203,13 @@ class BackgroundWorker:
         # queue. The intent is "the worker is doing work right now,"
         # not "an SSE consumer received an event."
         self._last_activity = time.time()
+        with self._events_cond:
+            self._events.append(msg)
+            if len(self._events) > _PROGRESS_QUEUE_MAX:
+                drop = len(self._events) - _PROGRESS_QUEUE_MAX
+                del self._events[:drop]
+                self._events_base += drop
+            self._events_cond.notify_all()
         try:
             self.progress_queue.put_nowait(msg)
             return
@@ -202,9 +228,9 @@ class BackgroundWorker:
             last_t, drops = self._drop_log_state
             drops += 1
             if now - last_t >= _DROP_LOG_INTERVAL_S:
-                log.warning(
+                log.debug(
                     "%s: progress queue full — dropped %d event(s) in the last %.0fs "
-                    "(SSE consumer disconnected or slow?)",
+                    "(no in-process consumer; the SSE streams read the event log)",
                     self._worker_name,
                     drops,
                     now - last_t if last_t > 0 else _DROP_LOG_INTERVAL_S,
@@ -212,6 +238,41 @@ class BackgroundWorker:
                 self._drop_log_state = (now, 0)
             else:
                 self._drop_log_state = (last_t, drops)
+
+    def claim_finalize(self, run_id: int) -> bool:
+        """True for the first caller per run: the SSE readers all see the
+        ``done`` message, but the finalizer behind it runs once."""
+        with self._events_cond:
+            if self._finalized_run == run_id:
+                return False
+            self._finalized_run = run_id
+            return True
+
+    def events_since(
+        self, run_id: int, seq: int, *, timeout: float | None = None
+    ) -> tuple[int, int, list[dict[str, Any]]]:
+        """The run's messages from position ``seq`` on, waiting up to
+        ``timeout`` for new ones. Returns ``(run_id, next_seq, messages)``;
+        a reader whose run is over (a newer run started) is moved to the
+        start of the new run. Messages evicted from the bounded log are
+        skipped."""
+        with self._events_cond:
+            if run_id != self.run_id:
+                prev = self._prev_events
+                if prev is not None and prev[0] == run_id:
+                    _rid, base, events = prev
+                    end = base + len(events)
+                    if seq < end:  # the old run's tail first
+                        return run_id, end, list(events[max(seq, base) - base :])
+                run_id, seq = self.run_id, 0
+            end = self._events_base + len(self._events)
+            if seq >= end and timeout:
+                self._events_cond.wait(timeout)
+                if run_id != self.run_id:
+                    run_id, seq = self.run_id, 0
+                end = self._events_base + len(self._events)
+            start = max(seq, self._events_base)
+            return run_id, end, list(self._events[start - self._events_base :])
 
     # ------------------------------------------------------------------
     # Internal

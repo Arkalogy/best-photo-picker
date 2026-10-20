@@ -252,10 +252,10 @@ class TestOnDemandModelsAreCatalogEntries:
     the row dead-ends at "Review the license ✓" + a disabled Uninstall.
     Regression for that dead-end."""
 
-    def test_lama_and_nudenet_have_catalog_loaders(self, client):
-        from bpp.web.bp_model_registry import _catalog_loaders
+    def test_lama_and_nudenet_havecatalog_loaders(self, client):
+        from bpp.web.catalog_loaders import catalog_loaders
 
-        loaders = _catalog_loaders()
+        loaders = catalog_loaders()
         for cid in ("lama_inpaint_research", "nudenet_320n"):
             assert cid in loaders, f"{cid} missing catalog loader"
             is_on_disk, ensure_fn, remove_fn = loaders[cid]

@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from bpp.utils.logging import get_logger
+from bpp.utils.raw import RAW_EXTENSIONS
 from bpp.utils.retry import retry_io
 
 log = get_logger(__name__)
@@ -64,26 +65,101 @@ def _needs_processing(mode: str, fmt: str, max_size: int | None) -> bool:
     return mode == "copy" and (fmt != "original" or max_size is not None)
 
 
-_METADATA_STRIP_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"}
+class MetadataNotStrippableError(OSError):
+    """The export was asked to remove metadata and this file would keep
+    it: the photo fails the export rather than shipping with it."""
 
 
-def _copy_image_without_metadata(src: str, dest: str, quality: int) -> None:
-    """Copy an image while dropping embedded metadata by re-encoding it."""
-    from PIL import Image, ImageOps, UnidentifiedImageError
+#: Image types the export strips by converting to JPEG (no metadata is
+#: carried over), when the decoder is installed.
+_CONVERT_TO_STRIP_EXTS = {".heic", ".heif"} | RAW_EXTENSIONS
 
+#: Every image type the export can strip (in place or by conversion).
+_METADATA_STRIP_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"} | _CONVERT_TO_STRIP_EXTS
+
+
+def _strip_and_save(src: str, dest: str, quality: int) -> str:
+    """Re-encode ``src`` without its embedded metadata. Returns the path
+    written: ``dest`` for a type PIL re-encodes in place, ``dest`` with a
+    ``.jpg`` extension for HEIC / camera RAW (converted). Raises
+    :class:`MetadataNotStrippableError` when the file's type can't be
+    re-encoded here (no decoder installed) and any OSError of the write."""
+    from PIL import Image, ImageOps
+
+    ext = os.path.splitext(src)[1].lower()
+    if ext in RAW_EXTENSIONS:
+        from bpp.utils.raw import RAWPY_AVAILABLE, convert_raw_to_jpeg
+
+        if not RAWPY_AVAILABLE:
+            raise metadata_not_strippable(src, "RAW support isn't installed")
+        out = os.path.splitext(dest)[0] + ".jpg"
+        if convert_raw_to_jpeg(src, out, quality=quality) is None:
+            raise metadata_not_strippable(src, "the file couldn't be decoded")
+        return out
+    if ext in (".heic", ".heif"):
+        try:
+            from pillow_heif import register_heif_opener
+        except ImportError:
+            raise metadata_not_strippable(src, "HEIC support isn't installed") from None
+        register_heif_opener()
+    with Image.open(src) as img:
+        fmt = img.format
+        img = ImageOps.exif_transpose(img)
+        save_kwargs: dict[str, Any] = {}
+        out = dest
+        # MPO is a multi-picture JPEG (phone portrait shots): the primary
+        # frame is saved as a plain JPEG at the chosen quality.
+        if fmt in ("JPEG", "MPO", "HEIF", "HEIC") or ext in (".heic", ".heif"):
+            if img.mode not in ("RGB", "L"):
+                img = img.convert("RGB")
+            save_kwargs["quality"] = quality
+            fmt = "JPEG"
+            if ext in (".heic", ".heif"):
+                out = os.path.splitext(dest)[0] + ".jpg"
+        img.save(out, format=fmt, **save_kwargs)
+    return out
+
+
+def _copy_image_without_metadata(src: str, dest: str, quality: int) -> str:
+    """Copy an image while dropping embedded metadata by re-encoding it;
+    returns the path written. A failed re-encode is a failed export of
+    that photo, never a copy of the original bytes (they carry the
+    metadata the user asked to drop). A disk error keeps its errno so
+    the export loop can still tell a full disk from a bad photo."""
+    import contextlib
+
+    # A sibling ".part" file, written with the process umask like any
+    # export (mkstemp would make it owner-only), replaced into place at
+    # the end so an earlier export's file at that name survives a failure.
+    out_dir, base = os.path.split(dest)
+    tmp = os.path.join(out_dir, f".{base}.part")
     try:
-        with Image.open(src) as img:
-            fmt = img.format
-            img = ImageOps.exif_transpose(img)
-            save_kwargs: dict[str, Any] = {}
-            if fmt == "JPEG":
-                if img.mode not in ("RGB", "L"):
-                    img = img.convert("RGB")
-                save_kwargs["quality"] = quality
-            img.save(dest, format=fmt, **save_kwargs)
-    except (OSError, UnidentifiedImageError):
-        log.warning("Could not strip image metadata from %s; copying original bytes", src)
-        _export_copy(src, dest)
+        written = _strip_and_save(src, tmp, quality)
+        final = dest if written == tmp else os.path.splitext(dest)[0] + ".jpg"
+        os.replace(written, final)
+        return final
+    except MetadataNotStrippableError:
+        raise
+    except OSError as e:  # UnidentifiedImageError is an OSError too
+        if e.errno is not None:
+            raise  # a disk / permission error: the loop classifies it
+        name = os.path.basename(src)
+        raise MetadataNotStrippableError(
+            f"metadata couldn't be removed from {name} ({e}); the photo was not exported"
+        ) from e
+    finally:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+        with contextlib.suppress(OSError):
+            os.remove(os.path.splitext(tmp)[0] + ".jpg")
+
+
+def metadata_not_strippable(src: str, why: str) -> MetadataNotStrippableError:
+    ext = os.path.splitext(src)[1].lower() or "this type of"
+    return MetadataNotStrippableError(
+        f"metadata can't be removed from {ext} files ({os.path.basename(src)}): {why}; "
+        "the photo was not exported"
+    )
 
 
 def _export_copy(src: str, dest: str) -> None:

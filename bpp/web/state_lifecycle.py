@@ -372,7 +372,7 @@ def _register_journal_recovery_handlers(ctx: WebAppState) -> None:
     ``switch_library``.
     """
     # Local imports to avoid circulars: these modules import state.
-    from bpp.web.bp_photos_manage import register_permanent_delete_recovery
+    from bpp.web.bp_photos_lifecycle import register_permanent_delete_recovery
     from bpp.web.clip_worker import register_clip_extraction_recovery
     from bpp.web.face_worker import (
         register_face_clustering_recovery,

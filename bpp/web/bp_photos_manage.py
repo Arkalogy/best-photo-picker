@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from flask import Blueprint, Response, jsonify, request
@@ -20,8 +19,11 @@ from bpp.db.photos import (
     get_photo_id_map_by_paths,
     update_photo_date,
 )
+from bpp.db.photos_sha import get_sha256_map
 from bpp.errors import BppError, NotFoundError, ValidationError
 from bpp.utils.logging import get_logger
+from bpp.web.photo_cache import invalidate_photo_cache
+from bpp.web.photo_dict import build_similar_entry
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx
 
@@ -83,19 +85,21 @@ def api_duplicates_groups() -> tuple[Response, int]:
         key = r[group_key_idx]
         if key is None or key == 0:
             continue
-        th = thumbs.get_hash(r[1]) if thumbs else ""
+        item = {
+            "filepath": r[1],
+            "original_filename": r[2],
+            "aggregate_score": r[4],
+            "blur_score": r[5],
+            "exposure_score": r[6],
+            "face_score": r[7],
+            "composition_score": r[8],
+            "date_day": r[9],
+        }
         groups_map[key].append(
             {
                 "id": r[0],
-                "filepath": r[1],
                 "original_filename": r[2],
-                "thumb_hash": th,
-                "aggregate_score": r[4] or 0,
-                "blur_score": r[5] or 0,
-                "exposure_score": r[6] or 0,
-                "face_score": r[7] or 0,
-                "composition_score": r[8] or 0,
-                "date_day": r[9] or "",
+                **build_similar_entry(item, thumbs, similarity=None),
             }
         )
 
@@ -137,7 +141,7 @@ def api_enhance_photos() -> tuple[Response, int]:
     errors: dict[str, str] = {}
     params_map: dict[str, dict] = {}
     id_map = get_photo_id_map_by_paths(conn, filepaths)
-    sha256_map = _get_sha256_map(conn, filepaths)
+    sha256_map = get_sha256_map(conn, filepaths)
     for fp in filepaths:
         photo_id = id_map.get(fp)
         if not photo_id:
@@ -160,7 +164,7 @@ def api_enhance_photos() -> tuple[Response, int]:
         # Invalidate cached full photo and thumbnail
         if ctx.thumbs:
             h = ctx.thumbs.get_hash(fp)
-            _invalidate_photo_cache(ctx, h, content_hash=sha256_map.get(fp))
+            invalidate_photo_cache(ctx, h, content_hash=sha256_map.get(fp))
         enhanced += 1
 
     ctx.invalidate_enhanced_cache()
@@ -183,7 +187,7 @@ def api_reset_edits() -> tuple[Response, int]:
 
     reset = 0
     id_map = get_photo_id_map_by_paths(conn, filepaths)
-    sha256_map = _get_sha256_map(conn, filepaths)
+    sha256_map = get_sha256_map(conn, filepaths)
     for fp in filepaths:
         photo_id = id_map.get(fp)
         if not photo_id:
@@ -192,7 +196,7 @@ def api_reset_edits() -> tuple[Response, int]:
         reset += reset_photo_edits(conn, photo_id)
         if ctx.thumbs:
             h = ctx.thumbs.get_hash(fp)
-            _invalidate_photo_cache(ctx, h, content_hash=sha256_map.get(fp))
+            invalidate_photo_cache(ctx, h, content_hash=sha256_map.get(fp))
 
     ctx.invalidate_enhanced_cache()
     return jsonify({"reset": reset}), 200
@@ -298,65 +302,9 @@ def api_save_edits() -> tuple[Response, int]:
         h = ctx.thumbs.get_hash(filepath)
         sha = photo.get("sha256") or ""
         c_hash = sha[:HASH_PREFIX_LEN] if sha else None
-        _invalidate_photo_cache(ctx, h, content_hash=c_hash)
+        invalidate_photo_cache(ctx, h, content_hash=c_hash)
 
     return jsonify({"status": "ok"}), 200
-
-
-def _get_sha256_map(conn: Any, filepaths: list[str]) -> dict[str, str]:
-    """Return {filepath: truncated_sha256} for inpaint cache key lookup."""
-    if not filepaths:
-        return {}
-    from bpp.constants import HASH_PREFIX_LEN, SQL_BATCH_SIZE
-
-    result: dict[str, str] = {}
-    for i in range(0, len(filepaths), SQL_BATCH_SIZE):
-        batch = filepaths[i : i + SQL_BATCH_SIZE]
-        placeholders = ",".join("?" * len(batch))
-        rows = conn.execute(
-            f"SELECT filepath, sha256 FROM photos WHERE filepath IN ({placeholders})",
-            batch,
-        ).fetchall()
-        for r in rows:
-            if r[1]:
-                result[r[0]] = r[1][:HASH_PREFIX_LEN]
-    return result
-
-
-def _invalidate_photo_cache(ctx: Any, path_hash: str, *, content_hash: str | None = None) -> None:
-    """Remove cached full photo and thumbnail variants for a hash.
-
-    Glob-based cleanup: matches `{path_hash}*.jpg` and `{path_hash}*.png`
-    so any current OR future suffix variant is caught automatically.
-    The `PHOTO_CACHE_SUFFIXES` registry in bpp.constants stays as
-    documentation but is no longer load-bearing for cleanup correctness.
-
-    Args:
-        path_hash: hash of the filepath (used for all variants whose
-            cache key is filepath-derived).
-        content_hash: truncated SHA-256 of file content. The inpaint
-            cache uses content hash because edits are content-addressed.
-            When provided, both content_hash and path_hash are swept
-            for backward compatibility.
-    """
-    if not ctx.thumbs:
-        return
-    import contextlib
-    import glob
-
-    ctx.thumbs.invalidate(path_hash)
-    cache_dir = ctx.thumbs.cache_dir
-
-    hashes = {path_hash}
-    if content_hash:
-        hashes.add(content_hash)
-    for h in hashes:
-        # Glob matches the base thumb ({h}.jpg) and every suffix variant
-        # ({h}_full.jpg, {h}_edited.jpg, {h}_inpainted.png, …).
-        for ext in (".jpg", ".png"):
-            for cached in glob.glob(os.path.join(cache_dir, f"{h}*{ext}")):
-                with contextlib.suppress(OSError):
-                    os.remove(cached)
 
 
 # --- Batch rename ---

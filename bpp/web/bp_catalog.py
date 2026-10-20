@@ -5,15 +5,13 @@ Split out of :mod:`bpp.web.bp_model_registry` for the 500-LOC cap. This
 module owns the catalog-loader map (the single switch that makes an entry
 "runtime-fetched") and the two explicit ensure/remove endpoints. The
 acceptance/registry/BYOM endpoints stay in ``bp_model_registry``;
-:func:`_catalog_loaders` is imported there for the ``is_catalog_entry`` /
+:func:`catalog_loaders` (bpp.web.catalog_loaders) is imported there for the ``is_catalog_entry`` /
 ``catalog_on_disk`` flags on the picker payload.
 """
 
 from __future__ import annotations
 
-import functools
 import os
-from collections.abc import Callable
 from typing import Any
 
 from flask import Blueprint, jsonify, request
@@ -22,85 +20,12 @@ from bpp.errors import BppError, ValidationError
 from bpp.utils.download import plain_reason
 from bpp.utils.logging import get_logger
 from bpp.web import download_gates
+from bpp.web.catalog_loaders import catalog_loaders
 from bpp.web.share import requires_local_app
 
 log = get_logger(__name__)
 
 bp = Blueprint("catalog", __name__)
-
-
-#: Maps catalog entry id → (is-on-disk fn, ensure-weights fn,
-#: remove-weights fn). Catalog entries are runtime-fetched models
-#: that have no install wiring in the legacy ``ModelRegistry`` (e.g.
-#: buffalo_s, whose ZIP-extract flow doesn't fit the stock single-URL
-#: download path). The picker uses ``is_on_disk`` to decide whether
-#: to surface "Download" or "Use this model" as the next step,
-#: ``ensure_weights`` is what the explicit "Download" button
-#: triggers, and ``remove_weights`` backs the Uninstall step so the
-#: catalog row has the same Review → Download → Use → Uninstall
-#: lifecycle as installable entries. Adding a new catalog entry
-#: means adding one row here.
-@functools.cache
-def _loader_selected_ids() -> frozenset[str]:
-    """Registry ids the loaders of kinds without a default select by
-    themselves (content filter, pet detector, object removal): what the
-    runtime uses, for the picker to show as running. Computed once; the
-    ids are module constants."""
-    from bpp.ai import inpainting
-    from bpp.scoring import nudity, pets
-
-    return frozenset({nudity.REGISTRY_ID, pets.REGISTRY_ID, inpainting.REGISTRY_ID})
-
-
-def _catalog_loaders() -> dict[
-    str,
-    tuple[Callable[[], bool], Callable[[], str], Callable[[], int]],
-]:
-    from bpp.ai.inpainting import (
-        ensure_lama_model,
-    )
-    from bpp.ai.inpainting import (
-        is_on_disk as lama_is_on_disk,
-    )
-    from bpp.ai.inpainting import (
-        remove_local_weights as lama_remove,
-    )
-    from bpp.scoring.face_embed_buffalo_s import (
-        ensure_buffalo_s_model,
-    )
-    from bpp.scoring.face_embed_buffalo_s import (
-        is_on_disk as buffalo_s_is_on_disk,
-    )
-    from bpp.scoring.face_embed_buffalo_s import (
-        remove_local_weights as buffalo_s_remove,
-    )
-    from bpp.scoring.nudity import (
-        ensure_nudenet_model,
-    )
-    from bpp.scoring.nudity import (
-        is_on_disk as nudenet_is_on_disk,
-    )
-    from bpp.scoring.nudity import (
-        remove_local_weights as nudenet_remove,
-    )
-
-    return {
-        "insightface_buffalo_s": (
-            buffalo_s_is_on_disk,
-            ensure_buffalo_s_model,
-            buffalo_s_remove,
-        ),
-        "nudenet_320n": (
-            nudenet_is_on_disk,
-            ensure_nudenet_model,
-            nudenet_remove,
-        ),
-        "lama_inpaint_research": (
-            lama_is_on_disk,
-            ensure_lama_model,
-            lama_remove,
-        ),
-    }
 
 
 @bp.post("/api/v1/face-embedders/ensure-weights")
@@ -136,7 +61,7 @@ def api_ensure_face_embedder_weights() -> tuple[Any, int]:
     registry_id = (body.get("registry_id") or "").strip()
     if not registry_id:
         raise ValidationError("registry_id is required")
-    loaders = _catalog_loaders()
+    loaders = catalog_loaders()
     if registry_id not in loaders:
         raise ValidationError(
             f"No catalog loader for {registry_id!r}. Only runtime-"
@@ -187,7 +112,7 @@ def api_uninstall_face_embedder_weights() -> tuple[Any, int]:
     legacy ``ModelRegistry``, so the regular ``/models/uninstall``
     path can't find them; this endpoint dispatches to the
     per-entry ``remove_weights`` function registered in
-    :func:`_catalog_loaders`.
+    :func:`catalog_loaders`.
 
     Returns ``{ok: true, bytes_freed: int}``. Idempotent: removing
     weights that are not on disk returns ``bytes_freed=0`` rather
@@ -197,7 +122,7 @@ def api_uninstall_face_embedder_weights() -> tuple[Any, int]:
     registry_id = (body.get("registry_id") or "").strip()
     if not registry_id:
         raise ValidationError("registry_id is required")
-    loaders = _catalog_loaders()
+    loaders = catalog_loaders()
     if registry_id not in loaders:
         raise ValidationError(
             f"No catalog loader for {registry_id!r}. Only runtime-"

@@ -7,13 +7,13 @@ import os
 
 from flask import Blueprint, Response, jsonify, request
 
-from bpp.constants import PROGRESS_QUEUE_TIMEOUT_S, WORKER_JOIN_TIMEOUT_S
+from bpp.constants import WORKER_JOIN_TIMEOUT_S
 from bpp.db.library import clear_library
 from bpp.db.settings import get_all_settings
 from bpp.errors import ConflictError, ValidationError
 from bpp.utils.logging import get_logger
 from bpp.web.share import requires_local_app
-from bpp.web.sse import sse_event
+from bpp.web.sse import captured_device_fingerprint, stream_worker_progress
 from bpp.web.state import get_ctx
 
 log = get_logger(__name__)
@@ -116,82 +116,15 @@ def api_analyze_progress() -> Response:
     worker finishes. For LAN devices the stream re-checks pairing
     trust periodically and emits ``auth_revoked`` on revocation."""
     ctx = get_ctx()
-
-    # Capture the LAN device fingerprint at handshake — auth was just
-    # verified by the @before_request middleware. While the generator
-    # runs, the owner can revoke the device. We re-check every ~5s so
-    # a revoke takes effect promptly mid-stream instead of waiting for
-    # the client's next reconnect.
-    fp = _captured_lan_fingerprint()
-
-    def generate():
-        yield from _stream_with_revoke_check(
-            ctx.worker.progress_queue,
+    return Response(
+        stream_worker_progress(
             ctx.worker,
-            fp,
-            ctx,
-            on_done=_finalize_analyze,
-        )
-
-    return Response(generate(), mimetype="text/event-stream")
-
-
-def _captured_lan_fingerprint() -> str | None:
-    """Return the bpp_share_fp cookie value if the request principal is
-    a LAN device; None for LOCAL_APP (loopback / app token). LAN
-    devices are the ones subject to revoke; loopback is bound to the
-    server process and doesn't need re-checking."""
-    from flask import g
-
-    from bpp.web.share import PRINCIPAL_LAN_DEVICE
-
-    principal = getattr(g, "bpp_principal", None)
-    if principal is None or principal.kind != PRINCIPAL_LAN_DEVICE:
-        return None
-    return principal.fingerprint
-
-
-def _stream_with_revoke_check(progress_queue, worker, fp, ctx, *, on_done):
-    """Yield SSE messages from `progress_queue` until done/error.
-
-    Periodically re-verifies that `fp` (the LAN-device fingerprint
-    captured at handshake) is still trusted. On revoke, yields an
-    auth_revoked error message and breaks the loop.
-
-    `worker` is the BaseWorker driving the queue — used for the
-    worker-death keepalive escape.
-    `on_done(msg, ctx)` runs after a successful "done" message.
-    """
-    from bpp.web.share import is_device_trusted
-
-    msgs_since_recheck = 0
-    while True:
-        try:
-            msg = progress_queue.get(timeout=PROGRESS_QUEUE_TIMEOUT_S)
-            yield sse_event(msg)
-            if msg.get("type") in ("done", "error"):
-                if msg.get("type") == "done":
-                    on_done(msg, ctx)
-                break
-            msgs_since_recheck += 1
-            # Re-auth gate: every ~5 messages, verify the LAN device
-            # is still trusted. LOCAL_APP (fp=None) skips the check.
-            if fp is not None and msgs_since_recheck >= 5:
-                msgs_since_recheck = 0
-                if not is_device_trusted(ctx.get_conn(), fp):
-                    yield sse_event({"type": "error", "message": "auth_revoked"})
-                    break
-        except Exception as exc:
-            log.debug("SSE keepalive after %s: %s", type(exc).__name__, exc)
-            yield sse_event({"type": "keepalive"})
-            # On keepalive (queue starvation), recheck auth too — the
-            # owner may have revoked while no progress was streaming.
-            if fp is not None and not is_device_trusted(ctx.get_conn(), fp):
-                yield sse_event({"type": "error", "message": "auth_revoked"})
-                break
-            if not worker.is_alive:
-                yield sse_event({"type": "error", "message": "Worker stopped unexpectedly"})
-                break
+            on_done=lambda msg: _finalize_analyze(msg, ctx),
+            ctx=ctx,
+            device_fp=captured_device_fingerprint(),
+        ),
+        mimetype="text/event-stream",
+    )
 
 
 def _finalize_analyze(msg, ctx):
@@ -394,18 +327,15 @@ def api_import_progress() -> Response:
     """Stream import-worker progress as Server-Sent Events. Same
     revoke-aware streaming envelope as the analyze progress route."""
     ctx = get_ctx()
-    fp = _captured_lan_fingerprint()
-
-    def generate():
-        yield from _stream_with_revoke_check(
-            ctx.import_worker.progress_queue,
+    return Response(
+        stream_worker_progress(
             ctx.import_worker,
-            fp,
-            ctx,
-            on_done=_finalize_import,
-        )
-
-    return Response(generate(), mimetype="text/event-stream")
+            on_done=lambda msg: _finalize_import(msg, ctx),
+            ctx=ctx,
+            device_fp=captured_device_fingerprint(),
+        ),
+        mimetype="text/event-stream",
+    )
 
 
 def _finalize_import(msg, ctx):

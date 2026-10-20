@@ -69,7 +69,7 @@ def _open_source(ctx: Any, filepath: str, photo_id: int) -> Image.Image:
     from bpp.errors import BppError
     from bpp.utils.raw import CHECK_FILE_RECOVERY
     from bpp.web import box_crop
-    from bpp.web.bp_media import raw_full_jpeg_path, raw_preview_error
+    from bpp.web.media_support import raw_full_jpeg_path, raw_preview_error
 
     path_hash = ctx.thumbs.get_hash(filepath) if ctx.thumbs else ""
     raw_full_jpeg = raw_full_jpeg_path(ctx, path_hash) if ctx.thumbs else None

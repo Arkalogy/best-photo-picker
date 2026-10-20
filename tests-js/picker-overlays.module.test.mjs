@@ -32,6 +32,7 @@ vi.mock("../bpp/web/static/js/modules/api-client.mjs", () => ({
     return {};
   }),
   authedSrc: (/** @type {string} */ s) => s,
+  petCropUrl: (/** @type {string} */ h, /** @type {number} */ i) => `/api/v1/pets/crop/${h}/${i}`,
   faceCropUrl: (/** @type {string} */ h, /** @type {number} */ i) => `/crop/${h}/${i}`,
 }));
 

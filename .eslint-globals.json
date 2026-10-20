@@ -745,6 +745,7 @@
   "personNameSuggestions": "writable",
   "petClassFromCluster": "writable",
   "petClusters": "writable",
+  "petCropUrl": "writable",
   "petDisplayName": "writable",
   "petLabelHTML": "writable",
   "petsAvailable": "writable",

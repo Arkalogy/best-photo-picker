@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from PIL import Image
 
 from bpp.cli import build_parser, main
 from bpp.db.albums import create_album
@@ -35,7 +36,8 @@ def library(tmp_path):
     # Create 10 fake analyzed photos with scores
     for i in range(10):
         img = photos_dir / f"IMG_{i:04d}.jpg"
-        img.write_bytes(b"\xff\xd8\xff\xe0" + bytes([i]) * 100)
+        # A real (tiny) JPEG: the export re-encodes photos to drop metadata.
+        Image.new("RGB", (8, 8), (20 * i, 90, 120)).save(img, "JPEG")
         upsert_photo(
             conn,
             {

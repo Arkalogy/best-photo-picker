@@ -201,10 +201,10 @@ def test_the_quiet_reader_does_not_warn_per_photo_when_raw_support_is_missing(mo
 
 def test_the_preview_endpoint_returns_reason_and_recovery(monkeypatch):
     from bpp.errors import BppError
-    from bpp.web import bp_media
+    from bpp.web import media_support
 
     monkeypatch.setattr(raw, "RAWPY_AVAILABLE", False)
-    err = bp_media.raw_preview_error("abc123")
+    err = media_support.raw_preview_error("abc123")
     assert isinstance(err, BppError)
     body = err.to_dict()
     assert body["error"] == "RAW support isn't available in this install"

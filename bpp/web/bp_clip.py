@@ -23,7 +23,7 @@ from bpp.utils.logging import get_logger
 from bpp.web.base_worker import raise_if_blocked
 from bpp.web.bp_install import no_install_during
 from bpp.web.share import requires_local_app
-from bpp.web.sse import stream_worker_progress
+from bpp.web.sse import captured_device_fingerprint, stream_worker_progress
 from bpp.web.state import get_ctx
 
 log = get_logger(__name__)
@@ -89,7 +89,9 @@ def api_clip_progress() -> Response:
         ctx.load_clip_embeddings()
 
     return Response(
-        stream_worker_progress(ctx.clip_worker, on_done=_on_done),
+        stream_worker_progress(
+            ctx.clip_worker, on_done=_on_done, ctx=ctx, device_fp=captured_device_fingerprint()
+        ),
         mimetype="text/event-stream",
     )
 

@@ -8,6 +8,7 @@ from bpp.constants import ACTIVE_PHOTO_SQL
 from bpp.db.memories import generate_memories, get_memory, list_memories
 from bpp.errors import NotFoundError
 from bpp.utils.logging import get_logger
+from bpp.web.photo_dict import build_photo_brief
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx
 
@@ -49,22 +50,13 @@ def api_memories_detail(memory_id: int) -> tuple[Response, int]:
         batch = photo_ids[i : i + _BATCH_SIZE]
         placeholders = ",".join("?" * len(batch))
         rows = conn.execute(
-            f"SELECT id, filepath, sha256, date, aggregate_score "
+            f"SELECT id, filepath, date, aggregate_score, original_filename "
             f"FROM photos WHERE id IN ({placeholders}) AND {ACTIVE_PHOTO_SQL} "
             f"ORDER BY date",
             batch,
         ).fetchall()
         all_rows.extend(rows)
-    m["photos"] = [
-        {
-            "id": r["id"],
-            "filepath": r["filepath"],
-            "hash": r["sha256"],
-            "date": r["date"],
-            "score": r["aggregate_score"],
-        }
-        for r in all_rows
-    ]
+    m["photos"] = [build_photo_brief(dict(r), ctx.thumbs) for r in all_rows]
     return jsonify(m), 200
 
 

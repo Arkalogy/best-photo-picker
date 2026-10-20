@@ -12,7 +12,7 @@
  * `loadAlbumList`, `refreshSmartAlbums` (also imported), `navigateTo`).
  */
 
-import { apiFetch, authedSrc } from "./api-client.mjs";
+import { apiFetch, petCropUrl } from "./api-client.mjs";
 import { appConfirm } from "./dialogs.mjs";
 import { menuClosed, menuOpened } from "./menu-a11y.mjs";
 import { esc } from "./text-format.mjs";
@@ -230,7 +230,7 @@ export function showPetsView() {
       const cid = c.cluster_id;
       const cropSrc =
         rep && rep.thumb_hash
-          ? authedSrc(`/api/v1/pets/crop/${esc(rep.thumb_hash)}/${rep.detection_index}`)
+          ? petCropUrl(rep.thumb_hash, rep.detection_index)
           : "";
       return `<div class="person-card pet-card" data-cluster-id="${cid}"
       tabindex="0" role="button" data-key-activate

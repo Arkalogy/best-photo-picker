@@ -7,7 +7,7 @@ import errno
 import json
 import os
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from bpp import __version__
@@ -29,6 +29,7 @@ from bpp.output.export_modes import (  # noqa: F401 — re-exported for plugins/
     _needs_processing,
     _process_image,
     bundle_selected_zip,
+    metadata_not_strippable,
     register_export_mode,
 )
 from bpp.utils.logging import get_logger
@@ -78,6 +79,11 @@ class ExportResult:
     exported: int
     failed: int
     disk_error: dict[str, Any] | None = None
+    #: One entry per failed photo: ``{"index", "source", "error"}``.
+    failures: list[dict[str, Any]] = field(default_factory=list)
+    #: Files exported with their metadata although removal was asked for
+    #: (videos: the export doesn't re-encode them). Reported, never silent.
+    metadata_kept: int = 0
 
     def __iter__(self):
         # Back-compat for any caller that still tuple-unpacks the
@@ -171,7 +177,7 @@ def export_selected(
     # now it's 1.
     score_pairs = _iter_weighted_score_pairs()
 
-    exported, failed, disk_error = _write_photos(
+    exported, failed, disk_error, metadata_kept = _write_photos(
         selected, selected_dir, plan, score_pairs, write_xmp, on_progress
     )
     if failed:
@@ -198,6 +204,8 @@ def export_selected(
         exported=len(exported),
         failed=len(failed),
         disk_error=disk_error,
+        failures=failed,
+        metadata_kept=metadata_kept,
     )
 
 
@@ -225,13 +233,29 @@ def _write_one(src: str, dest: str, is_vid: bool, plan: _WritePlan) -> str:
     # Unknown modes (typos / legacy clients) fall back to
     # copy.
     ext = os.path.splitext(src)[1].lower()
-    if plan.mode == "copy" and plan.strip_metadata and not is_vid and ext in _METADATA_STRIP_EXTS:
-        _copy_image_without_metadata(src, dest, plan.quality)
+    if plan.mode == "copy" and plan.strip_metadata and not is_vid:
+        # Removal was asked for: an image type the export can't strip
+        # fails rather than shipping its metadata (videos, and the link
+        # modes, are counted by the caller instead).
+        if ext not in _METADATA_STRIP_EXTS:
+            raise metadata_not_strippable(src, "this type can't be re-encoded")
+        return _copy_image_without_metadata(src, dest, plan.quality)
     else:
         mode_def = ExportModeRegistry.get(plan.mode)
         handler = mode_def.handler if mode_def else _export_copy
         handler(src, dest)
     return dest
+
+
+def _keeps_metadata(plan: _WritePlan, is_vid: bool) -> bool:
+    """A file written with its metadata although removal was asked for:
+    a video (never re-encoded) or any file in a mode that links or hands
+    the original bytes over (hardlink, symlink, a plugin mode)."""
+    if not plan.strip_metadata:
+        return False
+    if is_vid:
+        return True  # never re-encoded, in any mode
+    return not plan.process and plan.mode != "copy"
 
 
 def _write_photos(
@@ -241,12 +265,14 @@ def _write_photos(
     score_pairs: list[tuple[str, str]],
     write_xmp: bool,
     on_progress: Callable[[int, int, str], None] | None,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None]:
-    """The per-photo loop. Returns ``(exported, failed, disk_error)``;
-    the loop stops at the first OSError every further write would repeat."""
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None, int]:
+    """The per-photo loop. Returns ``(exported, failed, disk_error,
+    metadata_kept)``; the loop stops at the first OSError every further
+    write would repeat."""
     exported: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
     disk_error: dict[str, Any] | None = None
+    metadata_kept = 0
     total = len(selected)
     for i, item in enumerate(selected, 1):
         src = item["filepath"]
@@ -268,6 +294,8 @@ def _write_photos(
             dest = _write_one(src, dest, bool(is_vid), plan)
             dest_name = os.path.basename(dest)
             exported.append({"index": i, "source": src, "dest": dest_name, "item": item})
+            if _keeps_metadata(plan, bool(is_vid)):
+                metadata_kept += 1
             if write_xmp:
                 # pass the full item dict; write_xmp_sidecar
                 # iterates the scorer registry to pick out the fields
@@ -292,7 +320,7 @@ def _write_photos(
                     e.errno,
                 )
                 break
-    return exported, failed, disk_error
+    return exported, failed, disk_error, metadata_kept
 
 
 def _write_manifest(

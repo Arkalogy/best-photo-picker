@@ -12,7 +12,7 @@ Sub-clusters:
 * Listings (paginated): api_photos_deleted, api_photos_hidden
 
 Helpers used here that still live in bp_photos_manage:
-  _get_sha256_map (imported from there for the journaled
+  get_sha256_map (bpp.db.photos_sha, for the journaled
   permanent-delete payload).
 """
 
@@ -118,9 +118,9 @@ def api_photos_delete_permanent() -> tuple[Response, int]:
     # Grab sha256 before deletion (needed for content-addressed inpaint cache).
     # Helper lives in bp_photos_manage — lazy import avoids any
     # ordering-sensitivity from blueprint registration.
-    from bpp.web.bp_photos_manage import _get_sha256_map
+    from bpp.db.photos_sha import get_sha256_map
 
-    sha256_map = _get_sha256_map(conn, filepaths)
+    sha256_map = get_sha256_map(conn, filepaths)
 
     # Build set of allowed parent directories for disk deletion. Done
     # before the journal write so the recovery handler has the same

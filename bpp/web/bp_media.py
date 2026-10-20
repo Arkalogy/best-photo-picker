@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import contextlib
 import os
-from typing import Any
 
 from flask import Blueprint, Response, jsonify, request, send_file
 
@@ -17,6 +16,8 @@ from bpp.constants import (
 from bpp.errors import BppError, ForbiddenError, NotFoundError, ValidationError
 from bpp.media_types import MediaKind, media_kind_from_path
 from bpp.utils.logging import get_logger
+from bpp.web.media_support import raw_full_jpeg_path, raw_preview_error
+from bpp.web.photo_cache import invalidate_photo_cache
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx
 
@@ -317,9 +318,7 @@ def api_video_trim() -> tuple[Response, int]:
     if ctx.thumbs is not None:
         path_hash = ctx.thumbs.get_hash(filepath)
         if path_hash:
-            from bpp.web.bp_photos_manage import _invalidate_photo_cache
-
-            _invalidate_photo_cache(ctx, path_hash)
+            invalidate_photo_cache(ctx, path_hash)
 
     return jsonify({"status": "ok", "duration": vmeta["duration"] if vmeta else None}), 200
 
@@ -341,44 +340,3 @@ from bpp.web.photo_edits import (  # noqa: E402, F401
     _get_edits_for_path,
     _perspective_coefficients,
 )
-
-
-def raw_full_jpeg_path(ctx: Any, path_hash: str) -> str:
-    """Cache path of a camera RAW's full-size JPEG conversion: made by
-    the viewer or the first face / pet crop, reused by the others."""
-    cache_dir = ctx.thumbs.cache_dir if ctx.thumbs else ctx.ensure_workdir()
-    return os.path.join(cache_dir, f"{path_hash}{PHOTO_CACHE_SUFFIX_FULL}.jpg")
-
-
-def crop_failure_error(path_hash: str, diagnostic: str, **context: Any) -> BppError:
-    """A face / pet crop couldn't be made from a readable photo (the box
-    fell outside it, or the image couldn't be decoded): what happened
-    and what to do, for the toast. A camera RAW that couldn't be read
-    raises ``box_crop.RawUnreadable`` instead; see :func:`raw_preview_error`."""
-    from bpp.utils.raw import CHECK_FILE_RECOVERY
-
-    return BppError(
-        "Failed to generate crop",
-        user_message="the photo couldn't be read for the crop",
-        diagnostic_message=diagnostic,
-        path_hash=path_hash,
-        recovery=CHECK_FILE_RECOVERY,
-        **context,
-    )
-
-
-def raw_preview_error(path_hash: str, filepath: str = "", **context: Any) -> BppError:
-    """The RAW-preview failure as an error the viewer can explain: the
-    reason as the message, the fix as ``context.recovery`` (the viewer
-    toasts both; see ``explainPhotoFailure`` in api-client.mjs)."""
-    from bpp.utils.raw import preview_failure
-
-    reason, recovery = preview_failure()
-    return BppError(
-        "Cannot convert RAW image",
-        user_message=reason,
-        diagnostic_message=f"RAW conversion failed for {filepath}",
-        path_hash=path_hash,
-        recovery=recovery,
-        **context,
-    )

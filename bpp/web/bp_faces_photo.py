@@ -27,8 +27,8 @@ from bpp.media_types import MediaKind, media_kind_from_path
 from bpp.utils import raw as raw_support
 from bpp.utils.logging import get_logger
 from bpp.web.box_crop import RawUnreadable
-from bpp.web.bp_media import crop_failure_error, raw_full_jpeg_path, raw_preview_error
 from bpp.web.face_worker import generate_face_crop
+from bpp.web.media_support import crop_failure_error, raw_full_jpeg_path, raw_preview_error
 from bpp.web.state import get_ctx
 
 log = get_logger(__name__)

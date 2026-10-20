@@ -22,7 +22,7 @@ from bpp.db.smart_albums import get_affected_album_types, refresh_smart_albums
 from bpp.errors import NotFoundError, ValidationError
 from bpp.utils.logging import get_logger
 from bpp.web import box_crop
-from bpp.web.bp_media import crop_failure_error, raw_full_jpeg_path, raw_preview_error
+from bpp.web.media_support import crop_failure_error, raw_full_jpeg_path, raw_preview_error
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx
 

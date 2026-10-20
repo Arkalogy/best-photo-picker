@@ -27,7 +27,7 @@ from bpp.errors import BppError, ConflictError, FeatureUnavailableError, NotFoun
 from bpp.scoring.face_embed import is_available as face_recognition_available
 from bpp.utils.logging import get_logger
 from bpp.web.share import requires_local_app
-from bpp.web.sse import stream_worker_progress
+from bpp.web.sse import captured_device_fingerprint, stream_worker_progress
 from bpp.web.state import get_ctx, with_face_lock
 
 log = get_logger(__name__)
@@ -192,6 +192,6 @@ def api_faces_progress() -> Response:
     if the queue starves while the worker is no longer alive."""
     ctx = get_ctx()
     return Response(
-        stream_worker_progress(ctx.face_worker),
+        stream_worker_progress(ctx.face_worker, ctx=ctx, device_fp=captured_device_fingerprint()),
         mimetype="text/event-stream",
     )

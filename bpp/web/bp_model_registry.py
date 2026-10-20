@@ -63,7 +63,7 @@ from bpp.registry import (
 )
 from bpp.registry.labels import group_for_entry, ui_label_for_entry
 from bpp.utils.logging import get_logger
-from bpp.web.bp_catalog import _catalog_loaders, _loader_selected_ids
+from bpp.web.catalog_loaders import catalog_loaders, loader_selected_ids
 from bpp.web.share import requires_local_app
 
 log = get_logger(__name__)
@@ -76,7 +76,7 @@ def _entry_to_picker_dict(
 ) -> dict[str, Any]:
     """Serialise one :class:`ModelEntry` into the picker shape.
 
-    ``loaders`` is the catalog-loader map (``_catalog_loaders()``). The
+    ``loaders`` is the catalog-loader map (``catalog_loaders()``). The
     entries endpoint computes it ONCE and passes it in so this isn't
     rebuilt (with its lazy imports) per row. Callers that serialise a
     single entry can omit it — it's resolved lazily. Resolved per call
@@ -84,7 +84,7 @@ def _entry_to_picker_dict(
     functions still take effect.
     """
     if loaders is None:
-        loaders = _catalog_loaders()
+        loaders = catalog_loaders()
     group_title, group_subtitle = group_for_entry(entry)
     catalog_info = loaders.get(entry.id)
     return {
@@ -102,7 +102,7 @@ def _entry_to_picker_dict(
         "runs_alongside_default": getattr(entry, "runs_alongside_default", False),
         # What the runtime uses for the kind: its default, or the entry a
         # loader selects by id (kinds that have no default).
-        "primary_for_kind": bool(entry.default_for_kind) or entry.id in _loader_selected_ids(),
+        "primary_for_kind": bool(entry.default_for_kind) or entry.id in loader_selected_ids(),
         "ships_with_runtime": getattr(entry, "ships_with_runtime", False),
         "ack_text_kind": entry.ack_text_kind,
         # The load gate's decision (ok / needs_license / needs_reaccept /
@@ -151,7 +151,7 @@ def api_model_registry_entries() -> tuple[Any, int]:
 
     # Build the catalog-loader map once for the whole response instead
     # of rebuilding it (with its lazy imports) inside every row.
-    loaders = _catalog_loaders()
+    loaders = catalog_loaders()
     states = _registry_load_states()  # cached; one pass for the whole response
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for entry in iter_entries():

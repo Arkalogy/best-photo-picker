@@ -10,12 +10,12 @@ home; tonight's split gives them one:
   non-owner principals.
 * **Presets CRUD** (`/api/v1/presets`) — saved scoring presets.
 * **CLIP cap override** (`/api/v1/settings/clip_max_override` +
-  the `_clip_cap_status` helper) — per-library bypass of the
+  `clip_cap_status` in bpp.web.clip_cap) — per-library bypass of the
   CLIP_EMBEDDING_MAX_ROWS soft cap. The helper is also called from
   `bp_core.api_status` so it's re-exported for that call site.
 
 Backwards compat: re-exported from bp_core in the original module
-isn't needed because the only external callers of `_clip_cap_status`
+isn't needed because the only external callers of `clip_cap_status`
 are within the bpp.web layer and they can import from this module
 directly.
 """
@@ -23,13 +23,10 @@ directly.
 from __future__ import annotations
 
 import re
-from typing import Any
 
 from flask import Blueprint, Response, jsonify, request
 
 from bpp.db.clip import (
-    CLIP_EMBEDDING_BYTES,
-    CLIP_EMBEDDING_MAX_ROWS,
     CLIP_MAX_OVERRIDE_BYPASS,
     CLIP_MAX_OVERRIDE_KEY,
     get_clip_embedding_count,
@@ -46,12 +43,12 @@ from bpp.db.presets import (
 from bpp.db.settings import (
     delete_setting,
     get_all_settings,
-    get_setting,
     set_setting,
     set_settings,
 )
 from bpp.errors import NotFoundError, ValidationError
 from bpp.utils.logging import get_logger
+from bpp.web.clip_cap import clip_cap_status
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx
 
@@ -61,43 +58,6 @@ bp = Blueprint("settings_presets", __name__)
 
 #: Settings only the share endpoints may write (see PUT /api/v1/settings).
 _SHARE_ONLY_KEYS = frozenset({"lan_share_token", "lan_sharing_enabled"})
-
-
-# ──────────────────────────────────────────────────────────────────
-# CLIP cap override + status helper
-# ──────────────────────────────────────────────────────────────────
-
-
-def _clip_cap_status(conn, clip_count: int) -> dict[str, Any]:
-    """Compute the CLIP memory-cap surface for /api/v1/status.
-
-    Always returns the same keys so the frontend doesn't have to
-    branch on presence. Peak MB is the realistic ~3x footprint at
-    the current row count, not the cap — that's what the user
-    actually has to budget against when deciding whether to enable.
-    """
-    cap = CLIP_EMBEDDING_MAX_ROWS
-    overridden = False
-    if conn is not None:
-        try:
-            overridden = get_setting(conn, CLIP_MAX_OVERRIDE_KEY) == CLIP_MAX_OVERRIDE_BYPASS
-        except Exception:
-            log.debug("clip_max_override lookup failed", exc_info=True)
-    over_cap = clip_count > cap
-    if not over_cap:
-        state = "enabled"
-    elif overridden:
-        state = "enabled_override"
-    else:
-        state = "disabled_too_large"
-    # 3x one matrix: search matrix + dedup scratch + a concurrent
-    # Moments/smart-album load (see ClipEmbeddingsTooLarge).
-    peak_mb = (clip_count * CLIP_EMBEDDING_BYTES / (1024 * 1024)) * 3
-    return {
-        "clip_cap": cap,
-        "clip_cap_status": state,
-        "clip_cap_peak_mb": int(peak_mb),
-    }
 
 
 @bp.post("/api/v1/settings/clip_max_override")
@@ -139,7 +99,7 @@ def api_set_clip_max_override() -> tuple[Response, int]:
     except Exception:
         log.warning("get_clip_embedding_count failed in override toggle", exc_info=True)
         clip_count = 0
-    return jsonify(_clip_cap_status(conn, clip_count)), 200
+    return jsonify(clip_cap_status(conn, clip_count)), 200
 
 
 # ──────────────────────────────────────────────────────────────────

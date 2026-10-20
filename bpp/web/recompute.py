@@ -15,9 +15,7 @@ from bpp.constants import (
     OPTIMIZE_MAX_FACE_OVERLAP,
     OPTIMIZE_QUALITY_W,
 )
-from bpp.dedupe.cluster import deduplicate
-from bpp.dedupe.semantic import semantic_deduplicate
-from bpp.dedupe.strategy import resolve_strategy
+from bpp.dedupe.select import dedupe_candidates
 from bpp.scoring.aggregate import compute_aggregate, normalize_blur_scores
 from bpp.scoring.registry import get_weight_keys
 from bpp.selection.choose import choose
@@ -135,41 +133,15 @@ def recompute(opts: RecomputeOptions) -> dict[str, Any]:
             d for d in normal_for_dedupe if not is_sensitive_item(d, sens_threshold)
         ]
 
-    # Deduplicate only normal candidates.
-    #
-    # Plugin override: if the user (or YAML config) sets
-    # `dedupe_strategy` to a registered strategy name, the registry
-    # picks it up. resolve_strategy() falls back to None on unknown
-    # / clip-required-but-missing-embeddings cases so we never crash
-    # the recompute path; the auto-pick below covers those.
-    have_clip = bool(opts.clip_embeddings)
-    plugin_strategy = resolve_strategy(
-        config.get("dedupe_strategy"), have_clip_embeddings=have_clip
+    # Deduplicate only normal candidates, through the one shared path
+    # (a strategy named in config wins; else CLIP; else skip; else hash).
+    candidates, dedup_mode = dedupe_candidates(
+        normal_for_dedupe,
+        config,
+        clip_embeddings=opts.clip_embeddings,
+        skip_dedupe=opts.skip_dedupe,
+        clip_threshold=opts.clip_threshold,
     )
-    if plugin_strategy is not None:
-        candidates = plugin_strategy.dedupe_fn(
-            normal_for_dedupe,
-            config,
-            clip_embeddings=opts.clip_embeddings,
-        )
-        dedup_mode = plugin_strategy.name
-        _log.info(
-            "Recompute using dedup strategy %r (%s)",
-            plugin_strategy.name,
-            "plugin" if not plugin_strategy.is_builtin else "built-in",
-        )
-    elif opts.clip_embeddings:
-        threshold = opts.clip_threshold or cfg_get(config, "clip_similarity_threshold")
-        candidates = semantic_deduplicate(
-            normal_for_dedupe, opts.clip_embeddings, threshold=threshold, config=config
-        )
-        dedup_mode = "clip"
-    elif opts.skip_dedupe:
-        candidates = normal_for_dedupe
-        dedup_mode = "skipped"
-    else:
-        candidates = deduplicate(normal_for_dedupe, config=config)
-        dedup_mode = "hash"
 
     # Reduce k budget by number of force-includes
     remaining_k = max(0, opts.k - len(forced_in))
@@ -232,8 +204,12 @@ def optimize(
             item["ahash"] = ah
     normalize_blur_scores(base)
 
-    # Pre-deduplicate once (dedup params stay fixed)
-    deduped = base if opts.skip_dedupe else deduplicate(copy.deepcopy(base), config=config)
+    # Pre-deduplicate once (dedup params stay fixed), through the shared path
+    deduped, _mode = (
+        (base, "skipped")
+        if opts.skip_dedupe
+        else dedupe_candidates(copy.deepcopy(base), config)  # the hash pass writes in place
+    )
 
     # Weight grid — coarse sweep
     blur_weights = [0.15, 0.25, 0.35]

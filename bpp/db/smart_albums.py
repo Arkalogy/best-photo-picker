@@ -404,9 +404,9 @@ SmartAlbumRegistry.register(
 # dispatch. The hook receives (conn, ctx, photos, photos_data) and
 # mutates photos_data in place.
 def _smart_duplicates_ui_metadata(conn: Any, ctx: Any, photos: Any, photos_data: Any) -> None:
-    from bpp.web.bp_albums import _attach_cluster_siblings_from_db
+    from bpp.web.album_siblings import attach_cluster_siblings
 
-    _attach_cluster_siblings_from_db(conn, ctx.thumbs, photos, photos_data)
+    attach_cluster_siblings(conn, ctx.thumbs, photos, photos_data)
 
 
 SmartAlbumRegistry.register(

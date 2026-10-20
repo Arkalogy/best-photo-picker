@@ -11,7 +11,7 @@
  * looked up on `window`.
  */
 
-import { _authToken, apiFetch, authEventSource } from "./api-client.mjs";
+import { apiFetch, authEventSource } from "./api-client.mjs";
 import { appConfirm } from "./dialogs.mjs";
 import { reviewSensitiveBeforeExport } from "./sensitive.mjs";
 import { esc, escapeJsAttr } from "./text-format.mjs";
@@ -36,7 +36,7 @@ const _EXPORT_STREAM_THRESHOLD = 25;
  *
  * @param {Record<string, any>} body
  * @param {HTMLElement | null} statusEl
- * @returns {Promise<{count: number, failed: number, outdir: string, disk_error: any}>}
+ * @returns {Promise<{count: number, failed: number, outdir: string, disk_error: any, metadata_kept: number}>}
  */
 async function _streamExport(body, statusEl) {
   // 1) Kick off the worker; 202 means streaming has begun.
@@ -71,6 +71,7 @@ async function _streamExport(body, statusEl) {
           failed: msg.failed,
           outdir: msg.outdir,
           disk_error: msg.disk_error,
+          metadata_kept: msg.metadata_kept || 0,
         });
       } else if (msg.type === "error" || msg.type === "cancelled") {
         es.close();
@@ -239,6 +240,10 @@ export async function doExport() {
 
   let msg = `Exported ${data.count} photo${data.count !== 1 ? "s" : ""}`;
   if (data.failed > 0) msg += ` (${data.failed} failed)`;
+  // Videos (never re-encoded) and linked files keep their metadata: say
+  // so rather than let a "metadata removed" export quietly ship some.
+  const kept = data.metadata_kept || 0;
+  if (kept > 0) msg += ` — ${kept} file${kept !== 1 ? "s" : ""} kept metadata`;
   if (statusEl) {
     statusEl.innerHTML =
       `<span class="export-result-msg">${esc(msg)}</span>` +
@@ -342,16 +347,11 @@ export async function clearLibrary() {
     btn.classList.remove("enabled");
   }
   try {
-    const resp = await fetch("/api/v1/library", {
+    const data = await apiFetch("/api/v1/library", {
       method: "DELETE",
-      headers: { "Content-Type": "application/json", "X-Auth-Token": _authToken },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ confirmation: "delete" }),
     });
-    const data = await resp.json();
-    if (!resp.ok) {
-      toast(data.error || "Failed to clear", true);
-      return;
-    }
     win.hideSettings?.();
     toast(`Cleared: ${data.photos_deleted} photos removed`);
     inp.value = "";

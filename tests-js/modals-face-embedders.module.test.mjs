@@ -6,6 +6,7 @@ const apiFetchMock = vi.fn().mockResolvedValue({});
 vi.mock("../bpp/web/static/js/modules/api-client.mjs", () => ({
   apiFetch: apiFetchMock,
   authedSrc: (/** @type {string} */ p) => p,
+  petCropUrl: (/** @type {string} */ h, /** @type {number} */ i) => `/api/v1/pets/crop/${h}/${i}`,
   faceCropUrl: (/** @type {string} */ h, /** @type {number} */ i) => `/api/v1/faces/crop/${h}/${i}`,
 }));
 

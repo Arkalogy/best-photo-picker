@@ -148,5 +148,6 @@ class ExportWorker(BackgroundWorker):
                 "count": result.exported,
                 "failed": result.failed,
                 "disk_error": result.disk_error,
+                "metadata_kept": result.metadata_kept,
             }
         )

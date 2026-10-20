@@ -527,7 +527,7 @@ Export selected photos to a directory.
 | `gallery` | bool | true | Generate HTML gallery |
 | `write_manifest` | bool | false | Write `manifest.json` to outdir |
 | `write_xmp` | bool | false | Write XMP sidecars next to each exported photo |
-| `strip_metadata` | bool | true | Re-encode JPEGs to strip EXIF/GPS metadata |
+| `strip_metadata` | bool | true | Re-encode images to drop EXIF/GPS metadata (HEIC and camera RAW are converted to JPEG for it). An image that can't be re-encoded (decoder missing, unreadable file) fails instead of shipping its metadata (`failed`). Videos, and every file in the link modes, keep theirs and are counted in `metadata_kept`. |
 
 **Existing destination behavior:** if `outdir` already exists, BPP **merges**
 files into it — same-named files are overwritten in place; unrelated files
@@ -545,7 +545,7 @@ curl -X POST http://localhost:5001/api/v1/export \
 **Response:**
 
 ```json
-{ "status": "exported", "outdir": "/tmp/export", "count": 50, "failed": 0 }
+{ "status": "exported", "outdir": "/tmp/export", "count": 50, "failed": 0, "disk_error": null, "metadata_kept": 0 }
 ```
 
 ### POST /api/v1/open-folder

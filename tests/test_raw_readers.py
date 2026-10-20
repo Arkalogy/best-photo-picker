@@ -380,10 +380,10 @@ def test_raw_handle_is_closed_when_open_fails(monkeypatch):
 
 
 def test_a_raw_crop_failure_names_the_reason_and_the_fix(monkeypatch):
-    from bpp.web import bp_media
+    from bpp.web import media_support
 
     monkeypatch.setattr(raw, "RAWPY_AVAILABLE", False)
-    err = bp_media.raw_preview_error("h", "/photos/a.NEF", face_index=2)
+    err = media_support.raw_preview_error("h", "/photos/a.NEF", face_index=2)
     reason, recovery = raw.preview_failure()
     assert err.user_message == reason
     assert err.context["recovery"] == recovery
@@ -391,9 +391,9 @@ def test_a_raw_crop_failure_names_the_reason_and_the_fix(monkeypatch):
 
 
 def test_a_jpeg_crop_failure_still_says_what_and_what_to_do():
-    from bpp.web import bp_media
+    from bpp.web import media_support
 
-    err = bp_media.crop_failure_error("h", "diag", detection_index=1)
+    err = media_support.crop_failure_error("h", "diag", detection_index=1)
     assert "crop" in err.user_message
     assert err.context["recovery"] == raw.CHECK_FILE_RECOVERY
     assert err.context["detection_index"] == 1

@@ -100,9 +100,14 @@ def do_select(args: argparse.Namespace) -> int:
     setup_logging(debug=False)
     log = get_logger(__name__)
 
+    # Plugins first: a dedupe strategy named in config may be one of theirs.
+    from bpp.plugins import load_plugin_entry_points
+
+    load_plugin_entry_points()
+
     cfg = load_config(getattr(args, "config", None))
 
-    from bpp.dedupe.cluster import deduplicate
+    from bpp.dedupe.select import dedupe_candidates
     from bpp.output.export import export_selected
     from bpp.scoring.aggregate import load_analysis
     from bpp.selection.choose import choose
@@ -127,9 +132,11 @@ def do_select(args: argparse.Namespace) -> int:
     log.info("Loaded analysis for %d images", len(analysis))
 
     with timer.section("dedupe"):
-        candidates = deduplicate(analysis, config=cfg)
+        candidates, dedup_mode = dedupe_candidates(analysis, cfg)
 
-    log.info("After dedup: %d candidates from %d clusters", len(candidates), len(analysis))
+    log.info(
+        "After dedup (%s): %d candidates from %d photos", dedup_mode, len(candidates), len(analysis)
+    )
 
     with timer.section("select"):
         selected = choose(candidates, k=args.k, config=cfg, seed=args.seed)

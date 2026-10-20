@@ -11,7 +11,7 @@
  * Re-exported from pets.mjs.
  */
 
-import { apiFetch, authedSrc } from "./api-client.mjs";
+import { apiFetch, authedSrc, petCropUrl } from "./api-client.mjs";
 import { appConfirm } from "./dialogs.mjs";
 import { esc } from "./text-format.mjs";
 import { toast, toastError } from "./toast.mjs";
@@ -128,7 +128,7 @@ function _identifyCell(d, selected, confirmBtn) {
   cell.dataset.detectionId = String(d.detection_id);
   cell.dataset.thumbHash = d.thumb_hash || "";
   const img = document.createElement("img");
-  img.src = authedSrc(`/api/v1/pets/crop/${esc(d.thumb_hash)}/${d.detection_index}`);
+  img.src = petCropUrl(d.thumb_hash, d.detection_index);
   img.style.cssText = "width:100%;height:100%;object-fit:cover;display:block";
   img.loading = "lazy";
   cell.appendChild(img);
@@ -306,7 +306,7 @@ export function showPetMergePicker(sourceClusterId) {
     const rep = c.representative;
     const avatarUrl =
       rep && rep.thumb_hash
-        ? authedSrc(`/api/v1/pets/crop/${rep.thumb_hash}/${rep.detection_index}`)
+        ? petCropUrl(rep.thumb_hash, rep.detection_index)
         : "";
     item.innerHTML =
       (avatarUrl

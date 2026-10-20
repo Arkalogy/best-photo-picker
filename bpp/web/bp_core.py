@@ -222,7 +222,7 @@ def index() -> Response:
 # _clip_cap_status lives in bp_settings since the v0.1 split. Imported
 # at module load so api_status's snapshot pulls the same status dict
 # the override toggle endpoint returns.
-from bpp.web.bp_settings import _clip_cap_status  # noqa: E402
+from bpp.web.clip_cap import clip_cap_status  # noqa: E402
 
 
 @bp.get("/api/v1/status")
@@ -305,7 +305,7 @@ def api_status() -> Response:
         # peak_mb is the realistic ~3x footprint at current row count,
         # surfaced verbatim in the banner so users can size the
         # decision against their actual RAM.
-        **_clip_cap_status(conn, clip_count),
+        **clip_cap_status(conn, clip_count),
         "heic_available": heic_available(),
         "pet_detection_done": has_pet_data(conn) if conn else False,
         # Background perceptual-hash backfill (powers near-duplicate

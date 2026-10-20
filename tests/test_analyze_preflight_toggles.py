@@ -136,16 +136,21 @@ def test_switched_off_yunet_is_not_run(monkeypatch):
     import numpy as np
 
     from bpp.scoring import face_pipeline
+    from tests._detector_stubs import stub_detectors
 
     ran: list = []
-    monkeypatch.setitem(face_pipeline._DETECTORS, "yunet", lambda img, conf: ran.append(1) or [])
-    monkeypatch.setitem(face_pipeline._DETECTORS, "mediapipe_sr", lambda img, conf: [])
-    monkeypatch.setitem(face_pipeline._DETECTORS, "blazeface_fr", lambda img, conf: [])
-    monkeypatch.setitem(face_pipeline._DETECTORS, "dlib", lambda img, conf: [])
     monkeypatch.setattr(face_pipeline, "_yunet_detect", lambda img, conf: ran.append(2) or [])
-    face_pipeline._collect_builtin_detections(
-        np.zeros((1200, 1200, 3), np.uint8), 0.5, {"model_yunet": False, "model_scrfd": False}
-    )
+    with stub_detectors(
+        {
+            "yunet": lambda img, conf: ran.append(1) or [],
+            "mediapipe_sr": lambda img, conf: [],
+            "blazeface_fr": lambda img, conf: [],
+            "dlib": lambda img, conf: [],
+        }
+    ):
+        face_pipeline._collect_builtin_detections(
+            np.zeros((1200, 1200, 3), np.uint8), 0.5, {"model_yunet": False, "model_scrfd": False}
+        )
     assert ran == []
 
 

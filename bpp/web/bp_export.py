@@ -17,7 +17,7 @@ from bpp.errors import BppError, ConflictError, NotFoundError, ValidationError
 from bpp.output.export import export_selected
 from bpp.utils.logging import get_logger
 from bpp.web.share import requires_local_app
-from bpp.web.sse import sse_event
+from bpp.web.sse import captured_device_fingerprint, stream_worker_progress
 from bpp.web.state import get_ctx
 
 log = get_logger(__name__)
@@ -181,6 +181,7 @@ def api_export() -> tuple[Response, int]:
             "count": result.exported,
             "failed": result.failed,
             "disk_error": result.disk_error,
+            "metadata_kept": result.metadata_kept,
         }
     ), 200
 
@@ -320,33 +321,15 @@ def api_export_progress() -> Response:
     ``start`` / ``export_progress`` / ``done`` / ``error`` / ``cancelled``.
     Open by the frontend right after /api/v1/export/start returns 202.
     """
-    import queue
-    import time
-
     ctx = get_ctx()
-
-    def generate():
-        worker = ctx.export_worker
-        # Idle-timeout so a dead consumer doesn't pin the worker queue
-        # forever. Mirrors the import/analyze stream cadence.
-        last_event = time.time()
-        while True:
-            try:
-                msg = worker.progress_queue.get(timeout=1.0)
-            except queue.Empty:
-                if not worker.is_alive and time.time() - last_event > 2.0:
-                    break
-                # Heartbeat keeps proxies + browsers from closing the
-                # connection during quiet periods (e.g., large image
-                # conversion taking >30s without per-photo events).
-                yield ": heartbeat\n\n"
-                continue
-            last_event = time.time()
-            yield sse_event(msg)
-            if msg.get("type") in {"done", "error", "cancelled"}:
-                break
-
-    return Response(generate(), mimetype="text/event-stream")
+    return Response(
+        stream_worker_progress(
+            ctx.export_worker,
+            ctx=ctx,
+            device_fp=captured_device_fingerprint(),
+        ),
+        mimetype="text/event-stream",
+    )
 
 
 @bp.post("/api/v1/export/cancel")

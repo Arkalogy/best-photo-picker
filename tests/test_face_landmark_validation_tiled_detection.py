@@ -10,6 +10,7 @@ import numpy as np
 from bpp.scoring.face_embed import (
     DEFAULT_EMBEDDING_CONFIDENCE,
 )
+from tests._detector_stubs import stub_detectors
 from tests._face_landmark_validation_shared import unittest_mock_call_tracker
 
 
@@ -53,8 +54,7 @@ class TestTiledDetection:
 
         # Mock all detectors to return nothing, but tiled finds one
         with (
-            patch.dict(
-                "bpp.scoring.face._DETECTORS",
+            stub_detectors(
                 {
                     "yunet": lambda img, conf: [],
                     "mediapipe_sr": lambda img, conf: [],
@@ -81,13 +81,10 @@ class TestTiledDetection:
         # 800x800 is below _TILE_SIZE * 2 = 1280, so tiled is skipped
         img = np.zeros((800, 800, 3), dtype=np.uint8)
 
-        # Patch the detector registry entries directly. The orchestrator
-        # calls _DETECTORS[name](image, conf) — patching the bare function
-        # symbol no longer takes effect since a later change introduced the
-        # registry indirection.
+        # Replace the detectors through the registry: that is where the
+        # orchestrator looks them up.
         with (
-            patch.dict(
-                "bpp.scoring.face._DETECTORS",
+            stub_detectors(
                 {
                     "yunet": lambda img, conf: [(50, 50, 80, 80, 0.95)],
                     "mediapipe_sr": lambda img, conf: [],
@@ -110,8 +107,7 @@ class TestTiledDetection:
         img = np.zeros((1400, 1400, 3), dtype=np.uint8)
 
         with (
-            patch.dict(
-                "bpp.scoring.face._DETECTORS",
+            stub_detectors(
                 {
                     "yunet": lambda img, conf: [(50, 50, 80, 80, 0.95)],
                     "mediapipe_sr": lambda img, conf: [],
@@ -164,8 +160,7 @@ class TestScrfdEarlyExitRunsYunet:
                 "bpp.scoring.face_pipeline.detect_faces_scrfd",
                 return_value=[scrfd_face],
             ),
-            patch.dict(
-                "bpp.scoring.face._DETECTORS",
+            stub_detectors(
                 {
                     "yunet": yunet_mock,
                     "mediapipe_sr": mp_mock,
@@ -205,8 +200,7 @@ class TestScrfdEarlyExitRunsYunet:
                 "bpp.scoring.face_pipeline.detect_faces_scrfd",
                 return_value=[scrfd_face],
             ),
-            patch.dict(
-                "bpp.scoring.face._DETECTORS",
+            stub_detectors(
                 {
                     "yunet": lambda img, conf: [],
                     "mediapipe_sr": mp_mock,

@@ -14,7 +14,7 @@ import dataclasses
 
 from bpp.registry.builtins import NUDENET_320N_ENTRY
 from bpp.registry.model_registry import iter_entries, register_entry
-from bpp.web.bp_catalog import _loader_selected_ids
+from bpp.web.catalog_loaders import loader_selected_ids
 
 
 def _entries(client) -> dict[str, dict]:
@@ -24,11 +24,11 @@ def _entries(client) -> dict[str, dict]:
 
 def test_every_kind_without_a_default_has_exactly_one_loader_selected_entry():
     """A new kind whose loader picks by id must be listed in
-    ``_loader_selected_ids`` or its row regresses to "Backup"."""
+    ``loader_selected_ids`` or its row regresses to "Backup"."""
     entries = list(iter_entries())
     kinds_with_default = {e.kind for e in entries if e.default_for_kind}
     for kind in {e.kind for e in entries} - kinds_with_default:
-        selected = [e.id for e in entries if e.kind == kind and e.id in _loader_selected_ids()]
+        selected = [e.id for e in entries if e.kind == kind and e.id in loader_selected_ids()]
         assert len(selected) == 1, f"kind {kind!r}: loader-selected entries {selected}"
 
 
