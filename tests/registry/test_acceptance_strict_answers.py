@@ -11,7 +11,7 @@ import pytest
 from bpp.registry.acceptance import AcceptanceError, confirm_acceptance, prepare_acceptance
 from bpp.registry.acceptance_log import iter_rows
 from bpp.registry.use_context import REQUIRED_ACK_CHECKBOXES, UseContext
-from tests.registry.test_acceptance import _make_restricted_entry
+from tests.registry._acceptance_shared import _make_restricted_entry
 
 
 @pytest.fixture(autouse=True)

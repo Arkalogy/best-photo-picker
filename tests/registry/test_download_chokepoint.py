@@ -1,33 +1,8 @@
-"""Chokepoint that blocks third-party auto-downloads.
-
-The click-through acceptance
-dialog is cosmetic if a transitively-imported package
-(insightface and friends) can silently fetch a restricted model on
-first use behind BPP's back. These tests pin that:
-
-* The exception class :class:`BlockedAutoDownloadError` raises with
-  the package + function-path context a reader would want to see.
-* :func:`install_third_party_interceptions` patches every known
-  auto-downloader whose package is importable.
-* :func:`enforce_chokepoint` fails closed (raises) if any expected
-  patch is missing when called from a pipeline entry point.
-* Late-imported packages (loaded after :mod:`bpp.registry`) still
-  get patched via the meta-path post-import hook.
-* The per-thread registry-bypass mechanism lets BPP's own
-  acceptance-driven download flow pass through to the underlying
-  upstream function without triggering the blocker.
-
-Each test runs against a synthetic "third party" module so the suite
-does not depend on insightface being installed in the test
-environment. The real insightface case is exercised by the CI test
-that imports insightface and asserts the same patches are in place
-on the actual upstream package.
-"""
+"""Chokepoint that blocks third-party auto-downloads — split header."""
 
 from __future__ import annotations
 
 import sys
-import types
 from typing import Any
 
 import pytest
@@ -38,57 +13,17 @@ from bpp.registry.download_chokepoint import (
     _AutoDownloaderEntry,
     _ChokepointPostImportFinder,
     _patch_loaded_module,
-    _reset_chokepoint_for_tests,
     enforce_chokepoint,
     enter_registry_download,
     exit_registry_download,
     install_third_party_interceptions,
 )
-
-
-@pytest.fixture(autouse=True)
-def _reset_chokepoint() -> Any:
-    """Clean chokepoint state between tests so test order does not
-    leak patches across assertions.
-
-    Teardown re-installs the production interceptions so subsequent
-    test files that go through the face orchestrator (which calls
-    :func:`enforce_chokepoint` at the top of every run) don't trip
-    over an empty :data:`_patched` set. Without the re-install, the
-    orchestrator-driven test files (test_face_extraction_journal,
-    test_clustering_stability, etc.) all blew up with
-    ``BlockedAutoDownloadError`` after this file ran.
-    """
-    _reset_chokepoint_for_tests()
-    yield
-    _reset_chokepoint_for_tests()
-    install_third_party_interceptions()
-
-
-# ── Synthetic third-party module helper ──
-
-
-def _install_fake_thirdparty(submodule: str, function_name: str) -> tuple[types.ModuleType, Any]:
-    """Create a fake third-party module that exposes a callable named
-    ``function_name`` and install it under ``sys.modules[submodule]``.
-
-    Returns ``(module, original_callable)`` so the test can later
-    invoke the original to confirm it survives patch + restore.
-    """
-
-    def original(*args: Any, **kwargs: Any) -> str:
-        return f"called with args={args} kwargs={kwargs}"
-
-    module = types.ModuleType(submodule)
-    setattr(module, function_name, original)
-    sys.modules[submodule] = module
-    return module, original
-
-
-def _uninstall_fake_thirdparty(submodule: str) -> None:
-    """Remove a fake third-party module from sys.modules."""
-    sys.modules.pop(submodule, None)
-
+from tests.registry._download_chokepoint_shared import (
+    _insightface_available,
+    _install_fake_thirdparty,
+    _reset_chokepoint,  # noqa: F401
+    _uninstall_fake_thirdparty,
+)
 
 # ── BlockedAutoDownloadError shape ──
 
@@ -425,27 +360,6 @@ class TestFinderInstallation:
         install_third_party_interceptions()
         finders = [f for f in sys.meta_path if isinstance(f, _ChokepointPostImportFinder)]
         assert len(finders) == 1
-
-
-# ── Real-world insightface integration (run when insightface is installed) ──
-
-
-def _insightface_available() -> bool:
-    """Return ``True`` if the real ``insightface`` package can be
-    imported in this environment.
-
-    The chokepoint test suite primarily uses synthetic modules so the
-    suite stays portable, but the synthetic coverage cannot catch the
-    one regression we care most about: an upstream release renaming
-    ``download`` to ``download_file_v2`` (or similar) and silently
-    bypassing :data:`KNOWN_AUTO_DOWNLOADERS`. The real-import test
-    below catches that the moment it lands."""
-    try:
-        import importlib.util
-
-        return importlib.util.find_spec("insightface") is not None
-    except (ImportError, ValueError):
-        return False
 
 
 @pytest.mark.skipif(

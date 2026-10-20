@@ -112,7 +112,7 @@ def test_plugin_registering_its_entry_late_is_picked_up():
 def web(tmp_path):
     from bpp.db.connection import get_db
     from bpp.web.app import create_app
-    from tests.test_web import _make_analysis
+    from tests._web_shared import _make_analysis
 
     workdir = str(tmp_path / "workdir")
     os.makedirs(workdir)

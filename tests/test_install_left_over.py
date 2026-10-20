@@ -231,7 +231,7 @@ def test_face_recovery_waits_for_the_restart_without_spending_retries(monkeypatc
     from bpp.scoring import install_hold
     from bpp.web import face_extraction_journal as journal
     from bpp.web import face_worker
-    from tests.test_face_extraction_journal import _build_schema
+    from tests._face_extraction_journal_shared import _build_schema
 
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row

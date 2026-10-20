@@ -1,68 +1,17 @@
-"""Tests for the extracted `authorize_request()` policy function.
+"""Tests for the extracted `authorize_request()` policy function — part 1 of 2."""
 
-The middleware in app.py used to inline all the auth logic. We split it
-into a single decision function so:
-- It's testable without spinning up Flask
-- OSS contributors can swap it out (OAuth, JWT, LDAP) without touching
-  the request-handling plumbing
-
-Contract:
-- Returns one of: ALLOW, DENY, PAIR_REQUIRED
-- ALLOW: request can proceed
-- DENY: 403, log it
-- PAIR_REQUIRED: redirect to / so the phone hits the pairing page
-  (covered in Phase 4); only happens for non-loopback requests with a
-  valid share token but an untrusted fingerprint
-"""
+# Shared fixtures are imported by name and re-bound as test parameters.
+# ruff: noqa: F811
 
 from __future__ import annotations
 
-import os
-from dataclasses import dataclass
-
 import pytest
 
-
-@dataclass
-class FakeRequest:
-    """Minimal stand-in for a Flask request — only fields we use."""
-
-    path: str = "/api/v1/status"
-    remote_addr: str = "127.0.0.1"
-    headers: dict[str, str] | None = None
-    args: dict[str, str] | None = None
-    cookies: dict[str, str] | None = None
-
-    def __post_init__(self):
-        self.headers = self.headers or {}
-        self.args = self.args or {}
-        self.cookies = self.cookies or {}
-
-
-@pytest.fixture
-def ctx(tmp_path):
-    """A WebAppState-like context with the share helpers wired."""
-    from bpp.web.app import create_app
-    from bpp.web.share import set_lan_sharing_enabled
-
-    workdir = str(tmp_path / "workdir")
-    os.makedirs(workdir)
-    app = create_app(workdir=workdir)
-    c = app.extensions["bpp"]
-    with app.app_context():
-        set_lan_sharing_enabled(c.get_conn(), True)
-    # Stash app for context-using tests
-    c._test_app = app
-    return c
-
-
-def _authorize(ctx, req: FakeRequest):
-    """Convenience wrapper: pushes app context for DB access."""
-    from bpp.web.share import authorize_request
-
-    with ctx._test_app.app_context():
-        return authorize_request(req, ctx)
-
+from tests._authorize_request_shared import (
+    FakeRequest,
+    _authorize,
+    ctx,  # noqa: F401
+)
 
 # ─── Loopback always allowed (Tauri / local browser) ────────────────
 
@@ -498,68 +447,5 @@ class TestMediaPathAuth:
         req = FakeRequest(
             path=f"{prefix}abc123",
             remote_addr="127.0.0.1",
-        )
-        assert _authorize(ctx, req).decision == AuthDecision.DENY
-
-
-# ─── Constant-time token comparison ──────────────────────────
-
-
-class TestConstantTimeTokenCompare:
-    """The auth path must compare tokens through hmac.compare_digest
-    so a timing oracle on the LAN can't probe the token byte-by-byte.
-    With 256-bit secrets this is mostly defense-in-depth, but free
-    to enforce — and removes a primitive-level review flag."""
-
-    def test_authorize_request_uses_compare_digest(self, ctx, monkeypatch):
-        """Sentinel: monkeypatch hmac.compare_digest in the share
-        module's namespace and confirm authorize_request() invokes it
-        on the candidate token."""
-        from bpp.web import share
-        from bpp.web.share import AuthDecision
-
-        calls: list[tuple[str, str]] = []
-
-        def _spy(a, b):
-            calls.append((a, b))
-            return a == b
-
-        monkeypatch.setattr(share.hmac, "compare_digest", _spy)
-
-        req = FakeRequest(
-            path="/api/v1/status",
-            remote_addr="127.0.0.1",
-            headers={"X-Auth-Token": ctx.auth_token},
-        )
-        result = _authorize(ctx, req)
-        assert result.decision == AuthDecision.ALLOW
-        assert calls, "hmac.compare_digest was not consulted on the auth path"
-        # Both sides should be the candidate token + a configured token,
-        # never one empty side (which would short-circuit and skip
-        # constant-time semantics).
-        for cand, expected in calls:
-            assert cand, "compare_digest called with empty candidate"
-            assert expected, "compare_digest called with empty expected"
-
-    def test_empty_token_does_not_auth_when_no_secret_configured(self, ctx, monkeypatch):
-        """Edge case the truthy-guard in `_token_equals` defends
-        against: if the configured app/share token were ever falsy
-        (None / ""), a request with an empty token must NOT pass —
-        otherwise both sides match and the principal would auth as
-        LOCAL_APP without a real secret on either side."""
-        from bpp.web import share
-        from bpp.web.share import AuthDecision
-
-        # Stub both expected tokens to empty so a candidate "" would
-        # equal the expected "" under naive == compare. The fix's
-        # truthy guard makes _token_equals refuse the empty-vs-empty
-        # match, so the decision is DENY.
-        monkeypatch.setattr(ctx, "auth_token", "")
-        monkeypatch.setattr(share, "get_share_token", lambda conn: "")
-
-        req = FakeRequest(
-            path="/api/v1/status",
-            remote_addr="127.0.0.1",
-            headers={"X-Auth-Token": ""},
         )
         assert _authorize(ctx, req).decision == AuthDecision.DENY
