@@ -238,4 +238,11 @@ def assign_near_duplicate_clusters(
         multi_count,
         hamming_threshold,
     )
+    if multi_count:
+        from bpp.db.event_hooks import dispatch_post_cluster
+
+        n_clusters = conn.execute(
+            "SELECT COUNT(DISTINCT dup_cluster_id) FROM photos WHERE dup_cluster_id > 0"
+        ).fetchone()[0]
+        dispatch_post_cluster(conn, "near_duplicate", int(n_clusters))
     return multi_count

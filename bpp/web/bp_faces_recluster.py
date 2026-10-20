@@ -19,6 +19,7 @@ from __future__ import annotations
 from flask import Response, jsonify, request
 
 from bpp.constants import CLUSTER_DISMISSED, CLUSTER_UNASSIGNED
+from bpp.db.event_hooks import dispatch_post_cluster
 from bpp.db.smart_albums import get_affected_album_types, refresh_smart_albums
 from bpp.errors import ConflictError, ValidationError
 from bpp.scoring.face_cluster import cluster_faces
@@ -125,4 +126,5 @@ def api_faces_recluster() -> tuple[Response, int]:
     refresh_smart_albums(conn, kinds=get_affected_album_types("face_tag"))
 
     n_clusters = len(set(labels))
+    dispatch_post_cluster(conn, "face", n_clusters)
     return jsonify({"status": "reclustered", "clusters": n_clusters}), 200

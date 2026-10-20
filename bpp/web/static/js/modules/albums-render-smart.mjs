@@ -64,9 +64,9 @@ export function renderSmartAlbums(ctx, smartAlbums) {
   );
 
   for (const album of otherSmart) {
-    const icon = smartAlbumIcon(album.album_type, ctx.ICONS);
+    const icon = smartAlbumIcon(album, ctx.ICONS);
     const active = _isActive(ctx, album) ? " active" : "";
-    const tip = smartAlbumTip(album.album_type);
+    const tip = smartAlbumTip(album);
     html += `<div class="nav-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${album.id}" data-album-id="${album.id}"
         ${tip ? `title="${escapeAttr(tip)}"` : ""}
         data-oncontextmenu="showSmartAlbumMenu" data-arg0="${album.id}" data-arg1="${escapeAttr(album.name)}">

@@ -47,10 +47,17 @@ describe("_deriveRowState — lifecycle is exactly one of the 8 enum values", ()
    * @param {string} id
    * @param {Record<string, any>} [extra]
    */
+  const METHOD = {
+    sface_yunet: "sface",
+    dlib_face_recognition_resnet_v1: "dlib",
+    insightface_buffalo_s: "buffalo_s",
+  };
   const faceEmbedder = (id, extra = {}) => ({
     id,
     display_name: id,
     kind: "face_embedder",
+    method_value: METHOD[id],
+    legacy_label: id === "insightface_buffalo_s" ? null : "Face recognition",
     ...extra,
   });
 

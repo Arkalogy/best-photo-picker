@@ -74,9 +74,11 @@ class MyPlugin:
 
     def on_register(self, app):
         """Process startup, after setup() returns. `app` is the
-        Flask app instance (None in CLI / test contexts). Use for:
-        registering Flask blueprints, attaching CLI subcommands,
-        hooking the photo event bus."""
+        Flask app instance; the command line (`bpp analyze`, `bpp
+        select`, `bpp pick`, through `bpp.plugins.load_plugins_for_cli`)
+        passes None and fires `on_shutdown` when the command ends.
+        Use for: registering Flask blueprints, attaching CLI
+        subcommands, hooking the photo event bus."""
         if app is not None:
             from .blueprint import bp
             app.register_blueprint(bp)
@@ -95,6 +97,13 @@ class MyPlugin:
 
     def on_shutdown(self):
         """Process exit. Mirror of on_register. Also fires in LIFO order."""
+        ...
+
+    def on_db_restore(self, corrupted_sidecar_path):
+        """Once per process, after startup, when the library database
+        was restored from its backup at this start (the corrupted copy
+        is at the given path). Drop any side-cache keyed to the old
+        database here."""
         ...
 
 
@@ -147,7 +156,13 @@ intended call timing for `setup()`:
     detectors; its boxes are merged with theirs (overlaps removed).
     It is skipped while its `toggle_key` setting is off or its
     registry entry's license isn't accepted, and a detector that
-    raises is logged once at WARNING and skipped.
+    raises is logged once at WARNING and skipped. A `toggle_key` (a
+    detector's or a scorer's) is a real switch: `POST
+    /api/v1/models/toggle` accepts it, the analysis run reads it from
+    the library's settings, and the Settings → ML Models list shows
+    the switch on the plugin model's row when the model file's legal
+    entry is the one the detector names in `registry_id` (a scorer:
+    set `ScorerDef.registry_id`).
   - A **face embedder** runs when the library's `face_embedding_method`
     setting is set to its `name`: BPP detects faces as usual and calls
     `embed(image, (x, y, w, h))` for each one. Embeddings from one
@@ -156,7 +171,19 @@ intended call timing for `setup()`:
     vectors it returns.
 - **Smart album type**: register during `setup()`. Consumed lazily by
   `refresh_smart_albums()` (fires on import completion, face ops, hash
-  computation).
+  computation). Pass `icon=` (a key of the sidebar's icon set, e.g.
+  `"star"`), `tooltip=` and `order=` (built-ins run 0–16; 5 is the
+  middle) so the sidebar draws your type the way you want; they come
+  with every album from `GET /api/v1/albums`.
+- **Catalog loader**: a model whose weights don't come from a single
+  pinned URL (a ZIP, several files) gets the picker's Download → Use →
+  Uninstall lifecycle through
+  `bpp.web.catalog_loaders.register_catalog_loader(registry_id,
+  is_on_disk=…, ensure_weights=…, remove_weights=…)`.
+- **Clustering events**: `bpp.db.event_hooks.register_post_cluster_hook`
+  fires after face extraction, a manual face recluster (`"face"`), pet
+  clustering (`"pet"`) and near-duplicate clustering
+  (`"near_duplicate"`).
 - **Smart-album refresh domain**: when your plugin adds an album type
   that should refresh on a built-in mutation domain (face cluster,
   pet detect, dedup, edit, import), call
@@ -486,11 +513,13 @@ def setup_scorer() -> None:
   immediately after analyze, the field is in the API response, but
   after a server restart (or any path that rebuilds the photo dict
   from DB), the field reverts to its `api_fields` default.
-- **No persistence beyond aggregate_score.** `aggregate_score` IS
-  persisted, so a weighted plugin scorer's effect on ranking
-  survives restart — but the individual `myplugin_saturation_score`
-  field does not. If you need persistence, write to your own DB
-  table from your plugin code.
+- **No persistence of the score, so no lasting effect on ranking.**
+  `aggregate_score` is stored, but it is recomputed from the stored
+  per-scorer columns whenever weights change or the app reloads, and
+  your `myplugin_saturation_score` is not stored — so a weighted
+  plugin scorer's effect on ranking does not survive a restart or a
+  recompute. If you need it to last, write the score to your own DB
+  table and contribute it back through a recompute hook.
 - **No automatic UI slider.** Plugin scorers run, but the Settings
   → Scoring panel doesn't render a slider for them yet. Document
   the YAML key in your plugin README so users know how to override
@@ -589,15 +618,14 @@ photo with `(src, dest)`.
   uploaded it instead), bpp's manifest.json + report.txt are still
   written with the file metadata your handler decided on.
 
+- **The Export modal lists your mode.** Its "How to copy" control is
+  filled from `GET /api/v1/export/modes` (every registered mode with
+  its description), so a plugin mode appears there with no UI work;
+  `POST /api/v1/export` with `mode="myplugin_s3"` reaches it directly
+  too.
+
 **What you DON'T get:**
 
-- **No automatic UI dropdown.** The Export modal's "How to copy"
-  control is hardcoded HTML today. Plugin modes are reachable via
-  the API (`POST /api/v1/export` with `mode="myplugin_s3"`), but
-  the dropdown won't list them until a contributor ports the
-  dropdown to render from `ExportModeRegistry.all()`. Document the
-  mode name in your plugin README so users can wire it up via API
-  or a custom UI.
 - **No image processing in plugin modes.** When the user picks
   `copy` mode with `fmt=jpeg` or a `max_size` cap, bpp processes
   the image with PIL BEFORE the handler is consulted. For other

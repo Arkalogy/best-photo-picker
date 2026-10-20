@@ -326,7 +326,14 @@ def main(argv: list[str] | None = None) -> int:
         "model": cmd_model,
         "db": cmd_db,
     }
-    return dispatch[args.command](args)
+    if args.command in ("serve", "web", "demo"):
+        return dispatch[args.command](args)  # the app owns the plugin lifecycle
+    try:
+        return dispatch[args.command](args)
+    finally:
+        from bpp.plugin_protocol import fire_on_shutdown
+
+        fire_on_shutdown()
 
 
 if __name__ == "__main__":

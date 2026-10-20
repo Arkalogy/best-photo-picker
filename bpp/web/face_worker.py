@@ -306,12 +306,12 @@ def prepare_face_models(emit: Any, config: dict[str, Any]) -> dict[str, Any]:
     on), with their warnings. Returns the config to extract with: a YuNet
     that couldn't be fetched is off for this run, so the extraction
     subprocess doesn't silently try the same download again."""
-    from bpp.constants import MODEL_TOGGLE_KEYS
     from bpp.scoring import face, face_yunet
     from bpp.scoring.face_embed import ensure_sface_model
+    from bpp.scoring.toggles import toggles_from_config
     from bpp.utils.download import announce_downloads
 
-    toggles = {k: config.get(k, True) for k in MODEL_TOGGLE_KEYS}
+    toggles = toggles_from_config(config)
     with announce_downloads(lambda message: emit({"type": "status", "message": message})):
         warnings = [*face.ensure_face_models(toggles), *ensure_sface_model()]
     for warn in warnings:

@@ -119,7 +119,7 @@ class TestLoaderWiredAtStartup:
         from pathlib import Path
 
         src = Path("bpp/commands/pick.py").read_text()
-        assert "load_plugin_entry_points" in src
+        assert "load_plugins_for_cli" in src  # wraps load_plugin_entry_points
 
     def test_cli_analyze_calls_loader(self):
         from pathlib import Path
@@ -127,5 +127,5 @@ class TestLoaderWiredAtStartup:
         # Loader must fire in both analyze and pick CLI entry points.
         analyze_src = Path("bpp/commands/analyze.py").read_text()
         pick_src = Path("bpp/commands/pick.py").read_text()
-        assert "load_plugin_entry_points" in analyze_src
-        assert "load_plugin_entry_points" in pick_src
+        assert "load_plugins_for_cli" in analyze_src
+        assert "load_plugins_for_cli" in pick_src

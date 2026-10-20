@@ -33,10 +33,10 @@ from bpp.errors import NotFoundError, PayloadTooLargeError, ValidationError
 from bpp.utils.logging import get_logger
 from bpp.web.recompute import (
     RECOMPUTE_FULL_PAYLOAD_LIMIT,
-    RECOMPUTE_WEIGHT_KEYS,
     RecomputeOptions,
     optimize,
     recompute,
+    recompute_weight_keys,
 )
 from bpp.web.share import requires_local_app
 from bpp.web.state import clamp_k, get_ctx
@@ -179,7 +179,7 @@ def _config_with_overrides(config: dict[str, Any], params: dict[str, Any]) -> di
     """A copy of the config with the request's weight overrides (clamped
     to the schema) and the sensitive-photo policy applied."""
     cfg = dict(config)
-    for key in RECOMPUTE_WEIGHT_KEYS:
+    for key in recompute_weight_keys():
         if key in params:
             cfg[key] = clamp_override(key, params[key])
     # Sensitive-photo policy is a string enum, not a clampable weight.

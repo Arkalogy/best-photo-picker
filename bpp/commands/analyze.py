@@ -22,9 +22,9 @@ def do_analyze(args: argparse.Namespace) -> int:
 
     # load plugin entry-points before consuming the scoring
     # registry. Idempotent under repeated calls within a process.
-    from bpp.plugins import load_plugin_entry_points
+    from bpp.plugins import load_plugins_for_cli
 
-    load_plugin_entry_points()
+    load_plugins_for_cli()
 
     cfg = load_config(getattr(args, "config", None))
     extensions = [e.strip().lower() for e in args.extensions.split(",")]
@@ -101,9 +101,9 @@ def do_select(args: argparse.Namespace) -> int:
     log = get_logger(__name__)
 
     # Plugins first: a dedupe strategy named in config may be one of theirs.
-    from bpp.plugins import load_plugin_entry_points
+    from bpp.plugins import load_plugins_for_cli
 
-    load_plugin_entry_points()
+    load_plugins_for_cli()
 
     cfg = load_config(getattr(args, "config", None))
 

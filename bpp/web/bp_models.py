@@ -26,11 +26,11 @@ from typing import Any
 
 from flask import Blueprint, Response, jsonify, request
 
-from bpp.constants import MODEL_TOGGLE_KEYS
 from bpp.errors import BppError, ValidationError
 
 # (Through the module, never bare names: one patch point for the tests.)
 from bpp.scoring import model_lifecycle
+from bpp.scoring.toggles import all_toggle_keys
 from bpp.utils.logging import get_logger
 from bpp.web import download_gates
 from bpp.web.share import requires_local_app
@@ -76,7 +76,7 @@ def api_models_toggle() -> tuple[Response, int]:
     key = data.get("key", "")
     enabled = data.get("enabled")
 
-    if key not in MODEL_TOGGLE_KEYS:
+    if key not in all_toggle_keys():
         raise ValidationError(
             f"Invalid model key: {key}",
             field="key",

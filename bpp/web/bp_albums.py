@@ -24,10 +24,11 @@ from bpp.db.albums import (
 from bpp.db.photos import (
     get_photo_ids_by_paths,
 )
+from bpp.db.smart_albums import SmartAlbumRegistry
 from bpp.errors import NotFoundError, ValidationError
 from bpp.utils.logging import get_logger
 from bpp.web.recompute import (
-    RECOMPUTE_WEIGHT_KEYS,
+    recompute_weight_keys,
 )
 from bpp.web.share import requires_local_app
 from bpp.web.state import clamp_k, get_ctx
@@ -35,10 +36,14 @@ from bpp.web.state_helpers import clamp_override
 
 log = get_logger(__name__)
 
+
 # Keys allowed through the PUT /api/v1/albums/:id config update.
-# Scoring weights auto-populate from RECOMPUTE_WEIGHT_KEYS; UI state
+# Scoring weights come from recompute_weight_keys() at use time; UI state
 # flags are listed explicitly. Unknown keys are silently dropped.
-_ALLOWED_CONFIG_KEYS: frozenset[str] = frozenset(RECOMPUTE_WEIGHT_KEYS) | {"k_user_set"}
+def _allowed_config_keys() -> frozenset[str]:
+    return frozenset(recompute_weight_keys()) | {"k_user_set"}
+
+
 bp = Blueprint("albums", __name__)
 
 
@@ -50,6 +55,8 @@ def api_albums_list() -> tuple[Response, int]:
     ctx = get_ctx()
     conn = ctx.get_conn()
     albums = db_list_albums(conn)
+    for album in albums:
+        album.update(SmartAlbumRegistry.presentation(album.get("album_type", "")))
     return jsonify({"albums": albums}), 200
 
 
@@ -123,10 +130,12 @@ def api_album_update(album_id: int) -> tuple[Response, int]:
             # Values pass the same gate as a recompute override: a weight
             # clamped to its 0-1 range, anything else checked against the
             # schema — a stored value is used unchecked at recompute time.
+            weight_keys = recompute_weight_keys()
+            allowed = _allowed_config_keys()
             cfg_update = {
-                k: clamp_override(k, v) if k in RECOMPUTE_WEIGHT_KEYS else validate_value(k, v)
+                k: clamp_override(k, v) if k in weight_keys else validate_value(k, v)
                 for k, v in cfg_update.items()
-                if k in _ALLOWED_CONFIG_KEYS
+                if k in allowed
             }
             existing = album.get("config") or {}
             kwargs["config"] = {**existing, **cfg_update}

@@ -21,12 +21,12 @@ def do_pick(args: argparse.Namespace) -> int:
     from bpp.db.connection import close_all_connections, get_db, init_db
     from bpp.db.library import get_library_dirs
     from bpp.db.photos import get_all_photos
-    from bpp.plugins import load_plugin_entry_points
+    from bpp.plugins import load_plugins_for_cli
     from bpp.selection.choose import choose
 
     # ensure plugin scorers / config fields are registered
     # before we read the scoring registry.
-    load_plugin_entry_points()
+    load_plugins_for_cli()
 
     log = get_logger(__name__)
 

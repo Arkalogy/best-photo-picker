@@ -9,7 +9,7 @@
  * back-calls into the picker module, so there is no import cycle.
  */
 
-import { LEGACY_FEATURE_MAP } from "./face-embedders-catalog.mjs";
+import { FACE_EMBEDDER_METHOD_VALUE, LEGACY_FEATURE_MAP } from "./face-embedders-catalog.mjs";
 import { _withoutGuesses } from "./face-embedders-guesses.mjs";
 import { licenseBlocker, licenseFacts } from "./face-embedders-license.mjs";
 import { feState } from "./face-embedders-state.mjs";
@@ -23,11 +23,6 @@ import { escapeAttr, esc } from "./text-format.mjs";
  * face_embedder entries have a setting value because the analyze
  * dispatcher only reads one — non-face entries pass through.
  */
-const _FACE_EMBEDDER_METHOD_VALUE = {
-  sface_yunet: "sface",
-  dlib_face_recognition_resnet_v1: "dlib",
-  insightface_buffalo_s: "buffalo_s",
-};
 
 // ── Row state — single source of truth ──────────────────────────────
 //
@@ -130,7 +125,10 @@ export const ROW_LIFECYCLE = Object.freeze({
  */
 export function _deriveRowState(entry, install) {
   const isFaceEmbedder = entry?.kind === "face_embedder";
-  const methodValue = _FACE_EMBEDDER_METHOD_VALUE[entry?.id];
+  // The server says which face_embedding_method value picks the entry
+  // (a plugin embedder's too); the built-in table answers for an entry
+  // that arrived without it.
+  const methodValue = entry?.method_value ?? FACE_EMBEDDER_METHOD_VALUE[entry?.id];
   // "isPicked" — this row is the one currently producing results
   // for its kind. Two paths:
   //   * face_embedder: dispatched by setting (face_embedding_method
@@ -195,7 +193,8 @@ export function _deriveRowState(entry, install) {
   // record (rows linked to a legacy feature — catalog ones too: that
   // record says "needs runtime" / "incomplete"); its acceptance (when the
   // server sends no load state); whether it's the face model in use.
-  const installUnknown = !!feState.unknown.install && !!LEGACY_FEATURE_MAP[entry?.id]?.legacy_label;
+  const legacyLabel = entry?.legacy_label ?? LEGACY_FEATURE_MAP[entry?.id]?.legacy_label;
+  const installUnknown = !!feState.unknown.install && !!legacyLabel;
   const methodUnknown = !!feState.unknown.method && isFaceEmbedder && methodValue !== undefined;
   const unknown = installUnknown || methodUnknown || licenseUnknown;
 

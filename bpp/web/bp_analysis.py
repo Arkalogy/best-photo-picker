@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import contextlib
 import os
+from typing import Any
 
 from flask import Blueprint, Response, jsonify, request
 
 from bpp.constants import WORKER_JOIN_TIMEOUT_S
 from bpp.db.library import clear_library
 from bpp.db.settings import get_all_settings
+from bpp.db.smart_albums import get_affected_album_types, refresh_smart_albums
 from bpp.errors import ConflictError, ValidationError
 from bpp.utils.logging import get_logger
 from bpp.web.share import requires_local_app
@@ -60,27 +62,8 @@ def api_analyze() -> tuple[Response, int]:
     ctx.input_dir = os.path.abspath(input_dir)
     wd = ctx.ensure_workdir()
 
-    # Merge DB settings into analysis config so user tuning takes effect
     conn = ctx.get_conn()
-    db_settings = get_all_settings(conn)
-    merged_config = dict(ctx.config)
-
-    for key in ("face_detection_confidence", "face_embedding_confidence", "max_long_side"):
-        if key in db_settings:
-            with contextlib.suppress(ValueError, TypeError):
-                merged_config[key] = float(db_settings[key])
-
-    # Model toggle settings (stored as "true"/"false" strings in DB)
-    from bpp.constants import MODEL_TOGGLE_KEYS
-
-    for key in MODEL_TOGGLE_KEYS:
-        if key in db_settings:
-            merged_config[key] = db_settings[key].lower() in ("true", "1", "yes")
-
-    # Tell the worker whether face extraction is available
-    from bpp.scoring.face_embed import is_available as _face_avail
-
-    merged_config["face_recognition_available"] = _face_avail()
+    merged_config = run_config_for_analyze(ctx, conn)
 
     if ctx.import_worker.is_alive:
         raise ConflictError(
@@ -106,6 +89,27 @@ def api_analyze() -> tuple[Response, int]:
 
     ctx.invalidate_analysis()
     return jsonify({"status": "started", "workdir": wd}), 202
+
+
+def run_config_for_analyze(ctx: Any, conn: Any) -> dict[str, Any]:
+    """The analysis worker's config: the app config with the library's
+    stored tuning and every model switch (built-in and plugin) merged in,
+    plus whether face recognition is installed."""
+    from bpp.scoring.face_embed import is_available as _face_avail
+    from bpp.scoring.toggles import all_toggle_keys
+
+    db_settings = get_all_settings(conn)
+    merged_config = dict(ctx.config)
+    for key in ("face_detection_confidence", "face_embedding_confidence", "max_long_side"):
+        if key in db_settings:
+            with contextlib.suppress(ValueError, TypeError):
+                merged_config[key] = float(db_settings[key])
+    # Model toggle settings (stored as "true"/"false" strings in DB)
+    for key in all_toggle_keys():
+        if key in db_settings:
+            merged_config[key] = db_settings[key].lower() in ("true", "1", "yes")
+    merged_config["face_recognition_available"] = _face_avail()
+    return merged_config
 
 
 @bp.get("/api/v1/analyze/progress")
@@ -222,6 +226,8 @@ def api_compute_hashes() -> tuple[Response, int]:
         return jsonify({"status": "started", "missing": missing}), 200
     clustered = assign_near_duplicate_clusters(conn)
     moments = assign_moment_clusters(conn)
+    # Both albums read the cluster columns: refresh after both passes.
+    refresh_smart_albums(conn, kinds=get_affected_album_types("dedup"))
     return (
         jsonify({"status": "done", "missing": missing, "clustered": clustered, "moments": moments}),
         200,

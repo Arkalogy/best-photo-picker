@@ -229,6 +229,28 @@ def _iter_entry_points(group: str) -> Iterable[Any]:
     return ()
 
 
+_CLI_REGISTERED = False
+
+
+def load_plugins_for_cli() -> int:
+    """What a command-line command does before it reads any registry:
+    load the plugin entry points and tell the plugins they are running
+    (``on_register(None)``: no Flask app), once per process."""
+    global _CLI_REGISTERED
+    n = load_plugin_entry_points()
+    if not _CLI_REGISTERED:
+        _CLI_REGISTERED = True
+        from bpp.plugin_protocol import fire_on_register
+
+        fire_on_register(None)
+    return n
+
+
+def _reset_cli_lifecycle_for_tests() -> None:
+    global _CLI_REGISTERED
+    _CLI_REGISTERED = False
+
+
 def load_plugin_entry_points() -> int:
     """Load every entry-point in ``bpp.plugins``.
 

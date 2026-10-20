@@ -31,6 +31,7 @@ ALBUM_DELETED = "smart_deleted"
 ALBUM_HIDDEN = "smart_hidden"
 ALBUM_RECENT = "smart_recent"
 ALBUM_EDITED = "smart_edited"
+ALBUM_SENSITIVE = "smart_sensitive"
 
 # Mutation-domain → affected album types mapping.
 # Callers use get_affected_album_types(domain) instead of hard-coding
@@ -43,6 +44,7 @@ _DOMAIN_ALBUM_MAP: dict[str, tuple[str, ...]] = {
     "import": (ALBUM_PET,),
     "dedup": (ALBUM_DUPLICATES, ALBUM_MOMENTS),
     "edit": (ALBUM_EDITED,),
+    "sensitive": (ALBUM_SENSITIVE,),
 }
 
 

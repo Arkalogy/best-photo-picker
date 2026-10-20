@@ -384,7 +384,10 @@ def reconstruct_identities(
 
         refresh_smart_albums(
             conn,
-            kinds=get_affected_album_types("face_cluster"),
+            kinds={
+                *get_affected_album_types("face_extract"),
+                *get_affected_album_types("face_cluster"),
+            },
         )
     except Exception:
         log.warning(

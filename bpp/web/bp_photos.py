@@ -300,9 +300,9 @@ def api_set_sensitive_override() -> tuple[Response, int]:
                     break
 
     # Membership of the Sensitive album follows the override immediately.
-    from bpp.db.smart_albums import refresh_smart_albums
+    from bpp.db.smart_albums import get_affected_album_types, refresh_smart_albums
 
-    refresh_smart_albums(conn, kinds={"smart_sensitive"})
+    refresh_smart_albums(conn, kinds=get_affected_album_types("sensitive"))
 
     threshold = cfg_get(ctx.config, "sensitive_nudity_threshold")
     return jsonify({"status": "ok", "is_sensitive": is_sensitive_item(new_item, threshold)}), 200

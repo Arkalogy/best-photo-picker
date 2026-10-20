@@ -34,9 +34,9 @@ _log = get_logger(__name__)
 # bp_albums.py — duplicated locals drift.
 RECOMPUTE_FULL_PAYLOAD_LIMIT = 5000
 
-# Config keys that accept weight-clamped float values from the UI.
-RECOMPUTE_WEIGHT_KEYS = (
-    *get_weight_keys(),  # blur_weight, exposure_weight, face_weight, composition_weight
+#: The non-weight keys a recompute may override, next to every scorer's
+#: weight key.
+_RECOMPUTE_TUNING_KEYS = (
     "hash_distance_threshold",
     "time_window_seconds",
     "max_per_day",
@@ -46,6 +46,14 @@ RECOMPUTE_WEIGHT_KEYS = (
     "face_selection_boost",
     "selection_similarity_threshold",
 )
+
+
+def recompute_weight_keys() -> tuple[str, ...]:
+    """Config keys that accept weight-clamped float values from the UI:
+    every registered scorer's weight (a plugin's included, whenever it
+    registered) plus the selection tuning keys. Asked at use time, not
+    frozen at import."""
+    return (*get_weight_keys(), *_RECOMPUTE_TUNING_KEYS)
 
 
 @dataclass

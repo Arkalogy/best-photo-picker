@@ -61,73 +61,18 @@ from bpp.registry import (
     set_use_context,
     utc_now_iso,
 )
-from bpp.registry.labels import group_for_entry, ui_label_for_entry
+from bpp.registry.labels import group_for_entry
 from bpp.utils.logging import get_logger
-from bpp.web.catalog_loaders import catalog_loaders, loader_selected_ids
+from bpp.web.catalog_loaders import catalog_loaders
+from bpp.web.picker_fields import entry_to_picker_dict
 from bpp.web.share import requires_local_app
+
+#: Kept under its old name for the tests that build one row directly.
+_entry_to_picker_dict = entry_to_picker_dict
 
 log = get_logger(__name__)
 
 bp = Blueprint("model_registry", __name__)
-
-
-def _entry_to_picker_dict(
-    entry: Any, loaders: dict | None = None, states: dict[str, str] | None = None
-) -> dict[str, Any]:
-    """Serialise one :class:`ModelEntry` into the picker shape.
-
-    ``loaders`` is the catalog-loader map (``catalog_loaders()``). The
-    entries endpoint computes it ONCE and passes it in so this isn't
-    rebuilt (with its lazy imports) per row. Callers that serialise a
-    single entry can omit it — it's resolved lazily. Resolved per call
-    rather than cached at module level so test patches on the loader
-    functions still take effect.
-    """
-    if loaders is None:
-        loaders = catalog_loaders()
-    group_title, group_subtitle = group_for_entry(entry)
-    catalog_info = loaders.get(entry.id)
-    return {
-        "id": entry.id,
-        "display_name": entry.display_name,
-        "kind": entry.kind,
-        "ui_label": ui_label_for_entry(entry),
-        "group_title": group_title,
-        "group_subtitle": group_subtitle,
-        "license_summary": entry.license_summary,
-        "status": entry.status.value,
-        "requires_explicit_ack": entry.requires_explicit_ack,
-        "commercial_use_restriction_known": (entry.commercial_use_restriction_known),
-        "default_for_kind": entry.default_for_kind,
-        "runs_alongside_default": getattr(entry, "runs_alongside_default", False),
-        # What the runtime uses for the kind: its default, or the entry a
-        # loader selects by id (kinds that have no default).
-        "primary_for_kind": bool(entry.default_for_kind) or entry.id in loader_selected_ids(),
-        "ships_with_runtime": getattr(entry, "ships_with_runtime", False),
-        "ack_text_kind": entry.ack_text_kind,
-        # The load gate's decision (ok / needs_license / needs_reaccept /
-        # needs_commercial_rights / blocked) — the row's license state.
-        "load_state": _load_state(entry, states),
-        # Surfaced so the Settings → Models picker can show the
-        # download size BEFORE the user accepts and triggers the
-        # fetch. ``0`` means unknown — picker falls back to "—".
-        "expected_download_size_bytes": getattr(entry, "expected_download_size_bytes", 0),
-        # Catalog entries are runtime-fetched (weights pulled on demand,
-        # not in the download manifest). The picker reads these to drive
-        # the download lifecycle. ``is_catalog_entry`` says "this entry's
-        # weights come via the catalog ensure-weights endpoint" — it is
-        # the authoritative routing signal, independent of whether a
-        # (fileless) legacy install record happens to be attached. Before
-        # this flag the picker inferred catalog-ness from "no install
-        # record", which broke for LaMa / NudeNet: both DO have a legacy
-        # feature row (with an empty file list), so they were misrouted
-        # and lost their Download action entirely.
-        "is_catalog_entry": bool(catalog_info),
-        # ``catalog_on_disk`` is the real on-disk check for catalog
-        # entries. ``False`` for non-catalog entries (they report
-        # presence via ``install.files``).
-        "catalog_on_disk": bool(catalog_info and catalog_info[0]()),
-    }
 
 
 @bp.get("/api/v1/model-registry/entries")
@@ -156,7 +101,7 @@ def api_model_registry_entries() -> tuple[Any, int]:
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for entry in iter_entries():
         key = group_for_entry(entry)
-        grouped.setdefault(key, []).append(_entry_to_picker_dict(entry, loaders, states))
+        grouped.setdefault(key, []).append(entry_to_picker_dict(entry, loaders, states))
     # BYOM entries appear in the picker under their own group so
     # users can distinguish their own files from registered models.
     # group_for_entry returns the permissive subtitle for BYOM
@@ -165,7 +110,7 @@ def api_model_registry_entries() -> tuple[Any, int]:
     # to render them in a separate sub-section.
     for entry in iter_byom_model_entries():
         key = group_for_entry(entry)
-        grouped.setdefault(key, []).append(_entry_to_picker_dict(entry, loaders, states))
+        grouped.setdefault(key, []).append(entry_to_picker_dict(entry, loaders, states))
     # Stable ordering: permissive first, restricted second. The
     # permissive group does not carry the "commercial use restricted"
     # signal so a maintainer reading the picker output sees the safe
@@ -189,22 +134,6 @@ def _registry_load_states() -> dict[str, str] | None:
         return model_load_states()
     except Exception:
         log.warning("Couldn't compute model load states", exc_info=True)
-        return None
-
-
-def _load_state(entry: Any, states: dict[str, str] | None) -> str | None:
-    """One row's load-gate decision: from the cached registry map, or
-    computed for a user-supplied (BYOM) entry, which the map doesn't hold."""
-    if states is None:
-        return None
-    if not entry.id.startswith("byom_"):
-        return states.get(entry.id, "ok")
-    from bpp.web.model_filter import load_state
-
-    try:
-        return load_state(entry)
-    except Exception:
-        log.warning("Couldn't compute the load state of %s", entry.id, exc_info=True)
         return None
 
 

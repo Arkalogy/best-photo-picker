@@ -174,6 +174,16 @@ def api_enhance_photos() -> tuple[Response, int]:
     return jsonify(result), 200
 
 
+def _refresh_edit_albums(conn: Any) -> None:
+    """The albums that follow a photo's edits (the edit domain)."""
+    from bpp.db.smart_albums import get_affected_album_types, refresh_smart_albums
+
+    try:
+        refresh_smart_albums(conn, kinds=get_affected_album_types("edit"))
+    except Exception:
+        log.warning("smart album refresh after an edit failed", exc_info=True)
+
+
 @bp.post("/api/v1/photos/reset-edits")
 @requires_local_app
 def api_reset_edits() -> tuple[Response, int]:
@@ -199,6 +209,7 @@ def api_reset_edits() -> tuple[Response, int]:
             invalidate_photo_cache(ctx, h, content_hash=sha256_map.get(fp))
 
     ctx.invalidate_enhanced_cache()
+    _refresh_edit_albums(conn)
     return jsonify({"reset": reset}), 200
 
 
@@ -294,6 +305,7 @@ def api_save_edits() -> tuple[Response, int]:
 
     save_photo_edits(conn, photo["id"], edits)
     ctx.invalidate_enhanced_cache()
+    _refresh_edit_albums(conn)
 
     # Invalidate cache
     if ctx.thumbs:

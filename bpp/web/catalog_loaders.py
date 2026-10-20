@@ -22,10 +22,38 @@ def loader_selected_ids() -> frozenset[str]:
     return frozenset({nudity.REGISTRY_ID, pets.REGISTRY_ID, inpainting.REGISTRY_ID})
 
 
-def catalog_loaders() -> dict[
-    str,
-    tuple[Callable[[], bool], Callable[[], str], Callable[[], int]],
-]:
+Loader = tuple[Callable[[], bool], Callable[[], str], Callable[[], int]]
+
+_PLUGIN_LOADERS: dict[str, Loader] = {}
+
+
+def register_catalog_loader(
+    registry_id: str,
+    *,
+    is_on_disk: Callable[[], bool],
+    ensure_weights: Callable[[], str],
+    remove_weights: Callable[[], int],
+) -> None:
+    """Give a plugin model the picker's Download → Use → Uninstall
+    lifecycle: ``is_on_disk`` says whether its weights are present,
+    ``ensure_weights`` fetches them (returns the path), ``remove_weights``
+    deletes them (returns the bytes freed). A built-in id can't be taken
+    over."""
+    if registry_id in _builtin_loaders():
+        raise ValueError(f"{registry_id!r} is a built-in catalog entry")
+    _PLUGIN_LOADERS[registry_id] = (is_on_disk, ensure_weights, remove_weights)
+
+
+def _reset_for_tests() -> None:
+    _PLUGIN_LOADERS.clear()
+
+
+def catalog_loaders() -> dict[str, Loader]:
+    """The built-in loaders, then every plugin's."""
+    return {**_builtin_loaders(), **_PLUGIN_LOADERS}
+
+
+def _builtin_loaders() -> dict[str, Loader]:
     from bpp.ai.inpainting import ensure_lama_model
     from bpp.ai.inpainting import is_on_disk as lama_is_on_disk
     from bpp.ai.inpainting import remove_local_weights as lama_remove

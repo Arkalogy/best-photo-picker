@@ -809,10 +809,15 @@ List all albums.
 ```json
 {
   "albums": [
-    { "id": 1, "name": "All Photos", "album_type": "all", "photo_count": 1234, "k": 50 }
+    { "id": 1, "name": "All Photos", "album_type": "all", "photo_count": 1234, "k": 50,
+      "icon": "", "tooltip": "", "sort_order": 0 }
   ]
 }
 ```
+
+`icon` (a key of the UI's icon set, `""` for the folder), `tooltip` and
+`sort_order` are how the sidebar draws the album's type; they come from the
+type's registration, so a plugin album type carries its own.
 
 ### POST /api/v1/albums
 

@@ -312,11 +312,30 @@ def build_model_features(ctx: Any) -> list[dict[str, Any]]:
         _build_nudity(str(_nudenet_model_path()), toggles["model_nudity"], nudenet_available()),
         _build_inpaint(_inpaint_available()),
         _build_pets(pets_path, toggles["model_pets"], pets_lib_ok),
-        *_build_plugin_models(),
+        *_build_plugin_models(ctx),
     ]
 
 
-def _build_plugin_models() -> list[dict[str, Any]]:
+def _plugin_toggle_key(entry: Any) -> str | None:
+    """The switch of the detector or scorer a plugin registered for this
+    model file (matched through the file's legal entry), if it has one."""
+    from bpp.scoring.face_detector_registry import list_detectors
+    from bpp.scoring.model_lifecycle import fetchable_legal_id
+    from bpp.scoring.registry import iter_scorers
+
+    legal_id = fetchable_legal_id(entry)
+    if legal_id is None:
+        return None
+    for det in list_detectors():
+        if det.registry_id == legal_id and det.toggle_key:
+            return det.toggle_key
+    for scorer in iter_scorers():
+        if getattr(scorer, "registry_id", None) == legal_id and scorer.toggle_key:
+            return scorer.toggle_key
+    return None
+
+
+def _build_plugin_models(ctx: Any) -> list[dict[str, Any]]:
     """One row per model file a plugin registered, so it gets the same
     on-disk status and Redownload / Uninstall buttons as the built-ins
     (the endpoints look files up by name in the ModelRegistry). A file
@@ -344,6 +363,10 @@ def _build_plugin_models() -> list[dict[str, Any]]:
         }
         if bundled:
             row["bundled"] = True
+        toggle = _plugin_toggle_key(e)
+        if toggle:
+            row["toggle_key"] = toggle
+            row["enabled"] = bool(ctx.config.get(toggle, True))
         legal_id = fetchable_legal_id(e)
         if legal_id is None:
             row["no_download"] = True

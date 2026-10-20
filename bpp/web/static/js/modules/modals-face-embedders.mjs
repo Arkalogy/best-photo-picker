@@ -142,7 +142,6 @@ export async function loadFaceEmbedderPicker() {
     feState.currentUseContext = useCtx?.use_context || "unspecified";
     // (Settings didn't load: no guess — embedder rows read "Unknown".)
     feState.activeFaceMethod = settings ? settings.face_embedding_method || "sface" : null;
-    feState.installState = _buildInstallStateMap(legacy);
     feState.acceptedIds = _collectAcceptedIds(acceptances);
     // The list is the truth once it loads; until then, what was accepted
     // or withdrawn on this page stands.
@@ -155,6 +154,7 @@ export async function loadFaceEmbedderPicker() {
     for (const group of registry.groups || []) {
       for (const e of group.entries || []) if (e && e.id) feState.entries.set(e.id, e);
     }
+    feState.installState = _buildInstallStateMap(legacy, feState.entries);
     feState.reacceptIds = _collectReacceptIds(acceptances);
     container.innerHTML =
       loadFailureNoticeHTML(failures) +
@@ -190,23 +190,25 @@ let _loadCount = 0;
 
 /**
  * Build registry-id → install-state map by joining the legacy
- * /api/v1/models feature list against ``LEGACY_FEATURE_MAP``.
+ * /api/v1/models feature list against each entry's server-sent ``legacy_label``.
  *
  * @param {Array<object> | null} legacyFeatures
  * @returns {Map<string, object>}
  */
-function _buildInstallStateMap(legacyFeatures) {
+function _buildInstallStateMap(legacyFeatures, entries) {
   const map = new Map();
   if (!Array.isArray(legacyFeatures)) return map;
-  // Index legacy features by label for the join.
+  // Index legacy features by label for the join; each entry says
+  // (legacy_label, from the server) which feature row is its install state.
   const byLabel = new Map();
   for (const f of legacyFeatures) {
     if (f && f.label) byLabel.set(f.label, f);
   }
-  for (const [registryId, link] of Object.entries(LEGACY_FEATURE_MAP)) {
-    if (link.legacy_label && byLabel.has(link.legacy_label)) {
-      map.set(registryId, byLabel.get(link.legacy_label));
-    }
+  const ids = new Set([...(entries ? entries.keys() : []), ...Object.keys(LEGACY_FEATURE_MAP)]);
+  for (const registryId of ids) {
+    const entry = /** @type {any} */ (entries?.get(registryId));
+    const label = entry?.legacy_label ?? LEGACY_FEATURE_MAP[registryId]?.legacy_label;
+    if (label && byLabel.has(label)) map.set(registryId, byLabel.get(label));
   }
   return map;
 }

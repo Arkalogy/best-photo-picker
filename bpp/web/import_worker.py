@@ -222,7 +222,15 @@ class ImportWorker(BackgroundWorker):
                 # only triggered by other state changes).
                 from bpp.db.smart_albums import get_affected_album_types, refresh_smart_albums
 
-                refresh_smart_albums(conn, kinds=get_affected_album_types("import"))
+                # … and the Duplicates / Moments albums the clustering above
+                # feeds (the dedup domain), in the same pass.
+                refresh_smart_albums(
+                    conn,
+                    kinds={
+                        *get_affected_album_types("import"),
+                        *get_affected_album_types("dedup"),
+                    },
+                )
 
         from bpp.web.analyze_finalize import finalize_import_in_worker
 

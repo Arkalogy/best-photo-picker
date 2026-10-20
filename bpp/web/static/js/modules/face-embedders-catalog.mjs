@@ -8,73 +8,35 @@
 
 /**
  * Join table: registry id → legacy feature label and per-feature
- * toggle key (when applicable). Used to overlay install state on the
- * registry picker. Transitional — when each model's file-install
- * logic lands in the registry layer this mapping goes away.
- *
- * Keys NOT in this map render without install controls (registry-
- * catalog-only entries). Values without a ``toggle_key`` render
- * without an enable toggle.
+ * toggle key. The server sends these with every entry (``legacy_label``,
+ * ``toggle_key``, ``method_value`` — a plugin entry's included); this
+ * table answers only for an entry that arrived without them. It mirrors
+ * ``_BUILTIN_FEATURES`` in bpp/web/picker_fields.py and a test keeps the
+ * two identical.
  */
 export const LEGACY_FEATURE_MAP = {
-  // Face embedders
   sface_yunet: { legacy_label: "Face recognition", toggle_key: null },
-  dlib_face_recognition_resnet_v1: {
-    legacy_label: "Face recognition",
-    toggle_key: null,
-  },
+  dlib_face_recognition_resnet_v1: { legacy_label: "Face recognition", toggle_key: null },
   insightface_buffalo_s: { legacy_label: null, toggle_key: null },
-  // Face detectors
-  insightface_scrfd_25g: {
-    legacy_label: "SCRFD face detection",
-    toggle_key: "model_scrfd",
-  },
-  opencv_yunet: {
-    legacy_label: "Face detection",
-    toggle_key: null,
-  },
-  mediapipe_blazeface_short_range: {
-    legacy_label: "Face detection",
-    toggle_key: null,
-  },
-  mediapipe_blazeface_full_range: {
-    legacy_label: "BlazeFace full-range",
-    toggle_key: "model_blazeface_fr",
-  },
-  // Supporting models (expressions, hand filter, pose, segmentation)
-  mediapipe_face_landmarker: {
-    legacy_label: "Expression scoring",
-    toggle_key: "model_face_landmarker",
-  },
-  mediapipe_hand_landmarker: {
-    legacy_label: "Hand suppression",
-    toggle_key: "model_hand_landmarker",
-  },
-  mediapipe_pose_landmarker_lite: {
-    legacy_label: "Pose estimation",
-    toggle_key: "model_pose",
-  },
-  mediapipe_selfie_segmenter: {
-    legacy_label: "Subject segmentation",
-    toggle_key: "model_segmentation",
-  },
-  // Semantic search
-  openai_clip_vit_b32_onnx: {
-    legacy_label: "Smart search & dedup",
-    toggle_key: null,
-  },
-  // Pet detection
-  ultralytics_yolov11n_pets: {
-    legacy_label: "Pet detection",
-    toggle_key: null,
-  },
-  // Nudity classifier
+  insightface_scrfd_25g: { legacy_label: "SCRFD face detection", toggle_key: "model_scrfd" },
+  opencv_yunet: { legacy_label: "Face detection", toggle_key: null },
+  mediapipe_blazeface_short_range: { legacy_label: "Face detection", toggle_key: null },
+  mediapipe_blazeface_full_range: { legacy_label: "BlazeFace full-range", toggle_key: "model_blazeface_fr" },
+  mediapipe_face_landmarker: { legacy_label: "Expression scoring", toggle_key: "model_face_landmarker" },
+  mediapipe_hand_landmarker: { legacy_label: "Hand suppression", toggle_key: "model_hand_landmarker" },
+  mediapipe_pose_landmarker_lite: { legacy_label: "Pose estimation", toggle_key: "model_pose" },
+  mediapipe_selfie_segmenter: { legacy_label: "Subject segmentation", toggle_key: "model_segmentation" },
+  openai_clip_vit_b32_onnx: { legacy_label: "Smart search & dedup", toggle_key: null },
+  ultralytics_yolov11n_pets: { legacy_label: "Pet detection", toggle_key: null },
   nudenet_320n: { legacy_label: "Content filter", toggle_key: null },
-  // Inpainting
-  lama_inpaint_research: {
-    legacy_label: "AI object removal",
-    toggle_key: null,
-  },
+  lama_inpaint_research: { legacy_label: "AI object removal", toggle_key: null },
+};
+
+/** registry id → the ``face_embedding_method`` value that picks it (fallback). */
+export const FACE_EMBEDDER_METHOD_VALUE = {
+  sface_yunet: "sface",
+  dlib_face_recognition_resnet_v1: "dlib",
+  insightface_buffalo_s: "buffalo_s",
 };
 
 export const KIND_LABELS = {

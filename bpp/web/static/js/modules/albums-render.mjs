@@ -62,6 +62,18 @@ const _TYPE_ORDER = {
   smart_tag: 16,
 };
 
+/**
+ * Where an album sits in the sidebar: the position the server sent with
+ * it (the registry's, a plugin type's included), else the built-in
+ * table, else the middle.
+ * @param {any} album
+ * @returns {number}
+ */
+export function albumSortKey(album) {
+  if (typeof album?.sort_order === "number") return album.sort_order;
+  return _TYPE_ORDER[album?.album_type] ?? 5;
+}
+
 export function renderAlbumNav() {
   // Sidebar isolation: last line of defense. If anything inside _doRender
   // throws (data shape mismatch, missing window global, plugin
@@ -95,8 +107,8 @@ function _doRender() {
 
   const albums = /** @type {any[]} */ (win.albumList || []);
   const sorted = [...albums].sort((a, b) => {
-    const ta = _TYPE_ORDER[a.album_type] ?? 5;
-    const tb = _TYPE_ORDER[b.album_type] ?? 5;
+    const ta = albumSortKey(a);
+    const tb = albumSortKey(b);
     if (ta !== tb) return ta - tb;
     return a.name.localeCompare(b.name);
   });

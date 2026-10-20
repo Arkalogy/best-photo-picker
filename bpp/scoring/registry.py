@@ -51,6 +51,9 @@ class ScorerDef:
     toggle_key: str | None = None
     is_available_fn: Callable[[], bool] | None = None
     score_fn: Callable[[Any, str, dict[str, Any]], dict[str, Any]] | None = None
+    #: The ``bpp.registry`` entry (license, picker row) this scorer's
+    #: model belongs to, so the picker can show the scorer's toggle.
+    registry_id: str | None = None
 
 
 _SCORER_REGISTRY: dict[str, ScorerDef] = {
@@ -344,6 +347,11 @@ def run_optional_scorers(
 # ── Derived helpers ──
 
 
+def iter_scorers() -> list[ScorerDef]:
+    """Every registered scorer, built-in and plugin, in registration order."""
+    return list(_SCORER_REGISTRY.values())
+
+
 def get_weighted_scorers() -> list[ScorerDef]:
     """Scorers that contribute to aggregate_score via weights."""
     return [s for s in _SCORER_REGISTRY.values() if s.weight_key]
@@ -398,5 +406,5 @@ def get_video_avg_keys() -> list[str]:
 
 
 def get_weight_keys() -> tuple[str, ...]:
-    """Weight config keys for RECOMPUTE_WEIGHT_KEYS."""
+    """Weight config keys, for recompute_weight_keys()."""
     return tuple(s.weight_key for s in _SCORER_REGISTRY.values() if s.weight_key)

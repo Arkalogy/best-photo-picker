@@ -6,11 +6,18 @@
  */
 
 /**
- * @param {string} albumType
+ * @param {any} album - an album object (preferred) or an album type
  * @param {Record<string, string>} ICONS
  * @returns {string}
  */
-export function smartAlbumIcon(albumType, ICONS) {
+export function smartAlbumIcon(album, ICONS) {
+  // The server sends the type's icon key with the album (a plugin
+  // type's included); the table below covers an album without one.
+  if (album && typeof album === "object") {
+    if (album.icon) return ICONS[album.icon] || ICONS.folder;
+    album = album.album_type;
+  }
+  const albumType = album;
   return (        albumType === "smart_score"
           ? ICONS.star
           : albumType === "smart_recent"
@@ -42,10 +49,15 @@ export function smartAlbumIcon(albumType, ICONS) {
 }
 
 /**
- * @param {string} albumType
+ * @param {any} album - an album object (preferred) or an album type
  * @returns {string}
  */
-export function smartAlbumTip(albumType) {
+export function smartAlbumTip(album) {
+  if (album && typeof album === "object") {
+    if (album.tooltip) return album.tooltip;
+    album = album.album_type;
+  }
+  const albumType = album;
   return (        albumType === "smart_score"
           ? "Top 10% by BPP score"
           : albumType === "smart_recent"

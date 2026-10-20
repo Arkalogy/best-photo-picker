@@ -158,7 +158,6 @@ from bpp.db.smart_album_sensitive import (  # noqa: E402
 # Tag refresher lives in bpp.db.smart_album_tags.
 from bpp.db.smart_album_tags import _refresh_tag_albums  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # Unified smart album registry: album_type → (refresh_fn | None, get_ids_fn)
 #
@@ -167,6 +166,38 @@ from bpp.db.smart_album_tags import _refresh_tag_albums  # noqa: E402
 #   - get_ids_fn(conn, rule): re-evaluates the rule and returns matching photo IDs
 # Types with no refresh_fn (None) are query-only (e.g. "all", "smart_deleted").
 # ---------------------------------------------------------------------------
+#: The sidebar's icon key, tooltip and position for each built-in type
+#: (manual albums sit at 1; a type not listed here sorts in the middle).
+_BUILTIN_PRESENTATION: dict[str, tuple[str, str, float]] = {
+    "all": ("", "", 0),
+    "smart_score": ("star", "Top 10% by BPP score", 2),
+    "smart_recent": ("clock", "Imported in the last 7 days", 3),
+    "smart_edited": ("pencil", "", 4),
+    "smart_unsorted": ("inbox", "Photos not yet added to any album", 5),
+    "smart_video": ("video", "", 6),
+    "smart_screenshot": ("screenshot", "", 7),
+    "smart_moments": (
+        "moments",
+        "Bursts of visually-similar shots taken close together — review and keep the best",
+        7.5,
+    ),
+    "smart_duplicates": ("duplicate", "", 8),
+    "smart_no_faces": (
+        "noFace",
+        "Photos where face detection found no faces — may include small or partially hidden faces",
+        9,
+    ),
+    "smart_document": ("document", "", 10),
+    "smart_pet": ("paw", "", 11),
+    "smart_group": ("", "", 12),
+    "smart_hidden": ("hidden", "", 13),
+    "smart_time": ("", "", 14),
+    "smart_person": ("", "", 15),
+    "smart_tag": ("tag", "", 16),
+    "manual": ("", "", 1),  # not a smart type; the sidebar still places it
+}
+
+
 class SmartAlbumRegistry:
     """Mutable registry of smart-album types.
 
@@ -209,6 +240,9 @@ class SmartAlbumRegistry:
         searchable: bool = True,
         result_bucket: str = "album",
         replace: bool = False,
+        icon: str | None = None,
+        tooltip: str | None = None,
+        order: float | None = None,
     ) -> None:
         """Register a smart-album type.
 
@@ -258,6 +292,15 @@ class SmartAlbumRegistry:
             bucket["user_renameable"] = True
         if ui_metadata_fn is not None:
             bucket["ui_metadata_fn"] = ui_metadata_fn
+        # How the sidebar draws the type: an icon key, a tooltip and a
+        # sort position. Sent with every album, so a plugin type looks
+        # the way its plugin says, not like a folder in the middle.
+        if icon is not None:
+            bucket["icon"] = icon
+        if tooltip is not None:
+            bucket["tooltip"] = tooltip
+        if order is not None:
+            bucket["order"] = float(order)
         # searchable defaults True; only store when opting OUT so the
         # accessor's default-True covers every unregistered/plain type.
         if not searchable:
@@ -288,6 +331,19 @@ class SmartAlbumRegistry:
         decide whether a refresh may overwrite the album's name with
         the code-generated default."""
         return bool(cls._hooks.get(album_type, {}).get("user_renameable"))
+
+    @classmethod
+    def presentation(cls, album_type: str) -> dict[str, Any]:
+        """``icon`` (a key of the UI's icon set, "" for the default
+        folder), ``tooltip`` and ``sort_order`` (unknown types sort in
+        the middle, like the sidebar always did)."""
+        bucket = cls._hooks.get(album_type, {})
+        icon, tip, order = _BUILTIN_PRESENTATION.get(album_type, ("", "", 5.0))
+        return {
+            "icon": bucket.get("icon", icon),
+            "tooltip": bucket.get("tooltip", tip),
+            "sort_order": float(bucket.get("order", order)),
+        }
 
     @classmethod
     def get_ui_metadata_fn(cls, album_type: str) -> Any:
@@ -360,7 +416,8 @@ _BUILTIN_REGISTRATIONS: tuple[tuple[str, Any, Any], ...] = (
     ("smart_tag", _refresh_tag_albums, _get_tag_ids),
 )
 for _kind, _refresh, _get_ids in _BUILTIN_REGISTRATIONS:
-    SmartAlbumRegistry.register(_kind, _refresh, _get_ids)
+    _icon, _tip, _order = _BUILTIN_PRESENTATION.get(_kind, ("", "", 5))
+    SmartAlbumRegistry.register(_kind, _refresh, _get_ids, icon=_icon, tooltip=_tip, order=_order)
 # Hook registrations: smart_person is the only built-in with a rename hook.
 SmartAlbumRegistry.register(
     "smart_person",
