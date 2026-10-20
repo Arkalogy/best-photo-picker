@@ -78,6 +78,11 @@ class BackgroundWorker:
     #: before the restart. None (plugins' workers): unknown, so yes.
     loads_installable_packages: bool | None = None
 
+    #: The app state that owns this worker (set by ``WebAppState`` when it
+    #: builds the pool). Worker threads have no Flask context, so this is
+    #: how an in-worker finalize reaches the caches it must refresh.
+    ctx: Any = None
+
     def __init__(self) -> None:
         self.progress_queue: queue.Queue[dict[str, Any]] = queue.Queue(
             maxsize=_PROGRESS_QUEUE_MAX,

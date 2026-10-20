@@ -12,7 +12,9 @@ Not part of the public API — :class:`WebAppState` delegates from its
 from __future__ import annotations
 
 import contextlib
+import os
 import threading
+from collections.abc import Callable
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
@@ -54,7 +56,117 @@ def _switch_library_locked(ctx: WebAppState, new_path: str, new_dirs: dict[str, 
     ``ctx._switch_library_lock`` already held. Split out so the lock
     boundary is the only thing the public function does.
     """
+    _drain_current_library(ctx)
+    _adopt_library(ctx, new_path, new_dirs, new_dirs["data"])
 
+
+class RenameIncompleteError(RuntimeError):
+    """The folder moved and the session follows it, but the stored photo
+    paths or the caches could not be updated."""
+
+
+def rename_open_library(ctx: WebAppState, new_path: str, move: Callable[[], None]) -> None:
+    """Rename the open library's folder without leaving the running
+    session behind: drain it as for a switch, run ``move`` (the
+    ``os.rename``), rewrite the stored photo paths, move the cached
+    derivatives to their new names, then adopt the new paths and start
+    up again. If ``move`` raises, the old library is started again and
+    the error propagates; once the folder has moved, the session always
+    ends up on the new path. The photo rows hold absolute paths under the
+    library root, so without the rewrite every file is unreachable after
+    the rename and the health check marks the whole library missing."""
+    with ctx._switch_library_lock:
+        old_path = os.path.abspath(ctx.library_path)
+        new_path = os.path.abspath(new_path)
+        old_workdir = ctx.workdir
+        old_dirs = dict(ctx.dirs or {})
+        _drain_current_library(ctx)
+        with ctx.lock:
+            close_all_connections()  # this thread's handles; the pool is thread-local
+        try:
+            move()
+        except Exception:
+            _adopt_library(ctx, old_path, old_dirs, old_workdir)
+            raise
+
+        def _swap(path: str) -> str:
+            return new_path + path[len(old_path) :] if path.startswith(old_path) else path
+
+        new_workdir = _swap(old_workdir)
+        new_dirs = {k: _swap(v) for k, v in old_dirs.items()}
+        follow_error: Exception | None = None
+        try:
+            pairs = _rewrite_photo_paths(new_workdir, old_path, new_path)
+            _move_cache_files(new_dirs, pairs)
+        except Exception as exc:
+            follow_error = exc
+            log.error("Photo paths or caches could not follow the renamed library", exc_info=True)
+        _adopt_library(ctx, new_path, new_dirs, new_workdir)
+        if follow_error is not None:
+            raise RenameIncompleteError(
+                "The folder was renamed, but its photo paths or caches could not follow; "
+                "restart the app and run the missing-file recheck"
+            ) from follow_error
+
+
+def _rewrite_photo_paths(workdir: str, old_root: str, new_root: str) -> list[tuple[str, str]]:
+    """Point every photo row under ``old_root`` at ``new_root``; returns
+    the ``(old_path, new_path)`` pairs so the caches can follow."""
+    from bpp.db.connection import get_db
+
+    db_path = os.path.join(workdir, "photopicker.db")
+    if not os.path.exists(db_path):
+        return []
+    old_prefix = old_root.rstrip(os.sep) + os.sep
+    new_prefix = new_root.rstrip(os.sep) + os.sep
+    conn = get_db(db_path)
+    rows = conn.execute(
+        "SELECT filepath FROM photos WHERE substr(filepath, 1, ?) = ?",
+        (len(old_prefix), old_prefix),
+    ).fetchall()
+    pairs = [(r[0], new_prefix + r[0][len(old_prefix) :]) for r in rows]
+    conn.execute(
+        "UPDATE photos SET filepath = ? || substr(filepath, ?) WHERE substr(filepath, 1, ?) = ?",
+        (new_prefix, len(old_prefix) + 1, len(old_prefix), old_prefix),
+    )
+    conn.commit()
+    log.info("Rewrote %d photo paths from %s to %s", len(pairs), old_root, new_root)
+    return pairs
+
+
+def _move_cache_files(dirs: dict[str, str], pairs: list[tuple[str, str]]) -> None:
+    """Cached thumbnails, full-size variants and face / pet crops are
+    named by a hash of the photo's path; after a rename they would all be
+    orphaned and regenerated. Rename them to the new hashes instead."""
+    from bpp.web.thumbnails import ThumbnailCache
+
+    if not pairs:
+        return
+    remap = {ThumbnailCache._path_hash(old): ThumbnailCache._path_hash(new) for old, new in pairs}
+    width = len(next(iter(remap)))
+    moved = 0
+    for key, prefix in (("thumbs", ""), ("face_crops", ""), ("pet_crops", "pet_")):
+        folder = dirs.get(key)
+        if not folder or not os.path.isdir(folder):
+            continue
+        for name in os.listdir(folder):
+            if not name.startswith(prefix):
+                continue
+            new_hash = remap.get(name[len(prefix) : len(prefix) + width])
+            if new_hash is None:
+                continue
+            new_name = prefix + new_hash + name[len(prefix) + width :]
+            try:
+                os.replace(os.path.join(folder, name), os.path.join(folder, new_name))
+                moved += 1
+            except OSError as exc:
+                log.warning("Couldn't move cache file %s: %s", name, exc)
+    log.info("Moved %d cache files to the renamed library's hashes", moved)
+
+
+def _drain_current_library(ctx: WebAppState) -> None:
+    """Stop everything that holds the current library: plugin close
+    hooks, workers, health threads, the analysis store's threads."""
     # Notify lifecycle plugins BEFORE we touch any per-library
     # state so they can release resources tied to the outgoing library
     # (DB connections, side-caches, model handles).
@@ -81,6 +193,9 @@ def _switch_library_locked(ctx: WebAppState, new_path: str, new_dirs: dict[str, 
     # we know it's done before reusing the DB connection.
     ctx.analysis_store.join_threads(timeout=WORKER_JOIN_TIMEOUT_S)
 
+
+def _adopt_library(ctx: WebAppState, new_path: str, new_dirs: dict[str, str], workdir: str) -> None:
+    """Point the drained ``ctx`` at ``new_path`` and start it up."""
     with ctx.lock:
         close_all_connections()
         ctx.state["analysis"] = None
@@ -91,11 +206,11 @@ def _switch_library_locked(ctx: WebAppState, new_path: str, new_dirs: dict[str, 
         # the whole instance under the lock.
         ctx.paths = replace(
             ctx.paths,
-            workdir=new_dirs["data"],
+            workdir=workdir,
             library_path=new_path,
             dirs=new_dirs,
         )
-        ctx.state["workdir"] = new_dirs["data"]
+        ctx.state["workdir"] = workdir
         ctx.state["library_path"] = new_path
         # keep `ctx.dirs` consistent with the immutable
         # mapping `ctx.paths.dirs` now wraps. Pre-fix this
@@ -119,6 +234,52 @@ def _switch_library_locked(ctx: WebAppState, new_path: str, new_dirs: dict[str, 
         # .set(True) AFTER the new daemon completed cleanly.
         ctx.phase5_failed = False
     ctx.startup()
+
+
+def _start_face_recovery(ctx: WebAppState) -> None:
+    """Resume interrupted face extractions on a background thread. The
+    resume can take minutes on a large library; startup and library
+    switches must not wait for it. State is on ``ctx.analysis_store``
+    (``face_recovery_running`` / ``face_recovery_failed``, shown by
+    /api/v1/health); ``join_threads`` cancels and joins it. Nothing is
+    spawned (and nothing reads as in flight) when no run is pending."""
+    from bpp.web import face_extraction_journal as journal
+
+    try:
+        pending = journal.pending_runs(ctx.get_conn())
+    except Exception:
+        log.warning("Couldn't read the face-extraction journal", exc_info=True)
+        pending = []
+    if not pending:
+        return
+    store = ctx.analysis_store
+    store.face_recovery_cancel = threading.Event()
+    store.face_recovery_failed = False
+    store.face_recovery_running = True
+
+    def _run() -> None:
+        # A thread that outlived the join on a library switch must not
+        # write its outcome over the next library's flags.
+        me = threading.current_thread()
+        try:
+            from bpp.web.face_worker import recover_pending_face_extractions
+
+            n = recover_pending_face_extractions(
+                ctx.get_conn(), ctx=ctx, cancel_event=store.face_recovery_cancel
+            )
+            if n:
+                log.info("Recovered %d face-extraction journal row(s)", n)
+        except Exception:
+            if store.face_recovery_thread is me:
+                store.face_recovery_failed = True
+            log.warning("face_extraction_journal recovery failed", exc_info=True)
+        finally:
+            if store.face_recovery_thread is me:
+                store.face_recovery_running = False
+
+    t = threading.Thread(target=_run, name="face-recovery", daemon=True)
+    store.face_recovery_thread = t
+    t.start()
 
 
 def _init_thumbs_lightweight(ctx: WebAppState) -> None:
@@ -182,14 +343,7 @@ def startup(ctx: WebAppState) -> None:
     # because the per-phase resume needs the run_id, not just a
     # payload-driven re-fire. Best-effort: failures are logged but
     # don't block startup.
-    try:
-        from bpp.web.face_worker import recover_pending_face_extractions
-
-        n = recover_pending_face_extractions(ctx.get_conn())
-        if n:
-            log.info("Recovered %d face-extraction journal row(s) on startup", n)
-    except Exception:
-        log.warning("face_extraction_journal recovery failed", exc_info=True)
+    _start_face_recovery(ctx)
     # Start background file-health checks (non-blocking, serve mode only).
     if ctx.serve_mode:
         ctx._start_file_health_checks()

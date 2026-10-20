@@ -91,6 +91,13 @@ class AnalysisStore:
     #: The derived-recovery pipeline is running (all of it, not just the
     #: hash phase): /api/v1/health ``derived_recovery.in_flight``.
     recovery_running: bool = False
+    #: Resuming an interrupted face extraction runs on its own thread at
+    #: startup (it can take minutes on a large library, and used to block
+    #: startup and every library switch); /api/v1/health ``face_recovery``.
+    face_recovery_thread: threading.Thread | None = None
+    face_recovery_running: bool = False
+    face_recovery_failed: bool = False
+    face_recovery_cancel: threading.Event = field(default_factory=threading.Event)
 
     def bump_generation_and_reset_phash(self) -> None:
         """Atomically: increment the generation counter and install a
@@ -115,6 +122,9 @@ class AnalysisStore:
         # A failure in the old library says nothing about the new one.
         self.recovery_failed = False
         self.recovery_running = False
+        self.face_recovery_cancel = threading.Event()
+        self.face_recovery_running = False
+        self.face_recovery_failed = False
 
     def join_threads(self, timeout: float) -> None:
         """Signal cancel + join both daemon threads.
@@ -128,7 +138,12 @@ class AnalysisStore:
         # Signal the phash backfill to stop at its next loop check so it
         # doesn't keep decoding images while we tear down the DB pool.
         self.phash_cancel.set()
-        for name, t in (("warm_thread", self.warm_thread), ("compute_thread", self.compute_thread)):
+        self.face_recovery_cancel.set()
+        for name, t in (
+            ("warm_thread", self.warm_thread),
+            ("compute_thread", self.compute_thread),
+            ("face_recovery_thread", self.face_recovery_thread),
+        ):
             if t is not None and t.is_alive():
                 t.join(timeout=timeout)
                 if t.is_alive():
@@ -141,3 +156,4 @@ class AnalysisStore:
         # next library lifetime.
         self.warm_thread = None
         self.compute_thread = None
+        self.face_recovery_thread = None

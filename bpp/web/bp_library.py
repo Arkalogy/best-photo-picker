@@ -15,7 +15,7 @@ from bpp.db.registry import (
     rename_library_path,
     set_active_library,
 )
-from bpp.errors import ConflictError, ValidationError
+from bpp.errors import BppError, ConflictError, ValidationError
 from bpp.utils.logging import get_logger
 from bpp.web.bp_install import no_install_during
 from bpp.web.share import requires_local_app
@@ -116,8 +116,33 @@ def api_libraries_rename() -> tuple[Response, int]:
 
     if rename_folder and os.path.isdir(path):
         new_path = os.path.join(os.path.dirname(path), name)
-        try:
+        ctx = get_ctx()
+        moved = False
+
+        def _move() -> None:
+            nonlocal moved
             os.rename(path, new_path)
+            moved = True
+
+        reopen_error: Exception | None = None
+        if ctx.library_path == path and any(
+            getattr(w, "is_alive", False) for w in ctx.workers.values()
+        ):
+            raise ConflictError(
+                "Finish or cancel the running import or analysis before renaming the library"
+            )
+        try:
+            if ctx.library_path == path:
+                # The open library: drain, move, rewrite the photo paths,
+                # start up again (bpp/web/state_lifecycle.py). Reopening
+                # starts recovery work that loads packages: not while pip
+                # is rewriting them.
+                from bpp.web.state_lifecycle import rename_open_library
+
+                with no_install_during("the library to finish reopening"):
+                    rename_open_library(ctx, new_path, _move)
+            else:
+                _move()
         except FileExistsError as e:
             raise ValidationError(
                 "A folder with that name already exists",
@@ -125,35 +150,41 @@ def api_libraries_rename() -> tuple[Response, int]:
                 new_path=new_path,
             ) from e
         except OSError as e:
-            raise ValidationError(
-                "Cannot rename folder",
-                user_message="Cannot rename folder",
-                diagnostic_message=f"rename({path!r}, {new_path!r}) failed: {e!s}",
-                path=path,
-                new_path=new_path,
-            ) from e
+            if moved:
+                reopen_error = e
+            else:
+                raise ValidationError(
+                    "Cannot rename folder",
+                    user_message="Cannot rename folder",
+                    diagnostic_message=f"rename({path!r}, {new_path!r}) failed: {e!s}",
+                    path=path,
+                    new_path=new_path,
+                ) from e
+        except Exception as e:
+            if not moved:
+                raise
+            reopen_error = e
+        # The folder is renamed on disk: the registry must say so even if
+        # reopening the library failed.
         rename_library(path, name)
-        # Update registry path
         rename_library_path(path, new_path, name)
-        # Update active library pointer
         if get_active_library() == path:
             set_active_library(new_path)
-        # Update server state if this is the current library.
-        # workdir must point at <library>/data (the DB lives
-        # there), NOT the library root. Previously this set
-        # workdir = new_path, which made every subsequent DB path
-        # computation wrong (DB writes attempted in the library
-        # root instead of data/). Use get_library_dirs to compute
-        # the canonical layout, same way switch_library does.
-        ctx = get_ctx()
-        if ctx.library_path == path:
-            from bpp.db.library import get_library_dirs
+        if reopen_error is not None:
+            from bpp.web.state_lifecycle import RenameIncompleteError
 
-            new_dirs = get_library_dirs(new_path)
-            with ctx.lock:
-                ctx.library_path = new_path
-                ctx.workdir = new_dirs["data"]
-                ctx.dirs = new_dirs
+            log.error("Library renamed on disk but could not be reopened", exc_info=reopen_error)
+            raise BppError(
+                str(reopen_error)
+                if isinstance(reopen_error, RenameIncompleteError)
+                else (
+                    "The folder was renamed, but the library couldn't be reopened; restart the app"
+                ),
+                diagnostic_message=(
+                    f"reopen after rename({path!r}, {new_path!r}) failed: {reopen_error!s}"
+                ),
+                new_path=new_path,
+            ) from reopen_error
         return jsonify({"status": "renamed", "new_path": new_path}), 200
 
     rename_library(path, name)

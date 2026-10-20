@@ -26,11 +26,17 @@ import { toast, toastError } from "./toast.mjs";
  *
  * @param {string} thumbHash
  */
+// See _lbFacesTicket in lightbox-face-overlays.mjs: a late response for a
+// photo the inspector has moved on from must not render its chips.
+let _iphFacesTicket = 0;
+
 export async function _iphLoadFaces(thumbHash) {
   /** @type {any} */
   const win = window;
+  const ticket = ++_iphFacesTicket;
   try {
     const data = await apiFetch(`/api/v1/faces/photo/${thumbHash}`);
+    if (ticket !== _iphFacesTicket) return;
     const container = document.getElementById("iph-face-chips");
     if (!container) return;
 
@@ -79,6 +85,7 @@ export async function _iphLoadFaces(thumbHash) {
     }
     container.innerHTML = html || '<span class="iph-meta-val">No faces detected</span>';
   } catch {
+    if (ticket !== _iphFacesTicket) return;
     const container = document.getElementById("iph-face-chips");
     if (container) {
       container.innerHTML = '<span class="iph-meta-val">Failed to load faces</span>';

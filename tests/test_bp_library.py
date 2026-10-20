@@ -246,3 +246,105 @@ class TestGetActive:
         assert "path" in data
         assert "name" in data
         assert data["path"] == lib_path
+
+
+class TestRenamingTheOpenLibrary:
+    def test_the_session_follows_the_renamed_folder(self, lib_client):
+        """Renaming the open library's folder used to leave the running
+        session, its photo rows and its threads on the old path."""
+        from PIL import Image
+
+        from bpp.db.photos import get_photo_by_path, upsert_photo
+
+        client, lib, _tmp_path = lib_client
+        app = client.application
+        ctx = app.extensions["bpp"]
+        assert ctx.library_path == lib
+        photos = os.path.join(lib, "photos")
+        os.makedirs(photos, exist_ok=True)
+        old_file = os.path.join(photos, "k.jpg")
+        Image.new("RGB", (8, 8), "gray").save(old_file, "JPEG")
+        with app.app_context():
+            upsert_photo(ctx.get_conn(), {"filepath": old_file, "date": "2024-01-01T00:00:00"})
+            ctx.get_conn().commit()
+        # Cached derivatives are named by a hash of the path: they must follow.
+        from bpp.web.thumbnails import ThumbnailCache
+
+        old_hash = ThumbnailCache._path_hash(old_file)
+        dirs = dict(ctx.dirs)
+        for folder in ("thumbs", "face_crops", "pet_crops"):
+            os.makedirs(dirs[folder], exist_ok=True)
+        open(os.path.join(dirs["thumbs"], f"{old_hash}.jpg"), "wb").close()
+        open(os.path.join(dirs["thumbs"], f"{old_hash}_full.jpg"), "wb").close()
+        open(os.path.join(dirs["face_crops"], f"{old_hash}_0_abcd.jpg"), "wb").close()
+        open(os.path.join(dirs["pet_crops"], f"pet_{old_hash}_0_abcd.jpg"), "wb").close()
+
+        resp = client.put(
+            "/api/v1/libraries/rename",
+            json={"path": lib, "name": "renamed", "rename_folder": True},
+        )
+        assert resp.status_code == 200, resp.get_json()
+        new_path = resp.get_json()["new_path"]
+        assert ctx.library_path == new_path
+        assert ctx.workdir.startswith(new_path)
+        new_file = os.path.join(new_path, "photos", "k.jpg")
+        assert os.path.isfile(new_file)
+        with app.app_context():
+            assert get_photo_by_path(ctx.get_conn(), new_file) is not None
+            assert get_photo_by_path(ctx.get_conn(), old_file) is None
+        assert client.get("/api/v1/photos").status_code == 200
+        new_hash = ThumbnailCache._path_hash(new_file)
+        new_dirs = dict(ctx.dirs)
+        assert os.path.isfile(os.path.join(new_dirs["thumbs"], f"{new_hash}.jpg"))
+        assert os.path.isfile(os.path.join(new_dirs["thumbs"], f"{new_hash}_full.jpg"))
+        assert os.path.isfile(os.path.join(new_dirs["face_crops"], f"{new_hash}_0_abcd.jpg"))
+        assert os.path.isfile(os.path.join(new_dirs["pet_crops"], f"pet_{new_hash}_0_abcd.jpg"))
+        assert not os.path.exists(os.path.join(new_dirs["thumbs"], f"{old_hash}.jpg"))
+
+    def test_a_failed_move_leaves_the_open_library_running(self, lib_client, monkeypatch):
+        client, lib, _tmp_path = lib_client
+        ctx = client.application.extensions["bpp"]
+
+        def refuse(src, dst):
+            raise PermissionError("read-only volume")
+
+        monkeypatch.setattr(os, "rename", refuse)
+        resp = client.put(
+            "/api/v1/libraries/rename",
+            json={"path": lib, "name": "renamed", "rename_folder": True},
+        )
+        assert resp.status_code == 400
+        assert ctx.library_path == lib
+        assert client.get("/api/v1/photos").status_code == 200
+
+    def test_a_busy_library_is_not_renamed(self, lib_client, monkeypatch):
+        client, lib, _tmp_path = lib_client
+        ctx = client.application.extensions["bpp"]
+        worker = ctx.workers["import"]
+        monkeypatch.setattr(type(worker), "is_alive", property(lambda self: True))
+        resp = client.put(
+            "/api/v1/libraries/rename",
+            json={"path": lib, "name": "renamed", "rename_folder": True},
+        )
+        assert resp.status_code == 409
+        assert os.path.isdir(lib)
+        assert ctx.library_path == lib
+
+    def test_a_move_whose_paths_could_not_follow_says_so(self, lib_client, monkeypatch):
+        client, lib, _tmp_path = lib_client
+        ctx = client.application.extensions["bpp"]
+
+        def broken(*a, **kw):
+            raise RuntimeError("database is locked")
+
+        monkeypatch.setattr("bpp.web.state_lifecycle._rewrite_photo_paths", broken)
+        resp = client.put(
+            "/api/v1/libraries/rename",
+            json={"path": lib, "name": "renamed", "rename_folder": True},
+        )
+        assert resp.status_code == 500
+        assert "could not follow" in resp.get_json()["error"]
+        new_path = os.path.join(os.path.dirname(lib), "renamed")
+        assert ctx.library_path == new_path  # the session is on the moved folder
+        libs = client.get("/api/v1/libraries").get_json()["libraries"]
+        assert any(entry["path"] == new_path for entry in libs)

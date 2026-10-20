@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import contextlib
 import os
+import threading
+import zlib
 
 from PIL import Image, ImageOps
 
@@ -46,6 +48,25 @@ def _get_edits_for_path(ctx: object, filepath: str) -> dict | None:
     return get_photo_edits(conn, photo["id"])
 
 
+# A fixed stripe of locks (not one per path, which would grow for the
+# life of the process): two outputs sharing a stripe wait for each other,
+# which is harmless; one output always maps to one stripe.
+_OUTPUT_LOCK_STRIPES = 64
+_output_locks = [threading.Lock() for _ in range(_OUTPUT_LOCK_STRIPES)]
+
+
+def _output_lock(output_path: str) -> threading.Lock:
+    return _output_locks[zlib.crc32(output_path.encode("utf-8")) % _OUTPUT_LOCK_STRIPES]
+
+
+def _is_fresh(filepath: str, output_path: str) -> bool:
+    """A cached file newer than its source needs no rebuild."""
+    try:
+        return os.path.getmtime(output_path) >= os.path.getmtime(filepath)
+    except OSError:
+        return False
+
+
 def _generate_cached_image(
     filepath: str,
     output_path: str,
@@ -63,21 +84,29 @@ def _generate_cached_image(
 
     Returns True on success, False on failure (logs warning).
     """
-    tmp_path = output_path + ".tmp"
+    # Two requests for the same photo overlap easily (lightbox + compare +
+    # slideshow + editor). Each writer gets its own temp name, and the
+    # output path is written under a per-path lock with a freshness
+    # re-check, so the second writer reuses the first's result instead of
+    # racing it (the RAW converter uses the same scheme).
+    tmp_path = f"{output_path}.{os.getpid()}.{threading.get_ident()}.tmp"
     try:
         from bpp.constants import THUMBNAIL_MAX_SIZE
 
         quality = JPEG_QUALITY_CROP if thumb_size else JPEG_QUALITY_FULL
-        img = retry_io(Image.open, filepath, label="cached_img_open")
-        with img:
-            img = ImageOps.exif_transpose(img)
-            img = img.convert("RGB")
-            if edits:
-                img = _apply_edits(img, edits)
-            if thumb_size:
-                img.thumbnail((THUMBNAIL_MAX_SIZE, THUMBNAIL_MAX_SIZE), Image.LANCZOS)
-            img.save(tmp_path, "JPEG", quality=quality)
-        os.replace(tmp_path, output_path)
+        with _output_lock(output_path):
+            if _is_fresh(filepath, output_path):
+                return True
+            img = retry_io(Image.open, filepath, label="cached_img_open")
+            with img:
+                img = ImageOps.exif_transpose(img)
+                img = img.convert("RGB")
+                if edits:
+                    img = _apply_edits(img, edits)
+                if thumb_size:
+                    img.thumbnail((THUMBNAIL_MAX_SIZE, THUMBNAIL_MAX_SIZE), Image.LANCZOS)
+                img.save(tmp_path, "JPEG", quality=quality)
+            os.replace(tmp_path, output_path)
         log.debug("Generated cached image: %s", output_path)
         return True
     except Exception as e:

@@ -50,6 +50,7 @@ def start_health_checks(
         relocate_missing,
         sample_random_photos,
     )
+    from bpp.db.photos_missing import file_present
 
     stop_event = threading.Event()
     threads: list[threading.Thread] = []
@@ -62,7 +63,7 @@ def start_health_checks(
             conn = get_conn()
             if get_photo_count(conn) == 0:
                 return
-            newly_missing = check_missing(conn)
+            newly_missing = check_missing(conn, photos_dir=dirs.get("photos") or None)
             if newly_missing:
                 log.warning("Startup scan: %d files missing", len(newly_missing))
                 photos_dir = dirs.get("photos", "")
@@ -102,14 +103,14 @@ def start_health_checks(
             try:
                 conn = get_conn()
                 sample = sample_random_photos(conn, count=100)
-                missing_in_sample = [fp for fp in sample if not os.path.isfile(fp)]
+                missing_in_sample = [fp for fp in sample if file_present(fp) is False]
                 if missing_in_sample:
                     log.warning(
                         "Periodic check: %d/%d sampled files missing, running full scan",
                         len(missing_in_sample),
                         len(sample),
                     )
-                    newly_missing = check_missing(conn)
+                    newly_missing = check_missing(conn, photos_dir=dirs.get("photos") or None)
                     if newly_missing:
                         photos_dir = dirs.get("photos", "")
                         if photos_dir and os.path.isdir(photos_dir):

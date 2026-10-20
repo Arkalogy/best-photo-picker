@@ -224,9 +224,13 @@ class ImportWorker(BackgroundWorker):
 
                 refresh_smart_albums(conn, kinds=get_affected_album_types("import"))
 
+        from bpp.web.analyze_finalize import finalize_import_in_worker
+
+        finalize_import_in_worker(self.ctx)
         self._emit(
             {
                 "type": "done",
+                "finalized": self.ctx is not None,  # the stream's backstop can skip
                 "imported": result.imported,
                 "skipped": result.skipped,
                 "analyzed": len(valid),

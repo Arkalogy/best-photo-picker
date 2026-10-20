@@ -125,6 +125,7 @@ def api_health() -> tuple[Response, int]:
     journals_check = _journals_check(conn)
     phase5_check = _phase5_check(ctx)
     recovery_check = _recovery_check(ctx)
+    face_recovery_check = _face_recovery_check(ctx)
     models_check = _models_check()
 
     # Aggregate status: ok if everything reports clean, degraded if any
@@ -138,6 +139,7 @@ def api_health() -> tuple[Response, int]:
         or journals_check.get("pending", 0) > 0
         or phase5_check["failed"]
         or recovery_check["failed"]
+        or face_recovery_check["failed"]
         or "error" in models_check
     ):
         status = "degraded"
@@ -155,6 +157,7 @@ def api_health() -> tuple[Response, int]:
                     "collaborators": _collaborators_check(ctx, is_owner),
                     "phase5": phase5_check,
                     "derived_recovery": recovery_check,
+                    "face_recovery": face_recovery_check,
                     "models": models_check,
                 },
             }
@@ -344,6 +347,16 @@ def _phase5_check(ctx: Any) -> dict[str, bool]:
     return {
         "failed": bool(getattr(ctx, "phase5_failed", False)),
         "in_flight": bool(_backfill_event) and not _backfill_event.is_set(),
+    }
+
+
+def _face_recovery_check(ctx: Any) -> dict[str, bool]:
+    """Resuming an interrupted face extraction at startup: ``in_flight``
+    while it runs on its thread, ``failed`` when it died."""
+    store = getattr(ctx, "analysis_store", None)
+    return {
+        "failed": bool(getattr(store, "face_recovery_failed", False)),
+        "in_flight": bool(getattr(store, "face_recovery_running", False)),
     }
 
 

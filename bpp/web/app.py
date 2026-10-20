@@ -243,6 +243,7 @@ def _register_blueprints(app: Flask) -> None:
     from bpp.web.bp_photos import bp as photos_bp
     from bpp.web.bp_photos_lifecycle import bp as photos_lifecycle_bp
     from bpp.web.bp_photos_manage import bp as photos_manage_bp
+    from bpp.web.bp_photos_missing import bp as photos_missing_bp
     from bpp.web.bp_recompute import bp as recompute_bp
     from bpp.web.bp_search import bp as search_bp
     from bpp.web.bp_settings import bp as settings_bp
@@ -251,6 +252,7 @@ def _register_blueprints(app: Flask) -> None:
 
     for blueprint in (
         core_bp,
+        photos_missing_bp,
         health_bp,
         models_bp,
         install_bp,

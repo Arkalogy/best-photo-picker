@@ -97,6 +97,64 @@ describe("_iphLoadFaces", () => {
     expect(chips().textContent).toContain("No faces detected");
   });
 
+  test("a late face list for a previous photo is not rendered", async () => {
+    /** @type {(v: any) => void} */
+    let resolveOld = () => {};
+    const body = (name) =>
+      new Response(
+        JSON.stringify({
+          faces: [{ face_index: 0, name, cluster_id: 1, bbox_w: 100 }],
+          person_tags: [],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url) => {
+        if (String(url).includes("old-hash")) {
+          return new Promise((resolve) => {
+            resolveOld = () => resolve(body("Alice"));
+          });
+        }
+        return body("Bob");
+      })
+    );
+    const loadOld = _iphLoadFaces("old-hash");
+    await _iphLoadFaces("new-hash");
+    resolveOld();
+    await loadOld;
+    expect(chips().textContent).toContain("Bob");
+    expect(chips().textContent).not.toContain("Alice");
+  });
+
+  test("a late failure for a previous photo does not replace the current chips", async () => {
+    /** @type {(e: any) => void} */
+    let rejectOld = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url) => {
+        if (String(url).includes("old-hash")) {
+          return new Promise((_resolve, reject) => {
+            rejectOld = () => reject(new Error("timeout"));
+          });
+        }
+        return new Response(
+          JSON.stringify({
+            faces: [{ face_index: 0, name: "Bob", cluster_id: 1, bbox_w: 100 }],
+            person_tags: [],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      })
+    );
+    const loadOld = _iphLoadFaces("old-hash");
+    await _iphLoadFaces("new-hash");
+    rejectOld();
+    await loadOld;
+    expect(chips().textContent).toContain("Bob");
+    expect(chips().textContent).not.toContain("Failed");
+  });
+
   test("renders detected face chips with cluster_id → clickable rename", async () => {
     vi.stubGlobal(
       "fetch",

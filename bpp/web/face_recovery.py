@@ -28,6 +28,7 @@ tests still import them via ``bpp.web.face_worker``).
 from __future__ import annotations
 
 import sqlite3
+from typing import Any
 
 from bpp.config import cfg_get
 from bpp.errors import BppError
@@ -36,7 +37,9 @@ from bpp.utils.logging import get_logger
 log = get_logger(__name__)
 
 
-def recover_pending_face_extractions(conn: sqlite3.Connection) -> int:
+def recover_pending_face_extractions(
+    conn: sqlite3.Connection, *, ctx: Any = None, cancel_event: Any = None
+) -> int:
     """Replay every pending row in face_extraction_journal.
 
     Called from ``state_lifecycle.startup`` after the operation_journal
@@ -91,7 +94,7 @@ def recover_pending_face_extractions(conn: sqlite3.Connection) -> int:
             continue
 
         try:
-            ctx = get_ctx_or_none()
+            ctx = ctx or get_ctx_or_none()  # the recovery thread passes it in
             if ctx is None:
                 log.warning(
                     "Recovery: no live ctx; leaving face_extraction_journal "
@@ -122,6 +125,9 @@ def recover_pending_face_extractions(conn: sqlite3.Connection) -> int:
             # Increment BEFORE the attempt so a crash mid-attempt still
             # counts. The next startup sees the incremented count and
             # gets one fewer retry.
+            if cancel_event is not None and cancel_event.is_set():
+                log.info("Recovery: stopping before run %s (shutdown or library switch)", run_id)
+                break
             journal.increment_retry_count(conn, run_id)
             extract_and_cluster_faces(
                 conn,
@@ -130,8 +136,20 @@ def recover_pending_face_extractions(conn: sqlite3.Connection) -> int:
                 max_long_side,
                 face_conf,
                 dict(ctx.config),
+                cancel_event=cancel_event,
                 resume_run_id=run_id,
             )
+            if (
+                cancel_event is not None
+                and cancel_event.is_set()
+                and any(r["run_id"] == run_id for r in journal.pending_runs(conn))
+            ):
+                log.info(
+                    "Recovery: run %s stopped before completion (shutdown or library switch); "
+                    "it stays pending",
+                    run_id,
+                )
+                break
             resumed += 1
             log.info("Recovery: resumed face extraction run %s to completion", run_id)
         except BppError as e:

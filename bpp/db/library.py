@@ -258,13 +258,25 @@ def _unique_dest_path(batch_dir: str, filename: str) -> str:
     """The destination for ``filename`` in the batch folder, numbered on
     a collision within the batch."""
     dest_path = os.path.join(batch_dir, filename)
-    if retry_io(os.path.exists, dest_path, label="exists_check"):
+    if _slot_taken(dest_path):
         name, ext = os.path.splitext(filename)
         counter = 1
-        while retry_io(os.path.exists, dest_path, label="exists_check"):
+        while _slot_taken(dest_path):
             dest_path = os.path.join(batch_dir, f"{name}_{counter}{ext}")
             counter += 1
     return dest_path
+
+
+def _slot_taken(path: str) -> bool:
+    """Whether a file is at ``path``. A storage error is an error here
+    (``os.path.exists`` would read it as "free" and let the copy overwrite
+    a photo imported moments ago)."""
+    from bpp.db.photos_missing import file_present
+
+    present = file_present(path)
+    if present is None:
+        raise OSError(f"Storage didn't answer for {path}")
+    return present
 
 
 def _copy_atomically(src_path: str, tmp_path: str, dest_path: str) -> None:
@@ -460,4 +472,4 @@ def backfill_sha256(
 
 def check_missing_files(conn: sqlite3.Connection) -> list[str]:
     """Check all non-missing photos for files that no longer exist on disk."""
-    return check_missing(conn)
+    return check_missing(conn, force=True)

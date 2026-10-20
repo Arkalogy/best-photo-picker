@@ -176,6 +176,8 @@ class WebAppState(_LegacyDelegateMixin):
         # property delegate so existing call sites (bp_health,
         # state_lifecycle, tests) keep working unchanged.
         self.workers: WorkerPool = WorkerPool()
+        for worker in self.workers.values():
+            worker.ctx = self
         self.thumbs: ThumbnailCache | None = None
         # Derived-state caches (face cluster map, enhanced ids,
         # CLIP embeddings) live in :class:`ModelCache`. The bare

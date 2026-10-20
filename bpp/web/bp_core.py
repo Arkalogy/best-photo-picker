@@ -10,7 +10,6 @@ metadata, the update check, and `recheck-missing`.
 
 from __future__ import annotations
 
-import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -332,53 +331,6 @@ def api_stats() -> tuple[Response, int]:
     conn = ctx.get_conn()
     stats = get_library_stats(conn)
     return jsonify(stats), 200
-
-
-@bp.post("/api/v1/photos/recheck-missing")
-@requires_local_app
-def api_recheck_missing() -> tuple[Response, int]:
-    """Re-scan all missing photos and restore those whose files reappeared.
-
-    Useful after NAS reconnect or external drive mount.
-    """
-    ctx = get_ctx()
-    conn = ctx.get_conn()
-    # Find photos currently marked missing
-    rows = conn.execute("SELECT id, filepath FROM photos WHERE missing=1").fetchall()
-    if not rows:
-        return jsonify({"restored": 0, "still_missing": 0}), 200
-
-    from bpp.utils.retry import retry_io
-
-    restored_ids: list[int] = []
-    still_missing = 0
-    for row in rows:
-        pid, fp = row["id"], row["filepath"]
-        try:
-            found = retry_io(os.path.isfile, fp, label="recheck_missing")
-        except OSError:
-            found = False
-        if found:
-            restored_ids.append(pid)
-        else:
-            still_missing += 1
-    # Single batched UPDATE instead of one round-trip per restored photo —
-    # 50k-photo library reduces from N statements to one with an IN clause.
-    if restored_ids:
-        placeholders = ",".join("?" * len(restored_ids))
-        conn.execute(
-            f"UPDATE photos SET missing=0 WHERE id IN ({placeholders})",
-            restored_ids,
-        )
-        conn.commit()
-    restored = len(restored_ids)
-
-    if restored:
-        # Reload analysis so the UI sees the restored photos
-        ctx.invalidate_analysis()
-        ctx.load_analysis_if_needed()
-
-    return jsonify({"restored": restored, "still_missing": still_missing}), 200
 
 
 @bp.post("/api/v1/pick")

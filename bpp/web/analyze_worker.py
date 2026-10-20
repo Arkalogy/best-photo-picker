@@ -191,11 +191,20 @@ class AnalyzeWorker(BackgroundWorker):
         # are filled in phase by phase, so a failure in a later phase
         # keeps what the earlier ones reported.
         counts = {"faces_found": 0, "face_clusters": 0, "clip_computed": 0}
+        db_write_failed = False
         try:
             store_scoring_results(pp_conn, valid, sidecar_records, self._emit)
             self._downstream_phases(pp_conn, valid, config, counts)
         except Exception:
+            db_write_failed = True
             log.warning("Failed to write to DB", exc_info=True)
+            self._emit(
+                {
+                    "type": "warning",
+                    "message": "Scores were computed but couldn't all be saved to the "
+                    "library; see server.log, then run Analyze again",
+                }
+            )
         faces_found = counts["faces_found"]
         face_clusters = counts["face_clusters"]
         clip_computed = counts["clip_computed"]
@@ -210,7 +219,7 @@ class AnalyzeWorker(BackgroundWorker):
         sensitive_flagged, sensitive_new = count_sensitive_alert(pp_conn)
 
         self.results = valid
-        finalize_in_worker(clip_computed)
+        finalize_in_worker(clip_computed, ctx=self.ctx)
 
         self._emit(
             {
@@ -223,6 +232,7 @@ class AnalyzeWorker(BackgroundWorker):
                 "sidecars_skipped": len(sidecar_records),
                 "sensitive_flagged": sensitive_flagged,
                 "sensitive_new": sensitive_new,
+                "db_write_failed": db_write_failed,
             }
         )
 

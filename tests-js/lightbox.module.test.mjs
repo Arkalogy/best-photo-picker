@@ -288,6 +288,49 @@ describe("updateLightboxFaces / _lbUntagPerson", () => {
     expect(document.getElementById("lb-faces")?.innerHTML).toContain("Alice");
   });
 
+  test("a late face list for the photo the user left is not rendered", async () => {
+    /** @type {any} */
+    const win = window;
+    const photoA = { ...samplePhoto, thumb_hash: "hash-a" };
+    const photoB = { ...samplePhoto, thumb_hash: "hash-b" };
+    win.faceClusters = [
+      { cluster_id: 5, photo_count: 10 },
+      { cluster_id: 6, photo_count: 10 },
+    ];
+    /** @type {(v: any) => void} */
+    let resolveA = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url) => {
+        if (String(url).includes("hash-a")) {
+          return new Promise((resolve) => {
+            resolveA = () =>
+              resolve(
+                jsonResp({
+                  faces: [{ face_id: 1, face_index: 0, cluster_id: 5, name: "Alice" }],
+                  person_tags: [],
+                })
+              );
+          });
+        }
+        return jsonResp({
+          faces: [{ face_id: 2, face_index: 0, cluster_id: 6, name: "Bob" }],
+          person_tags: [],
+        });
+      })
+    );
+    // A's load is still in flight when the user arrows to B.
+    const loadA = updateLightboxFaces(photoA);
+    win.currentGridItems = [photoA, photoB];
+    win.lightboxIdx = 1;
+    await updateLightboxFaces(photoB);
+    resolveA();
+    await loadA;
+    const chips = document.getElementById("lb-faces")?.innerHTML || "";
+    expect(chips).toContain("Bob");
+    expect(chips).not.toContain("Alice");
+  });
+
   test("_lbUntagPerson DELETEs the tag and toasts", async () => {
     /** @type {any} */ (window).currentGridItems = [samplePhoto];
     /** @type {any} */ (window).lightboxIdx = 0;

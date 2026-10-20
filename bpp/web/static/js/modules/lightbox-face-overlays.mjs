@@ -40,11 +40,26 @@ import { _lbShowFaceAssignPicker } from "./lightbox-face-assign.mjs";
 /** @type {any[]} */
 let _lbFaceData = [];
 
+// Each load takes a ticket; a response whose ticket is no longer the
+// newest belongs to a photo the user has already left. Rendering it would
+// draw that photo's boxes and chips on the current one, and a drag or
+// dismiss would then edit the wrong photo's faces.
+let _lbFacesTicket = 0;
+
+/** True when the lightbox has moved on from `p` since this load began. */
+function _lbLeftPhoto(ticket, p) {
+  if (ticket !== _lbFacesTicket) return true;
+  /** @type {any} */
+  const win = window;
+  const open = (win.currentGridItems || [])[win.lightboxIdx];
+  return Boolean(open && open.thumb_hash && p.thumb_hash && open.thumb_hash !== p.thumb_hash);
+}
 
 export async function updateLightboxFaces(p) {
   /** @type {any} */
   const win = window;
   const container = document.getElementById("lb-faces");
+  const ticket = ++_lbFacesTicket;
   _lbFaceData = [];
 
   let faces = [];
@@ -52,9 +67,11 @@ export async function updateLightboxFaces(p) {
   if (p.thumb_hash) {
     try {
       const data = await apiFetch(`/api/v1/faces/photo/${p.thumb_hash}`);
+      if (_lbLeftPhoto(ticket, p)) return;
       faces = data.faces || [];
       personTags = data.person_tags || [];
     } catch (err) {
+      if (_lbLeftPhoto(ticket, p)) return;
       console.warn("Failed to load faces:", err);
     }
   }

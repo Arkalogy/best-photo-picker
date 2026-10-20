@@ -35,21 +35,74 @@ def mark_missing(conn: sqlite3.Connection, filepath: str) -> None:
     log.info("Marked photo as missing: %s", filepath)
 
 
-def check_missing(conn: sqlite3.Connection) -> list[str]:
+#: Below this many rows the mass-flip guard doesn't apply (a tiny library
+#: really can lose most of its photos to a cleanup).
+MASS_FLIP_MIN_ROWS = 20
+#: This many consecutive files with no answer from storage ends the scan.
+UNANSWERED_LIMIT = 3
+
+
+def file_present(filepath: str) -> bool | None:
+    """True / False when the filesystem answered; None when it didn't
+    (a transient error that outlasted the retries). ``os.path.exists``
+    swallows errors into False, so only ``os.stat`` can tell "gone"
+    from "unreachable right now"."""
+    try:
+        retry_io(os.stat, filepath, label="check_missing", max_retries=1)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError as exc:
+        log.warning("Can't tell whether %s exists (%s); leaving it as is", filepath, exc)
+        return None
+    return True
+
+
+def check_missing(
+    conn: sqlite3.Connection, *, photos_dir: str | None = None, force: bool = False
+) -> list[str]:
     """Find photos whose files no longer exist on disk. Marks them and returns paths.
 
-    Uses retry_io to avoid false positives from transient NAS errors.
+    Transient storage errors never count as missing. Unless ``force``,
+    the scan is skipped when ``photos_dir`` isn't reachable, and refused
+    when more than half the library would flip at once: that is an
+    outage, not a cleanup, and rows marked missing vanish from every view.
     """
+    from bpp.utils.retry import check_storage_accessible
+
+    if photos_dir and not force:
+        access = check_storage_accessible(photos_dir)
+        if not access["accessible"]:
+            log.warning(
+                "Skipping the missing-file scan: %s isn't reachable (%s)",
+                photos_dir,
+                access["error"],
+            )
+            return []
     rows = conn.execute("SELECT filepath FROM photos WHERE missing=0").fetchall()
     newly_missing = []
+    unanswered = 0
     for row in rows:
-        fp = row[0]
-        try:
-            exists = retry_io(os.path.exists, fp, label="check_missing")
-        except OSError:
-            exists = False
-        if not exists:
-            newly_missing.append(fp)
+        present = file_present(row[0])
+        if present is None:
+            unanswered += 1
+            if unanswered >= UNANSWERED_LIMIT:
+                log.warning(
+                    "Stopping the missing-file scan: %d files in a row got no answer from storage",
+                    unanswered,
+                )
+                return []
+            continue
+        unanswered = 0
+        if present is False:
+            newly_missing.append(row[0])
+    if not force and len(rows) >= MASS_FLIP_MIN_ROWS and len(newly_missing) * 2 > len(rows):
+        log.warning(
+            "%d of %d photos look missing at once; treating that as a storage outage "
+            "and not marking them (the manual recheck forces the scan)",
+            len(newly_missing),
+            len(rows),
+        )
+        return []
     if newly_missing:
         placeholders = ", ".join(["?"] * len(newly_missing))
         conn.execute(

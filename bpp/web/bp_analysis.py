@@ -409,7 +409,11 @@ def api_import_progress() -> Response:
 
 
 def _finalize_import(msg, ctx):
-    """Post-completion bookkeeping for /api/import/progress."""
+    """Post-completion bookkeeping for /api/import/progress. The worker
+    finalizes in its own thread (``finalized`` on the done message); this
+    is the backstop for a worker that couldn't."""
+    if msg.get("finalized"):
+        return
     ctx.invalidate_analysis()
     ctx.load_analysis_if_needed()
     try:

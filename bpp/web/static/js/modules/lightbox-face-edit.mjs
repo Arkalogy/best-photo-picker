@@ -275,6 +275,11 @@ async function _lbOnDragEnd(_e) {
  */
 export async function _lbCommitBboxUpdate(bboxPct) {
   if (!_lbEdit) return;
+  // The session this save belongs to. Navigation ends the edit and the
+  // user may have started another one before the response lands; only
+  // this session may be torn down by it, and its toast action must not
+  // open a picker on whatever photo is open by then.
+  const session = _lbEdit;
   const face = _lbEdit.face;
   const box = _lbEdit.box;
   const thumbHash = _lbEdit.thumbHash;
@@ -306,7 +311,7 @@ export async function _lbCommitBboxUpdate(bboxPct) {
     const explained = e.status === 422 || (isPlaceholder && e.status === 409);
     if (explained) toast(e.message, true);
     else toastError(isPlaceholder ? "add the face" : "update the face", e);
-    _lbEndFaceEdit();
+    if (_lbEdit === session) _lbEndFaceEdit();
     return;
   }
   box.classList.remove("lb-face-overlay-busy");
@@ -315,15 +320,23 @@ export async function _lbCommitBboxUpdate(bboxPct) {
     // Drop the synthetic placeholder; updateLightboxFaces will fetch
     // the new face from the server and render a real overlay.
     box.remove();
-    _lbEndFaceEdit();
+    if (_lbEdit === session) _lbEndFaceEdit();
     await finishPlaceholder(face, resp);
     return;
   }
 
   applyCommittedBbox(face, box, resp);
-  _lbEndFaceEdit();
-  announceCommittedBbox(resp, face, thumbHash);
+  if (_lbEdit === session) _lbEndFaceEdit();
+  if (_lbStillShowing(thumbHash)) announceCommittedBbox(resp, face, thumbHash);
   refreshOpenLightboxFaces();
+}
+
+/** Whether the lightbox still shows the photo a save was made on. */
+function _lbStillShowing(thumbHash) {
+  /** @type {any} */
+  const win = window;
+  const open = (win.currentGridItems || [])[win.lightboxIdx];
+  return !open || !open.thumb_hash || open.thumb_hash === thumbHash;
 }
 
 export function _lbEndFaceEdit() {
