@@ -131,11 +131,39 @@
     poll();
   }
 
+  var unreachable = false;
+  function hostUnreachable() {
+    unreachable = true;
+    status.textContent = "Can't reach the host — retrying…";
+    warn.textContent = "Make sure the host computer is awake and on the same network. This page will retry on its own.";
+    warn.style.display = "block";
+  }
+  function hostRefused(code) {
+    unreachable = true;
+    status.textContent = "The host refused this request (HTTP " + code + ").";
+    warn.textContent = "Open the share link (QR code) on the host again to ask for access.";
+    warn.style.display = "block";
+  }
+  function hostReachable() {
+    if (!unreachable) return;
+    unreachable = false;
+    warn.textContent = "";
+    warn.style.display = "";
+  }
+
   function poll() {
     if (stopped) return;
     fetch("/api/v1/share/pair/status", { credentials: "same-origin" })
-      .then(function(r){ return r.json(); })
+      .then(function(r){
+        if (!r.ok) {
+          var err = new Error("status " + r.status);
+          err.status = r.status;
+          throw err;
+        }
+        return r.json();
+      })
       .then(function(d){
+        hostReachable();
         if (d.state === "trusted") {
           setState("trusted");
           title.textContent = "Approved!";
@@ -177,8 +205,11 @@
         }
         pollTimer = setTimeout(poll, 2000);
       })
-      .catch(function(){
-        if (!stopped) pollTimer = setTimeout(poll, 3000);
+      .catch(function(e){
+        if (stopped) return;
+        if (e && e.status && e.status < 500) hostRefused(e.status);
+        else hostUnreachable();
+        pollTimer = setTimeout(poll, 3000);
       });
   }
 

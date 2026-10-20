@@ -68,10 +68,12 @@ class _LegacyDelegateMixin:
     # ModelCache property delegates.
     # ------------------------------------------------------------------
     @property
+    @_deprecated_attr("ctx.caches.clip_cache")
     def clip_cache(self) -> dict[str, Any]:
         return self.caches.clip_cache  # type: ignore[attr-defined]
 
     @clip_cache.setter
+    @_deprecated_attr("ctx.caches.clip_cache")
     def clip_cache(self, value: dict[str, Any]) -> None:
         # Identity swap honors the state_compat module-level contract
         # ("property reads through, never copies"). The previous shape
@@ -89,31 +91,38 @@ class _LegacyDelegateMixin:
         self.caches.clip_cache = dict(value)  # type: ignore[attr-defined]
 
     @property
+    @_deprecated_attr("ctx.caches.face_cluster_map (FaceClusterMapCache)")
     def _face_cluster_map(self) -> dict[str, list[int]] | None:
         return self.caches.face_cluster_map._map  # type: ignore[attr-defined]
 
     @_face_cluster_map.setter
+    @_deprecated_attr("ctx.caches.face_cluster_map (FaceClusterMapCache)")
     def _face_cluster_map(self, value: dict[str, list[int]] | None) -> None:
         with self.caches.face_cluster_map._lock:  # type: ignore[attr-defined]
             self.caches.face_cluster_map._map = value  # type: ignore[attr-defined]
 
     @property
+    @_deprecated_attr("ctx.caches.face_cluster_map (it locks itself)")
     def _face_cluster_map_lock(self) -> threading.Lock:
         return self.caches.face_cluster_map._lock  # type: ignore[attr-defined]
 
     @property
+    @_deprecated_attr("ctx.caches.enhanced_ids.edited")
     def _edited_ids(self) -> set[int] | None:
         return self.caches.enhanced_ids.edited  # type: ignore[attr-defined]
 
     @_edited_ids.setter
+    @_deprecated_attr("ctx.caches.enhanced_ids.edited")
     def _edited_ids(self, value: set[int] | None) -> None:
         self.caches.enhanced_ids.edited = value  # type: ignore[attr-defined]
 
     @property
+    @_deprecated_attr("ctx.caches.enhanced_ids.auto_enhanced")
     def _auto_enhanced_ids(self) -> set[int] | None:
         return self.caches.enhanced_ids.auto_enhanced  # type: ignore[attr-defined]
 
     @_auto_enhanced_ids.setter
+    @_deprecated_attr("ctx.caches.enhanced_ids.auto_enhanced")
     def _auto_enhanced_ids(self, value: set[int] | None) -> None:
         self.caches.enhanced_ids.auto_enhanced = value  # type: ignore[attr-defined]
 
@@ -121,42 +130,52 @@ class _LegacyDelegateMixin:
     # AnalysisStore property delegates.
     # ------------------------------------------------------------------
     @property
+    @_deprecated_attr("ctx.analysis_store.phash_ready")
     def phash_ready(self) -> threading.Event:
         return self.analysis_store.phash_ready  # type: ignore[attr-defined]
 
     @phash_ready.setter
+    @_deprecated_attr("ctx.analysis_store.phash_ready")
     def phash_ready(self, value: threading.Event) -> None:
         self.analysis_store.phash_ready = value  # type: ignore[attr-defined]
 
     @property
+    @_deprecated_attr("ctx.analysis_store.phash_generation")
     def _phash_generation(self) -> int:
         return self.analysis_store.phash_generation  # type: ignore[attr-defined]
 
     @_phash_generation.setter
+    @_deprecated_attr("ctx.analysis_store.phash_generation")
     def _phash_generation(self, value: int) -> None:
         self.analysis_store.phash_generation = value  # type: ignore[attr-defined]
 
     @property
+    @_deprecated_attr("ctx.analysis_store.compute_thread")
     def _compute_thread(self) -> threading.Thread | None:
         return self.analysis_store.compute_thread  # type: ignore[attr-defined]
 
     @_compute_thread.setter
+    @_deprecated_attr("ctx.analysis_store.compute_thread")
     def _compute_thread(self, value: threading.Thread | None) -> None:
         self.analysis_store.compute_thread = value  # type: ignore[attr-defined]
 
     @property
+    @_deprecated_attr("ctx.analysis_store.warm_thread")
     def _warm_thread(self) -> threading.Thread | None:
         return self.analysis_store.warm_thread  # type: ignore[attr-defined]
 
     @_warm_thread.setter
+    @_deprecated_attr("ctx.analysis_store.warm_thread")
     def _warm_thread(self, value: threading.Thread | None) -> None:
         self.analysis_store.warm_thread = value  # type: ignore[attr-defined]
 
     @property
+    @_deprecated_attr("ctx.analysis_store.cancel_warm")
     def _cancel_warm(self) -> threading.Event:
         return self.analysis_store.cancel_warm  # type: ignore[attr-defined]
 
     @_cancel_warm.setter
+    @_deprecated_attr("ctx.analysis_store.cancel_warm")
     def _cancel_warm(self, value: threading.Event) -> None:
         self.analysis_store.cancel_warm = value  # type: ignore[attr-defined]
 

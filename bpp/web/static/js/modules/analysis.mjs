@@ -211,7 +211,7 @@ function _listenAnalyzeProgress() {
       _previewRefreshTimer = null;
       hideStatusProgress();
       _analyzeStop();
-      toast(msg.message || "Analysis failed", true);
+      toastError("analyze the library", new Error(msg.message || "the analysis stopped"));
     } else if (msg.type === "cancelled") {
       src.close();
       win.activeOperation = null;
@@ -360,7 +360,7 @@ export function listenProgress() {
       win.activeOperation = null;
       if (_previewRefreshTimer) clearTimeout(_previewRefreshTimer);
       _previewRefreshTimer = null;
-      toast(msg.message || "Analysis error", true);
+      toastError("analyze the library", new Error(msg.message || "the analysis stopped"));
       hideStatusProgress();
     } else if (msg.type === "batch_ready") {
       _schedulePreviewRefresh();

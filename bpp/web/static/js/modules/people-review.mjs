@@ -267,16 +267,21 @@ export async function _reviewConfirm() {
     }
   } else {
     // Name as new person
-    await refreshSmartAlbums();
-    const albumId = getPersonAlbumId(cid);
-    if (albumId) {
-      await apiFetch(`/api/v1/albums/${albumId}`, {
-        method: "PUT",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ name }),
-      });
+    try {
+      await refreshSmartAlbums();
+      const albumId = getPersonAlbumId(cid);
+      if (albumId) {
+        await apiFetch(`/api/v1/albums/${albumId}`, {
+          method: "PUT",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({ name }),
+        });
+      }
+      await loadAlbumList();
+    } catch (e) {
+      toastError("name the person", e);
+      return;
     }
-    await loadAlbumList();
     const nn = (c.filepaths || c.faces || []).length;
     const ndetail = nn ? ` — ${nn} photo${nn !== 1 ? "s" : ""}` : "";
     toast(`Named as "${name}"${ndetail}`, "success");
@@ -286,6 +291,13 @@ export async function _reviewConfirm() {
   _reviewData.reviewed++;
   _reviewIndex++;
   _renderReviewCard();
+}
+
+/** Test-only: put the review at a given cluster. */
+export function _setReviewState(data, index) {
+  _reviewData = data;
+  _reviewIndex = index;
+  _reviewMergeTarget = null;
 }
 
 export function _reviewSkip() {

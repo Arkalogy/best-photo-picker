@@ -152,31 +152,46 @@ export function updateLightboxMap(p) {
   // from the Info list — the pin is the primary representation.
   wrap.title = `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
 
-  if (!win._lbLeafletMap) {
-    win._lbLeafletMap = L.map("lb-map", {
-      zoomControl: false,
-      attributionControl: false,
-      dragging: false,
-      scrollWheelZoom: false,
-      doubleClickZoom: false,
-      boxZoom: false,
-      keyboard: false,
-      touchZoom: false,
-    }).setView([lat, lon], 13);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 18 }).addTo(
-      win._lbLeafletMap
-    );
-    win._lbMapMarker = L.marker([lat, lon]).addTo(win._lbLeafletMap);
-    // NOTE: the Expand toggle is wired via data-action="toggleLightboxMap"
-    // in the markup (index.html + editor-rendering's panel copy), NOT a
-    // direct listener here — a listener attached to the header node dies
-    // silently when the editor rebuilds the panel's innerHTML. That was
-    // the "Expand doesn't work" bug.
-  } else {
-    win._lbLeafletMap.setView([lat, lon], 13);
-    win._lbMapMarker.setLatLng([lat, lon]);
+  // Third-party init under try/catch: a map failure hides the map and
+  // leaves the rest of the lightbox standing.
+  try {
+    if (!win._lbLeafletMap) {
+      win._lbLeafletMap = L.map("lb-map", {
+        zoomControl: false,
+        attributionControl: false,
+        dragging: false,
+        scrollWheelZoom: false,
+        doubleClickZoom: false,
+        boxZoom: false,
+        keyboard: false,
+        touchZoom: false,
+      }).setView([lat, lon], 13);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 18 }).addTo(
+        win._lbLeafletMap
+      );
+      win._lbMapMarker = L.marker([lat, lon]).addTo(win._lbLeafletMap);
+      // NOTE: the Expand toggle is wired via data-action="toggleLightboxMap"
+      // in the markup (index.html + editor-rendering's panel copy), NOT a
+      // direct listener here — a listener attached to the header node dies
+      // silently when the editor rebuilds the panel's innerHTML. That was
+      // the "Expand doesn't work" bug.
+    } else {
+      win._lbLeafletMap.setView([lat, lon], 13);
+      win._lbMapMarker.setLatLng([lat, lon]);
+    }
+  } catch (err) {
+    console.warn("Lightbox map unavailable:", err);
+    try {
+      win._lbLeafletMap?.remove?.(); // unbind the container for a later retry
+    } catch {
+      /* already torn down */
+    }
+    win._lbLeafletMap = null;
+    win._lbMapMarker = null;
+    wrap.classList.add("hidden");
+    return;
   }
-  setTimeout(() => win._lbLeafletMap.invalidateSize(), 100);
+  setTimeout(() => win._lbLeafletMap?.invalidateSize(), 100);
 }
 
 /**

@@ -115,6 +115,11 @@ Application status and feature availability.
   "defaults": { "blur_weight": 0.3, "..." : "..." },
   "face_recognition_available": true,
   "face_installable": false,
+  "face_license_needed": false,
+  "install_restart_pending": [],
+  "install_interrupted_keys": [],
+  "install_interrupted": [],
+  "install_blocked": "",
   "nudenet_available": true,
   "nudenet_active": false,
   "pets_available": true,
@@ -135,6 +140,11 @@ Application status and feature availability.
   "clip_cap_peak_mb": 0
 }
 ```
+
+The `install_*` fields and `face_installable` / `face_license_needed` are the
+install state (see `GET /api/v1/install/state`), folded in so a page needs one
+call. `workdir`, `input_dir` and `library_path` are present for the local app
+only, never for a paired device.
 
 ### GET /api/v1/stats
 
@@ -177,6 +187,9 @@ included only for the local-app owner.
     "phase5": { "in_flight": false, "failed": false },
     "derived_recovery": { "in_flight": false, "failed": false },
     "face_recovery": { "in_flight": false, "failed": false },
+    "install": { "restart_pending": [], "interrupted": [], "busy": [] },
+    "downloads": { "running": [], "failed": [] },
+    "phash": { "ready": true, "in_flight": false, "generation": 3 },
     "models": {
       "license_blocked": {
         "needs_license": ["insightface_scrfd_25g"],
@@ -195,6 +208,15 @@ see `load_state` under `GET /api/v1/model-registry/entries`). It's
 informational: it includes optional models that aren't switched on or in use,
 so a fresh install lists several. It doesn't affect `status`; only a failure
 to compute it does (`"models": {"error": "License check failed"}`).
+
+`checks.install` is the cheap part of `GET /api/v1/install/state`:
+`restart_pending` (feature keys installed this session that load after a
+restart), `interrupted` (the feature keys of installs pip was cut off in; the
+repair commands are on the install endpoint), and `busy`, the running work an
+install would wait for. An interrupted install degrades `status`. `checks.downloads` lists running
+model-download job keys and the failed ones with their reason; a failed
+download degrades `status` until it is retried. `checks.phash` is the
+perceptual-hash backfill the duplicate finder waits on.
 
 `status` is `"ok"` when every check is green and `"degraded"` otherwise. Requires the auth token like every `/api/v1/*` route, so it is not usable as a tokenless container liveness probe (the Dockerfile `HEALTHCHECK` fetches a static file instead).
 
@@ -1224,6 +1246,28 @@ user-facing `error` message). `phase` says where a running job is:
 `updated_at` is the job's last sign of life (a byte, a phase change, a
 verification step), so a client can tell a healthy wait before the
 first byte or after the last one from a stall. Unknown jobs return `404`.
+
+### GET /api/v1/install/state
+
+The install state every page polls (paired devices too, so there is no
+owner-only gate; they get the redacted form with nothing to act on):
+
+```json
+{
+  "restart_pending": ["faces"],
+  "face_installable": false,
+  "face_license_needed": false,
+  "install_blocked": "",
+  "interrupted": ["pip install \"bppicker[faces]\""],
+  "interrupted_keys": ["faces"]
+}
+```
+
+`restart_pending` lists features installed in this session that load after a
+restart. `face_installable` says the face install can be offered now.
+`install_blocked` is why no install can start right now (`""` when one can).
+`interrupted` holds the repair commands for installs pip was cut off in, with
+their feature keys in `interrupted_keys`.
 
 ### POST /api/v1/install/:key
 

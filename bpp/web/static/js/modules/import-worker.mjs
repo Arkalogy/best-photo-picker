@@ -204,7 +204,7 @@ export function listenImportProgress() {
       win.activeOperation = null;
       document.querySelector("main")?.classList.remove("analyzing-pending");
       win.hide?.("analyzing-banner");
-      toast(msg.message || "Import error", true);
+      toastError("import the photos", new Error(msg.message || "the import stopped"));
       win.hideStatusProgress?.();
       win.showStatusAnalyzing?.(false);
     }

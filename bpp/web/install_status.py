@@ -80,6 +80,17 @@ def _slow_facts(faces_interrupted: bool) -> dict[str, Any]:
     return facts
 
 
+def quick_state() -> dict[str, list[str]]:
+    """The part of the install state that is cheap to ask on every health
+    poll: features waiting for a restart and installs pip was cut off in.
+    No refusal check (it takes the install lock and releases stale claims)
+    and no face-model probe."""
+    from bpp.web.pip_process import notes_state
+
+    interrupted, _left_running = notes_state()
+    return {"restart_pending": sorted(held_keys()), "interrupted": sorted(interrupted)}
+
+
 def install_status_fields(*, owner: bool) -> dict[str, Any]:
     """The install part of /api/v1/status (same source as /install/state)."""
     state = install_state(owner=owner)

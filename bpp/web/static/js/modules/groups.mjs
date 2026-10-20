@@ -239,6 +239,7 @@ export function showGroupsView() {
       // unnamed placeholder — style it like names on the Faces page.
       const nameCls = "person-name";
       return `<div class="person-card group-card" data-group-idx="${idx}"
+      tabindex="0" role="button" data-key-activate
       data-action="navigateToGroupAlbum" data-arg0="${idx}">
       <div class="group-avatar-area">
         ${groupAvatarsHTML(g)}

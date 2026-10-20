@@ -65,6 +65,20 @@ export function focusInto(overlay, prefer) {
 }
 
 /**
+ * Whether any dialog is open. The static overlays in index.html stay in
+ * the DOM and show with ``.visible`` (a few hide with ``.hidden``);
+ * dialogs built on demand (the pickers) mark themselves ``data-dialog-open``.
+ * @returns {boolean}
+ */
+export function anyDialogOpen() {
+  return !!document.querySelector(
+    '[role="dialog"].visible, [role="dialog"][data-dialog-open], ' +
+      '#onboarding-overlay:not(.hidden), #slideshow-overlay:not(.hidden), ' +
+      "#library-picker-overlay:not(.hidden)"
+  );
+}
+
+/**
  * Give focus back to what had it before ``overlay`` opened (if that is
  * still on the page), and forget it.
  * @param {HTMLElement | null} overlay

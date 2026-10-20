@@ -26,6 +26,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from bpp.scoring.inference_log import report_inference_failure
 from bpp.scoring.install_hold import requires
 from bpp.scoring.model_base import ModelSingleton
 from bpp.utils.logging import get_logger
@@ -122,6 +123,7 @@ def _detect_hand_bboxes(image: np.ndarray) -> list[tuple[int, int, int, int]]:
         with _hand_lock:
             result = detector.detect(mp_image)
     except Exception:
+        report_inference_failure("Hand filter")
         return []
 
     if not result.hand_landmarks:

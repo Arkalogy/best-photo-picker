@@ -162,6 +162,7 @@ function _personCardHTML(c) {
   const selCls = _selectedPeople.has(cid) ? " person-card-selected" : "";
   const boostCls = /** @type {any} */ (window).selectedFaceIds?.has(cid) ? " person-card-boosted" : "";
   return `<div class="${cls}${cardCls}${selCls}${boostCls}" data-cluster-id="${cid}"${cardTitle}
+        tabindex="0" role="button" data-key-activate
         data-action="_personCardClick" data-pass-event="true" data-arg0="${cid}"
         data-oncontextmenu="_personCtxMenuDispatch" data-arg0="${cid}"
         data-onpointerdown="_personPointerDownDispatch" data-arg0="${cid}">

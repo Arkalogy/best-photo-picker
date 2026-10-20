@@ -233,6 +233,7 @@ export function showPetsView() {
           ? authedSrc(`/api/v1/pets/crop/${esc(rep.thumb_hash)}/${rep.detection_index}`)
           : "";
       return `<div class="person-card pet-card" data-cluster-id="${cid}"
+      tabindex="0" role="button" data-key-activate
       data-action="navigateToPetAlbum" data-arg0="${cid}"
       data-oncontextmenu="showPetCtxMenu" data-arg0="${cid}">
       <div class="person-avatar pet-avatar">

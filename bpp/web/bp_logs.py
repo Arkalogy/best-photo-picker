@@ -161,8 +161,7 @@ def api_debug_memory() -> tuple[Response, int]:
     thumb_hash_count = len(thumbs._hash_to_path) if thumbs else 0
     thumb_verified_count = len(thumbs._verified) if thumbs else 0
 
-    with ctx._face_cluster_map_lock:
-        fcm = ctx._face_cluster_map
+    fcm = ctx.caches.face_cluster_map.peek()
     face_cluster_entries = len(fcm) if fcm is not None else -1  # -1 = not loaded
 
     edited_ids = ctx.caches.enhanced_ids.edited

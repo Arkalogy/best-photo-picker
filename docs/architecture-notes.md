@@ -130,10 +130,14 @@ but every new code site should bind against the collaborator.
 | `ctx.analysis_store` | `bpp/web/analysis_store.py` :: `AnalysisStore` | `state["analysis"]` payload, the phash compute thread (`phash_ready`, `phash_generation`, `compute_thread`), and the cancellation event for the warm thread. |
 | `ctx.lifecycle` | `bpp/web/library_lifecycle.py` :: `LibraryLifecycle` | `startup` / `shutdown` / `switch_library` orchestration. Calls into `state_lifecycle` module functions. |
 
-Deprecation timeline: the property delegates in `state_compat.py` log
+Deprecation timeline: every property delegate in `state_compat.py`
+(`_workers`, `clip_cache`, `_face_cluster_map`, `phash_ready`, …) logs
 a one-shot WARNING on first access via the deprecated path. They
 remain available for at least the v0.1 → v0.2 window and are removed
-once every call site has migrated.
+once every call site has migrated. The typed worker accessors
+(`ctx.worker`, `ctx.face_worker`, `ctx.import_worker`, `ctx.clip_worker`,
+`ctx.export_worker`) are not delegates: they are the supported shorthand
+for `ctx.workers["…"]` and stay.
 
 PoC consumer reaching through the canonical collaborator surface:
 `_workers_check()` (the health endpoint's worker probe) in `bpp/web/bp_health.py` reads `ctx.workers.items()` directly

@@ -13,6 +13,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from bpp.scoring.inference_log import report_inference_failure
 from bpp.scoring.install_hold import requires
 from bpp.scoring.model_base import ModelSingleton
 from bpp.utils.logging import get_logger
@@ -102,6 +103,7 @@ def segment_subject(image: np.ndarray) -> np.ndarray | None:
     try:
         result = segmenter.segment(mp_image)
     except Exception:
+        report_inference_failure("Subject segmentation")
         return None
 
     if not result.confidence_masks:

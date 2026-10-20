@@ -14,6 +14,7 @@ import { esc, escapeAttr } from "./text-format.mjs";
 import { loadAlbumList, switchAlbum } from "./albums.mjs";
 import { loadFaceClusters } from "./faces.mjs";
 import { toast, toastError } from "./toast.mjs";
+import { openPicker, pickable } from "./picker-overlay.mjs";
 import { doMerge, personDisplayName, showPeopleView } from "./people.mjs";
 import { _selectedPeople, mergeSelected } from "./people-merge.mjs";
 
@@ -56,7 +57,7 @@ export async function showSplitPicker(clusterId) {
   grid.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;padding:12px;max-height:400px;overflow-y:auto;justify-content:center";
 
   for (const f of faces) {
-    const cell = document.createElement("div");
+    const cell = pickable(document.createElement("div"));
     cell.className = "face-select-cell";
     cell.style.cssText = "cursor:pointer;border-radius:8px;overflow:hidden;border:3px solid transparent;transition:border-color .15s;width:88px;height:88px;flex-shrink:0";
     const img = document.createElement("img");
@@ -131,20 +132,19 @@ export async function showSplitPicker(clusterId) {
   splitBtn.disabled = true;
   splitBtn.onclick = async () => {
     await splitSelectedFaces(clusterId, grid, selected, splitMergeTarget);
-    overlay.remove();
+    close();
   };
   actions.appendChild(splitBtn);
 
   const cancelBtn = document.createElement("button");
   cancelBtn.className = "btn btn-secondary";
   cancelBtn.textContent = "Cancel";
-  cancelBtn.onclick = () => overlay.remove();
+  cancelBtn.onclick = () => close();
   actions.appendChild(cancelBtn);
 
   picker.appendChild(actions);
   overlay.appendChild(picker);
-  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
-  document.body.appendChild(overlay);
+  const close = openPicker(overlay, { label: `Split "${name}"` });
 }
 
 export async function splitSelectedFaces(clusterId, grid, selectedKeys, mergeTargetCid) {
@@ -205,9 +205,7 @@ export function showMergePicker(sourceClusterId) {
   // The chosen target then absorbs EVERY selected person, not just this one.
   const bulk = _selectedPeople.size > 1 && _selectedPeople.has(sourceClusterId);
 
-  // Remove existing picker
-  const existing = document.getElementById("merge-picker-overlay");
-  if (existing) existing.remove();
+  closeMergePicker(); // an open one goes through its own close
 
   // Build overlay
   const overlay = document.createElement("div");
@@ -251,7 +249,7 @@ export function showMergePicker(sourceClusterId) {
     for (const c of sorted) {
       const name = personDisplayName(c.cluster_id) || `Person ${c.cluster_id + 1}`;
       if (q && !name.toLowerCase().includes(q)) continue;
-      const item = document.createElement("div");
+      const item = pickable(document.createElement("div"));
       item.className = "merge-picker-item";
       const rep = c.representative;
       const avatarUrl = rep && rep.thumb_hash
@@ -281,8 +279,7 @@ export function showMergePicker(sourceClusterId) {
 
   search.addEventListener("input", () => renderList(search.value));
   search.addEventListener("keydown", (ev) => {
-    ev.stopPropagation();
-    if (ev.key === "Escape") closeMergePicker();
+    if (ev.key !== "Escape") ev.stopPropagation();
   });
   picker.appendChild(list);
   renderList("");
@@ -298,18 +295,23 @@ export function showMergePicker(sourceClusterId) {
   picker.appendChild(footer);
 
   overlay.appendChild(picker);
-  overlay.addEventListener("click", (ev) => {
-    if (ev.target === overlay) closeMergePicker();
+  _closeMerge = openPicker(overlay, {
+    label: bulk ? "Merge people" : `Merge "${sourceName}"`,
+    prefer: search,
+    onClose: () => {
+      state.mergeSourceId = null;
+      _closeMerge = null;
+    },
   });
-
-  document.body.appendChild(overlay);
-  setTimeout(() => search.focus(), 50);
 }
+
+/** @type {(() => void) | null} */
+let _closeMerge = null;
 
 export function closeMergePicker() {
   state.mergeSourceId = null;
-  const overlay = document.getElementById("merge-picker-overlay");
-  if (overlay) overlay.remove();
+  if (_closeMerge) _closeMerge();
+  else document.getElementById("merge-picker-overlay")?.remove();
 }
 
 // ── Faces: avatar picker ──
@@ -354,7 +356,7 @@ export async function showAvatarPicker(clusterId) {
   grid.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;padding:12px;max-height:480px;overflow-y:auto;justify-content:center";
 
   for (const f of faces) {
-    const cell = document.createElement("div");
+    const cell = pickable(document.createElement("div"));
     cell.style.cssText = "cursor:pointer;border-radius:8px;overflow:hidden;border:2px solid transparent;transition:border-color .15s;width:88px;height:88px;flex-shrink:0";
     const img = document.createElement("img");
     img.src = faceCropUrl(f.thumb_hash, f.face_index);
@@ -364,7 +366,7 @@ export async function showAvatarPicker(clusterId) {
     cell.addEventListener("mouseenter", () => { cell.style.borderColor = "var(--accent)"; });
     cell.addEventListener("mouseleave", () => { cell.style.borderColor = "transparent"; });
     cell.onclick = async () => {
-      overlay.remove();
+      close();
       try {
         await apiFetch("/api/v1/faces/avatar", {
           method: "POST",
@@ -387,7 +389,7 @@ export async function showAvatarPicker(clusterId) {
   const cancelBtn = document.createElement("button");
   cancelBtn.className = "merge-picker-cancel";
   cancelBtn.textContent = "Cancel";
-  cancelBtn.onclick = () => overlay.remove();
+  cancelBtn.onclick = () => close();
   footer.appendChild(cancelBtn);
 
   // Reset button to go back to auto-picked avatar
@@ -396,7 +398,7 @@ export async function showAvatarPicker(clusterId) {
   resetBtn.textContent = "Reset to auto";
   resetBtn.style.marginRight = "auto";
   resetBtn.onclick = async () => {
-    overlay.remove();
+    close();
     try {
       await apiFetch("/api/v1/faces/avatar", {
         method: "POST",
@@ -414,8 +416,5 @@ export async function showAvatarPicker(clusterId) {
   picker.appendChild(footer);
 
   overlay.appendChild(picker);
-  overlay.addEventListener("click", (ev) => {
-    if (ev.target === overlay) overlay.remove();
-  });
-  document.body.appendChild(overlay);
+  const close = openPicker(overlay, { label: `Choose avatar for "${name}"` });
 }

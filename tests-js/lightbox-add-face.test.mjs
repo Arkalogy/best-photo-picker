@@ -12,7 +12,13 @@
  * and asserts that POST /api/v1/faces/create actually fires with the
  * chosen cluster + placeholder bbox.
  */
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { beforeAll, afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+
+// The lightbox module graph is large: compile it once up front so the
+// first test's dynamic import is not charged against its own timeout.
+beforeAll(async () => {
+  await import("../bpp/web/static/js/modules/lightbox.mjs");
+}, 30000);
 
 beforeEach(() => {
   vi.useFakeTimers();

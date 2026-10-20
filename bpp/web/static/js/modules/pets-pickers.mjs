@@ -5,8 +5,8 @@
  *
  * Extracted from pets.mjs during the v0.1 cleanup. Both overlays follow
  * the same visual idiom as the people pickers (merge-picker classnames,
- * cancel/ok footer, Esc to close in capture phase so the lightbox's
- * bubble-phase Esc doesn't also fire).
+ * cancel/ok footer) and open through picker-overlay.mjs: a dialog with
+ * focus handling and an Esc that closes only the picker.
  *
  * Re-exported from pets.mjs.
  */
@@ -15,6 +15,7 @@ import { apiFetch, authedSrc } from "./api-client.mjs";
 import { appConfirm } from "./dialogs.mjs";
 import { esc } from "./text-format.mjs";
 import { toast, toastError } from "./toast.mjs";
+import { openPicker, pickable } from "./picker-overlay.mjs";
 import {
   _petDefaultLabel,
   loadPetClusters,
@@ -76,7 +77,7 @@ export async function showIdentifyPicker(clusterId) {
   closeX.onmouseleave = () => {
     closeX.style.color = "var(--text-secondary)";
   };
-  closeX.onclick = () => overlay.remove();
+  closeX.onclick = () => close();
   header.appendChild(closeX);
   picker.appendChild(header);
 
@@ -98,40 +99,20 @@ export async function showIdentifyPicker(clusterId) {
   const cancelBtn = document.createElement("button");
   cancelBtn.className = "merge-picker-cancel";
   cancelBtn.textContent = "Cancel";
-  cancelBtn.onclick = () => overlay.remove();
+  cancelBtn.onclick = () => close();
 
   confirmBtn.className = "btn btn-primary";
   confirmBtn.textContent = "Name this pet";
   confirmBtn.disabled = true;
-  confirmBtn.onclick = () => _confirmIdentify(selected, detections, total, clusterId, overlay);
+  confirmBtn.onclick = () => _confirmIdentify(selected, detections, total, clusterId, close);
 
   footer.appendChild(cancelBtn);
   footer.appendChild(confirmBtn);
   picker.appendChild(footer);
 
   overlay.appendChild(picker);
-  overlay.addEventListener("click", (ev) => {
-    if (ev.target === overlay) overlay.remove();
-  });
-
-  // Capture phase + stopImmediatePropagation so ESC closes only the
-  // pet overlay, not also the lightbox (which registers a bubble-phase
-  // ESC handler on document at module load — fires first otherwise).
-  // Reference pattern: dialogs.mjs:46-58.
-  /** @param {KeyboardEvent} ev */
-  function onKey(ev) {
-    if (ev.key === "Escape") {
-      ev.stopPropagation();
-      ev.stopImmediatePropagation();
-      overlay.remove();
-      document.removeEventListener("keydown", onKey, true);
-    }
-  }
-  document.addEventListener("keydown", onKey, true);
-
   _installPreviewOnRightClick(grid);
-
-  document.body.appendChild(overlay);
+  const close = openPicker(overlay, { label: `Identify a pet in "${clusterName}"` });
 }
 
 /**
@@ -141,7 +122,7 @@ export async function showIdentifyPicker(clusterId) {
  * @param {HTMLButtonElement} confirmBtn
  */
 function _identifyCell(d, selected, confirmBtn) {
-  const cell = document.createElement("div");
+  const cell = pickable(document.createElement("div"));
   cell.style.cssText =
     "cursor:pointer;border-radius:8px;overflow:hidden;border:2px solid transparent;transition:border-color .15s;width:88px;height:88px;flex-shrink:0";
   cell.dataset.detectionId = String(d.detection_id);
@@ -175,13 +156,13 @@ function _identifyCell(d, selected, confirmBtn) {
  * @param {any[]} detections
  * @param {number} total
  * @param {number} clusterId
- * @param {HTMLElement} overlay
+ * @param {() => void} close
  */
-async function _confirmIdentify(selected, detections, total, clusterId, overlay) {
+async function _confirmIdentify(selected, detections, total, clusterId, close) {
   /** @type {any} */
   const win = window;
   if (selected.size === 0) return;
-  overlay.remove();
+  close();
   if (selected.size === detections.length && total === detections.length) {
     const labelEl = document.getElementById(`pet-label-${clusterId}`);
     if (labelEl) startPetRename(clusterId, labelEl);
@@ -320,7 +301,7 @@ export function showPetMergePicker(sourceClusterId) {
     const cid = c.cluster_id;
     const pcls = petClassFromCluster(cid);
     const name = petDisplayName(cid) || _petDefaultLabel(pcls) || `Pet ${cid + 1}`;
-    const item = document.createElement("div");
+    const item = pickable(document.createElement("div"));
     item.className = "merge-picker-item";
     const rep = c.representative;
     const avatarUrl =
@@ -334,7 +315,7 @@ export function showPetMergePicker(sourceClusterId) {
       `<div class="merge-picker-info"><div class="merge-picker-name">${esc(name)}</div>` +
       `<div class="merge-picker-count">${c.photo_count} photo${c.photo_count === 1 ? "" : "s"}</div></div>`;
     item.onclick = async () => {
-      overlay.remove();
+      close();
       const targetName = petDisplayName(cid) || _petDefaultLabel(pcls) || `Pet ${cid + 1}`;
       const ok = await appConfirm(`Merge "${sourceName}" into "${targetName}"?`, {
         okLabel: "Merge",
@@ -383,21 +364,10 @@ export function showPetMergePicker(sourceClusterId) {
   const cancelBtn = document.createElement("button");
   cancelBtn.className = "merge-picker-cancel";
   cancelBtn.textContent = "Cancel";
-  cancelBtn.onclick = () => overlay.remove();
+  cancelBtn.onclick = () => close();
   footer.appendChild(cancelBtn);
   picker.appendChild(footer);
 
   overlay.appendChild(picker);
-  overlay.addEventListener("click", (ev) => {
-    if (ev.target === overlay) overlay.remove();
-  });
-  /** @param {KeyboardEvent} ev */
-  function onKey(ev) {
-    if (ev.key === "Escape") {
-      overlay.remove();
-      document.removeEventListener("keydown", onKey);
-    }
-  }
-  document.addEventListener("keydown", onKey);
-  document.body.appendChild(overlay);
+  const close = openPicker(overlay, { label: `Merge "${sourceName}"` });
 }

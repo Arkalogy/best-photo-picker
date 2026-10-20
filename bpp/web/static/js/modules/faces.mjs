@@ -123,14 +123,21 @@ export async function applyFaceRecluster() {
     btn.disabled = true;
     btn.textContent = "Applying…";
   }
-  const resp = await apiFetch("/api/v1/faces/recluster", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ threshold }),
-  });
-  if (btn) {
-    btn.disabled = false;
-    btn.textContent = "Apply";
+  let resp;
+  try {
+    resp = await apiFetch("/api/v1/faces/recluster", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ threshold }),
+    });
+  } catch (e) {
+    toastError("regroup faces", e);
+    return;
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Apply";
+    }
   }
   if (resp.error) {
     toastError("regroup faces", new Error(resp.error));

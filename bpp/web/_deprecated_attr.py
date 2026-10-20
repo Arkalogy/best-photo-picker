@@ -57,7 +57,9 @@ def deprecated_attr(
     new_path: str,
 ) -> Callable[[Callable[..., _T]], Callable[..., _T]]:
     """Decorator: log a one-shot WARNING the first time the wrapped
-    property getter fires per process.
+    property getter (or setter: put it under ``@name.setter``) fires per
+    process. Getter and setter share one qualname, so one warning covers
+    both.
 
     ``new_path`` is the human-readable name of the recommended new
     access site (e.g. ``"ctx.workers (WorkerPool)"``). The log
@@ -73,7 +75,7 @@ def deprecated_attr(
         attr_name = getter.__qualname__
 
         @wraps(getter)
-        def _wrapper(self: Any) -> _T:
+        def _wrapper(self: Any, *args: Any) -> _T:
             if attr_name not in _logged:
                 # Slow path: lock + check + add + warn. Done at most
                 # once per attribute per process.
@@ -85,7 +87,7 @@ def deprecated_attr(
                             attr_name,
                             new_path,
                         )
-            return getter(self)
+            return getter(self, *args)
 
         return _wrapper
 

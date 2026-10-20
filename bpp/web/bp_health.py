@@ -127,6 +127,8 @@ def api_health() -> tuple[Response, int]:
     recovery_check = _recovery_check(ctx)
     face_recovery_check = _face_recovery_check(ctx)
     models_check = _models_check()
+    install_check = _install_check(is_owner)
+    downloads_check = _downloads_check()
 
     # Aggregate status: ok if everything reports clean, degraded if any
     # individual probe failed. We never return "down" through this code
@@ -141,6 +143,8 @@ def api_health() -> tuple[Response, int]:
         or recovery_check["failed"]
         or face_recovery_check["failed"]
         or "error" in models_check
+        or install_check["interrupted"]
+        or downloads_check["failed"]
     ):
         status = "degraded"
 
@@ -159,6 +163,9 @@ def api_health() -> tuple[Response, int]:
                     "derived_recovery": recovery_check,
                     "face_recovery": face_recovery_check,
                     "models": models_check,
+                    "install": install_check,
+                    "downloads": downloads_check,
+                    "phash": _phash_check(ctx),
                 },
             }
         ),
@@ -370,6 +377,46 @@ def _recovery_check(ctx: Any) -> dict[str, bool]:
     return {
         "failed": bool(getattr(store, "recovery_failed", False)),
         "in_flight": bool(getattr(store, "recovery_running", False)),
+    }
+
+
+def _install_check(is_owner: bool) -> dict[str, Any]:
+    """Feature installs: what waits for a restart, which pip left half-done
+    (``interrupted``, by feature key: the library degrades until repaired),
+    and the running work an install would have to wait for. The cheap
+    part of ``/api/v1/install/state`` only (no refusal check, no model
+    probe). Paired devices get nothing to act on."""
+    from bpp.web import install_status
+    from bpp.web.install_busy import busy_workers
+
+    if not is_owner:
+        return {"restart_pending": [], "interrupted": [], "busy": []}
+    state = install_status.quick_state()
+    return {
+        "restart_pending": state["restart_pending"],
+        "interrupted": state["interrupted"],
+        "busy": busy_workers(),
+    }
+
+
+def _downloads_check() -> dict[str, Any]:
+    """Model download jobs: running keys and the failed ones with the
+    reason. A failed download degrades health until it is retried."""
+    from bpp.web import model_download_jobs
+
+    return model_download_jobs.summary()
+
+
+def _phash_check(ctx: Any) -> dict[str, Any]:
+    """The perceptual-hash backfill the duplicate finder waits on: whether
+    it has finished for every analysed photo, whether its thread is still
+    running, and the store generation (bumps on every library switch)."""
+    store = ctx.analysis_store
+    thread = getattr(store, "compute_thread", None)
+    return {
+        "ready": bool(store.phash_ready.is_set()),
+        "in_flight": bool(thread is not None and thread.is_alive()),
+        "generation": int(getattr(store, "phash_generation", 0)),
     }
 
 

@@ -76,6 +76,11 @@ class FaceClusterMapCache:
             self._map = result
         return result
 
+    def peek(self) -> dict[str, list[int]] | None:
+        """The cached map without loading it (None = not loaded)."""
+        with self._lock:
+            return self._map
+
     def invalidate(self) -> None:
         with self._lock:
             self._map = None

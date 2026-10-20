@@ -120,6 +120,19 @@ def start(key: str, label: str, work: Callable[[], dict[str, Any]]) -> tuple[Dow
     return job, True
 
 
+def summary() -> dict[str, Any]:
+    """For /api/v1/health: the keys of the jobs running now and the failed
+    ones with their reason (a failed job stays until it is started again)."""
+    with _lock:
+        jobs = list(_jobs.values())
+    return {
+        "running": [j.key for j in jobs if j.status == "running"],
+        "failed": [
+            {"key": j.key, "label": j.label, "error": j.error} for j in jobs if j.status == "error"
+        ],
+    }
+
+
 def snapshot(key: str) -> dict[str, Any] | None:
     """Current state of the job for ``key``, or None if there is none."""
     with _lock:

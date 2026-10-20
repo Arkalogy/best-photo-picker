@@ -12,6 +12,7 @@
  * `updateBreadcrumbs`, `saveNavState`, `renderGrid`).
  */
 
+import { anyDialogOpen } from "./dialog-focus.mjs";
 import { apiFetch } from "./api-client.mjs";
 import { viewFetch } from "./view-guard.mjs";
 import { MONTHS_FULL } from "./date-format.mjs";
@@ -255,8 +256,13 @@ export function calendarKeyHandler(e) {
   /** @type {any} */
   const win = window;
   if (win.currentView !== "calendar") return;
+  if (_calKeysBelongElsewhere(e, win)) return;
 
   if (e.key === "Escape") {
+    // Only when there is a day focus or selection to clear; otherwise
+    // the key is left to whoever is listening after the calendar.
+    const focused = _calFocusDay !== null || document.querySelector(".cal-cell.cal-focused");
+    if (!focused && !getCalSelStart()) return;
     // Sibling bubble handlers (slideshow, compare) don't get to also
     // process this ESC. Dialog (capture phase) runs first.
     e.stopImmediatePropagation();
@@ -297,6 +303,21 @@ export function calendarKeyHandler(e) {
       calendarOpenDay(dateStr);
     }
   }
+}
+
+/**
+ * The calendar's keys are for its grid: not while typing in a field, not
+ * while the lightbox (opened from a day) or a dialog is over it.
+ * @param {KeyboardEvent} e
+ * @param {any} win
+ */
+function _calKeysBelongElsewhere(e, win) {
+  const t = /** @type {HTMLElement | null} */ (e.target);
+  if (t && (t.matches?.("input, textarea, select, [contenteditable]") || t.isContentEditable)) {
+    return true;
+  }
+  if (typeof win.lightboxIdx === "number" && win.lightboxIdx >= 0) return true;
+  return anyDialogOpen();
 }
 
 /**
@@ -380,6 +401,7 @@ export function _getCalState() {
     selStart: getCalSelStart(),
     selEnd: getCalSelEnd(),
     weekStart: _calWeekStart,
+    focusDay: _calFocusDay,
   };
 }
 

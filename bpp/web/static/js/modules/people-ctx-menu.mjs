@@ -140,18 +140,26 @@ const _PERSON_CTX_KEYS = {
 export function initPersonCtxMenu() {
   document.addEventListener("click", () => hidePersonCtxMenu());
 
-  // Single-key shortcuts when context menu is open
-  document.addEventListener("keydown", (e) => {
-    const menu = document.getElementById("person-ctx-menu");
-    if (menu.classList.contains("hidden") || ctxClusterId === null) return;
-    const action = _PERSON_CTX_KEYS[e.key.toLowerCase()];
-    if (action) {
-      e.preventDefault();
-      /** @type {HTMLElement|null} */ (menu.querySelector(`[data-action="${action}"]`))?.click();
-    } else if (e.key === "Escape") {
-      hidePersonCtxMenu();
-    }
-  });
+  // Single-key shortcuts while the menu is open. Capture phase, and the
+  // key stops here: the lightbox and grid listen on document too, and
+  // "d" (dismiss person) must not also delete the photo under the menu.
+  document.addEventListener(
+    "keydown",
+    (e) => {
+      const menu = document.getElementById("person-ctx-menu");
+      if (menu.classList.contains("hidden") || ctxClusterId === null) return;
+      const action = _PERSON_CTX_KEYS[e.key.toLowerCase()];
+      if (action) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        /** @type {HTMLElement|null} */ (menu.querySelector(`[data-action="${action}"]`))?.click();
+      } else if (e.key === "Escape") {
+        e.stopImmediatePropagation();
+        hidePersonCtxMenu();
+      }
+    },
+    true
+  );
 
 
   document.getElementById("person-ctx-menu").addEventListener("click", (e) => {
