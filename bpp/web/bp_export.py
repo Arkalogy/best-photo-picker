@@ -314,6 +314,7 @@ def api_export_start() -> tuple[Response, int]:
 
 
 @bp.get("/api/v1/export/progress")
+@requires_local_app
 def api_export_progress() -> Response:
     """SSE stream of export progress. Each event carries one of:
     ``start`` / ``export_progress`` / ``done`` / ``error`` / ``cancelled``.

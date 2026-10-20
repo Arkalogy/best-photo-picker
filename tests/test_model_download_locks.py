@@ -28,7 +28,7 @@ def test_a_download_that_failed_earlier_in_the_run_is_skipped(monkeypatch):
         patch("urllib.request.urlopen") as urlopen,
         pytest.raises(dl.DownloadSkippedError),
     ):
-        dl.download_file("https://x", "/nonexistent/f", registry_id="opencv_yunet")
+        dl.download_file("https://x", "/nonexistent/f", registry_id="opencv_yunet", sha256="0" * 64)
     urlopen.assert_not_called()
     assert "opencv_yunet" in os.environ["BPP_SKIP_DOWNLOADS"]  # inherited by subprocesses
 

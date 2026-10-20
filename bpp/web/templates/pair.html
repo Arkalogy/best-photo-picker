@@ -146,6 +146,14 @@
           setTimeout(function(){ location.reload(); }, 600);
           return;
         }
+        if (d.state === "unknown") {
+          stopped = true;
+          setState("revoked");
+          title.textContent = "This device isn't known to the host";
+          document.getElementById("pair-subtitle").textContent =
+            "Open the share link (QR code) again to ask for access.";
+          return;
+        }
         if (d.state === "revoked") {
           setState("revoked");
           title.textContent = "Access revoked";

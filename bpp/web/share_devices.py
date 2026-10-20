@@ -87,6 +87,12 @@ def find_or_create_pending_device(
     return _row_to_device(row)
 
 
+def touch_device(conn: sqlite3.Connection, device_id: int) -> None:
+    """Bump ``last_seen`` for a device the caller has already loaded."""
+    conn.execute("UPDATE share_devices SET last_seen=? WHERE id=?", (int(time.time()), device_id))
+    conn.commit()
+
+
 def request_access(conn: sqlite3.Connection, fingerprint: str) -> dict[str, object] | None:
     """Explicit re-request after a revoke (or no-op for non-revoked).
 

@@ -81,9 +81,10 @@ class TestEnsureModelHashCheck:
         tmp_file = target.with_suffix(target.suffix + ".tmp")
         assert not tmp_file.exists(), "tmp file must be cleaned up too"
 
-    def test_no_hash_keeps_legacy_behavior(self, tmp_path):
-        """Until every model registration has a hash, leaving model_sha256=None
-        must keep working — the field defaults to None for back-compat."""
+    def test_no_hash_refuses_the_download(self, tmp_path):
+        """A registration without a hash can't be verified, so nothing is
+        fetched and the model stays absent (an unverified install never
+        reaches the cache)."""
         content = b"legacy bytes"
         target = tmp_path / "model.onnx"
 
@@ -95,11 +96,14 @@ class TestEnsureModelHashCheck:
             create_fn=lambda p: object(),
             registry_id="openai_clip_vit_b32_onnx",
         )
-        with patch("urllib.request.urlopen", return_value=_fake_resp(content)):
-            result = ms.ensure_model()
+        with (
+            patch("urllib.request.urlopen", return_value=_fake_resp(content)) as urlopen,
+            pytest.raises(ValueError, match="pinned sha256"),
+        ):
+            ms.ensure_model()
 
-        assert result == target
-        assert target.exists()
+        assert not target.exists()
+        urlopen.assert_not_called()
 
     def test_existing_file_with_correct_hash_skips_download(self, tmp_path):
         """If model_path exists AND its bytes match the pinned hash,

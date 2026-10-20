@@ -104,6 +104,11 @@ _REDACT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(r"(?<![/A-Za-z0-9._-])/home/[^/\s'\"]+/"),
         "~/",
     ),
+    # Windows `C:\\Users\\<name>\\`.
+    (
+        re.compile(r"(?<![\\A-Za-z0-9._-])[A-Za-z]:\\+Users\\+[^\\\s'\"]+\\+"),
+        r"~\\",
+    ),
 )
 
 

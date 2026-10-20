@@ -49,7 +49,10 @@ def do_web(args: argparse.Namespace) -> int:
 
     host = getattr(args, "host", None) or "127.0.0.1"
     log.info("Starting web UI at http://%s:%d", host, port)
-    app.run(host=host, port=port, debug=getattr(args, "debug", False), threaded=True)
+    # ``--debug`` means verbose logging (setup_logging above), never
+    # Werkzeug's interactive debugger: that would hand a traceback page
+    # and a code console to anyone who can reach the port.
+    app.run(host=host, port=port, debug=False, threaded=True)
     return 0
 
 
@@ -122,10 +125,14 @@ def do_serve(args: argparse.Namespace) -> int:
     if (ctx.config or {}).get("behind_proxy"):
         _enable_gated_proxy_fix(app)
 
+    # ``--debug`` means verbose logging (setup_logging above), never
+    # Werkzeug's interactive debugger: with sharing on the server binds the
+    # LAN, and the debugger's traceback pages and console would be reachable
+    # by any device that can send a loopback Host header.
     app.run(
         host=host,
         port=port,
-        debug=getattr(args, "debug", False),
+        debug=False,
         threaded=True,
         ssl_context=_ssl_context(ctx.config or {}),
     )
@@ -299,6 +306,15 @@ def _enable_gated_proxy_fix(app: Any) -> None:
     from bpp.web.share import _trusted_peer_networks
 
     log = get_logger(__name__)
+    from bpp.web.host_allowlist import ENV_TRUSTED_HOSTS, configured_hosts
+
+    if not configured_hosts():
+        log.warning(
+            "behind_proxy is on but %s is empty: requests that arrive with the proxy's "
+            "host name are refused (421). Set %s to that name.",
+            ENV_TRUSTED_HOSTS,
+            ENV_TRUSTED_HOSTS,
+        )
     nets = _trusted_peer_networks()
     if not nets:
         log.error(

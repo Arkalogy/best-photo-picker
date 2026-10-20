@@ -46,7 +46,9 @@ def create_app(
     app.extensions["bpp"] = ctx
 
     _register_blueprints(app)
+    _install_host_gate(app)
     _install_auth_boundary(app, ctx)
+    _install_device_path_redaction(app, ctx)
     _install_security_headers(app)
 
     # Ensure workers stop and SQLite connections are closed on app teardown.
@@ -287,6 +289,51 @@ def _register_blueprints(app: Flask) -> None:
         share_bp,
     ):
         app.register_blueprint(blueprint)
+
+
+def _install_host_gate(app: Flask) -> None:
+    """Refuse requests whose Host header isn't one of this app's own
+    addresses (DNS rebinding defence; see ``bpp/web/host_allowlist.py``).
+    Runs before the auth boundary, and in TESTING too."""
+    from bpp.errors import HostNotAllowedError
+    from bpp.web.host_allowlist import configured_hosts, host_is_allowed
+
+    app.config["BPP_TRUSTED_HOSTS"] = configured_hosts()
+
+    @app.before_request
+    def _check_host():
+        if host_is_allowed(request.host or "", app.config["BPP_TRUSTED_HOSTS"]):
+            return None
+        raise HostNotAllowedError(
+            "This address isn't one the app answers to: open it from its own "
+            "address, or list the host in BPP_TRUSTED_HOSTS"
+        )
+
+
+def _install_device_path_redaction(app: Flask, ctx: WebAppState) -> None:
+    """Every JSON response to a paired device has the owner's paths
+    rewritten (library-relative, or ``~/``); see ``bpp/web/lan_redaction.py``."""
+    from bpp.web.lan_redaction import path_rewriter, redact_paths
+    from bpp.web.share import PRINCIPAL_LOCAL_APP
+
+    @app.after_request
+    def _redact_paths_for_devices(response):
+        if (
+            response.mimetype != "application/json"
+            or response.direct_passthrough
+            or response.is_streamed
+        ):
+            return response
+        from flask import g
+
+        principal = getattr(g, "bpp_principal", None)
+        if principal is None or principal.kind == PRINCIPAL_LOCAL_APP:
+            return response
+        data = response.get_json(silent=True)
+        if data is None:
+            return response
+        response.set_data(app.json.dumps(redact_paths(data, path_rewriter(ctx.library_path))))
+        return response
 
 
 def _install_auth_boundary(app: Flask, ctx: WebAppState) -> None:

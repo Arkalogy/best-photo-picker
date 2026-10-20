@@ -249,6 +249,11 @@ def download_file(
     runs the gate.
     """
     _run_policy_gate(registry_id)
+    if sha256 is None:
+        # Fail closed: an unpinned download is an unverified install.
+        raise ValueError(f"{registry_id}: refusing to download without a pinned sha256")
+    if not url.lower().startswith("https://"):
+        raise ValueError(f"{registry_id}: refusing a download that isn't over HTTPS")
     if _download_skipped(registry_id):
         why = (
             "downloads are disabled in this process"

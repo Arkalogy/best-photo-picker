@@ -145,25 +145,39 @@ def index() -> Response:
         # CSRF from cross-origin forms.
         import secrets
 
-        from bpp.web.share import is_device_trusted
+        from bpp.web.share import _token_equals, consume_pair_request_token
+        from bpp.web.share_devices import get_device_by_fingerprint
 
+        conn = ctx.get_conn()
         fp = request.cookies.get(FP_COOKIE_NAME)
-        if not fp:
+        known = get_device_by_fingerprint(conn, fp) if fp else None
+        if known is None:
+            # A device the owner has never seen joins the pending list only
+            # through the share link: the token in the QR / URL is the proof
+            # it was invited. Without that, any LAN host could queue itself
+            # for approval under a name of its choosing (the User-Agent) and
+            # collect the share token from a single approve click.
+            presented = request.args.get("_token") or request.headers.get("X-Auth-Token") or ""
+            if not _token_equals(presented, token):
+                return make_response(render_template("pair_needs_link.html"), 403)
+            if not consume_pair_request_token(remote):
+                return make_response(render_template("pair_needs_link.html", too_many=True), 429)
             fp = secrets.token_urlsafe(24)  # ~190 bits
-        # Always touch the device row (creates pending if new, bumps
-        # last_seen if existing). Owner-side UI uses this to surface
-        # pairing requests in real time.
-        find_or_create_pending_device(
-            ctx.get_conn(),
+        # Touch the device row (creates pending if new, bumps last_seen if
+        # existing). Owner-side UI uses this to surface pairing requests
+        # in real time.
+        row = find_or_create_pending_device(
+            conn,
             fingerprint=fp,
             name=_device_name_from_ua(request.headers.get("User-Agent", "")),
             ip=remote,
         )
+        trusted = row.get("trusted_at") is not None and row.get("revoked_at") is None
         # Phone is trusted → full SPA. Untrusted → pairing wait page.
         # Defense in depth: untrusted devices don't even get the SPA
         # bundle, so XSS in unrelated code can't leak the share token
         # to a phone the owner hasn't approved.
-        if is_device_trusted(ctx.get_conn(), fp):
+        if trusted:
             resp = make_response(
                 render_template(
                     "index.html",

@@ -372,7 +372,9 @@ requests through that mapping are treated as the owner — publishing
 to all interfaces (`-p 5001:5001`) can give other machines on your
 network owner access. LAN sharing is not supported from a container.
 Behind a reverse proxy, `X-Forwarded-For` is honored only if you also
-set `behind_proxy: true` in the config; see
+set `behind_proxy: true` in the config, and the proxy's host name must
+be listed in `BPP_TRUSTED_HOSTS` (the server answers only to its own
+addresses); see
 [docs/security.md](https://github.com/Arkalogy/best-photo-picker/blob/main/docs/security.md).
 
 ```

@@ -28,6 +28,7 @@ from bpp.db.photos import (
     count_hidden_photos,
     get_deleted_photos,
     get_hidden_photos,
+    get_photo_id_map_by_paths,
     get_photo_ids_by_paths,
     hide_photos,
     permanent_delete_photos,
@@ -112,7 +113,8 @@ def api_photos_delete_permanent() -> tuple[Response, int]:
     if not filepaths:
         raise ValidationError("filepaths required", field="filepaths")
     conn = ctx.get_conn()
-    photo_ids = get_photo_ids_by_paths(conn, filepaths)
+    path_to_id = get_photo_id_map_by_paths(conn, filepaths)  # rows of this library only
+    photo_ids = list(path_to_id.values())
     # Grab sha256 before deletion (needed for content-addressed inpaint cache).
     # Helper lives in bp_photos_manage — lazy import avoids any
     # ordering-sensitivity from blueprint registration.
@@ -138,7 +140,9 @@ def api_photos_delete_permanent() -> tuple[Response, int]:
         conn,
         "permanent_delete",
         {
-            "filepaths": list(filepaths),
+            # Only paths that are rows in this library: recovery replays
+            # the disk half on this list, so it must not be request input.
+            "filepaths": sorted(path_to_id),
             "sha256_map": dict(sha256_map),
             "allowed_dirs": allowed,
         },

@@ -222,3 +222,35 @@ class TestOpenFolderPlatformGate:
             resp = c.post("/api/v1/open-folder", json={"path": sub})
             assert resp.status_code == 501
             assert "platform" in resp.get_json()["error"].lower()
+
+
+class TestBundleDirectoriesAreNotOpened:
+    """On macOS a ``.app`` (or any package directory) is a directory, and
+    ``open <dir>`` launches it. The endpoint opens folders, not programs."""
+
+    def test_an_app_bundle_under_home_is_refused(self, tmp_path, monkeypatch):
+        app, d = _app_and_dir(tmp_path)
+        bundle = os.path.join(d, "Evil.app")
+        os.makedirs(os.path.join(bundle, "Contents"))
+        with open(os.path.join(bundle, "Contents", "Info.plist"), "w") as f:
+            f.write("<plist/>")
+        _force_launcher(monkeypatch)
+        fake = _ok_subprocess()
+        with app.test_client() as c, patch("bpp.web.bp_os_integration.subprocess", fake):
+            resp = c.post("/api/v1/open-folder", json={"path": bundle})
+        assert resp.status_code == 400
+        assert resp.get_json()["context"]["reason"] == "bundle"
+        fake.run.assert_not_called()
+
+    def test_a_package_without_a_bundle_suffix_is_refused_too(self, tmp_path, monkeypatch):
+        app, d = _app_and_dir(tmp_path)
+        pkg = os.path.join(d, "plain-name")
+        os.makedirs(os.path.join(pkg, "Contents"))
+        with open(os.path.join(pkg, "Contents", "Info.plist"), "w") as f:
+            f.write("<plist/>")
+        _force_launcher(monkeypatch)
+        fake = _ok_subprocess()
+        with app.test_client() as c, patch("bpp.web.bp_os_integration.subprocess", fake):
+            resp = c.post("/api/v1/open-folder", json={"path": pkg})
+        assert resp.status_code == 400
+        fake.run.assert_not_called()

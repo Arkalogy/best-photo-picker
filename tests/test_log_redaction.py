@@ -427,3 +427,13 @@ class TestPreloadRedaction:
         entries = h.get_entries()
         assert len(entries) == 1
         assert _TOKEN not in entries[0]["msg"]
+
+
+class TestWindowsHomePaths:
+    def test_windows_user_folder_is_anonymised_like_posix_homes(self):
+        from bpp.utils.logging import redact_secrets
+
+        text = r"saved C:\Users\alice\Pictures\x.jpg next to /Users/bob/Pictures/y.jpg"
+        out = redact_secrets(text)
+        assert "alice" not in out and "bob" not in out
+        assert out == r"saved ~\Pictures\x.jpg next to ~/Pictures/y.jpg"

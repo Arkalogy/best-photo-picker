@@ -97,7 +97,15 @@ class TestLanGated:
         ctx = app.extensions["bpp"]
         with app.app_context():
             set_lan_sharing_enabled(ctx.get_conn(), True)
+        from bpp.web.share import get_share_token
+
+        with app.app_context():
+            share = get_share_token(ctx.get_conn())
+        # The index is reachable, but a device the owner hasn't seen joins
+        # the pending list only with the share link's token.
         r = _request_from(app, "/", remote_addr="192.168.1.5")
+        assert r.status_code == 403
+        r = _request_from(app, "/", remote_addr="192.168.1.5", token=share)
         assert r.status_code == 200
 
 

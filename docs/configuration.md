@@ -112,6 +112,16 @@ If both `BPP_CACHE_DIR` and `BPP_MODELS_DIR` are set, models go to
 `BPP_MODELS_DIR` and everything else goes under `BPP_CACHE_DIR`.
 Resolution lives in `models_dir()` (`bpp/utils/paths.py`).
 
+## `BPP_TRUSTED_HOSTS`
+
+**Optional.** Comma-separated host names the server answers to, in
+addition to `localhost` and IP literals. Any other `Host` header is
+refused (HTTP 421) so a web page can't rebind its own domain to the
+app's address and read it as same-origin. Set it when bpp sits behind
+a reverse proxy with a name of its own, e.g.
+`BPP_TRUSTED_HOSTS=photos.home.lan`; a leading dot covers subdomains
+(`.example.net` allows `example.net` and `photos.example.net`).
+
 ## `BPP_SKIP_DOWNLOADS`
 
 **Internal — set by bpp, not by you.** Don't set it yourself.

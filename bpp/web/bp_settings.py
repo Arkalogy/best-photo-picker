@@ -59,6 +59,9 @@ log = get_logger(__name__)
 
 bp = Blueprint("settings_presets", __name__)
 
+#: Settings only the share endpoints may write (see PUT /api/v1/settings).
+_SHARE_ONLY_KEYS = frozenset({"lan_share_token", "lan_sharing_enabled"})
+
 
 # ──────────────────────────────────────────────────────────────────
 # CLIP cap override + status helper
@@ -268,6 +271,13 @@ def api_settings_put() -> tuple[Response, int]:
     data = request.get_json(silent=True) or {}
     if not data:
         raise ValidationError("No settings provided")
+    # Sharing state has its own endpoints (/share/toggle, /share/token):
+    # they refuse to enable sharing on a loopback-only bind, keep the
+    # token strong, and propagate to backups. A bare write here would
+    # skip all of that and persist to the next launch.
+    guarded = sorted(set(data) & _SHARE_ONLY_KEYS)
+    if guarded:
+        raise ValidationError("Use the Share controls for these settings", fields=guarded)
     ctx = get_ctx()
     conn = ctx.get_conn()
     set_settings(conn, data)

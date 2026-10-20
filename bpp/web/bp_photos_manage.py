@@ -198,6 +198,14 @@ def api_reset_edits() -> tuple[Response, int]:
     return jsonify({"reset": reset}), 200
 
 
+def _absolute_library_path(ctx: Any, filepath: str) -> str:
+    """A paired device sees device-safe paths (see ``bpp/web/lan_redaction.py``);
+    resolve those so its read-only lookups still find the row."""
+    from bpp.web.lan_redaction import resolve_device_path
+
+    return resolve_device_path(filepath, ctx.library_path)
+
+
 @bp.get("/api/v1/photos/enhance-preview")
 def api_enhance_preview() -> tuple[Response, int]:
     """Return auto-enhance parameters without saving (for per-section AUTO)."""
@@ -205,7 +213,7 @@ def api_enhance_preview() -> tuple[Response, int]:
 
     ctx = get_ctx()
     conn = ctx.get_conn()
-    filepath = request.args.get("filepath", "")
+    filepath = _absolute_library_path(ctx, request.args.get("filepath", ""))
     if not filepath:
         raise ValidationError("filepath required", field="filepath")
     if not get_photo_by_path(conn, filepath):
@@ -230,7 +238,7 @@ def api_get_edits() -> tuple[Response, int]:
     """Get current edits for a photo."""
     ctx = get_ctx()
     conn = ctx.get_conn()
-    filepath = request.args.get("filepath", "")
+    filepath = _absolute_library_path(ctx, request.args.get("filepath", ""))
     if not filepath:
         raise ValidationError("filepath required", field="filepath")
 

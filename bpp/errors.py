@@ -197,6 +197,21 @@ class PayloadTooLargeError(BppError):
     code = "payload_too_large"
 
 
+class RateLimitedError(BppError):
+    """Too many requests from one source (HTTP 429)."""
+
+    http_status = 429
+    code = "rate_limited"
+
+
+class HostNotAllowedError(BppError):
+    """The Host header names something that isn't this app (HTTP 421);
+    see ``bpp/web/host_allowlist.py``."""
+
+    http_status = 421
+    code = "host_not_allowed"
+
+
 class ResourceExhaustedError(BppError):
     """A bounded resource is full / over limit (503)."""
 

@@ -334,7 +334,7 @@ class BoundedSubprocessRunner(Generic[I, O]):
                     progress_callback(
                         {
                             "type": "error",
-                            "message": f"{self.phase.name} crashed: {msg.get('error')}",
+                            "message": (f"{self.phase.name} crashed; see server.log for the error"),
                         }
                     )
                 # Keep draining — the child may still emit SENTINEL on

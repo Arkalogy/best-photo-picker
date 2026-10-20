@@ -35,6 +35,8 @@ hardening path.
 |--------|------------|
 | Random LAN attacker hits port 5001 | LAN gate (Settings → Share toggle) blocks all non-loopback when off |
 | Attacker scans your QR (screenshot, etc.) and gets the URL | TOFU pairing — owner must approve the device on Mac |
+| LAN host that never had the link | A device enters the pending list only when its request carries the share token (the QR / share URL); requests are rate-limited per IP. A revoked device can still ask again from its pairing page; it reappears in the pending list for the owner to decline |
+| A web page the owner visits rebinds its domain to 127.0.0.1 (DNS rebinding) | Host-header allowlist: the app answers only to `localhost`, IP literals and names listed in `BPP_TRUSTED_HOSTS` (a reverse proxy's public name goes there; a leading dot covers subdomains) |
 | Friend who paired once now has perpetual access | Per-device "Revoke" button kicks them immediately |
 | Revoked phone reloads → silent re-pending notifications on Mac | After revoke, soft-revival is *explicit*: phone user must tap "Request access again" — the row stays revoked across reloads |
 | Phone bookmarks the URL, server reboots | Persistent share token survives restarts |

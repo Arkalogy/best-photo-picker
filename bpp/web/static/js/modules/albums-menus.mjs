@@ -19,7 +19,7 @@
 import { apiFetch } from "./api-client.mjs";
 import { appConfirm, appPrompt } from "./dialogs.mjs";
 import { menuClosed, menuOpened } from "./menu-a11y.mjs";
-import { esc, escapeJsAttr } from "./text-format.mjs";
+import { esc, escapeAttr } from "./text-format.mjs";
 import { showToast, toast, toastError } from "./toast.mjs";
 import { saveSetting } from "./settings-client.mjs";
 import { _getTimelineFilter, _setTimelineFilter } from "./timeline.mjs";
@@ -263,8 +263,8 @@ export function showSmartAlbumMenu(event, albumId, albumName) {
   menu.id = "smart-album-ctx";
   menu.className = "ctx-menu";
   menu.innerHTML =
-    `<div class="ctx-item" data-action="renameSmartAlbum" data-arg0="${albumId}" data-arg1="${escapeJsAttr(albumName)}">Rename</div>` +
-    `<div class="ctx-item ctx-item-danger" data-action="removeSmartAlbum" data-arg0="${albumId}" data-arg1="${escapeJsAttr(albumName)}">Remove</div>`;
+    `<div class="ctx-item" data-action="renameSmartAlbum" data-arg0="${albumId}" data-arg1="${escapeAttr(albumName)}">Rename</div>` +
+    `<div class="ctx-item ctx-item-danger" data-action="removeSmartAlbum" data-arg0="${albumId}" data-arg1="${escapeAttr(albumName)}">Remove</div>`;
   menu.style.position = "fixed";
   menu.style.left = event.clientX + "px";
   menu.style.top = event.clientY + "px";
@@ -363,8 +363,8 @@ export function showTagAlbumMenu(event, albumId, albumName, tagId) {
   menu.id = "smart-album-ctx";
   menu.className = "ctx-menu";
   menu.innerHTML =
-    `<div class="ctx-item" data-action="renameSmartAlbum" data-arg0="${albumId}" data-arg1="${escapeJsAttr(albumName)}">Rename</div>` +
-    `<div class="ctx-item ctx-item-danger" data-action="removeTagAlbum" data-arg0="${albumId}" data-arg1="${escapeJsAttr(albumName)}" data-arg2="${tagId}">Delete tag</div>`;
+    `<div class="ctx-item" data-action="renameSmartAlbum" data-arg0="${albumId}" data-arg1="${escapeAttr(albumName)}">Rename</div>` +
+    `<div class="ctx-item ctx-item-danger" data-action="removeTagAlbum" data-arg0="${albumId}" data-arg1="${escapeAttr(albumName)}" data-arg2="${tagId}">Delete tag</div>`;
   menu.style.position = "fixed";
   menu.style.left = event.clientX + "px";
   menu.style.top = event.clientY + "px";

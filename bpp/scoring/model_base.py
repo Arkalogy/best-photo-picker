@@ -392,64 +392,10 @@ class ModelSingleton:
         return self.bundled_path is not None and os.path.exists(self.bundled_path)
 
     def _download(self, repairing: bool) -> tuple[Path | None, str | None]:
-        import time
+        """Fetch the weights; the retry loop lives in ``model_download``."""
+        from bpp.scoring.model_download import download_model
 
-        from bpp.utils.download import announce, download_file, download_temp_path, plain_reason
-
-        assert self.model_path is not None and self.model_url is not None
-        try:
-            self.model_path.parent.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            log.error("Can't create the folder for %s: %s", self.name, exc)
-            return None, plain_reason(exc)
-        log.info("Downloading %s to %s ...", self.name, self.model_path)
-        announce(
-            f"Re-downloading {self.name} — the saved copy was damaged…"
-            if repairing
-            else f"Downloading {self.name}…"
-        )
-        tmp_path = Path(download_temp_path(str(self.model_path)))
-        _max_attempts = 3
-        for attempt in range(1, _max_attempts + 1):
-            try:
-                download_file(
-                    self.model_url,
-                    str(tmp_path),
-                    registry_id=self.registry_id,
-                    sha256=self.model_sha256,
-                )
-                os.replace(tmp_path, self.model_path)
-                size_mb = self.model_path.stat().st_size // (1024 * 1024)
-                log.info("%s downloaded (%d MB)", self.name, size_mb)
-                return self.model_path, None
-            except ModelIntegrityError:
-                # SHA mismatch is unrecoverable — propagate immediately so
-                # the caller hears about tampering/corruption without retry.
-                tmp_path.unlink(missing_ok=True)
-                log.error("Integrity failure downloading %s from %s", self.name, self.model_url)
-                raise
-            except Exception as exc:
-                tmp_path.unlink(missing_ok=True)
-                if attempt < _max_attempts:
-                    delay = 2**attempt
-                    log.warning(
-                        "Failed to download %s (attempt %d/%d): %s — retrying in %ds",
-                        self.name,
-                        attempt,
-                        _max_attempts,
-                        exc,
-                        delay,
-                    )
-                    time.sleep(delay)
-                else:
-                    log.error(
-                        "Failed to download %s after %d attempts: %s",
-                        self.name,
-                        _max_attempts,
-                        exc,
-                    )
-                    return None, plain_reason(exc)
-        return None, None
+        return download_model(self, repairing)
 
     def remove_files(self) -> int:
         """Delete the model file and any partial downloads; returns the

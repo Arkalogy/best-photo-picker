@@ -66,13 +66,17 @@ async function openAcceptance(page, nameText) {
 }
 
 test.describe("11 — Model registry picker + acceptance dialog", () => {
-  test("Picker renders 9 rows grouped by kind with the right markers", async ({ page }) => {
+  test("Picker renders every registry entry grouped by kind with the right markers", async ({
+    page,
+  }) => {
     const errors = await openApp(page);
     await openModelsTab(page);
 
     const rows = page.locator("#face-embedder-picker tr.fe-row");
-    // 9 entries: 3 face_embedder, 2 face_detector, 1 each of the rest.
-    await expect(rows).toHaveCount(9);
+    // The picker is the one list of every registry entry: the nine downloadable
+    // models (3 face embedders, 2 face detectors, CLIP, pets, content filter,
+    // inpainting) plus the seven bundled MediaPipe tasks.
+    await expect(rows).toHaveCount(16);
     // Grouped by kind — at least the face-embedder section heading shows.
     await expect(page.locator(".fe-kind-title", { hasText: "Face embedders" })).toBeVisible();
 

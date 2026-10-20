@@ -240,13 +240,19 @@ class TestFatalErrorPath:
         assert pid is not None
         assert _pid_exited(pid)
 
-    def test_fatal_error_emits_error_progress_message(self):
+    def test_fatal_error_emits_error_progress_message(self, caplog):
+        """The stream names the crashed phase; the raw error text (it can
+        carry file paths, and progress streams reach paired devices) goes
+        to server.log only."""
         progress: list[dict] = []
         runner = BoundedSubprocessRunner(_CountingPhase(child_fn=_child_raises_then_sentinel))
-        runner.run(payload=0, progress_callback=progress.append)
+        with caplog.at_level("ERROR", logger="bpp.utils.subprocess_runner"):
+            runner.run(payload=0, progress_callback=progress.append)
         errors = [m for m in progress if m.get("type") == "error"]
         assert errors, f"expected error progress msg, got {progress}"
-        assert "kaboom" in errors[0]["message"]
+        assert "counting crashed" in errors[0]["message"]
+        assert "kaboom" not in errors[0]["message"]
+        assert "kaboom" in caplog.text
 
 
 class TestCancellation:

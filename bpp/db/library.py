@@ -150,6 +150,8 @@ def import_folder(
     else:
         # Sanitize: strip path separators and traversal components.
         batch_name = os.path.basename(batch_name)
+        if batch_name in ("", ".", ".."):
+            raise ValueError(f"Invalid batch name: {batch_name!r}")
 
     photos_dir = get_library_dirs(library_path)["photos"]
     batch_dir = os.path.join(photos_dir, batch_name)

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from flask import Blueprint, Response, jsonify, request
 
-from bpp.errors import BppError, NotFoundError, ValidationError
+from bpp.errors import NotFoundError, RateLimitedError, ValidationError
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx
 
@@ -161,6 +161,7 @@ def api_share_pair_status() -> tuple[Response, int]:
         cookies are cleared and the user re-scans
     """
     from bpp.web.share import FP_COOKIE_NAME, get_device_by_fingerprint
+    from bpp.web.share_devices import touch_device
 
     ctx = get_ctx()
     fp = request.cookies.get(FP_COOKIE_NAME)
@@ -169,6 +170,9 @@ def api_share_pair_status() -> tuple[Response, int]:
     device = get_device_by_fingerprint(ctx.get_conn(), fp)
     if device is None:
         return jsonify({"state": "unknown"}), 200
+    # A phone that keeps polling is still waiting: bump last_seen so the
+    # pending-row expiry doesn't drop it while the owner is away.
+    touch_device(ctx.get_conn(), int(device["id"]))
     if device["revoked_at"] is not None:
         return jsonify({"state": "revoked"}), 200
     if device["trusted_at"] is not None:
@@ -196,9 +200,7 @@ def api_share_pair_request() -> tuple[Response, int]:
 
     ip = request.remote_addr or ""
     if not consume_pair_request_token(ip):
-        exc = BppError("Too many requests", code="rate_limited")
-        exc.http_status = 429  # type: ignore[misc]
-        raise exc
+        raise RateLimitedError("Too many requests")
 
     ctx = get_ctx()
     fp = request.cookies.get(FP_COOKIE_NAME)

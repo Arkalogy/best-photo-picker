@@ -32,6 +32,7 @@ class TestDownloadFileCleanup:
                 "https://example.com/model.onnx",
                 dest,
                 registry_id="openai_clip_vit_b32_onnx",
+                sha256="0" * 64,
             )
 
         assert not os.path.exists(dest), "Partial file should be removed on failure"
@@ -55,6 +56,7 @@ class TestDownloadFileCleanup:
                 "https://example.com/model.onnx",
                 dest,
                 registry_id="openai_clip_vit_b32_onnx",
+                sha256="0" * 64,
             )
 
         assert not os.path.exists(dest), "Partial file should be removed on write error"
@@ -68,11 +70,14 @@ class TestDownloadFileCleanup:
         fake_resp.__enter__ = lambda self: self
         fake_resp.__exit__ = lambda self, *a: None
 
+        import hashlib
+
         with patch("urllib.request.urlopen", return_value=fake_resp):
             download_file(
                 "https://example.com/model.onnx",
                 dest,
                 registry_id="openai_clip_vit_b32_onnx",
+                sha256=hashlib.sha256(content).hexdigest(),
             )
 
         assert os.path.exists(dest)
@@ -136,19 +141,22 @@ class TestDownloadFileSha256:
             "let a future load skip the verification path entirely"
         )
 
-    def test_no_sha256_no_check(self, tmp_path):
-        """Backwards compat: omitting `sha256` keeps the old behavior."""
+    def test_an_unpinned_download_is_refused(self, tmp_path):
+        """No pin, no download: an unverified install never reaches the cache."""
         dest = str(tmp_path / "model.onnx")
-        content = b"anything goes"
 
-        with patch("urllib.request.urlopen", return_value=self._fake_resp(content)):
+        with (
+            patch("urllib.request.urlopen") as urlopen,
+            pytest.raises(ValueError, match="pinned sha256"),
+        ):
             download_file(
                 "https://example.com/model.onnx",
                 dest,
                 registry_id="openai_clip_vit_b32_onnx",
             )
 
-        assert os.path.exists(dest)
+        urlopen.assert_not_called()
+        assert not os.path.exists(dest)
 
     def test_match_is_case_insensitive_and_strip_safe(self, tmp_path):
         """Hashes copy-pasted from `shasum -a 256` may have leading /

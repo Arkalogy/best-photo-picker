@@ -159,7 +159,14 @@ def extract_archive_into_workdir(
                 # AbsolutePathError / OutsideDestinationError on
                 # malicious entries. Surface as a user-readable
                 # message instead of a 500 crashing the worker.
-                emit({"type": "error", "message": f"Could not extract archive: {e}"})
+                log.warning("Could not extract archive: %s", e)
+                emit(
+                    {
+                        "type": "error",
+                        "message": "Could not extract archive: it is damaged or holds an "
+                        "unsafe entry (see server.log)",
+                    }
+                )
                 return None
     else:
         emit({"type": "error", "message": "Unsupported archive format"})

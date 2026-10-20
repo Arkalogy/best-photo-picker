@@ -26,6 +26,7 @@ The contract enforced here:
 
 from __future__ import annotations
 
+import hashlib
 import io
 import pathlib
 from typing import ClassVar
@@ -152,6 +153,7 @@ class TestPermissiveEntryPassesThrough:
                 "https://example.com/clip.onnx",
                 dest,
                 registry_id="openai_clip_vit_b32_onnx",
+                sha256=hashlib.sha256(content).hexdigest(),
             )
 
         assert pathlib.Path(dest).read_bytes() == content
@@ -186,6 +188,7 @@ class TestBypassWindowDuringFetch:
                 "https://example.com/x",
                 str(tmp_path / "x"),
                 registry_id="openai_clip_vit_b32_onnx",
+                sha256=hashlib.sha256(b"x").hexdigest(),
             )
 
         assert observed.get("during") is True, (

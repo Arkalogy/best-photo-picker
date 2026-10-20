@@ -49,6 +49,8 @@ def api_open_folder() -> tuple[Response, int]:
     path = os.path.realpath(path)
     if not os.path.isdir(path):
         raise NotFoundError("Directory not found", path=path)
+    if _is_bundle(path):
+        raise ValidationError("That's an application bundle, not a folder", reason="bundle")
 
     # Restrict to library root or user home (defense-in-depth).
     # shared allowlist helper.
@@ -114,6 +116,35 @@ def api_reveal_file() -> tuple[Response, int]:
         exc.http_status = code  # type: ignore[misc]
         raise exc
     return jsonify({"status": "ok"}), 200
+
+
+# macOS packages are directories that `open` launches instead of browsing.
+_BUNDLE_SUFFIXES = (
+    ".app",
+    ".appex",
+    ".action",
+    ".bundle",
+    ".component",
+    ".framework",
+    ".kext",
+    ".mdimporter",
+    ".mpkg",
+    ".pkg",
+    ".plugin",
+    ".prefpane",
+    ".qlgenerator",
+    ".saver",
+    ".workflow",
+    ".xpc",
+)
+
+
+def _is_bundle(path: str) -> bool:
+    """True for a package directory: by suffix, or by the Contents/Info.plist
+    inside it (a bundle renamed to hide its suffix is still a bundle)."""
+    if os.path.basename(path).lower().endswith(_BUNDLE_SUFFIXES):
+        return True
+    return os.path.isfile(os.path.join(path, "Contents", "Info.plist"))
 
 
 def _open_folder_cmd(path: str) -> list[str] | None:

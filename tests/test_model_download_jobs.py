@@ -8,6 +8,7 @@ started a second download. These tests pin the job behaviour.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import threading
@@ -136,7 +137,10 @@ class TestJobRegistry:
         def work():
             with patch.object(download.urllib.request, "urlopen", return_value=_Resp(body)):
                 download.download_file(
-                    "https://x/m.onnx", str(tmp_path / "m"), registry_id="openai_clip_vit_b32_onnx"
+                    "https://x/m.onnx",
+                    str(tmp_path / "m"),
+                    registry_id="openai_clip_vit_b32_onnx",
+                    sha256=hashlib.sha256(body).hexdigest(),
                 )
             seen.append(jobs.snapshot("prog"))
             release.wait(5)
@@ -227,7 +231,10 @@ class TestDownloadProgressCallback:
             download.report_progress(lambda done, total: calls.append((done, total))),
         ):
             download.download_file(
-                "https://x/y", str(tmp_path / "y"), registry_id="openai_clip_vit_b32_onnx"
+                "https://x/y",
+                str(tmp_path / "y"),
+                registry_id="openai_clip_vit_b32_onnx",
+                sha256=hashlib.sha256(body).hexdigest(),
             )
         assert calls, "progress callback never called"
         assert calls[-1] == (len(body), len(body))
