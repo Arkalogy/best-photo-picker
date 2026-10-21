@@ -26,6 +26,44 @@ import {
 } from "./people-review.mjs";
 import { FACE_MIN_PHOTOS } from "./constants.mjs";
 
+/** Person cards rendered per page of the People view. */
+const PEOPLE_PAGE = 150;
+
+/**
+ * Append the next page of cards when the sentinel scrolls into view.
+ * Without IntersectionObserver (jsdom) everything renders at once.
+ * @param {HTMLElement} view
+ * @param {any[]} cards
+ */
+function _watchPeopleSentinel(view, cards) {
+  // A re-render replaces the sentinel: drop the previous observer so it
+  // doesn't keep the old card array alive.
+  /** @type {any} */ (view)._peopleIo?.disconnect();
+  /** @type {any} */ (view)._peopleIo = null;
+  const sentinel = view.querySelector("#people-more-sentinel");
+  if (!sentinel) return;
+  let shown = PEOPLE_PAGE;
+  const more = () => {
+    const next = cards.slice(shown, shown + PEOPLE_PAGE);
+    shown += next.length;
+    sentinel.insertAdjacentHTML("beforebegin", next.map(_personCardHTML).join(""));
+    if (shown >= cards.length) sentinel.remove();
+  };
+  if (typeof IntersectionObserver === "undefined") {
+    while (shown < cards.length) more();
+    return;
+  }
+  const io = new IntersectionObserver((entries) => {
+    if (entries.some((e) => e.isIntersecting)) {
+      more();
+      if (!sentinel.isConnected) io.disconnect();
+    }
+  });
+  io.observe(sentinel);
+  /** @type {any} */ (view)._peopleIo = io;
+}
+
+
 export function personLabelHTML(clusterId, photoCount) {
   const name = personDisplayName(clusterId);
   const cluster = state.faceClusters.find(c => c.cluster_id === clusterId);
@@ -225,7 +263,11 @@ export function showPeopleView(afterLoad) {
       </div>
     </div>`;
   } else {
-    bodyHTML = displayCards.map(_personCardHTML).join("");
+    // A library can hold tens of thousands of clusters (background
+    // singletons): render a page of cards and append the rest as the
+    // user scrolls, instead of one DOM subtree per cluster at once.
+    bodyHTML = displayCards.slice(0, PEOPLE_PAGE).map(_personCardHTML).join("");
+    if (displayCards.length > PEOPLE_PAGE) bodyHTML += '<div id="people-more-sentinel"></div>';
 
     if (displayCards.length === 0) {
       const emptyMsg = state.peopleFilter === "excluded" ? "No excluded people"
@@ -235,6 +277,7 @@ export function showPeopleView(afterLoad) {
   }
 
   view.innerHTML = filterBar + bodyHTML;
+  _watchPeopleSentinel(view, displayCards);
 
   if (state.peopleFilter === "ignored") expandDismissedSection();
 

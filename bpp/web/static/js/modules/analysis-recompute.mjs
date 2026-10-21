@@ -10,7 +10,7 @@
  * Re-exported from analysis.mjs.
  */
 
-import { apiFetch } from "./api-client.mjs";
+import { apiFetch, LONG_OP_TIMEOUT_MS } from "./api-client.mjs";
 import { state } from "./state.mjs";
 import { toast, toastError } from "./toast.mjs";
 import { loadAlbumList } from "./albums.mjs";
@@ -95,6 +95,10 @@ export async function doRecompute(opts) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
+      // A first recompute on a large library runs the dedupe pass for
+      // minutes; the default 30 s abort would leave the server working
+      // while the user retries.
+      signal: AbortSignal.timeout(LONG_OP_TIMEOUT_MS),
     });
     if (_seq !== win._recomputeSeq || (win.currentAlbumId ?? null) !== _scope) return;
     // Surface slow recomputes so the user knows what they're waiting on.

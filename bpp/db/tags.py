@@ -170,13 +170,11 @@ def bulk_tag_photos(conn: sqlite3.Connection, photo_ids: list[int], tag_id: int)
 
 def bulk_untag_photos(conn: sqlite3.Connection, photo_ids: list[int], tag_id: int) -> int:
     """Remove a tag from multiple photos. Returns count removed."""
-    from bpp.constants import SQL_BATCH_SIZE
+    from bpp.db.sql_batches import in_batches
 
     if not photo_ids:
         return 0
-    for i in range(0, len(photo_ids), SQL_BATCH_SIZE):
-        batch = photo_ids[i : i + SQL_BATCH_SIZE]
-        placeholders = ",".join("?" * len(batch))
+    for placeholders, batch in in_batches(photo_ids):
         conn.execute(
             f"DELETE FROM photo_tags WHERE tag_id = ? AND photo_id IN ({placeholders})",
             [tag_id, *batch],

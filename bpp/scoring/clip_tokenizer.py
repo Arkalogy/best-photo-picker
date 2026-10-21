@@ -131,9 +131,14 @@ _vocab = ModelSingleton(
 
 def _load_vocab() -> tuple[dict[tuple[str, str], int], dict[str, int], dict[int, str]]:
     """Load BPE merge rules and build encoder/decoder (thread-safe singleton)."""
-    result = _vocab.get()
+    # get_or_raise names a license refusal; None here means the model
+    # was marked unavailable (its download or copy failed).
+    result = _vocab.get_or_raise()
     if result is None:
-        raise RuntimeError("CLIP BPE vocabulary unavailable — cannot tokenize text")
+        raise RuntimeError(
+            "CLIP BPE vocabulary unavailable: its download failed — see server.log; "
+            "Settings → Models can retry it"
+        )
     return result
 
 

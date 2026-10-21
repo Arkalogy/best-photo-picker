@@ -277,26 +277,37 @@ def api_video_trim() -> tuple[Response, int]:
     if not ffmpeg_available():
         raise ValidationError("ffmpeg is not installed", reason="ffmpeg_missing")
 
-    # Build output path: insert _trimmed before extension. The output
-    # also has to live inside the library — ffmpeg writes here, so a
-    # symlinked base could otherwise let it write outside the root.
+    # ffmpeg writes to a fresh hidden temp name beside the source (never
+    # a fixed name that could be another library file), inside the
+    # library — a symlinked base could otherwise let it write outside.
+    import tempfile
+
     base, ext = os.path.splitext(filepath)
-    out_path = f"{base}_trimmed{ext}"
+    fd, out_path = tempfile.mkstemp(
+        prefix=f".{os.path.basename(base)}.", suffix=f".trim{ext}", dir=os.path.dirname(filepath)
+    )
+    os.close(fd)
     if not is_path_under_any(out_path, allowed):
+        os.remove(out_path)
         raise ForbiddenError("Invalid filepath", reason="output_outside_library")
 
-    result = trim_video(filepath, out_path, start=float(start), end=float(end))
-    if not result["ok"]:
-        raise ValidationError(result["error"], reason="trim_failed")
+    try:
+        result = trim_video(filepath, out_path, start=float(start), end=float(end))
+        if not result["ok"]:
+            raise ValidationError(result["error"], reason="trim_failed")
 
-    # Re-resolve immediately before the destructive write — between the
-    # initial validation above and this replace, a symlink could be
-    # swapped to point outside the library (TOCTOU). Using the resolved
-    # target ensures we write to the path we already cleared.
-    if not is_path_under_any(filepath, allowed):
-        raise ForbiddenError("Path moved out of library", reason="toctou")
-    final_target = os.path.realpath(filepath)
-    os.replace(out_path, final_target)
+        # Re-resolve immediately before the destructive write — between
+        # the initial validation above and this replace, a symlink could
+        # be swapped to point outside the library (TOCTOU). Using the
+        # resolved target ensures we write to the path we already cleared.
+        if not is_path_under_any(filepath, allowed):
+            raise ForbiddenError("Path moved out of library", reason="toctou")
+        final_target = os.path.realpath(filepath)
+        os.replace(out_path, final_target)
+    finally:
+        # Whatever failed, no half-written clip stays beside the source.
+        with contextlib.suppress(OSError):
+            os.remove(out_path)
 
     # The file changed: the row must describe the new bytes (hash,
     # size, mtime) or the untrimmed original reads as a duplicate and

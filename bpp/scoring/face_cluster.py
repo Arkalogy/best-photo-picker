@@ -57,16 +57,29 @@ def _linkage_labels(matrix: np.ndarray, threshold: float) -> np.ndarray:
     return hierarchy.fcluster(linkage_matrix, t=threshold, criterion="distance") - 1
 
 
-def _nearest_centroid(block: np.ndarray, centroids: np.ndarray, chunk: int = 2048):
+def _f64(a: np.ndarray) -> np.ndarray:
+    """One chunk promoted to float64 for the distance math; the full
+    matrices stay float32 (a 500k x 512 float64 copy would be 2 GB)."""
+    return np.asarray(a, dtype=np.float64)
+
+
+def _nearest_centroid(block: np.ndarray, centroids: np.ndarray, chunk: int | None = None):
     """Index of the nearest centroid and its distance for each row of
     *block*, computed a chunk of rows at a time so the distance matrix
-    stays small."""
+    (and the float64 copy of the rows) stays small."""
+    cent = _f64(centroids)
+    # The float64 copy of a chunk is rows x dim: with few centroids the
+    # distance matrix is tiny but the copy is not, so the width counts.
+    chunk = chunk or _rows_per_chunk(max(len(cent), cent.shape[1]), len(cent))
     best = np.empty(len(block), dtype=np.int64)
     dist = np.empty(len(block), dtype=np.float64)
-    c_sq = np.einsum("ij,ij->i", centroids, centroids)
+    c_sq = np.einsum("ij,ij->i", cent, cent)
     for start in range(0, len(block), chunk):
-        rows = block[start : start + chunk]
-        d2 = np.einsum("ij,ij->i", rows, rows)[:, None] + c_sq[None, :] - 2.0 * (rows @ centroids.T)
+        rows = _f64(block[start : start + chunk])
+        d2 = rows @ cent.T
+        d2 *= -2.0
+        d2 += np.einsum("ij,ij->i", rows, rows)[:, None]
+        d2 += c_sq[None, :]
         np.maximum(d2, 0.0, out=d2)
         idx = np.argmin(d2, axis=1)
         best[start : start + chunk] = idx
@@ -85,29 +98,38 @@ def _rows_per_chunk(n_members: int, n_clusters: int) -> int:
 
 
 def _nearest_cluster_by_mean(
-    block: np.ndarray, members: np.ndarray, member_labels: np.ndarray, n_clusters: int
+    matrix: np.ndarray,
+    rows_idx: np.ndarray,
+    members: np.ndarray,
+    member_labels: np.ndarray,
+    n_clusters: int,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """For each row of *block*: the cluster whose members are nearest on
-    average, and that mean distance — the average-linkage criterion for
-    one face joining an existing cluster.
+    """For each row ``matrix[rows_idx]``: the cluster whose members are
+    nearest on average, and that mean distance — the average-linkage
+    criterion for one face joining an existing cluster.
 
-    Members are grouped by label once; each chunk of rows then costs one
-    (rows x members) distance matrix reduced per group, so memory is the
-    chunk budget, never (block x clusters) or (members x clusters).
+    Members are grouped by label once (at most one block of them, so
+    their float64 copy is bounded); each chunk of rows is gathered and
+    promoted to float64 on its own, so memory is the chunk budget, never
+    the whole tail or (block x clusters) or (members x clusters).
     """
     order = np.argsort(member_labels, kind="stable")
-    sorted_members = members[order]
+    sorted_members = _f64(members[order])
     sorted_labels = member_labels[order]
     counts = np.bincount(sorted_labels, minlength=n_clusters)
     if np.any(counts == 0):
-        raise ValueError("every cluster must have a member")
+        empty = np.flatnonzero(counts == 0)[:10].tolist()
+        raise ValueError(
+            f"empty cluster(s) {empty} of {n_clusters} ({len(members)} members): "
+            "every cluster must have a member"
+        )
     starts = np.searchsorted(sorted_labels, np.arange(n_clusters))
     m_sq = np.einsum("ij,ij->i", sorted_members, sorted_members)
-    best = np.empty(len(block), dtype=np.int64)
-    dist = np.empty(len(block), dtype=np.float64)
-    chunk = _rows_per_chunk(len(members), n_clusters)
-    for s0 in range(0, len(block), chunk):
-        rows = block[s0 : s0 + chunk]
+    best = np.empty(len(rows_idx), dtype=np.int64)
+    dist = np.empty(len(rows_idx), dtype=np.float64)
+    chunk = _rows_per_chunk(max(len(members), matrix.shape[1]), n_clusters)
+    for s0 in range(0, len(rows_idx), chunk):
+        rows = _f64(matrix[rows_idx[s0 : s0 + chunk]])
         # In place, so one (rows x members) matrix lives at a time.
         d2 = rows @ sorted_members.T
         d2 *= -2.0
@@ -147,12 +169,7 @@ def _blocked_labels(matrix: np.ndarray, threshold: float, block_size: int) -> np
         labels[head] = head_labels + next_id
         n_new = int(head_labels.max()) + 1
         if len(tail):
-            best, dist = _nearest_cluster_by_mean(
-                matrix[tail].astype(np.float64),
-                matrix[head].astype(np.float64),
-                head_labels,
-                n_new,
-            )
+            best, dist = _nearest_cluster_by_mean(matrix, tail, matrix[head], head_labels, n_new)
             joined = dist < threshold
             labels[tail[joined]] = best[joined] + next_id
             tail = tail[~joined]

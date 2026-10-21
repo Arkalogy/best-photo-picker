@@ -18,6 +18,7 @@ T = TypeVar("T")
 def in_batches(values: Sequence[T]) -> Iterator[tuple[str, list[T]]]:
     """Yield ``(placeholders, batch)`` pairs: ``placeholders`` is the
     ``?,?,...`` string for ``batch``, a slice of *values*."""
-    for i in range(0, len(values), SQL_BATCH_SIZE):
-        batch = list(values[i : i + SQL_BATCH_SIZE])
+    step = SQL_BATCH_SIZE
+    for i in range(0, len(values), step):
+        batch = list(values[i : i + step])
         yield ",".join("?" * len(batch)), batch

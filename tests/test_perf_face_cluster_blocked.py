@@ -75,7 +75,7 @@ def test_tail_faces_join_by_mean_distance_without_a_dense_cluster_matrix():
     members = rng.normal(size=(50, 8))
     labels = rng.integers(0, 7, size=50)
     block = rng.normal(size=(30, 8))
-    best, dist = fc._nearest_cluster_by_mean(block, members, labels, 7)
+    best, dist = fc._nearest_cluster_by_mean(block, np.arange(30), members, labels, 7)
     for i in range(30):
         means = [np.linalg.norm(members[labels == k] - block[i], axis=1).mean() for k in range(7)]
         assert best[i] == int(np.argmin(means)), f"row {i}: nearest cluster"

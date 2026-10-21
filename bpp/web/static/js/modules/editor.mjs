@@ -74,8 +74,15 @@ export async function openEditor(tab = "adjust") {
   if (win.lightboxIdx < 0) return;
   const p = items[win.lightboxIdx];
 
+  const ticket = ++_openTicket;
   const data = await apiFetch(`/api/v1/photos/edits?filepath=${encodeURIComponent(p.filepath)}`);
+  // The lightbox may have moved on (or closed) while the edits loaded:
+  // opening now would put this photo's edits on another photo, and
+  // Save would write them there.
+  const now = (win.currentGridItems || [])[win.lightboxIdx];
+  if (ticket !== _openTicket || win.lightboxIdx < 0 || now?.filepath !== p.filepath) return;
   const existing = data.edits || {};
+  win._editorPhoto = p;
 
   win.editorEdits = { ...EDITOR_DEFAULTS, ...existing };
   win.editorOriginalEdits = { ...win.editorEdits };
@@ -274,8 +281,11 @@ export function closeEditor(save) {
   win._removeInpaintOverlay?.();
   _clearLivePreview();
 
+  // Save to the photo the editor was opened on, not whatever the
+  // lightbox shows now.
   const items = /** @type {any[]} */ (win.currentGridItems || []);
-  const p = items[win.lightboxIdx];
+  const p = win._editorPhoto || items[win.lightboxIdx];
+  win._editorPhoto = null;
   if (save) {
     _saveEdits(p)
       .then(() => {
@@ -429,6 +439,7 @@ export {
 };
 
 import {
+
   _editorAutoEnhance,
   _editorDateChanged,
   _editorDateValue,
@@ -441,6 +452,9 @@ import {
   _updateAllSliders,
   _updateSliders,
 } from "./editor-tools.mjs";
+
+/** Bumped per openEditor call; a stale edits response is ignored. */
+let _openTicket = 0;
 export {
   _editorAutoEnhance,
   _editorDateChanged,

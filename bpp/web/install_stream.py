@@ -188,10 +188,14 @@ class _PipRun:
                 succeeded = proc.returncode == 0
                 # (All "already satisfied": nothing written, nothing waits.)
                 self.restart = self.wrote
-                with contextlib.suppress(Exception):
+                try:
                     pip_process.mark_ended(
                         self.key, stopped=stopped, succeeded=succeeded, prior=self.prior
                     )
+                except Exception:
+                    # The note left behind reads as an interrupted install
+                    # in /api/v1/health; say why it couldn't be cleared.
+                    log.warning("Couldn't clear the install note for %s", self.key, exc_info=True)
                 pip_process.clear_live(proc)  # after the note; only if ours
 
             # Whatever failed above, never leave the claim held: every

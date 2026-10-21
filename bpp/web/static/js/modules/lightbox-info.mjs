@@ -331,6 +331,9 @@ export async function lbTrimVideo() {
     if (data.duration != null) p.video_duration = data.duration;
     toast("Video trimmed!");
     const video = /** @type {HTMLVideoElement | null} */ (document.getElementById("lb-video"));
+    // The user may have moved to another clip while ffmpeg ran.
+    const shown = (win.currentGridItems || [])[win.lightboxIdx];
+    if (shown?.thumb_hash !== p.thumb_hash) return;
     if (video) video.src = authedSrc("/video/" + p.thumb_hash + "?t=" + Date.now());
     updateLightboxVideoInfo(p);
     updateLightboxTrim(p);

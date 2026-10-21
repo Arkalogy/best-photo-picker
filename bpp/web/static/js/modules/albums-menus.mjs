@@ -18,7 +18,7 @@
 
 import { apiFetch } from "./api-client.mjs";
 import { appConfirm, appPrompt } from "./dialogs.mjs";
-import { menuClosed, menuOpened } from "./menu-a11y.mjs";
+import { menuClosed, menuOpened, wireMenuActions } from "./menu-a11y.mjs";
 import { esc, escapeAttr } from "./text-format.mjs";
 import { showToast, toast, toastError } from "./toast.mjs";
 import { saveSetting } from "./settings-client.mjs";
@@ -203,6 +203,7 @@ export function showAlbumMoveMenu(event, albumId) {
   menu.style.top = event.clientY + "px";
   menu.style.zIndex = "9999";
   document.body.appendChild(menu);
+  wireMenuActions(menu, { items: ".ctx-item" });
   menuOpened(menu, {
     trigger: event.target,
     items: ".ctx-item",
@@ -270,6 +271,7 @@ export function showSmartAlbumMenu(event, albumId, albumName) {
   menu.style.top = event.clientY + "px";
   menu.style.zIndex = "9999";
   document.body.appendChild(menu);
+  wireMenuActions(menu, { items: ".ctx-item" });
   menuOpened(menu, {
     trigger: event.target,
     items: ".ctx-item",
@@ -370,6 +372,7 @@ export function showTagAlbumMenu(event, albumId, albumName, tagId) {
   menu.style.top = event.clientY + "px";
   menu.style.zIndex = "9999";
   document.body.appendChild(menu);
+  wireMenuActions(menu, { items: ".ctx-item" });
   menuOpened(menu, {
     trigger: event.target,
     items: ".ctx-item",

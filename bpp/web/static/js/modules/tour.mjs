@@ -403,6 +403,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     endTour();
     e.preventDefault();
+    e.stopImmediatePropagation(); // the lightbox must not also close
   } else if (e.key === "ArrowRight" || e.key === "Enter") {
     if (!TOUR_STEPS[tourStepIndex].waitFor) {
       nextTourStep();
@@ -412,7 +413,7 @@ document.addEventListener("keydown", (e) => {
     prevTourStep();
     e.preventDefault();
   }
-});
+}, true);
 
 window.addEventListener("resize", () => {
   if (!tourActive || !tourOverlayEl) return;

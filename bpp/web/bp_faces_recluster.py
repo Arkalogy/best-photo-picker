@@ -20,6 +20,7 @@ from flask import Response, jsonify, request
 
 from bpp.constants import CLUSTER_DISMISSED, CLUSTER_UNASSIGNED
 from bpp.db.event_hooks import dispatch_post_cluster
+from bpp.db.face_queries import assert_face_load_cap
 from bpp.db.smart_albums import get_affected_album_types, refresh_smart_albums
 from bpp.errors import ConflictError, ValidationError
 from bpp.scoring.face_cluster import cluster_faces
@@ -73,6 +74,13 @@ def api_faces_recluster() -> tuple[Response, int]:
 
     # Snapshot old cluster→photo mappings BEFORE re-clustering
     old_cluster_photos = _snapshot_cluster_photos(conn)
+
+    # Every non-dismissed embedding is loaded below: refuse past the cap
+    # with a structured 503 (as merge/restore do) instead of an OOM kill.
+    active_count = conn.execute(
+        f"SELECT COUNT(*) FROM face_embeddings WHERE cluster_id != {CLUSTER_DISMISSED}"
+    ).fetchone()[0]
+    assert_face_load_cap(conn, active_count)
 
     # Load all non-dismissed embeddings (ORDER BY ensures deterministic cluster IDs)
     rows = conn.execute(

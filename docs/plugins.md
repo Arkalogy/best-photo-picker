@@ -77,8 +77,7 @@ class MyPlugin:
         Flask app instance; the command line (`bpp analyze`, `bpp
         select`, `bpp pick`, through `bpp.plugins.load_plugins_for_cli`)
         passes None and fires `on_shutdown` when the command ends.
-        Use for: registering Flask blueprints, attaching CLI
-        subcommands, hooking the photo event bus."""
+        Use for: registering Flask blueprints, hooking the photo event bus."""
         if app is not None:
             from .blueprint import bp
             app.register_blueprint(bp)
@@ -554,9 +553,9 @@ See `examples/plugin_example/bpp_example_plugin/plugin.py` —
 
 ## Custom export modes
 
-The built-in export pipeline ships three modes — `copy`, `hardlink`,
-`symlink` — selected by the user from the Export modal's "How to copy"
-dropdown. Plugins can add their own modes (S3 upload, encrypted ZIP,
+The built-in export pipeline ships four modes — `copy`, `hardlink`,
+`symlink` and `zip` — selected by the user from the Export modal's "How
+to copy" dropdown. Plugins can add their own modes (S3 upload, encrypted ZIP,
 SFTP push, "Export to iPhoto", anything per-photo) via
 `register_export_mode()`.
 
@@ -890,7 +889,7 @@ What bpp commits to:
   Existing kwargs keep their meaning; new kwargs default to a value
   that preserves the pre-kwarg behaviour.
 - **Reserved (built-in) registry names don't move between majors.**
-  `hash` / `clip` / `none` (dedup), `copy` / `hardlink` / `symlink`
+  `hash` / `clip` / `none` (dedup), `copy` / `hardlink` / `symlink` / `zip`
   (export), `blur` / `exposure` / `face` / `composition` (scoring) —
   if any of these reserved names ever change, that's a major bump and
   shows up in CHANGELOG.md → "Breaking changes".
@@ -905,10 +904,10 @@ What plugins should commit to:
   exclusive upper bound on the next major (`>=0.4,<1.0`). This is the
   setuptools convention and what `__bpp_version_required__` will
   parse cleanly.
-- Treat the `**kwargs` catch-all in callbacks (scorer `score_fn`,
-  dedup `dedupe_fn`, export handler) as required — bpp may pass new
-  keyword arguments in future minor versions and a callable that
-  enumerates kwargs without `**kwargs` will break.
+- bpp passes only the documented arguments to callbacks (scorer
+  `score_fn`, dedup `dedupe_fn`, export handler) today; accepting
+  `**kwargs` as well keeps a callback working if a later minor version
+  adds one.
 - Pin the bpp dependency in your `pyproject.toml` to the same range
   you put in `__bpp_version_required__`. The runtime check is a
   belt-and-suspenders backstop; your wheel's pip resolver should
@@ -917,7 +916,7 @@ What plugins should commit to:
 ## Loader behaviour
 
 - **Idempotent**: the loader tracks loaded entry-points in a
-  process-global set, so the three startup paths (`bpp serve`,
+  process-global set, so the four startup paths (`bpp serve`, `bpp select`,
   `bpp analyze`, `bpp pick`) calling it in the same process don't
   double-invoke `setup()`.
 - **Best-effort**: a plugin whose import or `setup()` raises is
@@ -963,7 +962,7 @@ without restarting.
 ## Lifecycle hooks
 
 `setup()` is fired once at process startup. For per-library or
-per-request work, implement a plugin class with any subset of the four
+per-request work, implement a plugin class with any subset of the five
 lifecycle methods below and pass an instance to `register_plugin`:
 
 ```python
@@ -999,7 +998,7 @@ Firing semantics:
   (first-registered runs first).
 * `on_library_close` and `on_shutdown` fire in *reverse* registration
   order — symmetric with nested context managers (LIFO cleanup).
-* All four methods are optional; the host checks `hasattr` before
+* All five methods are optional; the host checks `hasattr` before
   calling. A plugin that needs only `on_library_open` defines just
   that method.
 * If your hook raises, the host logs a WARNING with `module.Class`
@@ -1012,13 +1011,22 @@ test suite drives every hook in
 
 ## Smart-album mutation domains
 
+Callback contract: `refresh_fn(conn)` runs on every refresh of the
+type and must create or update the album row itself — call
+`bpp.db.smart_albums.ensure_smart_album(conn, name=..., album_type=...,
+rule=..., photo_ids=[...])`, which also honours a user's dismissal of
+that album; core never creates a plugin album's row.
+`get_ids_fn(conn, rule)` returns the photo ids for one album's rule. Types must start with
+`smart_` (the sidebar and album delete key on the prefix); `register()`
+refuses others.
+
 When you register a custom smart-album type via `SmartAlbumRegistry`,
 the album's `refresh_fn` is invoked from
 `bpp/db/smart_albums.py:refresh_smart_albums()`. But that helper takes
 a `kinds=` argument so callers can refresh only the album types
 affected by their mutation. Built-in mutation domains
 (`face_extract`, `face_cluster`, `face_tag`, `pet_detect`, `import`,
-`dedup`, `edit` — see `bpp/db/smart_album_domains.py`) map to specific album
+`dedup`, `edit`, `sensitive` — see `bpp/db/smart_album_domains.py`) map to specific album
 types; a plugin's custom type doesn't show up in those tables unless
 you tell bpp about it:
 
@@ -1040,7 +1048,7 @@ register_album_domain(
 Without the `register_album_domain` call, a face-cluster mutation
 won't trigger your refresh — the album will only update on a full
 unscoped refresh (which the UI does on a slower cadence). The example
-plugin demonstrates the pattern at `bpp/plugins/example.py:175-185`.
+plugin demonstrates the pattern at `bpp/plugins/example.py` (its `register_album_domain` call).
 
 ## Post-event hooks
 
@@ -1062,7 +1070,7 @@ def _on_post_analyze(conn, results):
 
 def _on_post_cluster(conn, kind, n_clusters):
     """Fires after face / pet clustering writes cluster IDs. kind is
-    'face' / 'pet' (or a plugin-prefixed string)."""
+    'face' / 'pet' / 'near_duplicate' (or a plugin-prefixed string)."""
 
 def _on_post_import(conn, photo_ids, filepaths):
     """Fires after an import batch commits. photo_ids and filepaths

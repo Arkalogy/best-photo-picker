@@ -16,7 +16,7 @@
  * window at call time.
  */
 
-import { apiFetch, faceCropUrl } from "./api-client.mjs";
+import { apiFetch, faceCropUrl, LONG_OP_TIMEOUT_MS } from "./api-client.mjs";
 import { showModal } from "./modal.mjs";
 import {getSetting, saveSetting} from "./settings-client.mjs";
 import { showNudge } from "./nudges.mjs";
@@ -129,6 +129,7 @@ export async function applyFaceRecluster() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ threshold }),
+      signal: AbortSignal.timeout(LONG_OP_TIMEOUT_MS), // reclustering every face takes minutes
     });
   } catch (e) {
     toastError("regroup faces", e);

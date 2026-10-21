@@ -9,12 +9,11 @@ def get_sha256_map(conn: Any, filepaths: list[str]) -> dict[str, str]:
     """Return ``{filepath: truncated_sha256}`` for inpaint cache key lookup."""
     if not filepaths:
         return {}
-    from bpp.constants import HASH_PREFIX_LEN, SQL_BATCH_SIZE
+    from bpp.constants import HASH_PREFIX_LEN
+    from bpp.db.sql_batches import in_batches
 
     result: dict[str, str] = {}
-    for i in range(0, len(filepaths), SQL_BATCH_SIZE):
-        batch = filepaths[i : i + SQL_BATCH_SIZE]
-        placeholders = ",".join("?" * len(batch))
+    for placeholders, batch in in_batches(filepaths):
         rows = conn.execute(
             f"SELECT filepath, sha256 FROM photos WHERE filepath IN ({placeholders})",
             batch,

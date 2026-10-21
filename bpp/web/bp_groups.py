@@ -48,11 +48,9 @@ def api_groups() -> tuple[Response, int]:
     all_cids = list({cid for g in groups for cid in g["members"]})
     cluster_faces_map: dict[int, list] = {cid: [] for cid in all_cids}
     if all_cids:
-        from bpp.constants import SQL_BATCH_SIZE
+        from bpp.db.sql_batches import in_batches
 
-        for i in range(0, len(all_cids), SQL_BATCH_SIZE):
-            batch = all_cids[i : i + SQL_BATCH_SIZE]
-            ph = ",".join("?" * len(batch))
+        for ph, batch in in_batches(all_cids):
             rows = conn.execute(
                 "SELECT fe.cluster_id, fe.face_index, p.filepath, fe.quality "
                 "FROM face_embeddings fe "

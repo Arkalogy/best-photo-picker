@@ -16,6 +16,7 @@ import os
 import sqlite3
 from dataclasses import dataclass
 
+from bpp.db.sql_batches import in_batches
 from bpp.utils.logging import get_logger
 from bpp.utils.retry import retry_io
 
@@ -128,11 +129,13 @@ def scan_missing(
         )
         return MissingScan([], refused=(len(newly_missing), len(rows)))
     if newly_missing:
-        placeholders = ", ".join(["?"] * len(newly_missing))
-        conn.execute(
-            f"UPDATE photos SET missing=1 WHERE filepath IN ({placeholders})",
-            newly_missing,
-        )
+        # Batched: a forced scan after an outage can name most of the
+        # library, past SQLite's bound-variable limit in one statement.
+        for placeholders, batch in in_batches(newly_missing):
+            conn.execute(
+                f"UPDATE photos SET missing=1 WHERE filepath IN ({placeholders})",
+                batch,
+            )
         conn.commit()
         log.info("Marked %d photos as missing", len(newly_missing))
     return MissingScan(newly_missing)

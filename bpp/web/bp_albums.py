@@ -27,6 +27,7 @@ from bpp.db.photos import (
 from bpp.db.smart_albums import SmartAlbumRegistry
 from bpp.errors import NotFoundError, ValidationError
 from bpp.utils.logging import get_logger
+from bpp.web import album_siblings  # noqa: F401  (registers the Duplicates response hook)
 from bpp.web.recompute import (
     recompute_weight_keys,
 )

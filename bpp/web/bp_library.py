@@ -15,7 +15,7 @@ from bpp.db.registry import (
     rename_library_path,
     set_active_library,
 )
-from bpp.errors import BppError, ConflictError, ValidationError
+from bpp.errors import BppError, ConflictError, NotFoundError, ValidationError
 from bpp.utils.logging import get_logger
 from bpp.web.bp_install import no_install_during
 from bpp.web.share import requires_local_app
@@ -110,6 +110,13 @@ def api_libraries_rename() -> tuple[Response, int]:
             value=name,
         )
 
+    # Only a library bpp knows (registered, or the one open now) can be
+    # renamed: this moves a folder on disk, so an arbitrary path from the
+    # request body must not reach os.rename.
+    ctx = get_ctx()
+    known = {lib["path"] for lib in list_libraries()}
+    if path not in known and path != ctx.library_path:
+        raise NotFoundError("Not a known library", path=path)
     # Ensure the library is in the registry even if it was started via
     # `bpp serve --library` without going through the picker/switch flow.
     add_library(path)

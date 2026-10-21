@@ -130,6 +130,31 @@ def api_logs_clear() -> tuple[Response, int]:
     return jsonify({"status": "cleared", "files": cleared}), 200
 
 
+def _current_rss_bytes() -> int | None:
+    """The process's current resident size: psutil when installed, else
+    /proc on Linux, else ``ps`` on macOS. None when none of those work."""
+    try:
+        import psutil  # type: ignore[import-not-found]
+
+        return int(psutil.Process().memory_info().rss)
+    except Exception:
+        pass
+    try:
+        with open("/proc/self/statm") as f:
+            return int(f.read().split()[1]) * os.sysconf("SC_PAGE_SIZE")
+    except Exception:
+        pass
+    try:
+        import subprocess
+
+        out = subprocess.run(
+            ["ps", "-o", "rss=", "-p", str(os.getpid())], capture_output=True, text=True, timeout=2
+        )
+        return int(out.stdout.strip()) * 1024
+    except Exception:
+        return None
+
+
 @bp.get("/api/v1/debug/memory")
 @requires_local_app
 def api_debug_memory() -> tuple[Response, int]:
@@ -144,12 +169,15 @@ def api_debug_memory() -> tuple[Response, int]:
     ctx = get_ctx()
 
     # ── Process RSS ──────────────────────────────────────────────────────────
-    # resource.ru_maxrss is bytes on macOS, kilobytes on Linux.
+    # ru_maxrss is the process's PEAK (bytes on macOS, kilobytes on
+    # Linux); it never goes down, so it can't show memory being freed.
+    # ``rss_mb`` is the current resident size, read from the OS.
     ru = resource.getrusage(resource.RUSAGE_SELF)
-    rss_bytes = ru.ru_maxrss
+    peak_bytes = ru.ru_maxrss
     if sys.platform != "darwin":
-        rss_bytes *= 1024
-    rss_mb = round(rss_bytes / (1024 * 1024), 1)
+        peak_bytes *= 1024
+    peak_rss_mb = round(peak_bytes / (1024 * 1024), 1)
+    rss_mb = round((_current_rss_bytes() or peak_bytes) / (1024 * 1024), 1)
 
     # ── Cache sizes ──────────────────────────────────────────────────────────
     clip_emb = ctx.caches.clip_cache.get("embeddings") or {}
@@ -184,6 +212,7 @@ def api_debug_memory() -> tuple[Response, int]:
         {
             "process": {
                 "rss_mb": rss_mb,
+                "peak_rss_mb": peak_rss_mb,
                 "platform": sys.platform,
             },
             "caches": {

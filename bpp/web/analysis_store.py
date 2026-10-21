@@ -98,6 +98,10 @@ class AnalysisStore:
     face_recovery_running: bool = False
     face_recovery_failed: bool = False
     face_recovery_cancel: threading.Event = field(default_factory=threading.Event)
+    #: The phase-5 backfill (dup clusters + smart albums after startup):
+    #: joined with the other per-library threads on a switch, so it can't
+    #: write while the pool closes.
+    phase5_thread: threading.Thread | None = None
     #: The last missing-file scan refused to mark more than half the
     #: library missing: ``(missing, total)``; /api/v1/health shows it so a
     #: real mass deletion isn't mistaken for a healthy library.
@@ -148,6 +152,7 @@ class AnalysisStore:
             ("warm_thread", self.warm_thread),
             ("compute_thread", self.compute_thread),
             ("face_recovery_thread", self.face_recovery_thread),
+            ("phase5_thread", self.phase5_thread),
         ):
             if t is not None and t.is_alive():
                 t.join(timeout=timeout)
@@ -162,3 +167,4 @@ class AnalysisStore:
         self.warm_thread = None
         self.compute_thread = None
         self.face_recovery_thread = None
+        self.phase5_thread = None

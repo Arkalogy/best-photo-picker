@@ -6,7 +6,8 @@ import os
 import sqlite3
 from typing import Any
 
-from bpp.constants import ACTIVE_PHOTO_SQL, SQL_BATCH_SIZE, visible_photo_conditions
+from bpp.constants import ACTIVE_PHOTO_SQL, visible_photo_conditions
+from bpp.db.sql_batches import in_batches
 from bpp.scoring.registry import get_score_db_columns
 from bpp.utils.logging import get_logger
 from bpp.utils.retry import retry_io
@@ -220,10 +221,7 @@ def get_photo_id_map_by_paths(conn: sqlite3.Connection, filepaths: list[str]) ->
     if not filepaths:
         return {}
     result: dict[str, int] = {}
-    batch_size = SQL_BATCH_SIZE
-    for i in range(0, len(filepaths), batch_size):
-        batch = filepaths[i : i + batch_size]
-        placeholders = ",".join("?" * len(batch))
+    for placeholders, batch in in_batches(filepaths):
         rows = conn.execute(
             f"SELECT filepath, id FROM photos WHERE filepath IN ({placeholders})",
             batch,
@@ -242,10 +240,7 @@ def get_photo_ids_by_paths(conn: sqlite3.Connection, filepaths: list[str]) -> li
     if not filepaths:
         return []
     ids: list[int] = []
-    batch_size = SQL_BATCH_SIZE
-    for i in range(0, len(filepaths), batch_size):
-        batch = filepaths[i : i + batch_size]
-        placeholders = ",".join("?" * len(batch))
+    for placeholders, batch in in_batches(filepaths):
         rows = conn.execute(
             f"SELECT id FROM photos WHERE filepath IN ({placeholders})",
             batch,

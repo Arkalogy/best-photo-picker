@@ -56,11 +56,13 @@ def api_recheck_missing() -> tuple[Response, int]:
     # Single batched UPDATE instead of one round-trip per restored photo —
     # 50k-photo library reduces from N statements to one with an IN clause.
     if restored_ids:
-        placeholders = ",".join("?" * len(restored_ids))
-        conn.execute(
-            f"UPDATE photos SET missing=0 WHERE id IN ({placeholders})",
-            restored_ids,
-        )
+        from bpp.db.sql_batches import in_batches
+
+        for placeholders, batch in in_batches(restored_ids):
+            conn.execute(
+                f"UPDATE photos SET missing=0 WHERE id IN ({placeholders})",
+                batch,
+            )
         conn.commit()
     restored = len(restored_ids)
 

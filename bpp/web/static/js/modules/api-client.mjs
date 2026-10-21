@@ -81,6 +81,9 @@ export function petCropUrl(thumbHash, detectionIndex) {
  * avoid a reload-storm if many in-flight requests all 403 at once. */
 let _sessionLostHandled = false;
 
+/** Timeout for requests that do a whole-library pass (recompute, recluster). */
+export const LONG_OP_TIMEOUT_MS = 10 * 60 * 1000;
+
 export async function apiFetch(url, opts) {
   opts = opts || {};
   if (!opts.signal) opts.signal = AbortSignal.timeout(30000);

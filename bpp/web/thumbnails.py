@@ -225,10 +225,12 @@ class ThumbnailCache:
         to drain warming work before swapping the underlying DB.
         """
         generated = 0
-        for path_hash, filepath in self._hash_to_path.items():
+        # A snapshot: a permanent delete on a request thread pops from
+        # this dict while the warmer runs.
+        for path_hash, filepath in list(self._hash_to_path.items()):
             if cancel_event is not None and cancel_event.is_set():
                 break
-            if path_hash in self._verified:
+            if path_hash in self._verified or path_hash not in self._hash_to_path:
                 continue
             thumb_path = os.path.join(self.cache_dir, f"{path_hash}.jpg")
             if os.path.exists(thumb_path):

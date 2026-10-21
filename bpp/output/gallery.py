@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
+import html
 import os
+import urllib.parse
 from typing import Any
 
 from PIL import Image, ImageOps
@@ -85,15 +88,15 @@ def _make_thumbnail(src: str, dest: str, size: int = THUMBNAIL_MAX_SIZE) -> bool
             if img is None:
                 return False
         else:
-            img = retry_io(Image.open, src, label="thumb_open")
-            # Shrink before the EXIF transpose: thumbnail() asks the JPEG
-            # decoder for a reduced DCT scale, which a full decode (what
-            # exif_transpose forces) would have thrown away.
-            img.thumbnail((size, size), Image.LANCZOS)
-            img = ImageOps.exif_transpose(img)
+            with retry_io(Image.open, src, label="thumb_open") as raw:
+                # Shrink before the EXIF transpose: thumbnail() asks the
+                # JPEG decoder for a reduced DCT scale, which a full decode
+                # (what exif_transpose forces) would have thrown away.
+                raw.thumbnail((size, size), Image.LANCZOS)
+                img = ImageOps.exif_transpose(raw)
         img.thumbnail((size, size), Image.LANCZOS)
         img = img.convert("RGB")
-        img.save(dest, "JPEG", quality=JPEG_QUALITY_THUMB)
+        _save_atomically(img, dest, "JPEG", quality=JPEG_QUALITY_THUMB)
         return True
     except Exception as e:
         log.debug("Thumbnail failed for %s: %s", src, e)
@@ -110,11 +113,27 @@ def _make_video_thumbnail(src: str, dest: str, size: int = THUMBNAIL_MAX_SIZE) -
             return False
         img.thumbnail((size, size), Image.LANCZOS)
         img = img.convert("RGB")
-        img.save(dest, "JPEG", quality=JPEG_QUALITY_THUMB)
+        _save_atomically(img, dest, "JPEG", quality=JPEG_QUALITY_THUMB)
         return True
     except Exception as e:
         log.debug("Video thumbnail failed for %s: %s", src, e)
         return False
+
+
+def _save_atomically(img: Any, dest: str, fmt: str, **kw: Any) -> None:
+    """Write to a per-writer temp name and rename into place, so a reader
+    (or the warm thread racing a request) never sees a half-written file
+    — the grid serves thumbnails with a one-year immutable cache header."""
+    import threading
+
+    tmp = f"{dest}.{os.getpid()}.{threading.get_ident()}.tmp"
+    try:
+        img.save(tmp, fmt, **kw)
+        os.replace(tmp, dest)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+        raise
 
 
 def generate_gallery(selected: list[dict[str, Any]], outdir: str) -> None:
@@ -130,16 +149,20 @@ def generate_gallery(selected: list[dict[str, Any]], outdir: str) -> None:
         thumb_path = safe_join(thumb_dir, thumb_name)
 
         if _make_thumbnail(src, thumb_path):
+            # File names and reasons are untrusted text (an imported
+            # archive names them): escaped for HTML, and URL-quoted in src.
             card = CARD_TEMPLATE % {
-                "thumb": thumb_name,
-                "name": name,
-                "date": item.get("date_day") or (item.get("date") or "")[:10],
-                "score": item.get("aggregate_score", 0),
-                "reason": item.get("selection_reason", ""),
+                "thumb": urllib.parse.quote(thumb_name),
+                "name": html.escape(name, quote=True),
+                "date": html.escape(
+                    str(item.get("date_day") or (item.get("date") or "")[:10]), quote=True
+                ),
+                "score": float(item.get("aggregate_score", 0) or 0),
+                "reason": html.escape(str(item.get("selection_reason", "")), quote=True),
             }
             cards.append(card)
 
-    html = GALLERY_TEMPLATE % {
+    page = GALLERY_TEMPLATE % {
         "app_name": APP_NAME,
         "count": len(selected),
         "cards": "\n".join(cards),
@@ -147,6 +170,6 @@ def generate_gallery(selected: list[dict[str, Any]], outdir: str) -> None:
 
     gallery_path = os.path.join(outdir, "gallery.html")
     with open(gallery_path, "w") as f:
-        f.write(html)
+        f.write(page)
 
     log.info("Gallery written: %s (%d thumbnails)", gallery_path, len(cards))

@@ -15,8 +15,9 @@
 
 import { apiFetch, authedSrc } from "./api-client.mjs";
 import { appConfirm, appPrompt } from "./dialogs.mjs";
-import { menuClosed, menuOpened } from "./menu-a11y.mjs";
+import { menuClosed, menuOpened, wireMenuActions } from "./menu-a11y.mjs";
 import { renderGridFromItems } from "./memories.mjs";
+import { fetchAllPages } from "./paging.mjs";
 import { esc, escapeAttr } from "./text-format.mjs";
 import { toast, toastError } from "./toast.mjs";
 
@@ -119,7 +120,7 @@ export async function navigateToTagPhotos(tagId) {
   const win = window;
   let data;
   try {
-    data = await apiFetch(`/api/v1/tags/${tagId}/photos`);
+    data = await apiFetch(`/api/v1/tags/${tagId}/photos?limit=${PAGE}&offset=0`);
   } catch (e) {
     toastError("open that tag", e);
     return;
@@ -141,8 +142,20 @@ export async function navigateToTagPhotos(tagId) {
   grid.style.paddingTop = "0";
   grid.style.paddingBottom = "0";
   if (photos.length) {
-    // Windowed rendering: a tag can hold thousands of photos.
+    // Windowed rendering: a tag can hold thousands of photos; later
+    // pages are appended while this tag stays open.
     renderGridFromItems(photos);
+    if (data.has_more) {
+      fetchAllPages(`/api/v1/tags/${tagId}/photos`, {
+        pageSize: PAGE,
+        startOffset: photos.length,
+        stillWanted: () => win.currentView === "tag-photos" && win.currentViewId === tagId,
+        onPage: (page) => {
+          photos.push(...page);
+          win.vgrid?.appendItems?.(page);
+        },
+      }).catch((e) => toastError("load the rest of that tag", e));
+    }
   } else {
     if (win.vgrid) win.vgrid.items = [];
     grid.innerHTML = `<div class="empty-state"><div class="title">No photos</div>
@@ -154,6 +167,9 @@ export async function navigateToTagPhotos(tagId) {
 }
 
 // ── Card context menu: Rename / Merge into… / Delete ──
+
+/** Photos per page when opening a tag. */
+const PAGE = 1000;
 
 /** @type {number|null} */
 let _ctxTagId = null;
@@ -183,23 +199,32 @@ export function _tagCardCtxMenu(e) {
       menu?.classList.add("hidden");
       menuClosed(menu);
     };
+    wireMenuActions(menu, { items: ".ctx-menu-item", after: hide });
     document.addEventListener("click", hide);
-    document.addEventListener("keydown", (ke) => {
-      if (menu?.classList.contains("hidden") || _ctxTagId === null) return;
-      const map = /** @type {Record<string, string>} */ ({
-        r: "_tagCtxRename", m: "_tagCtxMerge", d: "_tagCtxDelete",
-      });
-      const action = map[ke.key.toLowerCase()];
-      if (action) {
-        ke.preventDefault();
-        menu.querySelector(`[data-action="${action}"]`)?.dispatchEvent(
-          new MouseEvent("click", { bubbles: true }),
-        );
-        hide();
-      } else if (ke.key === "Escape") {
-        hide();
-      }
-    });
+    // Capture phase + stopImmediatePropagation: the lightbox's global
+    // keydown must not also see this Escape (it would clear the
+    // selection) or the R/M/D shortcuts.
+    document.addEventListener(
+      "keydown",
+      (ke) => {
+        if (menu?.classList.contains("hidden") || _ctxTagId === null) return;
+        const map = /** @type {Record<string, string>} */ ({
+          r: "_tagCtxRename", m: "_tagCtxMerge", d: "_tagCtxDelete",
+        });
+        const action = map[ke.key.toLowerCase()];
+        if (action) {
+          ke.preventDefault();
+          ke.stopImmediatePropagation();
+          menu.querySelector(`[data-action="${action}"]`)?.dispatchEvent(
+            new MouseEvent("click", { bubbles: true }),
+          );
+        } else if (ke.key === "Escape") {
+          ke.stopImmediatePropagation();
+          hide();
+        }
+      },
+      true
+    );
   }
   menu.style.left = `${e.clientX}px`;
   menu.style.top = `${e.clientY}px`;

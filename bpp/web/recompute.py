@@ -73,6 +73,69 @@ class RecomputeOptions:
     clip_threshold: float | None = None
 
 
+_DEDUPE_CACHE: dict[str, Any] = {}
+_NOT_DEDUPE_KEYS = ("default_selection_k", "default_selection_seed")
+
+
+def _dedupe_cache_clear() -> None:
+    _DEDUPE_CACHE.clear()
+
+
+def _dedupe_key(items: list[dict[str, Any]], config: dict[str, Any], opts: RecomputeOptions):
+    """What the dedupe result depends on: the candidates (path + score,
+    so a re-analysis invalidates), the dedupe-relevant config, and the
+    CLIP inputs. Weights and k/seed are left out."""
+    rows = tuple(
+        (d["filepath"], d.get("aggregate_score"), d.get("phash"), d.get("date")) for d in items
+    )
+    cfg = tuple(
+        sorted(
+            (k, v)
+            for k, v in config.items()
+            if isinstance(v, (int, float, str, bool, type(None)))
+            and not k.endswith("_weight")
+            and k not in _NOT_DEDUPE_KEYS
+        )
+    )
+    clip = opts.clip_embeddings
+    clip_len = len(clip) if clip else 0
+    return (hash(rows), len(rows), cfg, clip_len, opts.skip_dedupe, opts.clip_threshold)
+
+
+def _dedupe_cached(
+    items: list[dict[str, Any]], config: dict[str, Any], opts: RecomputeOptions
+) -> tuple[list[dict[str, Any]], str]:
+    key = _dedupe_key(items, config, opts)
+    hit = _DEDUPE_CACHE.get("entry")
+    # The CLIP dict is compared by identity (held in the entry, so its
+    # address can't be reused by a reloaded cache).
+    if hit is not None and hit[0] == key and hit[2] is opts.clip_embeddings:
+        cached, mode = hit[1]
+        # recompute copies the analysis per call: the dedupe's fields
+        # (cluster_size, similar_photos) must land on THIS call's dicts,
+        # and the candidates returned must be those dicts.
+        by_path = {d["filepath"]: d for d in items}
+        candidates = []
+        for c in cached:
+            cur = by_path.get(c["filepath"])
+            if cur is None:
+                continue
+            for k, v in c.items():
+                if k not in cur or k in ("cluster_size", "similar_photos"):
+                    cur[k] = v
+            candidates.append(cur)
+        return candidates, mode
+    candidates, mode = dedupe_candidates(
+        items,
+        config,
+        clip_embeddings=opts.clip_embeddings,
+        skip_dedupe=opts.skip_dedupe,
+        clip_threshold=opts.clip_threshold,
+    )
+    _DEDUPE_CACHE["entry"] = (key, (candidates, mode), opts.clip_embeddings)
+    return list(candidates), mode
+
+
 def recompute(opts: RecomputeOptions) -> dict[str, Any]:
     """Reweight, deduplicate, apply overrides, and select photos.
 
@@ -143,13 +206,10 @@ def recompute(opts: RecomputeOptions) -> dict[str, Any]:
 
     # Deduplicate only normal candidates, through the one shared path
     # (a strategy named in config wins; else CLIP; else skip; else hash).
-    candidates, dedup_mode = dedupe_candidates(
-        normal_for_dedupe,
-        config,
-        clip_embeddings=opts.clip_embeddings,
-        skip_dedupe=opts.skip_dedupe,
-        clip_threshold=opts.clip_threshold,
-    )
+    # The result is kept while its inputs are unchanged: a k or seed
+    # change (every slider nudge) must not redo the O(N²) pass, which
+    # takes minutes at 200k photos.
+    candidates, dedup_mode = _dedupe_cached(normal_for_dedupe, config, opts)
 
     # Reduce k budget by number of force-includes
     remaining_k = max(0, opts.k - len(forced_in))

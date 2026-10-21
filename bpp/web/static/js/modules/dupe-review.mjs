@@ -9,6 +9,7 @@
  */
 
 import { apiFetch } from "./api-client.mjs";
+import { fetchAllPages } from "./paging.mjs";
 import { toast, toastError } from "./toast.mjs";
 
 /**
@@ -65,10 +66,18 @@ export function _resetDupeState() {
  * view on the first one, and wraps the compare actions for
  * auto-advance.
  */
+/** Duplicate groups fetched per request. */
+const DUPE_PAGE = 200;
+
 export async function startDupeReview() {
   try {
-    const data = await apiFetch("/api/v1/duplicates/groups");
-    _dupeGroups = data.groups || [];
+    // Paged requests (the server caps each page), but all groups are
+    // in hand before the review starts: resolving groups shrinks the
+    // server's list, so a later offset would skip groups never shown.
+    _dupeGroups = await fetchAllPages("/api/v1/duplicates/groups", {
+      pageSize: DUPE_PAGE,
+      key: "groups",
+    });
     if (!_dupeGroups || _dupeGroups.length === 0) {
       _dupeGroups = null;
       toast("No duplicate groups to review");

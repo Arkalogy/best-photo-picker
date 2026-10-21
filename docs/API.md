@@ -187,6 +187,7 @@ included only for the local-app owner.
     "phase5": { "in_flight": false, "failed": false },
     "derived_recovery": { "in_flight": false, "failed": false },
     "face_recovery": { "in_flight": false, "failed": false },
+    "missing_scan": { "refused": false },
     "install": { "restart_pending": [], "interrupted": [], "busy": [] },
     "downloads": { "running": [], "failed": [] },
     "phash": { "ready": true, "in_flight": false, "generation": 3 },
@@ -360,10 +361,17 @@ Feeds the Activity tab; the bell dropdown runs the humanizer over it.
 
 Owner-only. Clear the in-memory buffer and truncate server.log files.
 
+`missing_scan.refused` is true (with `missing` / `total`) when a scan
+declined to mark more than half the library missing — an outage, or a
+real mass deletion the manual recheck must confirm; it degrades `status`
+until a completed scan or a clean sample clears it.
+
 ### GET /api/v1/debug/memory
 
-Snapshot of major in-memory structures (caches, worker queues) for
-memory-leak diagnostics.
+Snapshot of major in-memory structures (CLIP cache, thumbnail map,
+cluster map) for memory-leak diagnostics. `rss_mb` is the process's
+current resident size; `peak_rss_mb` its peak since start (the peak
+never goes down).
 
 ### GET /api/v1/_diag/is_e2e_fixture
 
@@ -1324,12 +1332,18 @@ List all face clusters (people) with representative photos.
   "clusters": [
     {
       "cluster_id": 0,
-      "name": "Alice",
+      "face_count": 47,
       "photo_count": 42,
-      "representative": { "filepath": "...", "face_index": 0, "thumb_hash": "abc123" }
+      "representative": { "filepath": "...", "face_index": 0, "bbox": [x, y, w, h], "thumb_hash": "abc123" },
+      "filepaths": ["..."]
     }
-  ]
+  ],
+  "dismissed_count": 3
 }
+
+Names live on the person's smart album (`GET /api/v1/albums`, type
+`smart_person`), not on the cluster. `filepaths` and `representative.filepath`
+are redacted for paired LAN devices.
 ```
 
 ### POST /api/v1/faces/avatar
@@ -1990,11 +2004,6 @@ Remove a tag from multiple photos.
 | `tag_id` | int | yes | Tag ID |
 
 ---
-
-### GET /api/v1/tags/:tag_id/photos
-
-All active photos carrying a tag — the Tags browse view's
-click-through grid (standard photo dicts, lightbox-compatible).
 
 ### POST /api/v1/tags/:tag_id/merge
 

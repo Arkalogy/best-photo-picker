@@ -69,6 +69,8 @@ def scan_images(
             ):
                 continue
             for name in sorted(filenames):
+                if name.startswith("."):
+                    continue  # hidden: OS metadata, editors' and bpp's own temp files
                 scanned += 1
                 filepath = os.path.join(dirpath, name)
                 if not follow_symlinks and os.path.islink(filepath):
@@ -98,6 +100,8 @@ def scan_images(
         for entry in entries:
             if not entry.is_file(follow_symlinks=follow_symlinks):
                 continue
+            if entry.name.startswith("."):
+                continue  # hidden: OS metadata, editors' and bpp's own temp files
             if not follow_symlinks and entry.is_symlink():
                 log.debug("Skipping symlink: %s", entry.path)
                 continue

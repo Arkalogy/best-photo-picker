@@ -9,7 +9,7 @@ process boot" but offers no hook for:
 * clean teardown when the user switches library,
 * clean shutdown on Ctrl-C / SIGTERM.
 
-This module adds an opt-in protocol — :class:`Plugin` — with four
+This module adds an opt-in protocol — :class:`Plugin` — with five
 lifecycle hooks. Plugins that conform get called at the right points;
 plugins that don't (the existing zero-arg ``setup()`` shape) keep
 working unchanged. The protocol is a contract, not a mandate.
@@ -18,8 +18,7 @@ Lifecycle:
 
 * ``on_register(app)`` — once per process, just after the plugin's
   setup callable returns. Receives the Flask app (None in CLI
-  contexts). Use for: registering Flask blueprints, attaching
-  CLI subcommands, hooking the photo event bus.
+  contexts). Use for: registering Flask blueprints, hooking the photo event bus.
 * ``on_db_restore(corrupted_sidecar_path)`` — fires once per process
   if the startup integrity check auto-restored the DB from ``.backup``.
   Receives the path of the corrupt-DB sidecar that was kept for

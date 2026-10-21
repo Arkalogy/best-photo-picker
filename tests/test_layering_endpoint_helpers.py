@@ -23,14 +23,22 @@ ALLOWED = {
     ("web/bp_faces_extract.py", "bp_install"),
     ("web/bp_library.py", "bp_install"),
     ("web/bp_inpaint.py", "bp_install"),
+    ("web/install_stream.py", "bp_install"),
     ("web/state_lifecycle.py", "bp_photos_lifecycle"),
     # The faces blueprints share one Blueprint object.
     ("web/bp_faces_recluster.py", "bp_faces_cluster_ops"),
+    # Route registration for the shared Blueprint (module import form).
+    ("web/bp_faces_cluster_ops.py", "bp_faces_recluster"),
     # Photo lifecycle routes are registered on the photos-manage blueprint.
     ("web/bp_photos_manage.py", "bp_photos_lifecycle"),
 }
 
 _IMPORT = re.compile(r"^\s*from bpp\.web\.(bp_[a-z_]+) import", re.MULTILINE)
+# ``from bpp.web import bp_x [as _b]`` and ``import bpp.web.bp_x``: the
+# same edge in another spelling.
+_MODULE_IMPORT = re.compile(
+    r"^\s*(?:from bpp\.web import (bp_[a-z_]+)|import bpp\.web\.(bp_[a-z_]+))", re.MULTILINE
+)
 
 
 def _edges():
@@ -38,8 +46,11 @@ def _edges():
         rel = path.relative_to(ROOT).as_posix()
         if rel in ("web/app.py", "web/blueprints.py") or rel.startswith("plugins/"):
             continue
-        for m in _IMPORT.finditer(path.read_text(encoding="utf-8")):
+        text = path.read_text(encoding="utf-8")
+        for m in _IMPORT.finditer(text):
             yield rel, m.group(1)
+        for m in _MODULE_IMPORT.finditer(text):
+            yield rel, m.group(1) or m.group(2)
 
 
 def test_the_db_layer_imports_no_endpoint_file():

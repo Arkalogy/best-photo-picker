@@ -199,15 +199,21 @@ def _load_plugins(app: Flask) -> None:
             fire_on_register,
         )
 
-        fire_on_register(app)
+        try:
+            fire_on_register(app)
+        except Exception:
+            log.warning("Plugin on_register dispatch failed at startup", exc_info=True)
         # Drain the deferred startup DB-restore signal.
         # serve.py noted the corrupt-sidecar path before plugins were
         # loaded; now that fire_on_register has run, plugins exist
         # and can flush stale caches before on_library_open primes
         # against the freshly-restored DB.
-        fire_on_db_restore_if_pending()
+        try:
+            fire_on_db_restore_if_pending()
+        except Exception:
+            log.warning("Plugin on_db_restore dispatch failed at startup", exc_info=True)
     except Exception:
-        pass  # best-effort; loader already logs per-plugin failures
+        log.warning("Plugin lifecycle module unavailable at startup", exc_info=True)
 
 
 def _register_blueprints(app: Flask) -> None:

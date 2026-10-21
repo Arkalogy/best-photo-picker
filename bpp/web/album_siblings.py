@@ -66,3 +66,14 @@ def attach_cluster_siblings(
         ]
         if siblings:
             photos[i]["similar_photos"] = siblings
+
+
+def _smart_duplicates_ui_metadata(conn: Any, ctx: Any, photos: Any, photos_data: Any) -> None:
+    """The Duplicates album's response hook: attach each photo's cluster
+    siblings. Registered here (the web layer shapes API responses)."""
+    attach_cluster_siblings(conn, ctx.thumbs, photos, photos_data)
+
+
+from bpp.db.smart_albums import SmartAlbumRegistry  # noqa: E402
+
+SmartAlbumRegistry.set_ui_metadata_fn("smart_duplicates", _smart_duplicates_ui_metadata)

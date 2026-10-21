@@ -238,8 +238,20 @@ def semantic_deduplicate(
     return selected
 
 
-#: Candidates scored per matrix product in pass 2.
+#: Candidates scored per matrix product in pass 2, and the most bytes one
+#: block's (candidates x reps) similarity matrix may take: as the rep
+#: count grows toward the CLIP cap the block shrinks, so the product is
+#: never a 200 MB allocation on top of the matrix itself.
 _PASS2_BLOCK = 256
+_PASS2_BLOCK_BYTES = 32 * 1024 * 1024
+
+
+def _pass2_block_rows(n_reps: int) -> int:
+    """Candidates per block so the block's similarity matrix stays
+    under ``_PASS2_BLOCK_BYTES`` (float32)."""
+    if n_reps <= 0:
+        return _PASS2_BLOCK
+    return max(1, min(_PASS2_BLOCK, _PASS2_BLOCK_BYTES // (4 * n_reps)))
 
 
 def _global_semantic_dedup(
@@ -300,8 +312,10 @@ def _global_semantic_dedup(
     # as the one-candidate-at-a-time pass; a fraction of the memory
     # traffic, because the rep matrix is streamed once per block, not
     # once per candidate.
-    for start in range(0, len(sorted_items), _PASS2_BLOCK):
-        block = sorted_items[start : start + _PASS2_BLOCK]
+    start = 0
+    while start < len(sorted_items):
+        block = sorted_items[start : start + _pass2_block_rows(n_emb)]
+        start += len(block)
         with_emb = [
             (i, fp_to_emb[it["filepath"]])
             for i, it in enumerate(block)

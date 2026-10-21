@@ -59,6 +59,53 @@ export function menuTriggerOf(menu) {
  *   ``onEscape``: for a menu with no Escape handling of its own — called
  *   (and the key stopped) when Escape is pressed inside it.
  */
+/**
+ * Run the `data-action` of a clicked item in a runtime-built menu.
+ *
+ * The global click dispatcher in globals.js deliberately skips anything
+ * inside `.ctx-menu` (those menus own their clicks), so a menu built at
+ * runtime must wire its items itself — this is that one place. Args
+ * come from `data-arg0..N` with the dispatcher's coercion (numbers,
+ * booleans); the handler is looked up in the action registry, then on
+ * `window`.
+ * @param {HTMLElement | null} menu
+ * @param {{ items?: string, after?: () => void }} [opts]
+ */
+export function wireMenuActions(menu, opts = {}) {
+  if (!menu || /** @type {any} */ (menu).__bppWired) return;
+  /** @type {any} */ (menu).__bppWired = true;
+  const selector = opts.items || ITEM_SELECTOR;
+  menu.addEventListener("click", (e) => {
+    const target = /** @type {HTMLElement | null} */ (e.target);
+    const item = /** @type {HTMLElement | null} */ (target?.closest(selector));
+    if (!item || !menu.contains(item)) return;
+    const name = item.dataset.action;
+    if (!name) return;
+    /** @type {any} */
+    const win = window;
+    const registered = win.__bppActionRegistry && win.__bppActionRegistry.get(name);
+    const fn = registered !== undefined ? registered : win[name];
+    if (typeof fn !== "function") {
+      console.warn("bpp menu: unknown action:", name);
+      return;
+    }
+    const args = [];
+    for (let i = 0; item.dataset["arg" + i] !== undefined; i++) {
+      args.push(_coerceArg(/** @type {string} */ (item.dataset["arg" + i])));
+    }
+    fn.apply(item, args);
+    opts.after?.();
+  });
+}
+
+/** @param {string} s */
+function _coerceArg(s) {
+  if (s === "true") return true;
+  if (s === "false") return false;
+  if (s !== "" && !isNaN(+s)) return +s;
+  return s;
+}
+
 export function menuOpened(menu, opts = {}) {
   if (!menu) return;
   menuClosed(menu, { keepFocus: true });

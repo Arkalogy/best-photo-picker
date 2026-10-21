@@ -293,6 +293,7 @@ def _start_face_recovery(ctx: WebAppState) -> None:
             if store.face_recovery_thread is me:
                 store.face_recovery_running = False
 
+    log.info("Face-extraction resume starting: %d pending run(s)", len(pending))
     t = threading.Thread(target=_run, name="face-recovery", daemon=True)
     store.face_recovery_thread = t
     t.start()
@@ -324,7 +325,11 @@ def _init_thumbs_lightweight(ctx: WebAppState) -> None:
                 target = ctx.thumbs
                 if target is None:
                     return
-                n = target.warm_cache(cancel_event=ctx.analysis_store.cancel_warm)
+                try:
+                    n = target.warm_cache(cancel_event=ctx.analysis_store.cancel_warm)
+                except Exception:
+                    log.warning("Thumbnail cache warming stopped", exc_info=True)
+                    return
                 if n:
                     log.info("Thumbnail cache warmed: %d generated", n)
 

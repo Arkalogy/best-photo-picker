@@ -195,8 +195,8 @@ def register_scorer(scorer: ScorerDef, *, replace: bool = False) -> None:
         # Its weight is a setting like the built-ins': in DEFAULTS (so
         # cfg_get and YAML know it) and bounded 0.0-1.0 in the schema (so
         # Config.set and load_config validate it). The recompute override
-        # allow-list is built at import time and doesn't see it: see
-        # RECOMPUTE_WEIGHT_KEYS in bpp/web/recompute.py.
+        # allow-list is computed when used (recompute_weight_keys in
+        # bpp/web/recompute.py), so it sees the plugin's key.
         from bpp.config import DEFAULTS
         from bpp.config_schema import ConfigField, register_field
 

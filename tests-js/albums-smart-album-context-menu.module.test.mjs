@@ -271,3 +271,38 @@ describe("switchAlbum 404 fallback", () => {
     expect(win.currentAlbumId).toBe(99);
   });
 });
+
+describe("runtime-built album menus run their items", () => {
+  test("clicking Rename in the smart album menu calls renameSmartAlbum", () => {
+    const spy = vi.fn();
+    /** @type {any} */ (window).renameSmartAlbum = spy;
+    showSmartAlbumMenu(
+      /** @type {any} */ ({ preventDefault() {}, stopPropagation() {}, clientX: 30, clientY: 30 }),
+      5,
+      "Top"
+    );
+    const item = /** @type {HTMLElement} */ (
+      document.querySelector('#smart-album-ctx [data-action="renameSmartAlbum"]')
+    );
+    item.click();
+    expect(spy).toHaveBeenCalledWith(5, "Top");
+    delete (/** @type {any} */ (window).renameSmartAlbum);
+  });
+
+  test("clicking Delete tag in the tag album menu calls removeTagAlbum", () => {
+    const spy = vi.fn();
+    /** @type {any} */ (window).removeTagAlbum = spy;
+    showTagAlbumMenu(
+      /** @type {any} */ ({ preventDefault() {}, stopPropagation() {}, clientX: 30, clientY: 30 }),
+      9,
+      "trip",
+      3
+    );
+    const item = /** @type {HTMLElement} */ (
+      document.querySelector('[data-action="removeTagAlbum"]')
+    );
+    item.click();
+    expect(spy).toHaveBeenCalled();
+    delete (/** @type {any} */ (window).removeTagAlbum);
+  });
+});

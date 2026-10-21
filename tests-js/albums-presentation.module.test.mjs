@@ -27,11 +27,11 @@ describe("smart album presentation", () => {
     expect(albumSortKey(album)).toBe(3.5);
   });
 
-  test("falls back to the built-in tables for a bare album", () => {
+  test("a bare album has no icon or tooltip of its own (the server sends them)", () => {
     const album = { album_type: "smart_duplicates" };
-    expect(smartAlbumIcon(album, ICONS)).toBe("<dup/>");
+    expect(smartAlbumIcon(album, ICONS)).toBe("<folder/>");
     expect(albumSortKey(album)).toBe(8);
-    expect(smartAlbumTip({ album_type: "smart_score" })).toBe("Top 10% by BPP score");
+    expect(smartAlbumTip({ album_type: "smart_score" })).toBe("");
   });
 
   test("a type the tables do not know gets the folder and the middle", () => {

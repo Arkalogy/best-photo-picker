@@ -108,8 +108,10 @@ def _example_embed(image: np.ndarray, bbox: tuple[int, int, int, int]) -> np.nda
 
 
 def _example_album_refresh(conn: Any) -> None:
-    """Sample smart-album refresher — does nothing. Real plugins
-    would query the photos table and call :func:`_ensure_smart_album`."""
+    """Sample smart-album refresher (``refresh_fn(conn)``) — does nothing.
+    A real one queries the photos table and calls
+    :func:`bpp.db.smart_albums.ensure_smart_album` with the album's name,
+    type, rule and photo ids: core never creates the row itself."""
     _record("album_refresh_called")
 
 

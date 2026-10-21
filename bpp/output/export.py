@@ -341,6 +341,12 @@ def _write_photos(
                     e.errno,
                 )
                 break
+        except Exception as e:
+            # A plugin export handler that raised something other than an
+            # OSError: the documented contract is per-photo isolation, so
+            # record it and carry on (it says nothing about the disk).
+            log.warning("Export handler failed on %s: %s", src, e, exc_info=True)
+            failed.append({"index": i, "source": src, "error": str(e)})
     return exported, failed, disk_error, metadata_kept
 
 

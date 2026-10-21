@@ -22,6 +22,25 @@ from bpp.web.base_worker import BackgroundWorker
 log = get_logger(__name__)
 
 
+def _store_scored(conn: Any, valid: list[dict[str, Any]], config: dict[str, Any]) -> None:
+    """Finish the import's analysis: aggregate, write the rows, tell the
+    plugins, sync the All album and recluster near-duplicates."""
+    from bpp.db.dedupe import assign_near_duplicate_clusters
+    from bpp.db.event_hooks import dispatch_post_analyze
+    from bpp.db.photos import bulk_upsert_photos
+
+    normalize_blur_scores(valid)
+    compute_aggregate(valid, config)
+    bulk_upsert_photos(conn, valid)
+    # Imported photos are scored here, not by the analyze worker:
+    # plugins subscribed to post_analyze must hear about them too.
+    dispatch_post_analyze(conn, valid)
+    sync_all_photos_album(conn)
+    # Recompute near-duplicate clusters after each import+analyze so
+    # the Duplicates album and review flow are always up to date.
+    assign_near_duplicate_clusters(conn)
+
+
 class ImportWorker(BackgroundWorker):
     """Runs photo import + analysis in a background thread, reporting progress via a queue."""
 
@@ -177,18 +196,7 @@ class ImportWorker(BackgroundWorker):
             )
 
         if valid:
-            normalize_blur_scores(valid)
-            compute_aggregate(valid, config)
-
-            from bpp.db.photos import bulk_upsert_photos
-
-            bulk_upsert_photos(conn, valid)
-            sync_all_photos_album(conn)
-            # Recompute near-duplicate clusters after each import+analyze so
-            # the Duplicates album and review flow are always up to date.
-            from bpp.db.dedupe import assign_near_duplicate_clusters
-
-            assign_near_duplicate_clusters(conn)
+            _store_scored(conn, valid, config)
 
             # Save pet detections.
             # pre-load filepath → photo_id in ONE round-trip

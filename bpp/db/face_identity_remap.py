@@ -424,13 +424,16 @@ def _assign_new_faces(
     from bpp.scoring.face_cluster import _nearest_centroid
 
     cids = list(centroids)
-    cent = np.stack([centroids[c] for c in cids]).astype(np.float64) if cids else None
+    cent = np.stack([centroids[c] for c in cids]) if cids else None
     n = len(unassigned)
     nearest = np.zeros(n, dtype=np.int64)
     nearest_dist = np.full(n, np.inf)
     if cent is not None and n:
-        rows = np.stack([u[3] for u in unassigned]).astype(np.float64)
+        # The new faces stay in their stored dtype; _nearest_centroid
+        # promotes one chunk at a time.
+        rows = np.stack([u[3] for u in unassigned])
         nearest, nearest_dist = _nearest_centroid(rows, cent)
+        del rows
 
     labels: list[int] = []
     leftover_indices: list[int] = []

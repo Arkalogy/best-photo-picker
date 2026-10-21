@@ -54,6 +54,14 @@ def _write_manifest(
     )
 
 
+def _csv_safe(value: Any) -> Any:
+    """A text cell that a spreadsheet would run as a formula (file names
+    are untrusted) is prefixed with an apostrophe; numbers pass through."""
+    if isinstance(value, str) and value[:1] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + value
+    return value
+
+
 def _write_reports(
     outdir: str,
     selected: list[dict[str, Any]],
@@ -137,7 +145,7 @@ def _write_reports(
             writer = csv.DictWriter(f, fieldnames=csv_fieldnames)
             writer.writeheader()
             for entry in report["selected"]:
-                writer.writerow({k: entry.get(k, "") for k in writer.fieldnames})
+                writer.writerow({k: _csv_safe(entry.get(k, "")) for k in writer.fieldnames})
 
     retry_io(_write_csv_report, label="write_report_csv")
     return report_path

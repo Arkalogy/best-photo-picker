@@ -108,9 +108,10 @@ def init_app_db(ctx: WebAppState) -> None:
     # together they were 5-10s of blocked /api/v1/photos. Daemon
     # thread frees the HTTP server immediately so the photo grid
     # paints fast; sidebar smart-album counts populate as the thread
-    # completes. ctx.smart_album_backfill_done is the deterministic
-    # wait point for switch_library / tests / any caller that needs
-    # post-backfill consistency.
+    # completes. The thread is owned by ctx.analysis_store
+    # (``phase5_thread``) so a library switch joins it with the other
+    # per-library threads; ctx.smart_album_backfill_done is the event
+    # tests and callers can wait on for post-backfill consistency.
     #
     # The DB path is captured at SPAWN time, not resolved through
     # ctx.get_conn() at runtime. Otherwise a switch_library() between
@@ -165,11 +166,15 @@ def init_app_db(ctx: WebAppState) -> None:
             )
             ctx.smart_album_backfill_done.set()
 
-    threading.Thread(
+    phase5 = threading.Thread(
         target=_phase5_background,
         daemon=True,
         name="bpp-phase5-backfill",
-    ).start()
+    )
+    store = getattr(ctx, "analysis_store", None)  # a bare test ctx has none
+    if store is not None:
+        store.phase5_thread = phase5
+    phase5.start()
 
 
 # Worker cap for the startup phash backfill. Each worker decodes a
@@ -288,7 +293,7 @@ def load_analysis_if_needed(
                     for item in data:
                         item["live_photo_sidecar_count"] = counts.get(item.get("id"), 0)
             except Exception:
-                pass  # sidecar count is cosmetic — never block startup
+                log.debug("Live Photo sidecar counts skipped (cosmetic)", exc_info=True)
             ctx.state["analysis"] = data
             ctx.thumbs = ThumbnailCache(ctx.dirs["thumbs"])
             ctx.thumbs.build_map(data)

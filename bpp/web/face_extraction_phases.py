@@ -62,6 +62,7 @@ from bpp.constants import (
     CLUSTER_DISMISSED,
 )
 from bpp.db.face_embedding_safety import decode_embedding
+from bpp.db.sql_batches import in_batches
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -153,9 +154,7 @@ def preload_cached_embeddings(
             seen_pids.add(pid)
 
     cached_by_pid: dict[int, list[tuple[int, bytes]]] = {}
-    for start in range(0, len(candidate_pids), 500):
-        chunk = candidate_pids[start : start + 500]
-        placeholders = ",".join("?" * len(chunk))
+    for placeholders, chunk in in_batches(candidate_pids):
         rows = conn.execute(
             "SELECT photo_id, face_index, embedding FROM face_embeddings "
             f"WHERE photo_id IN ({placeholders}) "
@@ -246,9 +245,7 @@ def delete_stale_embeddings(
     stale_to_extract = [pid for _i, _fp, pid in need_extract if pid in stale_photo_ids]
     if not stale_to_extract:
         return 0
-    for start in range(0, len(stale_to_extract), 500):
-        chunk = stale_to_extract[start : start + 500]
-        placeholders = ",".join("?" * len(chunk))
+    for placeholders, chunk in in_batches(stale_to_extract):
         conn.execute(
             f"DELETE FROM face_embeddings WHERE photo_id IN ({placeholders}) "
             f"AND cluster_id != {CLUSTER_DISMISSED}",

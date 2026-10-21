@@ -162,6 +162,7 @@ def recover_pending_face_extractions(
         except BppError as e:
             # A deliberate stop (model changed or unavailable), not a crash.
             log.warning("Recovery: face extraction run %s stopped: %s", run_id, e.user_message)
+            _mark_resume_failed(ctx)
         except Exception:
             log.warning(
                 "Recovery: face extraction run %s failed mid-resume "
@@ -171,7 +172,16 @@ def recover_pending_face_extractions(
                 journal.MAX_RECOVERY_RETRIES,
                 exc_info=True,
             )
+            _mark_resume_failed(ctx)
     return resumed
+
+
+def _mark_resume_failed(ctx: Any) -> None:
+    """A run that didn't resume is a failed resume as far as
+    /api/v1/health is concerned (the row stays pending; retries count)."""
+    store = getattr(ctx, "analysis_store", None)
+    if store is not None:
+        store.face_recovery_failed = True
 
 
 def register_face_clustering_recovery() -> None:
@@ -192,10 +202,12 @@ def register_face_clustering_recovery() -> None:
         log.info(
             "Recovering interrupted face clustering — re-running identity + smart-album refresh"
         )
+        ok = True
         try:
             _reconstruct_identities(conn)
         except Exception:
             log.warning("_reconstruct_identities during recovery failed", exc_info=True)
+            ok = False
         try:
             from bpp.db.smart_albums import get_affected_album_types, refresh_smart_albums
 
@@ -206,8 +218,12 @@ def register_face_clustering_recovery() -> None:
                 kinds=get_affected_album_types("face_cluster"),
             )
         except Exception:
+            # The albums refresh again on the next refresh pass; the
+            # identity work above is what the journal row guards.
             log.warning("refresh_smart_albums during recovery failed", exc_info=True)
-        return True
+        # False keeps the journal row pending for the next startup
+        # instead of logging "Recovered" over a failed reconstruction.
+        return ok
 
     register_recovery_handler("face_clustering", _recover, replace=True)
 
