@@ -25,31 +25,52 @@ log = get_logger(__name__)
 _FMT_EXT = {"jpeg": ".jpg", "png": ".png"}
 
 
-def _process_image(src: str, dest: str, fmt: str, max_size: int | None, quality: int) -> str:
-    """Resize/convert an image, return the final dest path."""
-    from PIL import Image
+def _process_image(
+    src: str, dest: str, fmt: str, max_size: int | None, quality: int, *, keep_exif: bool = False
+) -> str:
+    """Resize/convert an image, return the final dest path.
+
+    The EXIF orientation is applied to the pixels (a portrait phone
+    photo comes out upright, as the copy path does). With *keep_exif*
+    the remaining EXIF rides along; without it the output carries none.
+    """
+    from PIL import Image, ImageOps
 
     # Context manager releases the source file handle when the block
     # exits. `img.convert(...)` returns a new Image instance independent
     # of the source file, so rebinding `img` inside the block is fine —
     # the original FD still closes correctly on exit.
-    with Image.open(src) as img:
+    with Image.open(src) as raw:
+        try:
+            img = ImageOps.exif_transpose(raw)
+        except Exception as e:  # a malformed APP1 block raises SyntaxError
+            log.warning("Exporting %s without applying its EXIF (unreadable): %s", src, e)
+            img = raw.copy()
         # Resize if needed
         if max_size and max(img.size) > max_size:
             img.thumbnail((max_size, max_size), Image.LANCZOS)
+        save_kw: dict = {}
+        if keep_exif:
+            try:
+                exif = img.getexif()
+                exif.pop(0x0112, None)  # orientation is applied, not re-declared
+                if exif:
+                    save_kw["exif"] = exif.tobytes()
+            except Exception as e:  # a malformed APP1 block raises SyntaxError
+                log.warning("Exporting %s without its EXIF (unreadable): %s", src, e)
 
         # Determine output format and extension
         if fmt == "jpeg":
             if img.mode in ("RGBA", "P", "LA"):
                 img = img.convert("RGB")
             dest = _swap_ext(dest, ".jpg")
-            img.save(dest, "JPEG", quality=quality)
+            img.save(dest, "JPEG", quality=quality, **save_kw)
         elif fmt == "png":
             dest = _swap_ext(dest, ".png")
-            img.save(dest, "PNG")
+            img.save(dest, "PNG", **save_kw)
         else:
             # original format but resized
-            img.save(dest)
+            img.save(dest, **save_kw)
 
     return dest
 

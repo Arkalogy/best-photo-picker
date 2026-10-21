@@ -146,3 +146,26 @@ def test_a_re_scan_after_the_request_expired_is_a_fresh_request(app, monkeypatch
         row = find_or_create_pending_device(conn, "fp-S", "iPhone", "192.168.1.5")
         assert row["first_seen"] >= int(time.time()) - 5
         assert share_devices.list_devices(conn)["pending"][0]["name"] == "iPhone"
+
+
+def test_a_blocked_device_is_not_pruned_as_a_stale_request(app, monkeypatch):
+    from bpp.web import share_devices
+    from bpp.web.share import find_or_create_pending_device
+    from bpp.web.share_devices import revoke_device
+
+    monkeypatch.setattr(share_devices, "PENDING_TTL_SECONDS", 10)
+    ctx = app.extensions["bpp"]
+    with app.app_context():
+        conn = ctx.get_conn()
+        dev = find_or_create_pending_device(conn, "fp-B", "iPhone", "192.168.1.5")
+        revoke_device(conn, int(dev["id"]))
+        conn.execute(
+            "UPDATE share_devices SET first_seen=? WHERE fingerprint='fp-B'",
+            (int(time.time()) - 100,),
+        )
+        conn.commit()
+        assert share_devices.prune_expired_pending(conn) == 0
+        row = conn.execute(
+            "SELECT prev_revoked FROM share_devices WHERE fingerprint='fp-B'"
+        ).fetchone()
+        assert row is not None and row[0] == 1

@@ -53,86 +53,8 @@ def api_export() -> tuple[Response, int]:
     workdir, or user home; mode/fmt/quality/max_size are validated.
     Returns ``{count, failed}`` from the underlying export pipeline."""
     ctx = get_ctx()
-    analysis = ctx.load_analysis_if_needed()
-    if analysis is None:
-        raise NotFoundError("No analysis data")
-
     params = request.get_json(silent=True) or {}
-    outdir = params.get("outdir")
-    if not outdir:
-        raise ValidationError("outdir is required", field="outdir")
-
-    outdir = os.path.abspath(outdir)
-
-    # shared allowlist helper instead of an open-coded
-    # realpath + is_relative_to loop. Same allow-list as before:
-    # library, workdir, or anywhere under the user's home.
-    from bpp.utils.path_validation import build_library_allowlist, is_path_under_any
-
-    allowed = build_library_allowlist(
-        library_path=ctx.state.get("library_path"),
-        workdir=ctx.state.get("workdir"),
-        include_home=True,
-    )
-    if not is_path_under_any(outdir, allowed):
-        # ValidationError (400) rather than ForbiddenError (403) to
-        # preserve the historical 400 status — existing callers and
-        # tests pin this as a 'bad input' check, not an 'auth
-        # denied' one.
-        raise ValidationError(
-            "Output directory is outside allowed paths",
-            field="outdir",
-            outdir=outdir,
-        )
-
-    selected_paths = set(params.get("selected_paths", []))
-
-    if not selected_paths:
-        raise ValidationError("No photos selected", field="selected_paths")
-
-    selected = [item for item in analysis if item["filepath"] in selected_paths]
-
-    fmt = params.get("fmt", "original")
-    if fmt not in ("original", "jpeg", "png"):
-        raise ValidationError(
-            "Invalid format",
-            field="fmt",
-            value=fmt,
-            allowed=["original", "jpeg", "png"],
-        )
-
-    max_size = params.get("max_size")
-    if max_size is not None:
-        try:
-            max_size = int(max_size)
-        except (TypeError, ValueError) as e:
-            raise ValidationError(
-                "max_size must be a number",
-                field="max_size",
-            ) from e
-        if max_size < 100:
-            raise ValidationError(
-                "max_size must be >= 100",
-                field="max_size",
-                value=max_size,
-                min=100,
-            )
-
-    try:
-        quality = int(params.get("quality", 85))
-    except (TypeError, ValueError) as e:
-        raise ValidationError(
-            "quality must be a number",
-            field="quality",
-        ) from e
-    if not 1 <= quality <= 100:
-        raise ValidationError(
-            "quality must be 1-100",
-            field="quality",
-            value=quality,
-            min=1,
-            max=100,
-        )
+    selected, analysis, outdir, fmt, max_size, quality = _validate_export_params(ctx, params)
 
     log.info(
         "Export starting: %d photo(s) -> %s (mode=%s, fmt=%s)",

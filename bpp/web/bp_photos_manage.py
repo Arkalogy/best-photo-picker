@@ -382,6 +382,13 @@ def api_batch_rename_apply() -> tuple[Response, int]:
     failed = sum(1 for r in results if not r.get("success"))
     if failed:
         log.warning("Batch rename: %d/%d failed", failed, len(results))
+    if any(r.get("success") for r in results):
+        # Rows and thumbnail URLs are keyed by path: the next grid load
+        # must see the new paths and resolve their thumbnails.
+        from bpp.web.state_ops import refresh_thumb_map
+
+        ctx.invalidate_analysis()
+        refresh_thumb_map(ctx)
     return jsonify({"results": results}), 200
 
 

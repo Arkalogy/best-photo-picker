@@ -55,8 +55,18 @@ def scan_images(
             log.warning("Failed to scan %s: %s", input_dir, e)
             return []
         scanned = 0
-        for dirpath, _dirnames, filenames in walker:
-            if os.path.basename(dirpath) in _SKIP_DIRS:
+        root = os.path.normpath(input_dir)
+        for dirpath, dirnames, filenames in walker:
+            # Prune bpp's own folders at the scanned root (cache/pet_crops,
+            # data/extracted, ...) so os.walk never descends into them. A
+            # user's own "data" or "cache" folder deeper in an import
+            # source is still a folder of photos.
+            if os.path.normpath(dirpath) == root:
+                dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
+            elif (
+                os.path.basename(dirpath) in _SKIP_DIRS
+                and os.path.dirname(os.path.normpath(dirpath)) == root
+            ):
                 continue
             for name in sorted(filenames):
                 scanned += 1

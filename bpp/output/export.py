@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import csv
 import errno
-import json
 import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from bpp import __version__
 from bpp.output.export_metadata import (
     _iter_weighted_score_pairs,
     _safe_source_name,
@@ -32,9 +29,9 @@ from bpp.output.export_modes import (  # noqa: F401 — re-exported for plugins/
     metadata_not_strippable,
     register_export_mode,
 )
+from bpp.output.export_reports import _write_manifest, _write_reports
 from bpp.utils.logging import get_logger
 from bpp.utils.paths import safe_join
-from bpp.utils.retry import retry_io
 from bpp.utils.video import is_video_file
 
 # Re-exported from bpp.output.export_metadata since the v0.1 cleanup.
@@ -152,14 +149,22 @@ def export_selected(
     # 'Overwrite' silently nuked everything. Now we create the folder if
     # missing and let individual photo writes overwrite same-named files
     # in place. Non-export files in the destination are preserved.
-    selected_dir = os.path.join(outdir, "selected")
-    os.makedirs(selected_dir, exist_ok=True)
-
     # "zip" is a bundle mode: write each photo exactly as copy mode would
     # (so format/resize/strip-metadata all apply — Option A), then pack
     # the staging folder into a single archive after the loop. The
-    # per-photo write therefore uses the "copy" code path.
+    # per-photo write therefore uses the "copy" code path. The staging
+    # folder is this export's own temporary one, so bundling removes
+    # only what this export wrote — never an earlier export's files in
+    # ``selected/``.
     bundle_zip = mode == "zip"
+    if bundle_zip:
+        import tempfile
+
+        os.makedirs(outdir, exist_ok=True)
+        selected_dir = tempfile.mkdtemp(prefix=".bundle-", dir=outdir)
+    else:
+        selected_dir = os.path.join(outdir, "selected")
+        os.makedirs(selected_dir, exist_ok=True)
     effective_mode = "copy" if bundle_zip else mode
     plan = _WritePlan(
         mode=effective_mode,
@@ -177,23 +182,37 @@ def export_selected(
     # now it's 1.
     score_pairs = _iter_weighted_score_pairs()
 
-    exported, failed, disk_error, metadata_kept = _write_photos(
-        selected, selected_dir, plan, score_pairs, write_xmp, on_progress
-    )
-    if failed:
-        log.warning("Export completed with %d failures out of %d", len(failed), len(selected))
+    try:
+        exported, failed, disk_error, metadata_kept = _write_photos(
+            selected, selected_dir, plan, score_pairs, write_xmp, on_progress
+        )
+        if failed:
+            log.warning("Export completed with %d failures out of %d", len(failed), len(selected))
 
-    if write_manifest and exported:
-        _write_manifest(outdir, exported, score_pairs, library_path, include_source_paths)
+        if write_manifest and exported:
+            _write_manifest(outdir, exported, score_pairs, library_path, include_source_paths)
 
-    report_path = _write_reports(
-        outdir, selected, analysis, config, score_pairs, library_path, include_source_paths
-    )
-    log.info("Exported %d photos to %s", len(exported), selected_dir)
-    log.info("Report: %s", report_path)
+        report_path = _write_reports(
+            outdir, selected, analysis, config, score_pairs, library_path, include_source_paths
+        )
+        log.info("Exported %d photos to %s", len(exported), selected_dir)
+        log.info("Report: %s", report_path)
 
-    if bundle_zip and exported and disk_error is None:
-        disk_error = _bundle_zip(outdir, selected_dir, exported)
+        if bundle_zip and exported and disk_error is None:
+            disk_error = _bundle_zip(outdir, selected_dir, exported)
+            if disk_error is not None:
+                # The zip failed: keep the photos, under a name the user
+                # can see, instead of in the hidden staging folder.
+                selected_dir = _keep_staging_visible(outdir, selected_dir)
+    finally:
+        if (
+            bundle_zip
+            and os.path.isdir(selected_dir)
+            and os.path.basename(selected_dir).startswith(".bundle-")
+        ):
+            import shutil
+
+            shutil.rmtree(selected_dir, ignore_errors=True)
 
     if gallery and not bundle_zip:
         from bpp.output.gallery import generate_gallery
@@ -227,7 +246,9 @@ def _write_one(src: str, dest: str, is_vid: bool, plan: _WritePlan) -> str:
     """Write one photo; returns the destination path actually written
     (a format conversion can change the extension)."""
     if plan.process and not is_vid:
-        return _process_image(src, dest, plan.fmt, plan.max_size, plan.quality)
+        return _process_image(
+            src, dest, plan.fmt, plan.max_size, plan.quality, keep_exif=not plan.strip_metadata
+        )
     # Mode dispatch goes through ExportModeRegistry so
     # plugin-registered modes work the same as built-ins.
     # Unknown modes (typos / legacy clients) fall back to
@@ -323,129 +344,20 @@ def _write_photos(
     return exported, failed, disk_error, metadata_kept
 
 
-def _write_manifest(
-    outdir: str,
-    exported: list[dict[str, Any]],
-    score_pairs: list[tuple[str, str]],
-    library_path: str,
-    include_source_paths: bool,
-) -> None:
-    """manifest.json (optional). Builds the per-photo `scores` dict from
-    the registry — every weighted scorer + the aggregate, no hardcoded
-    keys — reusing the `score_pairs` snapshot instead of walking the
-    registry a second time."""
+def _keep_staging_visible(outdir: str, staging_dir: str) -> str:
+    """Rename a zip staging folder to a visible, dated ``selected-…``
+    folder (the bundle failed; the photos are still the export)."""
+    import datetime as _dt
 
-    def _full_scores(item: dict[str, Any]) -> dict[str, Any]:
-        scores = {"aggregate_score": item.get("aggregate_score", 0)}
-        for _short, full in score_pairs:
-            scores[full] = item.get(full, 0)
-        return scores
-
-    manifest_data = [
-        {
-            "dest_name": e["dest"],
-            "original_path": e["source"],
-            "scores": _full_scores(e["item"]),
-            "rank": e["index"],
-        }
-        for e in exported
-    ]
-    write_json_manifest(
-        outdir,
-        manifest_data,
-        library_path,
-        include_source_paths=include_source_paths,
-        score_pairs=score_pairs,
-    )
-
-
-def _write_reports(
-    outdir: str,
-    selected: list[dict[str, Any]],
-    analysis: list[dict[str, Any]],
-    config: dict[str, Any],
-    score_pairs: list[tuple[str, str]],
-    library_path: str,
-    include_source_paths: bool,
-) -> str:
-    """report.json + report.csv. Returns the JSON report's path."""
-    selected_paths = {s["filepath"] for s in selected}
-
-    def _entry_filename(item: dict[str, Any]) -> str:
-        """Recipient-safe name. ``include_source_paths`` opts back in
-        to the absolute path — the report.json contract still uses
-        the ``filepath`` key for the value."""
-        if include_source_paths:
-            return item["filepath"]
-        return _safe_source_name(item["filepath"], library_path)
-
-    # every weighted scorer's full `<key>_score` field name
-    # comes from the registry, so a custom scorer's column lands in
-    # both report.json and the CSV without callsite edits.
-    # reuse the `score_pairs` snapshot from the top of
-    # `export_selected` — third walk of the registry per export, now
-    # the same first walk's result.
-    report_full_keys = [full for _short, full in score_pairs]
-
-    def _selected_entry(i: int, item: dict[str, Any]) -> dict[str, Any]:
-        out: dict[str, Any] = {
-            "index": i + 1,
-            "filepath": _entry_filename(item),
-            "date": item.get("date", ""),
-            "aggregate_score": item.get("aggregate_score", 0),
-        }
-        for full in report_full_keys:
-            out[full] = item.get(full, 0)
-        out["selection_reason"] = item.get("selection_reason", "")
-        out["cluster_size"] = item.get("cluster_size", 1)
-        return out
-
-    report = {
-        "version": __version__,
-        "config": config,
-        "total_analyzed": len(analysis),
-        "total_selected": len(selected),
-        "selected": [_selected_entry(i, item) for i, item in enumerate(selected)],
-        "skipped": [
-            {
-                "filepath": _entry_filename(item),
-                "aggregate_score": item.get("aggregate_score", 0),
-            }
-            for item in analysis
-            if item["filepath"] not in selected_paths
-        ],
-    }
-
-    report_path = os.path.join(outdir, "report.json")
-
-    def _write_json_report():
-        tmp = report_path + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(report, f, indent=2)
-        os.replace(tmp, report_path)
-
-    retry_io(_write_json_report, label="write_report_json")
-
-    # Write report.csv. fieldnames mirror the JSON shape.
-    csv_fieldnames = [
-        "index",
-        "filepath",
-        "date",
-        "aggregate_score",
-        *report_full_keys,
-        "selection_reason",
-    ]
-    csv_path = os.path.join(outdir, "report.csv")
-
-    def _write_csv_report():
-        with open(csv_path, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=csv_fieldnames)
-            writer.writeheader()
-            for entry in report["selected"]:
-                writer.writerow({k: entry.get(k, "") for k in writer.fieldnames})
-
-    retry_io(_write_csv_report, label="write_report_csv")
-    return report_path
+    stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    visible = os.path.join(outdir, f"selected-{stamp}")
+    try:
+        os.replace(staging_dir, visible)
+    except OSError as e:
+        log.warning("Couldn't rename %s to %s: %s", staging_dir, visible, e)
+        return staging_dir
+    log.info("Bundle failed; the exported photos are in %s", visible)
+    return visible
 
 
 def _bundle_zip(

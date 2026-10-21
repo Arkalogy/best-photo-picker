@@ -401,7 +401,10 @@ def restore_from_backup_if_corrupt(db_path: str) -> str | None:
             with contextlib.suppress(OSError):
                 os.remove(staging_path)
         raise
-    # Wipe -wal and -shm too — they're keyed to the corrupt main DB.
+    # Wipe -wal and -shm too — they're keyed to the corrupt main DB —
+    # then bring the backup's own WAL along: the rows it holds were part
+    # of the backup that passed its integrity check (the CLI restore
+    # copies it too).
     for suffix in ("-wal", "-shm"):
         side = db_path + suffix
         if os.path.isfile(side):
@@ -409,6 +412,18 @@ def restore_from_backup_if_corrupt(db_path: str) -> str | None:
                 os.remove(side)
             except OSError as exc:
                 _log.warning("Could not remove stale %s: %s", side, exc)
+    for suffix in ("-wal", "-shm"):
+        side = backup_path + suffix
+        if os.path.isfile(side):
+            try:
+                _shutil.copy2(side, db_path + suffix)
+            except OSError as exc:
+                _log.warning(
+                    "Restored the main file but couldn't copy %s: %s — rows in the "
+                    "backup's WAL are not part of the restore",
+                    side,
+                    exc,
+                )
     _log.warning(
         "Auto-restored %s from %s; corrupt file kept at %s. "
         "User-visible changes since the last backup may be lost.",

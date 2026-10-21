@@ -8,6 +8,7 @@ import os
 from flask import Blueprint, Response, jsonify, request, send_file
 
 from bpp.constants import (
+    HASH_PREFIX_LEN,
     PHOTO_CACHE_SUFFIX_EDITED,
     PHOTO_CACHE_SUFFIX_EDITED_THUMB,
     PHOTO_CACHE_SUFFIX_FULL,
@@ -297,17 +298,45 @@ def api_video_trim() -> tuple[Response, int]:
     final_target = os.path.realpath(filepath)
     os.replace(out_path, final_target)
 
-    # Update video duration in DB
+    # The file changed: the row must describe the new bytes (hash,
+    # size, mtime) or the untrimmed original reads as a duplicate and
+    # the file can't be re-found by hash; plus the new duration/size.
+    from bpp.db.library import _sha256_file
     from bpp.utils.video import extract_video_metadata
 
     conn = ctx.get_conn()
+    old = conn.execute("SELECT sha256 FROM photos WHERE filepath=?", (filepath,)).fetchone()
+    st = os.stat(final_target)
+    digest = _sha256_file(final_target)  # chunked: a 4K clip is not read into RAM
+    conn.execute(
+        "UPDATE photos SET sha256=?, file_size=?, file_mtime=?, "
+        "phash=NULL, ahash=NULL, dup_cluster_id=0, cluster_size=1 WHERE filepath=?",
+        (digest, st.st_size, st.st_mtime, filepath),
+    )
     vmeta = extract_video_metadata(filepath)
     if vmeta:
         conn.execute(
-            "UPDATE photos SET video_duration=? WHERE filepath=?",
-            (vmeta["duration"], filepath),
+            "UPDATE photos SET video_duration=?, video_width=?, video_height=?, video_fps=?, "
+            "video_codec=? WHERE filepath=?",
+            (
+                vmeta["duration"],
+                vmeta.get("width"),
+                vmeta.get("height"),
+                vmeta.get("fps"),
+                vmeta.get("codec"),
+                filepath,
+            ),
         )
-        conn.commit()
+    conn.commit()
+    # The row changed and the old bytes' cached derivatives are stale.
+    ctx.invalidate_analysis()
+    if ctx.thumbs is not None:
+        old_sha = old["sha256"] if old and old["sha256"] else None
+        invalidate_photo_cache(
+            ctx,
+            ctx.thumbs.get_hash(filepath),
+            content_hash=old_sha[:HASH_PREFIX_LEN] if old_sha else None,
+        )
 
     # The trim overwrites the
     # underlying file but the cached sprite + thumbnail are content-

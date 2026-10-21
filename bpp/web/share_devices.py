@@ -264,7 +264,8 @@ def prune_expired_pending(conn: sqlite3.Connection, *, ttl_seconds: int | None =
     """
     cutoff = int(time.time()) - (PENDING_TTL_SECONDS if ttl_seconds is None else ttl_seconds)
     cur = conn.execute(
-        "DELETE FROM share_devices WHERE trusted_at IS NULL AND first_seen < ?",
+        "DELETE FROM share_devices "
+        "WHERE trusted_at IS NULL AND revoked_at IS NULL AND first_seen < ?",
         (cutoff,),
     )
     conn.commit()

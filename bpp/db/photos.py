@@ -327,8 +327,21 @@ def bulk_upsert_photos(conn: sqlite3.Connection, photos: list[dict[str, Any]]) -
     # wiped deliberately (re-hash + the live-photo no-ghost-row chain
     # depends on it; see analyze-worker seam docs).
     _PRESERVE_ON_UPDATE = {"dup_cluster_id", "moment_cluster_id", "moment_size", "cluster_size"}
+    # Provenance the import wrote and a scoring row never carries: kept
+    # unless the caller gives a value (sha256, import_batch), or never
+    # rewritten by an upsert at all (original_filename: the name the
+    # photo arrived with), or a re-analyze would blank the hashes the
+    # duplicate check and relocation rely on.
+    _KEEP_WHEN_ABSENT = {"sha256", "import_batch"}
+    _PRESERVE_ON_UPDATE = _PRESERVE_ON_UPDATE | {"original_filename"}
     updates = ", ".join(
-        f"{c}=excluded.{c}" for c in cols if c != "filepath" and c not in _PRESERVE_ON_UPDATE
+        (
+            f"{c}=COALESCE(excluded.{c}, photos.{c})"
+            if c in _KEEP_WHEN_ABSENT
+            else f"{c}=excluded.{c}"
+        )
+        for c in cols
+        if c != "filepath" and c not in _PRESERVE_ON_UPDATE
     )
     sql = (
         f"INSERT INTO photos ({', '.join(cols)}) VALUES ({placeholders})"

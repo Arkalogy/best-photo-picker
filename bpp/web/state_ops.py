@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING, Any
 
 from bpp.config import cfg_get
 from bpp.db.clip import record_dedup_feedback
-from bpp.db.photos import purge_old_deleted
 from bpp.scoring.clip_embed import cosine_similarity as clip_cosine_similarity
 from bpp.utils.logging import get_logger
 from bpp.web.photo_dict import build_photo_dict as _build_photo_dict_impl
@@ -48,30 +47,54 @@ def refresh_thumb_map(ctx: WebAppState) -> None:
 
 
 def auto_purge(ctx: WebAppState) -> None:
-    """Purge photos deleted more than 30 days ago."""
-    # shared allowlist helper.
-    from bpp.utils.path_validation import build_library_allowlist, is_path_under_any
+    """Purge photos deleted more than 30 days ago.
+
+    The same permanent delete the owner can run: journaled before the
+    rows go (a crash between the DB delete and the disk loop is replayed
+    at the next start) and the purged photos' cached variants and crops
+    are swept with the files.
+    """
+    from bpp.db.journal import journal_complete, journal_start
+    from bpp.db.photos_lifecycle import permanent_delete_photos
+    from bpp.db.photos_sha import get_sha256_map
+    from bpp.utils.path_validation import build_library_allowlist
+    from bpp.web.permanent_delete import _apply_permanent_delete_disk
 
     try:
         conn = ctx.get_conn()
-        filepaths = purge_old_deleted(conn, days=30)
+        # One selection drives the journal, the DB delete and the disk
+        # loop, so nothing is deleted that the journal doesn't name.
+        rows = conn.execute(
+            "SELECT id, filepath FROM photos "
+            "WHERE deleted_at IS NOT NULL AND deleted_at < datetime('now', '-30 days')"
+        ).fetchall()
+        if not rows:
+            return
+        ids = [r[0] for r in rows]
+        filepaths = [r[1] for r in rows]
+        if ctx.thumbs is None:
+            # Startup runs the purge before the thumbnail map is built;
+            # the cache folder exists regardless, and the sweep needs it.
+            ctx.thumbs = ThumbnailCache(ctx.dirs["thumbs"])
+        sha256_map = get_sha256_map(conn, filepaths)
         allowed = build_library_allowlist(library_path=ctx.state["library_path"])
-        for fp in filepaths:
-            try:
-                if not is_path_under_any(fp, allowed):
-                    log.warning("Skipping purge of file outside library: %s", fp)
-                    continue
-                if os.path.isfile(fp):
-                    os.remove(fp)
-            except OSError:
-                log.warning("Failed to remove file during auto-purge: %s", fp)
-        if filepaths:
-            log.info("Auto-purged %d photos deleted >30 days ago", len(filepaths))
+        journal_id = journal_start(
+            conn,
+            "permanent_delete",
+            {
+                "filepaths": sorted(filepaths),
+                "sha256_map": dict(sha256_map),
+                "allowed_dirs": allowed,
+            },
+        )
+        log.info("Purging %d photos soft-deleted more than 30 days ago", len(ids))
+        deleted = permanent_delete_photos(conn, ids)
+        removed = _apply_permanent_delete_disk(ctx, deleted, sha256_map, allowed)
+        journal_complete(conn, journal_id)
+        log.info("Auto-purged %d photos deleted >30 days ago (%d files)", len(deleted), removed)
     except Exception:
         # include the traceback so a
         # silent auto-purge failure isn't an unsolvable mystery.
-        # The previous shape only printed the exception's value
-        # which omits the failing frame's file/line.
         log.warning("Auto-purge failed", exc_info=True)
 
 
