@@ -86,6 +86,10 @@ def _make_thumbnail(src: str, dest: str, size: int = THUMBNAIL_MAX_SIZE) -> bool
                 return False
         else:
             img = retry_io(Image.open, src, label="thumb_open")
+            # Shrink before the EXIF transpose: thumbnail() asks the JPEG
+            # decoder for a reduced DCT scale, which a full decode (what
+            # exif_transpose forces) would have thrown away.
+            img.thumbnail((size, size), Image.LANCZOS)
             img = ImageOps.exif_transpose(img)
         img.thumbnail((size, size), Image.LANCZOS)
         img = img.convert("RGB")

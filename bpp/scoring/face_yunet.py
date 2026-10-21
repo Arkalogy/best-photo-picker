@@ -52,6 +52,10 @@ log = get_logger(__name__)
 _yunet_tls = threading.local()  # per-thread detector instances
 _YUNET_AVAILABLE: bool | None = None
 _yunet_lock = threading.Lock()
+#: Bumped by reset_yunet_cache(); a thread whose detector was built under
+#: an older generation rebuilds it (and re-runs the load gate) on its
+#: next detection, so a reset reaches pool threads too.
+_yunet_generation = 0
 
 # Load-time license gate for YuNet (``opencv_yunet``). ``download_file``
 # already gates YuNet at *download* time, but ``_ensure_yunet_model``
@@ -150,26 +154,33 @@ def _get_yunet_detector(
     width: int,
     height: int,
 ) -> cv2.FaceDetectorYN | None:
-    """Get or create YuNet detector sized for the given image dimensions.
+    """Get the calling thread's YuNet detector, sized for the given image.
 
     Each thread gets its own detector instance via thread-local storage
     so that ThreadPoolExecutor workers don't share mutable DNN state.
+    The detector is built once per thread and resized in place for the
+    next image: every photo has its own dimensions, so rebuilding (and
+    re-hashing the model file) on each size change rebuilt it for nearly
+    every photo of a run. The model file is verified once per process.
     """
     global _YUNET_AVAILABLE
     if _YUNET_AVAILABLE is False:
         return None
 
-    # Check thread-local cache
     det = getattr(_yunet_tls, "detector", None)
-    size = getattr(_yunet_tls, "size", (0, 0))
-    if det is not None and (width, height) == size:
+    if det is not None and getattr(_yunet_tls, "generation", -1) != _yunet_generation:
+        det = None  # built before a reset: rebuild through the gate
+    if det is not None:
+        if (width, height) != _yunet_tls.size:
+            det.setInputSize((width, height))
+            _yunet_tls.size = (width, height)
         return det
 
-    with _yunet_lock:
+    if _YUNET_AVAILABLE is None:
+        with _yunet_lock:
+            if _YUNET_AVAILABLE is None and not _ensure_yunet_model():
+                _YUNET_AVAILABLE = False
         if _YUNET_AVAILABLE is False:
-            return None
-        if not _ensure_yunet_model():
-            _YUNET_AVAILABLE = False
             return None
     # Create per-thread detector outside the lock
     try:
@@ -183,6 +194,7 @@ def _get_yunet_detector(
         )
         _yunet_tls.detector = det
         _yunet_tls.size = (width, height)
+        _yunet_tls.generation = _yunet_generation
         _YUNET_AVAILABLE = True
         return det
     except Exception as exc:
@@ -249,6 +261,7 @@ def reset_yunet_cache() -> None:
     Also re-arms the license gate so a reset re-evaluates acceptance
     (e.g. after a revoke); otherwise a passed gate would let the next
     load skip the check."""
-    global _YUNET_AVAILABLE
+    global _YUNET_AVAILABLE, _yunet_generation
     _YUNET_AVAILABLE = None
     _yunet_gate.reset()
+    _yunet_generation += 1

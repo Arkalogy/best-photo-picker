@@ -22,10 +22,11 @@ from __future__ import annotations
 
 import os
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any
 
 from bpp.db.connection import get_db
-from bpp.db.photos import update_hashes as db_update_hashes
+from bpp.db.photos import update_hashes_many as db_update_hashes_many
 from bpp.dedupe.phash import compute_hashes_from_file
 from bpp.utils.logging import get_logger
 
@@ -35,6 +36,10 @@ if TYPE_CHECKING:
 log = get_logger(__name__)
 
 _PHASH_BACKFILL_WORKERS = min(2, os.cpu_count() or 1)
+#: Photos submitted to the pool, and hashes written, per batch. Bounds the
+#: futures in flight (one per photo of the library before) and turns a
+#: commit per row into one per batch.
+_PHASH_WRITE_BATCH = 256
 
 
 def precompute_phashes(ctx: WebAppState, data: list[dict[str, Any]]) -> None:
@@ -166,10 +171,10 @@ def _backfill_hashes(
     genuinely parallel CPU + holds N decoded images in RAM). The pool
     is capped (see _PHASH_BACKFILL_WORKERS) so this stays a gentle
     background pass; it also reports progress + honours cancel so it
-    isn't the silent machine-pegging op it once was.
+    isn't the silent machine-pegging op it once was. Work goes to the
+    pool a batch at a time (_PHASH_WRITE_BATCH) and each batch's hashes
+    are written in one transaction.
     """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
     computed: dict[str, tuple[int | None, int | None]] = {}
     errors = 0
     done = 0
@@ -180,44 +185,49 @@ def _backfill_hashes(
     store.phash_running = True
 
     with ThreadPoolExecutor(max_workers=_PHASH_BACKFILL_WORKERS) as pool:
-        futures = {pool.submit(compute_hashes_from_file, fp): fp for fp in missing_fps}
-        for future in as_completed(futures):
-            if store.phash_cancel.is_set():
-                log.info("Hash backfill cancelled at %d/%d", done, total)
-                pool.shutdown(wait=False, cancel_futures=True)
-                store.phash_running = False
-                return None
-            fp = futures[future]
-            try:
-                dhash, ahash = future.result()
-                computed[fp] = (dhash, ahash)
-                db_update_hashes(conn, fp, dhash, ahash)
-            except Exception as exc:
-                errors += 1
-                if errors <= 5:
-                    log.warning("Hash failed for %s: %s", fp, exc)
-                elif errors == 6:
-                    # previously the per-error cap silently
-                    # suppressed everything beyond the first 5.
-                    # On a uniformly-failing library (SSD failure,
-                    # permission flip on the photos dir, broken
-                    # symlinks), an operator saw 5 lines + silence
-                    # and had no signal that the failure was
-                    # systematic. Emit one breadcrumb at the cap
-                    # transition; the final summary line below
-                    # carries the full count.
-                    log.warning(
-                        "Hash failed for %s: %s — further "
-                        "per-file errors suppressed; see the "
-                        "summary line at end of run for total "
-                        "count",
-                        fp,
-                        exc,
-                    )
-            done += 1
-            store.phash_done = done
-            if done % 500 == 0:
-                log.info("Hash progress: %d/%d", done, total)
+        for start in range(0, total, _PHASH_WRITE_BATCH):
+            batch_fps = missing_fps[start : start + _PHASH_WRITE_BATCH]
+            futures = {pool.submit(compute_hashes_from_file, fp): fp for fp in batch_fps}
+            batch_rows: list[tuple[str, int | None, int | None]] = []
+            for future in as_completed(futures):
+                if store.phash_cancel.is_set():
+                    log.info("Hash backfill cancelled at %d/%d", done, total)
+                    pool.shutdown(wait=False, cancel_futures=True)
+                    db_update_hashes_many(conn, batch_rows)
+                    store.phash_running = False
+                    return None
+                fp = futures[future]
+                try:
+                    dhash, ahash = future.result()
+                    computed[fp] = (dhash, ahash)
+                    batch_rows.append((fp, dhash, ahash))
+                except Exception as exc:
+                    errors += 1
+                    if errors <= 5:
+                        log.warning("Hash failed for %s: %s", fp, exc)
+                    elif errors == 6:
+                        # previously the per-error cap silently
+                        # suppressed everything beyond the first 5.
+                        # On a uniformly-failing library (SSD failure,
+                        # permission flip on the photos dir, broken
+                        # symlinks), an operator saw 5 lines + silence
+                        # and had no signal that the failure was
+                        # systematic. Emit one breadcrumb at the cap
+                        # transition; the final summary line below
+                        # carries the full count.
+                        log.warning(
+                            "Hash failed for %s: %s — further "
+                            "per-file errors suppressed; see the "
+                            "summary line at end of run for total "
+                            "count",
+                            fp,
+                            exc,
+                        )
+                done += 1
+                store.phash_done = done
+                if done % 500 == 0:
+                    log.info("Hash progress: %d/%d", done, total)
+            db_update_hashes_many(conn, batch_rows)
     store.phash_running = False
     return computed, errors
 

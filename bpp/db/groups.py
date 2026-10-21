@@ -146,11 +146,15 @@ def detect_groups(conn: sqlite3.Connection, min_photos: int = 3) -> list[dict]:
             for m2 in members[i + 1 :]:
                 used_pairs.add((m1, m2))
 
-    # Build result with photo counts
+    # Build result with photo counts: one query for every member's
+    # photo set, then set intersections — not an INTERSECT query per group.
+    photo_sets = _photo_sets(conn, sorted(all_clusters))
     results = []
     for group in found_groups:
         members = sorted(group)
-        photo_count = _count_group_photos(conn, members)
+        photo_count = len(
+            frozenset.intersection(*(photo_sets.get(m, frozenset()) for m in members))
+        )
         if photo_count >= min_photos:
             results.append(
                 {
@@ -179,6 +183,23 @@ def detect_groups(conn: sqlite3.Connection, min_photos: int = 3) -> list[dict]:
     return results
 
 
+def _photo_sets(conn: sqlite3.Connection, cluster_ids: list[int]) -> dict[int, frozenset[int]]:
+    """``{cluster_id: active photo ids}`` for the given clusters, batched."""
+    from bpp.db.sql_batches import in_batches
+
+    sets: dict[int, set[int]] = {}
+    for ph, batch in in_batches(cluster_ids):
+        rows = conn.execute(
+            "SELECT DISTINCT fe.cluster_id, fe.photo_id FROM face_embeddings fe "
+            "JOIN photos p ON p.id = fe.photo_id "
+            f"WHERE fe.cluster_id IN ({ph}) AND p.{_ACTIVE}",
+            batch,
+        ).fetchall()
+        for cid, pid in rows:
+            sets.setdefault(cid, set()).add(pid)
+    return {cid: frozenset(s) for cid, s in sets.items()}
+
+
 def get_group_photo_ids(conn: sqlite3.Connection, cluster_ids: list[int]) -> list[int]:
     """Return photo IDs where ALL given face clusters appear."""
     if not cluster_ids:
@@ -205,11 +226,6 @@ def get_group_photo_ids(conn: sqlite3.Connection, cluster_ids: list[int]) -> lis
     query = " INTERSECT ".join(parts)
     rows = conn.execute(query, params).fetchall()
     return [r[0] for r in rows]
-
-
-def _count_group_photos(conn: sqlite3.Connection, cluster_ids: list[int]) -> int:
-    """Count photos where ALL given clusters have faces."""
-    return len(get_group_photo_ids(conn, cluster_ids))
 
 
 def has_group_data(conn: sqlite3.Connection) -> bool:

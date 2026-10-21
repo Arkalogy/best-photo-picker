@@ -9,15 +9,15 @@
  *   * Right-click a card  → Rename / Merge into… / Delete.
  *
  * Card grid clones the Groups view pattern (#tags-view container,
- * .people-grid layout); the photo grid clones the Moments-timeline
- * pattern (vgrid parked, renderCardHTML cards into #photo-grid).
+ * .people-grid layout); the photo grid is the shared virtual grid
+ * (vgrid.setItems), as the Memories and calendar views use it.
  */
 
 import { apiFetch, authedSrc } from "./api-client.mjs";
 import { appConfirm, appPrompt } from "./dialogs.mjs";
 import { menuClosed, menuOpened } from "./menu-a11y.mjs";
+import { renderGridFromItems } from "./memories.mjs";
 import { esc, escapeAttr } from "./text-format.mjs";
-import { renderCardHTML } from "./photos-card.mjs";
 import { toast, toastError } from "./toast.mjs";
 
 /** @type {Array<{id:number,name:string,count:number,cover_thumb_hash:string|null}>} */
@@ -110,8 +110,8 @@ export async function navigateToTags() {
 }
 
 /**
- * Open one tag's photos as a full-card grid in #photo-grid (lightbox
- * works via currentGridItems; vgrid parked like the Moments timeline).
+ * Open one tag's photos in #photo-grid through the shared virtual grid
+ * (lightbox works via currentGridItems).
  * @param {number} tagId
  */
 export async function navigateToTagPhotos(tagId) {
@@ -135,16 +135,19 @@ export async function navigateToTagPhotos(tagId) {
   }
   const grid = document.getElementById("photo-grid");
   if (!grid) return;
-  if (win.vgrid) win.vgrid.items = [];
   win.photos = photos;
   win.currentGridItems = photos;
-  grid.classList.add("simple-cards");
+  grid.classList.remove("simple-cards");
   grid.style.paddingTop = "0";
   grid.style.paddingBottom = "0";
-  grid.innerHTML = photos.length
-    ? photos.map((p, i) => renderCardHTML(p, i)).join("")
-    : `<div class="empty-state"><div class="title">No photos</div>
+  if (photos.length) {
+    // Windowed rendering: a tag can hold thousands of photos.
+    renderGridFromItems(photos);
+  } else {
+    if (win.vgrid) win.vgrid.items = [];
+    grid.innerHTML = `<div class="empty-state"><div class="title">No photos</div>
        <div class="desc">No active photos carry this tag.</div></div>`;
+  }
   win.show?.("photo-grid");
   win.updateToolbarTitle?.(`Tag: ${name}`, `${photos.length} photo${photos.length === 1 ? "" : "s"}`);
   win.renderAlbumNav?.();

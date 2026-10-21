@@ -794,7 +794,10 @@ Return auto-enhance parameters for a photo without saving anything
 ### GET /api/v1/duplicates/groups
 
 Near-duplicate groups for the review flow: photos grouped by
-`dup_cluster_id`, each group sorted best-score-first.
+`dup_cluster_id`, each group sorted best-score-first. Optional `limit`
+(1..5000) and `offset` page the groups; the response then carries
+`count` (this page), `total` (all groups), `limit`, `offset` and
+`has_more`. Without `limit` every group is returned.
 
 ## Albums
 
@@ -1812,8 +1815,11 @@ Photos for a specific date or date range.
 | `date` | string (query) | conditional | Single date `YYYY-MM-DD` |
 | `start` | string (query) | conditional | Range start `YYYY-MM-DD` |
 | `end` | string (query) | conditional | Range end `YYYY-MM-DD` |
+| `limit` | int (query) | no | Page size (1..5000); omit for every photo |
+| `offset` | int (query) | no | Page start (default 0) |
 
-Provide either `date` or both `start` and `end`.
+Provide either `date` or both `start` and `end`. The response carries
+`count` (this page), `total`, `limit`, `offset` and `has_more`.
 
 ```bash
 curl 'http://localhost:5001/api/v1/calendar/photos?date=2024-06-15'
@@ -1824,7 +1830,8 @@ curl 'http://localhost:5001/api/v1/calendar/photos?date=2024-06-15'
 ```json
 {
   "photos": [ { "id": 1, "filepath": "...", "hash": "abc123", "date": "2024-06-15 14:30:00", "score": 0.82 } ],
-  "date": "2024-06-15"
+  "date": "2024-06-15",
+  "count": 1, "total": 1, "limit": null, "offset": 0, "has_more": false
 }
 ```
 
@@ -1909,6 +1916,13 @@ List all tags with photo counts.
 ```json
 { "tags": [ { "id": 1, "name": "vacation", "count": 42 } ] }
 ```
+
+### GET /api/v1/tags/:tag_id/photos
+
+Active photos carrying the tag, oldest first, as standard photo dicts.
+Optional `limit` (1..5000) and `offset` page the list; the response
+carries `tag`, `photos`, `count` (this page), `total`, `limit`, `offset`
+and `has_more`. Without `limit` every photo is returned.
 
 ### POST /api/v1/tags
 

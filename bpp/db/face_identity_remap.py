@@ -416,47 +416,53 @@ def _assign_new_faces(
 
     max_existing = max(centroids.keys()) if centroids else -1
 
+    # Nearest centroid per new face in one chunked matrix product
+    # (``_nearest_centroid``: squared norms + a GEMM, never an
+    # (faces x centroids x dim) intermediate), instead of a Python loop
+    # over the centroids for each face. Only the hard-negative distances
+    # that matter are computed afterwards, one small dot each.
+    from bpp.scoring.face_cluster import _nearest_centroid
+
+    cids = list(centroids)
+    cent = np.stack([centroids[c] for c in cids]).astype(np.float64) if cids else None
+    n = len(unassigned)
+    nearest = np.zeros(n, dtype=np.int64)
+    nearest_dist = np.full(n, np.inf)
+    if cent is not None and n:
+        rows = np.stack([u[3] for u in unassigned]).astype(np.float64)
+        nearest, nearest_dist = _nearest_centroid(rows, cent)
+
     labels: list[int] = []
     leftover_indices: list[int] = []
 
-    for i, (_fp, _pid, _fi, emb, bw, _quality) in enumerate(unassigned):
+    for i, (_fp, _pid, _fi, _emb, bw, _quality) in enumerate(unassigned):
         # Small faces produce unreliable embeddings — don't assign
         # to existing clusters, let them form their own groups.
-        if bw < _MIN_ASSIGN_PX:
+        if bw < _MIN_ASSIGN_PX or cent is None:
             labels.append(CLUSTER_UNASSIGNED)
             leftover_indices.append(i)
             continue
 
-        if centroids:
-            best_cid = CLUSTER_UNASSIGNED
-            best_dist = float("inf")
-            for cid, centroid in centroids.items():
-                dist = float(np.linalg.norm(emb - centroid))
-                if dist < best_dist:
-                    best_dist = dist
-                    best_cid = cid
-            if best_dist < threshold:
-                # Hard negative check: defer to leftover clustering if
-                # the best cluster has a known confusable partner that
-                # this face is also close to.
-                skip = False
-                neg_partners = hard_negatives.get(best_cid, set())
-                if neg_partners:
-                    ambiguity_radius = threshold * 1.5
-                    for neg_cid in neg_partners:
-                        if neg_cid in centroids:
-                            neg_dist = float(np.linalg.norm(emb - centroids[neg_cid]))
-                            if neg_dist < ambiguity_radius:
-                                skip = True
-                                break
-                if skip:
-                    labels.append(CLUSTER_UNASSIGNED)
-                    leftover_indices.append(i)
-                else:
-                    labels.append(best_cid)
-            else:
+        best_cid = cids[int(nearest[i])]
+        if float(nearest_dist[i]) < threshold:
+            # Hard negative check: defer to leftover clustering if
+            # the best cluster has a known confusable partner that
+            # this face is also close to.
+            skip = False
+            neg_partners = hard_negatives.get(best_cid, set())
+            if neg_partners:
+                ambiguity_radius = threshold * 1.5
+                for neg_cid in neg_partners:
+                    if neg_cid in centroids:
+                        neg_dist = float(np.linalg.norm(_emb - centroids[neg_cid]))
+                        if neg_dist < ambiguity_radius:
+                            skip = True
+                            break
+            if skip:
                 labels.append(CLUSTER_UNASSIGNED)
                 leftover_indices.append(i)
+            else:
+                labels.append(best_cid)
         else:
             labels.append(CLUSTER_UNASSIGNED)
             leftover_indices.append(i)

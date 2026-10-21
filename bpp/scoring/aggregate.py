@@ -181,6 +181,10 @@ def load_and_downscale(filepath: str, max_long_side: int) -> np.ndarray | None:
                 # Context manager releases the file handle before the
                 # array copy; exif_transpose() returns a new Image, so
                 # the open file isn't pinned past the `with` block.
+                # Full decode on purpose: a reduced DCT-scale decode keeps
+                # different high-frequency content, which would move the
+                # sharpness scores of newly analysed photos away from the
+                # ones already in the library (thumbnails use the draft).
                 with Image.open(filepath) as raw:
                     pil_img = ImageOps.exif_transpose(raw)
             pil_img = pil_img.convert("RGB")

@@ -58,7 +58,7 @@ describe("showTagsView", () => {
 });
 
 describe("navigateToTagPhotos", () => {
-  test("renders full cards into #photo-grid, parks vgrid, sets currentGridItems", async () => {
+  test("hands the photos to the virtual grid and sets currentGridItems", async () => {
     vi.mocked(apiFetch).mockResolvedValueOnce({
       tag: { id: 1, name: "birthday" },
       photos: [
@@ -66,13 +66,15 @@ describe("navigateToTagPhotos", () => {
         { filepath: "/b.jpg", filename: "b.jpg", thumb_hash: "h2" },
       ],
     });
+    const setItems = vi.fn();
+    /** @type {any} */ (window).vgrid = { items: [{ x: 1 }], setItems };
     await navigateToTagPhotos(1);
     const grid = document.getElementById("photo-grid");
-    expect(grid?.classList.contains("simple-cards")).toBe(true);
-    expect(grid?.querySelectorAll(".card").length).toBe(2);
+    // Windowed rendering, not one card element per photo.
+    expect(grid?.classList.contains("simple-cards")).toBe(false);
+    expect(setItems).toHaveBeenCalledTimes(1);
+    expect(setItems.mock.calls[0][0].length).toBe(2);
     // Lightbox contract: the flat list IS what prev/next walks.
     expect(/** @type {any} */ (window).currentGridItems.length).toBe(2);
-    // vgrid parked so its render loop can't clobber the cards.
-    expect(/** @type {any} */ (window).vgrid.items.length).toBe(0);
   });
 });

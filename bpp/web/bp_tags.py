@@ -11,6 +11,7 @@ from bpp.db.tags import (
     add_tag_to_photo,
     bulk_tag_photos,
     bulk_untag_photos,
+    count_photos_by_tag,
     create_tag,
     delete_tag,
     get_photo_tags,
@@ -23,6 +24,7 @@ from bpp.db.tags import (
     search_tags,
 )
 from bpp.errors import ConflictError, NotFoundError, ValidationError
+from bpp.web.paging import page_args, page_fields
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx
 
@@ -44,15 +46,19 @@ def api_list_tags() -> tuple[Response, int]:
 
 @bp.get("/api/v1/tags/<int:tag_id>/photos")
 def api_tag_photos(tag_id: int) -> tuple[Response, int]:
-    """All active photos carrying a tag — feeds the Tags browse view's
-    click-through grid (standard photo dicts, lightbox-compatible)."""
+    """Active photos carrying a tag — feeds the Tags browse view's
+    click-through grid (standard photo dicts, lightbox-compatible).
+    Optional ``limit`` / ``offset`` page the list."""
     ctx = get_ctx()
     conn = ctx.get_conn()
     tag = get_tag(conn, tag_id)
     if tag is None:
         raise NotFoundError("Tag not found", tag_id=tag_id)
-    photos = [ctx.build_photo_dict(item) for item in get_photos_by_tag(conn, tag_id)]
-    return jsonify({"tag": tag, "photos": photos, "count": len(photos)}), 200
+    limit, offset = page_args()
+    rows = get_photos_by_tag(conn, tag_id, limit=limit, offset=offset)
+    photos = [ctx.build_photo_dict(item) for item in rows]
+    total = count_photos_by_tag(conn, tag_id) if limit is not None else len(photos)
+    return jsonify({"tag": tag, "photos": photos, **page_fields(photos, total, limit, offset)}), 200
 
 
 @bp.post("/api/v1/tags/<int:tag_id>/merge")

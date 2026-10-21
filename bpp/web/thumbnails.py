@@ -114,11 +114,9 @@ class ThumbnailCache:
     ) -> int:
         """Remove thumbnail + variants + face/pet crops for a path hash.
 
-        Glob-based cleanup of the main cache dir (`{hash}*.jpg`,
-        `{hash}*.png`) so any current or future suffix variant is
-        caught automatically. The `PHOTO_CACHE_SUFFIXES` registry in
-        bpp.constants stays as documentation but isn't load-bearing
-        for cleanup correctness.
+        The main cache is swept by the names in `PHOTO_CACHE_SUFFIXES`
+        (no directory listing). The crop folders embed a face index and
+        bbox tag the caller can't know, so they stay a prefix glob.
 
         Called during permanent delete to clean up orphaned cache files.
 
@@ -129,16 +127,21 @@ class ThumbnailCache:
         """
         import glob as _glob
 
+        from bpp.web.photo_cache import cached_variant_paths
+
         removed = 0
         hashes = {path_hash}
         if content_hash:
             hashes.add(content_hash)
-        for h in hashes:
-            for ext in (".jpg", ".png"):
-                for variant in _glob.glob(os.path.join(self.cache_dir, f"{h}*{ext}")):
-                    if os.path.isfile(variant):
-                        os.remove(variant)
-                        removed += 1
+        for variant in cached_variant_paths(self.cache_dir, hashes):
+            try:
+                os.remove(variant)
+            except FileNotFoundError:
+                continue
+            except OSError as e:
+                log.warning("Couldn't remove cached variant %s: %s", variant, e)
+                continue
+            removed += 1
         self._verified.discard(path_hash)
         self._hash_to_path.pop(path_hash, None)
         # Face crops: {path_hash}_{face_index}_{bbox_tag}.jpg

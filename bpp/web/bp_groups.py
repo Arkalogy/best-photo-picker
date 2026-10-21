@@ -43,7 +43,8 @@ def api_groups() -> tuple[Response, int]:
 
     person_name_map = get_smart_person_cluster_name_map(conn)
 
-    # Batch-fetch all face embeddings for all group members (1 query instead of N)
+    # One query for every member's faces (face index, path, quality — the
+    # avatar pick needs no embedding, so none is fetched).
     all_cids = list({cid for g in groups for cid in g["members"]})
     cluster_faces_map: dict[int, list] = {cid: [] for cid in all_cids}
     if all_cids:
@@ -53,7 +54,7 @@ def api_groups() -> tuple[Response, int]:
             batch = all_cids[i : i + SQL_BATCH_SIZE]
             ph = ",".join("?" * len(batch))
             rows = conn.execute(
-                "SELECT fe.cluster_id, fe.face_index, p.filepath, fe.embedding, fe.quality "
+                "SELECT fe.cluster_id, fe.face_index, p.filepath, fe.quality "
                 "FROM face_embeddings fe "
                 "JOIN photos p ON p.id = fe.photo_id "
                 f"WHERE fe.cluster_id IN ({ph}) AND p.{_ACTIVE}",
@@ -83,8 +84,8 @@ def api_groups() -> tuple[Response, int]:
             if reps:
                 # Best-QUALITY crop for the avatar, not the centroid-closest
                 # one: the centroid pick surfaced junk crops (hands / blurry
-                # profiles / food misdetected as faces). fe.quality is r[4].
-                rep = max(reps, key=lambda r: r[4] if r[4] is not None else 0.0)
+                # profiles / food misdetected as faces). fe.quality is r[3].
+                rep = max(reps, key=lambda r: r[3] if r[3] is not None else 0.0)
                 face_index = rep[1]
                 if ctx.thumbs:
                     thumb_hash = ctx.thumbs.get_hash(rep[2]) or ""

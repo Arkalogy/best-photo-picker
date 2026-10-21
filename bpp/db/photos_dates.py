@@ -44,21 +44,36 @@ def get_date_distribution(
 
 
 def get_photos_by_date_range(
-    conn: sqlite3.Connection, start_date: str, end_date: str
+    conn: sqlite3.Connection,
+    start_date: str,
+    end_date: str,
+    *,
+    limit: int | None = None,
+    offset: int = 0,
 ) -> list[dict[str, Any]]:
     """Return photos whose date falls within [start_date, end_date].
 
     Dates are compared as strings (ISO 8601: YYYY-MM-DDTHH:MM:SS).
-    Excludes deleted and missing photos.
+    Excludes deleted and missing photos. A page when *limit* is set.
     """
+    page = "" if limit is None else f" LIMIT {int(limit)} OFFSET {int(offset)}"
     rows = conn.execute(
         f"SELECT {PHOTO_COLS_SLIM} FROM photos "
         "WHERE date >= ? AND date <= ? "
         f"AND {ACTIVE_PHOTO_SQL} "
-        "ORDER BY date",
+        f"ORDER BY date{page}",
         (start_date, end_date),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def count_photos_by_date_range(conn: sqlite3.Connection, start_date: str, end_date: str) -> int:
+    """Number of active photos dated within [start_date, end_date]."""
+    row = conn.execute(
+        f"SELECT COUNT(*) FROM photos WHERE date >= ? AND date <= ? AND {ACTIVE_PHOTO_SQL}",
+        (start_date, end_date),
+    ).fetchone()
+    return int(row[0]) if row else 0
 
 
 def update_photo_date(conn: sqlite3.Connection, photo_id: int, new_date: str) -> None:

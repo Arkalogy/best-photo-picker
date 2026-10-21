@@ -18,6 +18,8 @@ import os
 import sqlite3
 from typing import Any
 
+import numpy as np
+
 from bpp.constants import active_photo_sql
 from bpp.db.face_embedding_safety import active_embedding_dim, decode_embedding
 from bpp.errors import ResourceExhaustedError as _ResourceExhaustedError
@@ -136,18 +138,27 @@ def load_face_clusters(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """Load clustered face data shaped for the API response.
 
     Returns one entry per cluster_id with face/photo counts plus a
-    representative face (chosen by quality if quality scores exist,
-    otherwise by the cluster-level pick_representative heuristic).
+    representative face: the best-quality face when the cluster has
+    quality scores (the same pick the Groups view makes), otherwise the
+    cluster-level pick_representative heuristic over the embeddings.
+    Only that fallback decodes embeddings, so the People list is counts
+    and paths for a library whose faces carry quality scores. Rows whose
+    stored embedding has the wrong byte size (the one corruption that
+    has happened: another model's dimension mixed in) are left out of
+    the counts in SQL, as the decoding readers leave them out.
     Manually tagged photos are merged into their target cluster's
     filepath set so the response reflects the user's tagging.
     """
     try:
+        blob_len = active_embedding_dim(conn) * 4  # float32
         rows = conn.execute(
             "SELECT p.filepath, fe.face_index, fe.bbox_x, fe.bbox_y, fe.bbox_w, fe.bbox_h, "
-            "fe.embedding, fe.cluster_id, fe.quality FROM face_embeddings fe "
+            "fe.cluster_id, fe.quality FROM face_embeddings fe "
             "JOIN photos p ON p.id = fe.photo_id "
             f"WHERE fe.cluster_id >= 0 AND {active_photo_sql('p')} "
-            "ORDER BY fe.cluster_id"
+            "AND length(fe.embedding) = ? "
+            "ORDER BY fe.cluster_id",
+            (blob_len,),
         ).fetchall()
     except sqlite3.OperationalError as e:
         log.debug("face_embeddings table not ready, skipping: %s", e)
@@ -157,23 +168,9 @@ def load_face_clusters(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         return []
 
     clusters: dict[int, list[dict]] = {}
-    dim = active_embedding_dim(conn)
-    for fp, fi, bx, by, bw, bh, emb_blob, cid, quality in rows:
-        # Read-side decode defense: skip rows whose stored BLOB is corrupt (wrong
-        # size, non-finite, zero-norm). Without this guard a single
-        # bad row propagated into np.stack callers and crashed the
-        # whole faces/clusters endpoint (Jun-2 demo lib incident).
-        emb = decode_embedding(emb_blob, where="face_queries.fetch_clusters", dim=dim)
-        if emb is None:
-            continue
+    for fp, fi, bx, by, bw, bh, cid, quality in rows:
         clusters.setdefault(cid, []).append(
-            {
-                "filepath": fp,
-                "face_index": fi,
-                "bbox": (bx, by, bw, bh),
-                "embedding": emb,
-                "quality": quality,
-            }
+            {"filepath": fp, "face_index": fi, "bbox": (bx, by, bw, bh), "quality": quality}
         )
 
     # Manual person tags
@@ -191,15 +188,18 @@ def load_face_clusters(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     for fp, cid in tag_rows:
         tagged.setdefault(cid, set()).add(fp)
 
+    unscored = [cid for cid, faces in clusters.items() if all(f["quality"] is None for f in faces)]
+    centroid_pick = _representatives_by_centroid(conn, unscored)
+
     result = []
     for cid, faces in clusters.items():
-        embeddings = [f["embedding"] for f in faces]
-        qualities = [f.get("quality") for f in faces]
-        if any(q is not None for q in qualities):
-            rep_idx = pick_representative(embeddings, qualities=qualities)
+        if cid in centroid_pick:
+            rep = next(
+                (f for f in faces if (f["filepath"], f["face_index"]) == centroid_pick[cid]),
+                faces[0],
+            )
         else:
-            rep_idx = pick_representative(embeddings)
-        rep = faces[rep_idx]
+            rep = max(faces, key=lambda f: f["quality"] if f["quality"] is not None else -1.0)
         filepaths = {f["filepath"] for f in faces}
         if cid in tagged:
             filepaths |= tagged[cid]
@@ -220,6 +220,38 @@ def load_face_clusters(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     # Most frequent person first
     result.sort(key=lambda c: -c["photo_count"])
     return result
+
+
+def _representatives_by_centroid(
+    conn: sqlite3.Connection, cluster_ids: list[int]
+) -> dict[int, tuple[str, int]]:
+    """``{cluster_id: (filepath, face_index)}`` of the face nearest each
+    cluster's centroid, for clusters without quality scores. Decodes only
+    those clusters' embeddings."""
+    if not cluster_ids:
+        return {}
+    from bpp.db.sql_batches import in_batches
+
+    dim = active_embedding_dim(conn)
+    faces: dict[int, list[tuple[str, int, np.ndarray]]] = {}
+    for ph, batch in in_batches(cluster_ids):
+        rows = conn.execute(
+            "SELECT p.filepath, fe.face_index, fe.embedding, fe.cluster_id "
+            "FROM face_embeddings fe JOIN photos p ON p.id = fe.photo_id "
+            f"WHERE fe.cluster_id IN ({ph}) AND {active_photo_sql('p')}",
+            batch,
+        ).fetchall()
+        for fp, fi, blob, cid in rows:
+            # Read-side decode defense: a corrupt BLOB (wrong size, non-finite,
+            # zero-norm) is skipped instead of crashing the People panel.
+            emb = decode_embedding(blob, where="face_queries.fetch_clusters", dim=dim)
+            if emb is not None:
+                faces.setdefault(cid, []).append((fp, fi, emb))
+    picks: dict[int, tuple[str, int]] = {}
+    for cid, items in faces.items():
+        idx = pick_representative([e for _fp, _fi, e in items])
+        picks[cid] = (items[idx][0], items[idx][1])
+    return picks
 
 
 def has_face_data(conn: sqlite3.Connection) -> bool:

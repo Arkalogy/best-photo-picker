@@ -145,11 +145,9 @@ PET_CROP_PADDING = 0.15  # fraction of bbox added as margin
 HASH_PREFIX_LEN = 32  # characters of sha256 hex used for path hashes (128-bit)
 
 # ── Photo cache suffixes (single source of truth for all cleanup paths) ──
-# Cleanup in `ThumbnailCache.remove_for_hash` is glob-based so any
-# future suffix gets swept automatically — the registry below is
-# kept as DOCUMENTATION + a single-source-of-truth for create
-# sites (so adding a variant is one new constant + one tuple entry,
-# not grep-and-edit across blueprints).
+# Cleanup (`photo_cache.cached_variant_paths`) removes exactly these
+# names, so a variant missing here leaks files; adding one is one
+# constant + one tuple entry, checked by tests/test_cache_suffix_registry.py.
 PHOTO_CACHE_SUFFIX_FULL = "_full"
 PHOTO_CACHE_SUFFIX_EDITED = "_edited"
 PHOTO_CACHE_SUFFIX_EDITED_THUMB = "_edited_thumb"

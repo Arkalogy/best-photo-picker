@@ -309,35 +309,6 @@ def get_photos_page(
     return [dict(r) for r in rows]
 
 
-def update_scores(conn: sqlite3.Connection, filepath: str, scores: dict[str, Any]) -> None:
-    """Update score columns for a photo."""
-    allowed = {*_SCORE_COLUMNS, "cluster_size"}
-    updates = {k: v for k, v in scores.items() if k in allowed}
-    if not updates:
-        return
-    set_clause = ", ".join(f"{k}=?" for k in updates)
-    conn.execute(
-        f"UPDATE photos SET {set_clause} WHERE filepath=?",
-        [*updates.values(), filepath],
-    )
-    conn.commit()
-
-
-def update_hashes(
-    conn: sqlite3.Connection, filepath: str, phash: int | None, ahash: int | None
-) -> None:
-    """Persist perceptual hashes (phash, ahash) for a photo by filepath.
-
-    Used by the background dedup pass to fill in hashes lazily after
-    initial analyze. Pass None for either if computation failed.
-    """
-    conn.execute(
-        "UPDATE photos SET phash=?, ahash=? WHERE filepath=?",
-        (phash, ahash, filepath),
-    )
-    conn.commit()
-
-
 def bulk_upsert_photos(conn: sqlite3.Connection, photos: list[dict[str, Any]]) -> int:
     """Batch upsert photos in a single transaction. Returns count inserted/updated."""
     if not photos:
@@ -469,9 +440,12 @@ def get_photo_count(conn: sqlite3.Connection, include_missing: bool = False) -> 
     return row[0]
 
 
+# Per-photo column writers (scores, perceptual hashes) live in
+# photos_updates.py. Re-exported here.
 # Date-keyed queries + update_photo_date moved to photos_dates.py
 # during the 500-LOC split. Re-exported here.
 from bpp.db.photos_dates import (  # noqa: E402, F401
+    count_photos_by_date_range,
     get_date_distribution,
     get_photos_by_date_range,
     update_photo_date,
@@ -502,4 +476,9 @@ from bpp.db.photos_missing import (  # noqa: E402, F401
     check_missing,
     mark_missing,
     relocate_missing,
+)
+from bpp.db.photos_updates import (  # noqa: E402, F401
+    update_hashes,
+    update_hashes_many,
+    update_scores,
 )

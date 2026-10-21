@@ -133,16 +133,29 @@ def get_photo_tags(conn: sqlite3.Connection, photo_id: int) -> list[dict[str, An
     return [dict(r) for r in rows]
 
 
-def get_photos_by_tag(conn: sqlite3.Connection, tag_id: int) -> list[dict[str, Any]]:
-    """Get all non-deleted photos with a given tag."""
+def get_photos_by_tag(
+    conn: sqlite3.Connection, tag_id: int, *, limit: int | None = None, offset: int = 0
+) -> list[dict[str, Any]]:
+    """Non-deleted photos with a given tag, by date; a page when *limit* is set."""
+    page = "" if limit is None else f" LIMIT {int(limit)} OFFSET {int(offset)}"
     rows = conn.execute(
         f"SELECT {PHOTO_COLS_SLIM_PREFIXED} FROM photos p "
         "JOIN photo_tags pt ON pt.photo_id = p.id "
         f"WHERE pt.tag_id = ? AND {active_photo_sql('p')} "
-        "ORDER BY p.date",
+        f"ORDER BY p.date{page}",
         (tag_id,),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def count_photos_by_tag(conn: sqlite3.Connection, tag_id: int) -> int:
+    """Number of non-deleted photos carrying a tag."""
+    row = conn.execute(
+        "SELECT COUNT(*) FROM photos p JOIN photo_tags pt ON pt.photo_id = p.id "
+        f"WHERE pt.tag_id = ? AND {active_photo_sql('p')}",
+        (tag_id,),
+    ).fetchone()
+    return int(row[0]) if row else 0
 
 
 def bulk_tag_photos(conn: sqlite3.Connection, photo_ids: list[int], tag_id: int) -> int:

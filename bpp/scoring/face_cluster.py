@@ -43,6 +43,98 @@ def _filter_to_majority_shape(embeddings: list[np.ndarray], *, where: str) -> li
     return [e for e in embeddings if e.shape == majority]
 
 
+#: Largest face set handed to scipy's linkage in one go. Average linkage
+#: holds the condensed distance matrix (8 bytes per pair): 8000 faces is
+#: ~256 MB, 30000 faces would be 3.6 GB. Larger sets are clustered in
+#: blocks (see ``_blocked_labels``).
+LINKAGE_MAX_FACES = 8000
+
+
+def _linkage_labels(matrix: np.ndarray, threshold: float) -> np.ndarray:
+    """0-based cluster labels by average linkage with a distance cut."""
+    hierarchy = import_gated("scipy.cluster.hierarchy")  # not mid-install
+    linkage_matrix = hierarchy.linkage(matrix, method="average", metric="euclidean")
+    return hierarchy.fcluster(linkage_matrix, t=threshold, criterion="distance") - 1
+
+
+def _nearest_centroid(block: np.ndarray, centroids: np.ndarray, chunk: int = 2048):
+    """Index of the nearest centroid and its distance for each row of
+    *block*, computed a chunk of rows at a time so the distance matrix
+    stays small."""
+    best = np.empty(len(block), dtype=np.int64)
+    dist = np.empty(len(block), dtype=np.float64)
+    c_sq = np.einsum("ij,ij->i", centroids, centroids)
+    for start in range(0, len(block), chunk):
+        rows = block[start : start + chunk]
+        d2 = np.einsum("ij,ij->i", rows, rows)[:, None] + c_sq[None, :] - 2.0 * (rows @ centroids.T)
+        np.maximum(d2, 0.0, out=d2)
+        idx = np.argmin(d2, axis=1)
+        best[start : start + chunk] = idx
+        dist[start : start + chunk] = np.sqrt(d2[np.arange(len(rows)), idx])
+    return best, dist
+
+
+def _mean_dist_to_clusters(
+    block: np.ndarray, members: np.ndarray, member_labels: np.ndarray, n_clusters: int, chunk: int
+) -> np.ndarray:
+    """Mean Euclidean distance from each row of *block* to the members of
+    each cluster: the average-linkage criterion for one face joining an
+    existing cluster. Chunked over *block* so the (rows x members)
+    distance matrix stays small."""
+    membership = np.zeros((len(members), n_clusters))
+    membership[np.arange(len(members)), member_labels] = 1.0
+    membership /= membership.sum(axis=0, keepdims=True)
+    m_sq = np.einsum("ij,ij->i", members, members)
+    out = np.empty((len(block), n_clusters))
+    for start in range(0, len(block), chunk):
+        rows = block[start : start + chunk]
+        d2 = np.einsum("ij,ij->i", rows, rows)[:, None] + m_sq[None, :] - 2.0 * (rows @ members.T)
+        np.maximum(d2, 0.0, out=d2)
+        out[start : start + chunk] = np.sqrt(d2) @ membership
+    return out
+
+
+def _blocked_labels(matrix: np.ndarray, threshold: float, block_size: int) -> np.ndarray:
+    """Cluster a set too large for one linkage.
+
+    The first *block_size* unassigned faces are clustered by linkage;
+    every other unassigned face whose mean distance to one of those
+    clusters' members is under *threshold* joins it (the same criterion
+    average linkage applies when it attaches a point to a cluster); the
+    rest wait for the next block. Each block's clusters get fresh ids,
+    so the result is a plain partition. The outcome depends on the input
+    order, which callers keep stable (photo id, face index).
+    """
+    n = len(matrix)
+    labels = np.full(n, -1, dtype=np.int64)
+    remaining = np.arange(n)
+    next_id = 0
+    log.info("Clustering %d faces in blocks of %d (linkage memory cap)", n, block_size)
+    while len(remaining):
+        head, tail = remaining[:block_size], remaining[block_size:]
+        if len(head) > 1:
+            head_labels = _linkage_labels(matrix[head], threshold)
+        else:
+            head_labels = np.zeros(1, dtype=np.int64)
+        labels[head] = head_labels + next_id
+        n_new = int(head_labels.max()) + 1
+        if len(tail):
+            mean_dist = _mean_dist_to_clusters(
+                matrix[tail].astype(np.float64),
+                matrix[head].astype(np.float64),
+                head_labels,
+                n_new,
+                chunk=max(1, 8_000_000 // max(1, len(head))),
+            )
+            best = np.argmin(mean_dist, axis=1)
+            joined = mean_dist[np.arange(len(tail)), best] < threshold
+            labels[tail[joined]] = best[joined] + next_id
+            tail = tail[~joined]
+        next_id += n_new
+        remaining = tail
+    return labels
+
+
 def cluster_faces(
     embeddings: list[np.ndarray],
     threshold: float = 0.6,
@@ -51,7 +143,8 @@ def cluster_faces(
 
     Uses agglomerative clustering with average linkage and a Euclidean
     distance threshold. 0.6 is the standard face_recognition threshold
-    for same-person matching.
+    for same-person matching. Sets larger than ``LINKAGE_MAX_FACES`` are
+    clustered in blocks so memory stays bounded.
 
     Returns list of integer cluster IDs (0-based), same length as input.
     """
@@ -66,14 +159,12 @@ def cluster_faces(
     if len(embeddings) == 1:
         return [0]
 
-    hierarchy = import_gated("scipy.cluster.hierarchy")  # not mid-install
-    fcluster, linkage = hierarchy.fcluster, hierarchy.linkage
-
     matrix = np.stack(embeddings)
-    linkage_matrix = linkage(matrix, method="average", metric="euclidean")
-    labels = fcluster(linkage_matrix, t=threshold, criterion="distance")
-    # fcluster returns 1-based labels; convert to 0-based
-    return [int(v) - 1 for v in labels]
+    if len(matrix) > LINKAGE_MAX_FACES:
+        labels = _blocked_labels(matrix, threshold, LINKAGE_MAX_FACES)
+    else:
+        labels = _linkage_labels(matrix, threshold)
+    return [int(v) for v in labels]
 
 
 def pick_representative(

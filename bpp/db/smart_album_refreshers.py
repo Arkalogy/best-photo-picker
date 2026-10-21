@@ -79,6 +79,59 @@ def _refresh_time_albums(conn: sqlite3.Connection) -> None:
     )
 
 
+def _greedy_dissimilar(
+    rows: list[tuple[int, int | None, int | None]],
+    clip_embs: dict[int, Any],
+    limit: int,
+    threshold: float,
+) -> list[int]:
+    """Walk *rows* (best first) and keep up to *limit* photos that aren't
+    near-duplicates of an already kept one.
+
+    A candidate with a CLIP embedding is compared against every kept
+    embedding in one matrix-vector product (the kept embeddings live in
+    one preallocated buffer); one without falls back to hash distance.
+    """
+    import numpy as np
+
+    from bpp.dedupe.phash import dual_hash_distance, hamming_distance
+
+    accepted_ids: list[int] = []
+    accepted_hashes: list[tuple[int | None, int | None]] = []
+    first = next(iter(clip_embs.values()), None)
+    kept = np.empty((limit, first.shape[0]), dtype=first.dtype) if first is not None else None
+    n_kept = 0
+
+    for photo_id, phash, ahash in rows:
+        if len(accepted_ids) >= limit:
+            break
+        emb = clip_embs.get(photo_id)
+        if emb is not None and n_kept and threshold > 0:
+            if float(np.max(kept[:n_kept] @ emb)) >= threshold:
+                continue
+        elif phash is not None and accepted_hashes and threshold > 0:
+            too_similar = False
+            for acc_ph, acc_ah in accepted_hashes:
+                if acc_ph is None:
+                    continue
+                if acc_ah is not None and ahash is not None:
+                    dist = dual_hash_distance(phash, ahash, acc_ph, acc_ah)
+                else:
+                    dist = hamming_distance(phash, acc_ph)
+                if dist <= 16:
+                    too_similar = True
+                    break
+            if too_similar:
+                continue
+
+        accepted_ids.append(photo_id)
+        if emb is not None and kept is not None:
+            kept[n_kept] = emb
+            n_kept += 1
+        accepted_hashes.append((phash, ahash))
+    return accepted_ids
+
+
 def _refresh_score_album(conn: sqlite3.Connection) -> None:
     """Create a 'Top Rated' smart album with the highest-scoring photos.
 
@@ -114,58 +167,16 @@ def _refresh_score_album(conn: sqlite3.Connection) -> None:
         )
         return
 
-    # Try loading CLIP embeddings for better similarity checking
+    # CLIP embeddings for the candidates only (not the library matrix).
     clip_embs: dict[int, Any] = {}
     try:
-        from bpp.db.clip import get_all_clip_embeddings
+        from bpp.db.clip import get_clip_embeddings_for_ids
 
-        clip_embs = get_all_clip_embeddings(conn)
+        clip_embs = get_clip_embeddings_for_ids(conn, [r[0] for r in rows])
     except Exception:
         log.warning("CLIP embeddings unavailable for Top Rated album", exc_info=True)
 
-    # Greedy similarity filter
-    import numpy as np
-
-    from bpp.dedupe.phash import dual_hash_distance, hamming_distance
-
-    accepted_ids: list[int] = []
-    accepted_clip: list[np.ndarray] = []
-    accepted_hashes: list[tuple[int | None, int | None]] = []
-
-    for photo_id, phash, ahash in rows:
-        if len(accepted_ids) >= limit:
-            break
-
-        # CLIP similarity check
-        emb = clip_embs.get(photo_id)
-        if emb is not None and accepted_clip and threshold > 0:
-            too_similar = False
-            for acc_emb in accepted_clip:
-                if float(np.dot(emb, acc_emb)) >= threshold:
-                    too_similar = True
-                    break
-            if too_similar:
-                continue
-        elif phash is not None and accepted_hashes and threshold > 0:
-            # Hash fallback
-            too_similar = False
-            for acc_ph, acc_ah in accepted_hashes:
-                if acc_ph is None:
-                    continue
-                if acc_ah is not None and ahash is not None:
-                    dist = dual_hash_distance(phash, ahash, acc_ph, acc_ah)
-                else:
-                    dist = hamming_distance(phash, acc_ph)
-                if dist <= 16:
-                    too_similar = True
-                    break
-            if too_similar:
-                continue
-
-        accepted_ids.append(photo_id)
-        if emb is not None:
-            accepted_clip.append(emb)
-        accepted_hashes.append((phash, ahash))
+    accepted_ids = _greedy_dissimilar(rows, clip_embs, limit, threshold)
 
     _ensure_smart_album(
         conn,

@@ -24,7 +24,6 @@ CAP = 500
 # Shrink-only: lower a number when a split lands; never raise one.
 GRANDFATHERED: dict[str, int] = {
     "bpp/db/schema.py": 530,
-    "bpp/db/photos.py": 507,
 }
 
 

@@ -47,7 +47,7 @@ def _patch_io(monkeypatch, *, hash_fn):
     import bpp.web.derived_recovery as si
 
     monkeypatch.setattr(si, "get_db", lambda _p: object())
-    monkeypatch.setattr(si, "db_update_hashes", lambda *a, **k: None)
+    monkeypatch.setattr(si, "db_update_hashes_many", lambda *a, **k: None)
     monkeypatch.setattr(si, "compute_hashes_from_file", hash_fn)
     monkeypatch.setattr(sa, "refresh_smart_albums", lambda *a, **k: None)
 
@@ -152,7 +152,7 @@ def test_recovery_pipeline_runs_steps_in_order(monkeypatch):
 
     calls: list[str] = []
     monkeypatch.setattr(si, "get_db", lambda _p: object())
-    monkeypatch.setattr(si, "db_update_hashes", lambda *a, **k: None)
+    monkeypatch.setattr(si, "db_update_hashes_many", lambda *a, **k: None)
     monkeypatch.setattr(si, "compute_hashes_from_file", lambda fp: (1, 2))
     monkeypatch.setattr(
         live_photo,

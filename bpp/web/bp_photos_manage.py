@@ -22,6 +22,7 @@ from bpp.db.photos import (
 from bpp.db.photos_sha import get_sha256_map
 from bpp.errors import BppError, NotFoundError, ValidationError
 from bpp.utils.logging import get_logger
+from bpp.web.paging import page_args, page_fields
 from bpp.web.photo_cache import invalidate_photo_cache
 from bpp.web.photo_dict import build_similar_entry
 from bpp.web.share import requires_local_app
@@ -38,7 +39,8 @@ def api_duplicates_groups() -> tuple[Response, int]:
 
     Groups by dup_cluster_id (assigned by assign_near_duplicate_clusters()).
     Falls back to exact phash grouping if clustering has never run.
-    Groups are sorted by score difference descending (most useful first).
+    Groups are sorted by score difference descending (most useful first);
+    optional ``limit`` / ``offset`` page them.
     """
     from collections import defaultdict
 
@@ -77,8 +79,9 @@ def api_duplicates_groups() -> tuple[Response, int]:
         ).fetchall()
         group_key_idx = 3  # phash
 
+    limit, offset = page_args()
     if not rows:
-        return jsonify({"groups": [], "total": 0}), 200
+        return jsonify({"groups": [], **page_fields([], 0, limit, offset)}), 200
 
     groups_map: dict[int, list[dict]] = defaultdict(list)
     for r in rows:
@@ -118,7 +121,8 @@ def api_duplicates_groups() -> tuple[Response, int]:
         )
 
     result.sort(key=lambda g: -g["score_diff"])
-    return jsonify({"groups": result, "total": len(result)}), 200
+    page = result if limit is None else result[offset : offset + limit]
+    return jsonify({"groups": page, **page_fields(page, len(result), limit, offset)}), 200
 
 
 # --- Delete routes ---

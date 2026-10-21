@@ -149,13 +149,7 @@ def load_clip_matrix(
     )
     for row in cursor:
         photo_id, blob = row[0], row[1]
-        if len(blob) != CLIP_EMBEDDING_BYTES:
-            log.warning(
-                "Skipping malformed CLIP embedding for photo_id=%s: %d bytes (expected %d)",
-                photo_id,
-                len(blob),
-                CLIP_EMBEDDING_BYTES,
-            )
+        if not _well_formed(photo_id, blob):
             continue
         if len(ids) == matrix.shape[0]:
             # Rows added since the count (rare): grow by a small step, not
@@ -186,6 +180,45 @@ def get_all_clip_embeddings(
     """
     ids, matrix = load_clip_matrix(conn, model_name=model_name)
     return dict(zip(ids, matrix, strict=True))
+
+
+def get_clip_embeddings_for_ids(
+    conn: sqlite3.Connection,
+    photo_ids: list[int],
+    model_name: str = CLIP_MODEL_NAME,
+) -> dict[int, np.ndarray]:
+    """``{photo_id: embedding}`` for just the given photos (batched IN).
+
+    For a per-album or per-selection pass this reads a few hundred rows
+    instead of the whole library matrix. Malformed rows are skipped.
+    """
+    from bpp.db.sql_batches import in_batches
+
+    out: dict[int, np.ndarray] = {}
+    for ph, batch in in_batches(photo_ids):
+        rows = conn.execute(
+            f"SELECT photo_id, embedding FROM clip_embeddings WHERE model_name = ? "
+            f"AND photo_id IN ({ph})",
+            (model_name, *batch),
+        ).fetchall()
+        for photo_id, blob in rows:
+            if _well_formed(photo_id, blob):
+                out[photo_id] = np.frombuffer(blob, dtype=np.float32)
+    return out
+
+
+def _well_formed(photo_id: int, blob: bytes) -> bool:
+    """Whether a stored CLIP blob has the expected byte size; a malformed
+    row is logged and skipped by every reader."""
+    if len(blob) == CLIP_EMBEDDING_BYTES:
+        return True
+    log.warning(
+        "Skipping malformed CLIP embedding for photo_id=%s: %d bytes (expected %d)",
+        photo_id,
+        len(blob),
+        CLIP_EMBEDDING_BYTES,
+    )
+    return False
 
 
 def get_clip_embedding_count(
