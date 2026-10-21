@@ -395,11 +395,7 @@ def reconstruct_identities(
             exc_info=True,
         )
 
-    try:
-        from bpp.web.state import get_ctx_or_none
-
-        ctx = get_ctx_or_none()
-        if ctx is not None:
-            ctx.invalidate_face_cluster_map()
-    except Exception:
-        log.debug("face cluster map invalidation skipped", exc_info=True)
+    # The filepath -> cluster map is invalidated by whoever owns the app
+    # state (the analyze worker, the face worker, the resume thread):
+    # this phase runs on worker threads and in subprocesses, where the
+    # request-bound lookup finds nothing.

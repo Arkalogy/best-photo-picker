@@ -153,7 +153,7 @@ def test_a_row_with_non_text_fields_counts_as_damaged(tmp_path):
         {"separate_rights_asserted": 0},
         {"checkbox_responses": {"box": "yes"}},
         {"event": 1},
-        {"schema_version": "2"},
+        {"schema_version": "two"},
     ],
 )
 def test_a_wrong_type_field_is_damage_never_coerced(tmp_path, over):

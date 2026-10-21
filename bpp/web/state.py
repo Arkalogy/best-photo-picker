@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import functools
 import os
 import secrets
 import sqlite3
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any
@@ -448,42 +447,10 @@ def get_ctx_or_none() -> WebAppState | None:
         return None
 
 
-def with_face_lock(fn: Callable[..., Any]) -> Callable[..., Any]:
-    """Serialize face-mutating operations via face_op_lock and invalidate
-    the face cluster map on exit.
-
-    All endpoints that mutate face_embeddings, photo_person_tags, or
-    smart_person albums MUST use this decorator. Two contracts:
-
-    1. ``face_op_lock`` serializes the body so concurrent face mutations
-       can't interleave.
-    2. ``invalidate_face_cluster_map()`` fires in ``finally`` so the
-       grid + recompute paths see fresh ``filepath → [cluster_ids]``
-       data on the next read.
-
-    Pre-fix every face-mutation endpoint (create, update_bbox, merge,
-    dismiss, split, restore, retry, tag_person, untag_person, reassign,
-    purge, recluster) relied on the analyse worker's Phase 7
-    invalidation. Between mutations, the cache stayed stale — the
-    /api/v1/pick handler boosted by the old cluster IDs and the photo
-    grid badged faces against the pre-merge state. Wiring the invalidate
-    into the decorator closes the gap at one site instead of 13.
-
-    The invalidate fires even on exception: a face mutation that partly
-    committed (e.g. a SAVEPOINT rolled back inside a multi-statement
-    handler) still leaves the cluster_id columns in a state the cache
-    doesn't reflect, so a stale cache after error is the worst outcome.
-    Cheap to invalidate; expensive to debug a "why does Alice show as
-    Bob" report.
-    """
-
-    @functools.wraps(fn)
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
-        ctx = get_ctx()
-        with ctx.face_op_lock:
-            try:
-                return fn(*args, **kwargs)
-            finally:
-                ctx.invalidate_face_cluster_map()
-
-    return wrapper
+# The face lock and the resume guard live in face_lock.py; re-exported
+# because every face-mutating blueprint imports them from here.
+from bpp.web.face_lock import (  # noqa: E402, F401
+    FACE_RECOVERY_MESSAGE,
+    refuse_while_face_recovery,
+    with_face_lock,
+)

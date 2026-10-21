@@ -86,10 +86,10 @@ class TestWithFaceLockInvalidatesClusterMap:
 
         ctx = self._build_ctx()
         call_log = []
-        ctx.face_op_lock.__enter__ = MagicMock(side_effect=lambda: call_log.append("lock_acquired"))
-        ctx.face_op_lock.__exit__ = MagicMock(
-            side_effect=lambda *_: call_log.append("lock_released")
+        ctx.face_op_lock.acquire = MagicMock(
+            side_effect=lambda **_kw: call_log.append("lock_acquired") or True
         )
+        ctx.face_op_lock.release = MagicMock(side_effect=lambda: call_log.append("lock_released"))
         ctx.invalidate_face_cluster_map = MagicMock(
             side_effect=lambda: call_log.append("invalidated")
         )

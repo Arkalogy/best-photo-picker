@@ -230,7 +230,10 @@ There are two layers:
    your plugin's own modules register (at import, in `setup()` or in a
    later hook) are recorded as plugin files, and a plugin can't reuse a
    built-in file name; `bpp.utils.download.download_file`
-   reads the sha256 to verify after fetch.
+   reads the sha256 to verify after fetch. The same holds for a
+   `ModelSingleton` with a `model_url`: without `model_sha256` nothing is
+   fetched — `ensure_model()` returns `None` and the analysis preflight
+   reports the model as unavailable.
 
 Most plugins want both. Pattern:
 

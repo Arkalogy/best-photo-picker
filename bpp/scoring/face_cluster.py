@@ -74,24 +74,52 @@ def _nearest_centroid(block: np.ndarray, centroids: np.ndarray, chunk: int = 204
     return best, dist
 
 
-def _mean_dist_to_clusters(
-    block: np.ndarray, members: np.ndarray, member_labels: np.ndarray, n_clusters: int, chunk: int
-) -> np.ndarray:
-    """Mean Euclidean distance from each row of *block* to the members of
-    each cluster: the average-linkage criterion for one face joining an
-    existing cluster. Chunked over *block* so the (rows x members)
-    distance matrix stays small."""
-    membership = np.zeros((len(members), n_clusters))
-    membership[np.arange(len(members)), member_labels] = 1.0
-    membership /= membership.sum(axis=0, keepdims=True)
-    m_sq = np.einsum("ij,ij->i", members, members)
-    out = np.empty((len(block), n_clusters))
-    for start in range(0, len(block), chunk):
-        rows = block[start : start + chunk]
-        d2 = np.einsum("ij,ij->i", rows, rows)[:, None] + m_sq[None, :] - 2.0 * (rows @ members.T)
+_CHUNK_BUDGET_BYTES = 64 * 1024 * 1024
+
+
+def _rows_per_chunk(n_members: int, n_clusters: int) -> int:
+    """Rows of a block scored per step so neither the (rows x members)
+    distance matrix nor the (rows x clusters) mean matrix exceeds the
+    chunk budget."""
+    return max(1, _CHUNK_BUDGET_BYTES // (8 * max(n_members, n_clusters, 1)))
+
+
+def _nearest_cluster_by_mean(
+    block: np.ndarray, members: np.ndarray, member_labels: np.ndarray, n_clusters: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """For each row of *block*: the cluster whose members are nearest on
+    average, and that mean distance — the average-linkage criterion for
+    one face joining an existing cluster.
+
+    Members are grouped by label once; each chunk of rows then costs one
+    (rows x members) distance matrix reduced per group, so memory is the
+    chunk budget, never (block x clusters) or (members x clusters).
+    """
+    order = np.argsort(member_labels, kind="stable")
+    sorted_members = members[order]
+    sorted_labels = member_labels[order]
+    counts = np.bincount(sorted_labels, minlength=n_clusters)
+    if np.any(counts == 0):
+        raise ValueError("every cluster must have a member")
+    starts = np.searchsorted(sorted_labels, np.arange(n_clusters))
+    m_sq = np.einsum("ij,ij->i", sorted_members, sorted_members)
+    best = np.empty(len(block), dtype=np.int64)
+    dist = np.empty(len(block), dtype=np.float64)
+    chunk = _rows_per_chunk(len(members), n_clusters)
+    for s0 in range(0, len(block), chunk):
+        rows = block[s0 : s0 + chunk]
+        # In place, so one (rows x members) matrix lives at a time.
+        d2 = rows @ sorted_members.T
+        d2 *= -2.0
+        d2 += np.einsum("ij,ij->i", rows, rows)[:, None]
+        d2 += m_sq[None, :]
         np.maximum(d2, 0.0, out=d2)
-        out[start : start + chunk] = np.sqrt(d2) @ membership
-    return out
+        np.sqrt(d2, out=d2)
+        means = np.add.reduceat(d2, starts, axis=1) / counts
+        idx = np.argmin(means, axis=1)
+        best[s0 : s0 + chunk] = idx
+        dist[s0 : s0 + chunk] = means[np.arange(len(rows)), idx]
+    return best, dist
 
 
 def _blocked_labels(matrix: np.ndarray, threshold: float, block_size: int) -> np.ndarray:
@@ -119,15 +147,13 @@ def _blocked_labels(matrix: np.ndarray, threshold: float, block_size: int) -> np
         labels[head] = head_labels + next_id
         n_new = int(head_labels.max()) + 1
         if len(tail):
-            mean_dist = _mean_dist_to_clusters(
+            best, dist = _nearest_cluster_by_mean(
                 matrix[tail].astype(np.float64),
                 matrix[head].astype(np.float64),
                 head_labels,
                 n_new,
-                chunk=max(1, 8_000_000 // max(1, len(head))),
             )
-            best = np.argmin(mean_dist, axis=1)
-            joined = mean_dist[np.arange(len(tail)), best] < threshold
+            joined = dist < threshold
             labels[tail[joined]] = best[joined] + next_id
             tail = tail[~joined]
         next_id += n_new

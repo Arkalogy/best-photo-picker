@@ -96,11 +96,10 @@ class TestEnsureModelHashCheck:
             create_fn=lambda p: object(),
             registry_id="openai_clip_vit_b32_onnx",
         )
-        with (
-            patch("urllib.request.urlopen", return_value=_fake_resp(content)) as urlopen,
-            pytest.raises(ValueError, match="pinned sha256"),
-        ):
-            ms.ensure_model()
+        with patch("urllib.request.urlopen", return_value=_fake_resp(content)) as urlopen:
+            assert ms.ensure_model() is None
+            with pytest.raises(RuntimeError, match="sha256"):
+                ms.ensure_model_or_raise()
 
         assert not target.exists()
         urlopen.assert_not_called()

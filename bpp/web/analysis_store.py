@@ -98,6 +98,10 @@ class AnalysisStore:
     face_recovery_running: bool = False
     face_recovery_failed: bool = False
     face_recovery_cancel: threading.Event = field(default_factory=threading.Event)
+    #: The last missing-file scan refused to mark more than half the
+    #: library missing: ``(missing, total)``; /api/v1/health shows it so a
+    #: real mass deletion isn't mistaken for a healthy library.
+    missing_scan_refused: tuple[int, int] | None = None
 
     def bump_generation_and_reset_phash(self) -> None:
         """Atomically: increment the generation counter and install a
@@ -125,6 +129,7 @@ class AnalysisStore:
         self.face_recovery_cancel = threading.Event()
         self.face_recovery_running = False
         self.face_recovery_failed = False
+        self.missing_scan_refused = None
 
     def join_threads(self, timeout: float) -> None:
         """Signal cancel + join both daemon threads.

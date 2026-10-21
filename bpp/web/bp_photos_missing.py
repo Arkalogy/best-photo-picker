@@ -26,9 +26,14 @@ def api_recheck_missing() -> tuple[Response, int]:
     conn = ctx.get_conn()
     # The owner asked: scan everything, including marking files that are
     # gone (the periodic check refuses to flip most of a library at once).
-    from bpp.db.photos_missing import check_missing
+    from bpp.db.photos_missing import scan_missing
 
-    newly_missing = len(check_missing(conn, force=True))
+    scan = scan_missing(conn, force=True)
+    newly_missing = len(scan.newly_missing)
+    # The owner's forced scan is the answer to a refused one — once it
+    # has actually run to the end (storage may still be unreachable).
+    if scan.completed:
+        ctx.analysis_store.missing_scan_refused = None
     # Find photos currently marked missing
     rows = conn.execute("SELECT id, filepath FROM photos WHERE missing=1").fetchall()
     if not rows:

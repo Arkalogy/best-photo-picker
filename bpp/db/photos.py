@@ -476,6 +476,7 @@ from bpp.db.photos_missing import (  # noqa: E402, F401
     check_missing,
     mark_missing,
     relocate_missing,
+    scan_missing,
 )
 from bpp.db.photos_updates import (  # noqa: E402, F401
     update_hashes,

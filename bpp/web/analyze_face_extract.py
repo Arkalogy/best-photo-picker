@@ -61,6 +61,19 @@ _FACE_EXTRACTION_CHUNK_SIZE = 250
 _FACE_MESSAGE_TIMEOUT_S = 600.0
 
 
+def fatal_error_payload(e: BaseException) -> dict[str, Any]:
+    """The message a crashed child sends its parent. A BppError's
+    ``user_message`` rides along so the parent can show those words;
+    anything else only gets the generic line (the raw text may carry
+    paths) and the traceback for the log."""
+    return {
+        "type": "fatal_error",
+        "user_message": getattr(e, "user_message", None),
+        "error": getattr(e, "user_message", None) or str(e),
+        "traceback": traceback.format_exc(),
+    }
+
+
 def _face_extraction_worker(
     with_faces: list[dict[str, Any]],
     config: dict[str, Any],
@@ -119,14 +132,7 @@ def _face_extraction_worker(
         # close_all_connections(). This child process exits after the
         # queue.put() above, so the pool dies with it (project rule).
     except Exception as e:
-        result_queue.put(
-            {
-                "type": "fatal_error",
-                # A BppError carries words written for the user.
-                "error": getattr(e, "user_message", None) or str(e),
-                "traceback": traceback.format_exc(),
-            }
-        )
+        result_queue.put(fatal_error_payload(e))
     finally:
         result_queue.put(SENTINEL)
 

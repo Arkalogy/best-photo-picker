@@ -16,7 +16,7 @@ from bpp.errors import ConflictError, ValidationError
 from bpp.utils.logging import get_logger
 from bpp.web.share import requires_local_app
 from bpp.web.sse import captured_device_fingerprint, stream_worker_progress
-from bpp.web.state import get_ctx
+from bpp.web.state import get_ctx, refuse_while_face_recovery
 
 log = get_logger(__name__)
 
@@ -75,6 +75,7 @@ def api_analyze() -> tuple[Response, int]:
             "Face extraction in progress — wait for it to finish",
             blocker="face_extraction",
         )
+    refuse_while_face_recovery(ctx)
 
     started = ctx.worker.start(
         input_dir=ctx.input_dir,
@@ -298,6 +299,7 @@ def api_import() -> tuple[Response, int]:
             "Face extraction in progress — wait for it to finish",
             blocker="face_extraction",
         )
+    refuse_while_face_recovery(ctx)
 
     source_dir = os.path.abspath(source_dir)
     batch_name = data.get("batch_name")

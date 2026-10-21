@@ -129,16 +129,23 @@ def recover_pending_face_extractions(
                 log.info("Recovery: stopping before run %s (shutdown or library switch)", run_id)
                 break
             journal.increment_retry_count(conn, run_id)
-            extract_and_cluster_faces(
-                conn,
-                with_faces,
-                photo_map,
-                max_long_side,
-                face_conf,
-                dict(ctx.config),
-                cancel_event=cancel_event,
-                resume_run_id=run_id,
-            )
+            try:
+                extract_and_cluster_faces(
+                    conn,
+                    with_faces,
+                    photo_map,
+                    max_long_side,
+                    face_conf,
+                    dict(ctx.config),
+                    cancel_event=cancel_event,
+                    resume_run_id=run_id,
+                )
+            finally:
+                # Clusters may have changed off a request thread, even
+                # on a cancel or crash after the early phases committed:
+                # the grid and pick paths must not keep the old map.
+                if ctx is not None:
+                    ctx.invalidate_face_cluster_map()
             if (
                 cancel_event is not None
                 and cancel_event.is_set()

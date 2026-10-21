@@ -230,7 +230,9 @@ def test_every_model_writer_uses_a_per_writer_temp_file(tmp_path, monkeypatch, w
     with patch("bpp.utils.download.download_file", side_effect=plain):
         if writer == "singleton":
             ms = _singleton(tmp_path / "m.onnx")
-            ms.model_sha256 = None
+            # Pinned to the stub's bytes: an unpinned model is refused
+            # before any fetch (tests/test_model_singleton_unpinned.py).
+            ms.model_sha256 = _sha(b"x")
             ms.ensure_model()
         elif writer == "pets":
             from bpp.scoring import pets

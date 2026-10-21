@@ -252,10 +252,18 @@ def _start_face_recovery(ctx: WebAppState) -> None:
         pending = []
     if not pending:
         return
+    if ctx.face_worker.is_alive:
+        # A face extraction started by a journal replay is already
+        # writing the face tables; it completes the same work. The run
+        # stays pending and resumes at the next startup if it must.
+        log.warning("Face extraction is already running; the resume waits for the next startup")
+        return
     store = ctx.analysis_store
     store.face_recovery_cancel = threading.Event()
     store.face_recovery_failed = False
     store.face_recovery_running = True
+    generation = store.phash_generation
+    cancel = store.face_recovery_cancel
 
     def _run() -> None:
         # A thread that outlived the join on a library switch must not
@@ -264,9 +272,17 @@ def _start_face_recovery(ctx: WebAppState) -> None:
         try:
             from bpp.web.face_worker import recover_pending_face_extractions
 
-            n = recover_pending_face_extractions(
-                ctx.get_conn(), ctx=ctx, cancel_event=store.face_recovery_cancel
-            )
+            # The resume owns the face tables while it runs: a mutation
+            # already in flight finishes first, and every face-mutating
+            # endpoint (``with_face_lock``), analyze and import refuse
+            # with 409 until ``face_recovery_running`` clears.
+            with ctx.face_op_lock:
+                # Parked behind a long mutation across a library switch:
+                # the app state now belongs to another library.
+                if store.face_recovery_thread is not me or store.phash_generation != generation:
+                    log.info("Face-extraction resume skipped: the library changed while it waited")
+                    return
+                n = recover_pending_face_extractions(ctx.get_conn(), ctx=ctx, cancel_event=cancel)
             if n:
                 log.info("Recovered %d face-extraction journal row(s)", n)
         except Exception:
@@ -402,7 +418,27 @@ def _start_file_health_checks(ctx: WebAppState) -> None:
     """Launch background threads for missing-file detection and periodic sampling."""
     from bpp.web.health import start_health_checks
 
-    ctx._health_handle = start_health_checks(ctx.get_conn, ctx.dirs, ctx.invalidate_analysis)
+    ctx._health_handle = start_health_checks(
+        ctx.get_conn,
+        ctx.dirs,
+        ctx.invalidate_analysis,
+        on_scan_refused=make_scan_refused_callback(ctx),
+    )
+
+
+def make_scan_refused_callback(ctx: WebAppState):
+    """The health thread's way to report a refused missing-file scan.
+    Bound to the library open when the thread started: a scan that
+    outlives a library switch must not stamp its verdict on the next
+    library (same guard as the hash backfill's generation)."""
+    store = ctx.analysis_store
+    generation = store.phash_generation
+
+    def _scan_refused(refused: tuple[int, int] | None) -> None:
+        if store.phash_generation == generation:
+            store.missing_scan_refused = refused
+
+    return _scan_refused
 
 
 def shutdown(ctx: WebAppState) -> None:

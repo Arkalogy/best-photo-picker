@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import os
 import sqlite3
+from dataclasses import dataclass
 
 from bpp.utils.logging import get_logger
 from bpp.utils.retry import retry_io
@@ -57,15 +58,38 @@ def file_present(filepath: str) -> bool | None:
     return True
 
 
+@dataclass(frozen=True)
+class MissingScan:
+    """Outcome of one missing-file scan: the paths newly marked missing,
+    and ``refused`` as ``(missing, total)`` when the scan declined to mark
+    more than half the library at once."""
+
+    newly_missing: list[str]
+    refused: tuple[int, int] | None = None
+    #: False when the scan was skipped (storage unreachable) or aborted
+    #: (storage stopped answering): it says nothing about the library.
+    completed: bool = True
+
+
 def check_missing(
     conn: sqlite3.Connection, *, photos_dir: str | None = None, force: bool = False
 ) -> list[str]:
-    """Find photos whose files no longer exist on disk. Marks them and returns paths.
+    """:func:`scan_missing`'s newly-missing paths (the historical shape)."""
+    return scan_missing(conn, photos_dir=photos_dir, force=force).newly_missing
+
+
+def scan_missing(
+    conn: sqlite3.Connection, *, photos_dir: str | None = None, force: bool = False
+) -> MissingScan:
+    """Find photos whose files no longer exist on disk and mark them.
 
     Transient storage errors never count as missing. Unless ``force``,
     the scan is skipped when ``photos_dir`` isn't reachable, and refused
     when more than half the library would flip at once: that is an
     outage, not a cleanup, and rows marked missing vanish from every view.
+    A refusal is reported in the result (and by /api/v1/health) so a
+    real mass deletion isn't mistaken for a healthy library; the manual
+    recheck (``force``) marks the files.
     """
     from bpp.utils.retry import check_storage_accessible
 
@@ -77,7 +101,7 @@ def check_missing(
                 photos_dir,
                 access["error"],
             )
-            return []
+            return MissingScan([], completed=False)
     rows = conn.execute("SELECT filepath FROM photos WHERE missing=0").fetchall()
     newly_missing = []
     unanswered = 0
@@ -90,7 +114,7 @@ def check_missing(
                     "Stopping the missing-file scan: %d files in a row got no answer from storage",
                     unanswered,
                 )
-                return []
+                return MissingScan([], completed=False)
             continue
         unanswered = 0
         if present is False:
@@ -102,7 +126,7 @@ def check_missing(
             len(newly_missing),
             len(rows),
         )
-        return []
+        return MissingScan([], refused=(len(newly_missing), len(rows)))
     if newly_missing:
         placeholders = ", ".join(["?"] * len(newly_missing))
         conn.execute(
@@ -111,7 +135,7 @@ def check_missing(
         )
         conn.commit()
         log.info("Marked %d photos as missing", len(newly_missing))
-    return newly_missing
+    return MissingScan(newly_missing)
 
 
 def relocate_missing(conn: sqlite3.Connection, search_dir: str) -> int:

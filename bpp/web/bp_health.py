@@ -126,6 +126,7 @@ def api_health() -> tuple[Response, int]:
     phase5_check = _phase5_check(ctx)
     recovery_check = _recovery_check(ctx)
     face_recovery_check = _face_recovery_check(ctx)
+    missing_scan_check = _missing_scan_check(ctx)
     models_check = _models_check()
     install_check = _install_check(is_owner)
     downloads_check = _downloads_check()
@@ -142,6 +143,7 @@ def api_health() -> tuple[Response, int]:
         or phase5_check["failed"]
         or recovery_check["failed"]
         or face_recovery_check["failed"]
+        or missing_scan_check["refused"]
         or "error" in models_check
         or install_check["interrupted"]
         or downloads_check["failed"]
@@ -162,6 +164,7 @@ def api_health() -> tuple[Response, int]:
                     "phase5": phase5_check,
                     "derived_recovery": recovery_check,
                     "face_recovery": face_recovery_check,
+                    "missing_scan": missing_scan_check,
                     "models": models_check,
                     "install": install_check,
                     "downloads": downloads_check,
@@ -355,6 +358,17 @@ def _phase5_check(ctx: Any) -> dict[str, bool]:
         "failed": bool(getattr(ctx, "phase5_failed", False)),
         "in_flight": bool(_backfill_event) and not _backfill_event.is_set(),
     }
+
+
+def _missing_scan_check(ctx: Any) -> dict[str, Any]:
+    """The missing-file scan declined to mark more than half the library
+    missing (``refused`` with the counts): an outage, or a real mass
+    deletion the manual recheck must confirm."""
+    store = getattr(ctx, "analysis_store", None)
+    refused = getattr(store, "missing_scan_refused", None)
+    if not refused:
+        return {"refused": False}
+    return {"refused": True, "missing": refused[0], "total": refused[1]}
 
 
 def _face_recovery_check(ctx: Any) -> dict[str, bool]:

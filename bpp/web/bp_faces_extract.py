@@ -45,11 +45,8 @@ def api_faces_extract() -> tuple[Response, int]:
     exist. Returns 409 when analysis or another extraction is
     already running."""
     ctx = get_ctx()
-    # An interrupted extraction resuming after a restart owns the face
-    # tables until it finishes (checked first: it is the reason a user
-    # may be clicking at all).
-    if ctx.analysis_store.face_recovery_running:
-        raise ConflictError("Face extraction is resuming after a restart; wait for it to finish")
+    # (A resume after a restart owns the face tables: with_face_lock
+    # answers 409 for it before this body runs.)
     analysis = ctx.load_analysis_if_needed()
     if analysis is None:
         raise NotFoundError("No analysis data")
@@ -81,11 +78,8 @@ def api_faces_retry() -> tuple[Response, int]:
     face-extraction worker from scratch. Used when detection settings
     change or initial extraction produced bad clusters."""
     ctx = get_ctx()
-    # An interrupted extraction resuming after a restart owns the face
-    # tables until it finishes (checked first: it is the reason a user
-    # may be clicking at all).
-    if ctx.analysis_store.face_recovery_running:
-        raise ConflictError("Face extraction is resuming after a restart; wait for it to finish")
+    # (A resume after a restart owns the face tables: with_face_lock
+    # answers 409 for it before this body runs.)
     analysis = ctx.load_analysis_if_needed()
     if analysis is None:
         raise NotFoundError("No analysis data")

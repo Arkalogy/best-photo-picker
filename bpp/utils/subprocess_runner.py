@@ -331,12 +331,14 @@ class BoundedSubprocessRunner(Generic[I, O]):
                 )
                 child_crashed = True
                 if progress_callback:
-                    progress_callback(
-                        {
-                            "type": "error",
-                            "message": (f"{self.phase.name} crashed; see server.log for the error"),
-                        }
+                    # A refusal the child wrote for the user (a BppError's
+                    # user_message) is shown as is; anything else stays
+                    # the generic line, since a raw exception text may
+                    # carry paths.
+                    message = msg.get("user_message") or (
+                        f"{self.phase.name} crashed; see server.log for the error"
                     )
+                    progress_callback({"type": "error", "message": message})
                 # Keep draining — the child may still emit SENTINEL on
                 # its way out, and we want to consume it cleanly.
                 continue

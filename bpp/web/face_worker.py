@@ -256,13 +256,20 @@ class FaceWorker(BackgroundWorker):
 
         # Thread the FaceWorker's threading-side cancel into the
         # subprocess runner — same plumbing as AnalyzeWorker.
-        faces_found, n_clusters, _pid = run_face_extraction_subprocess(
-            with_faces,
-            config,
-            db_path,
-            progress_callback=self._emit,
-            cancel_event=self._cancelled,
-        )
+        try:
+            faces_found, n_clusters, _pid = run_face_extraction_subprocess(
+                with_faces,
+                config,
+                db_path,
+                progress_callback=self._emit,
+                cancel_event=self._cancelled,
+            )
+        finally:
+            # The subprocess may have rewritten the clusters (even when
+            # it was cancelled or crashed after the early phases); this
+            # thread owns the app state, so the map is invalidated here.
+            if self.ctx is not None:
+                self.ctx.invalidate_face_cluster_map()
 
         # Clear any pending `face_extraction_retry` journal entries.
         # api_faces_retry creates one before wiping face data; we close

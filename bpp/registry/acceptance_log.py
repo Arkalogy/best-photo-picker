@@ -65,6 +65,7 @@ import dataclasses
 import datetime
 import json
 import os
+import re
 import tempfile
 import threading
 from collections.abc import Iterator
@@ -190,7 +191,19 @@ class AcceptanceRow:
         record back-filled from external evidence (if any)."""
         # A field of the wrong type means a damaged row — never coerced
         # (``bool("false")`` is True: that would grant commercial rights).
-        # Raising makes the reader skip it whole and fail closed.
+        # Raising makes the reader skip it whole and fail closed. Two
+        # readings an earlier writer may have produced are unambiguous
+        # and accepted: an int-like string schema version, and 0/1 for a
+        # checkbox answer.
+        raw = dict(raw)
+        sv = raw.get("schema_version", 1)
+        if isinstance(sv, str) and re.fullmatch(r"[1-9][0-9]*", sv):
+            raw["schema_version"] = int(sv)
+        cr = raw.get("checkbox_responses")
+        if isinstance(cr, dict):
+            raw["checkbox_responses"] = {
+                k: (bool(v) if type(v) is int and v in (0, 1) else v) for k, v in cr.items()
+            }
         bad = [k for k in ROW_TEXT_FIELDS if not isinstance(raw[k], str)]
         bad += [
             k

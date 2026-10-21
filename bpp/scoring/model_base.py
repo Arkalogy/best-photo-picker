@@ -386,6 +386,13 @@ class ModelSingleton:
         # don't burn the retry loop on a refusal that can't change).
         if not self._license_allows_load():
             return None, "its license isn't accepted (Settings → Models)"
+        if not self.model_sha256:
+            # download_file refuses an unpinned fetch; say so here in the
+            # documented shape (None + reason) instead of raising.
+            log.warning(
+                "%s model can't be downloaded: no pinned sha256 for %s", self.name, self.model_url
+            )
+            return None, "its download has no pinned sha256"
         return self._download(repairing)
 
     def _bundled_exists(self) -> bool:

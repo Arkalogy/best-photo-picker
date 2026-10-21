@@ -329,9 +329,10 @@ class AnalyzeWorker(BackgroundWorker):
         # AFTER the CLIP phase below — Moments cluster over CLIP
         # embeddings, so clustering before CLIP finishes "recovers"
         # to garbage (the wipe-incident race, S4 2026-06-12).
-        from bpp.web.state import get_ctx_or_none
-
-        ctx = get_ctx_or_none()
+        # The worker thread has no request, so the request-bound
+        # ``get_ctx`` would find nothing; ``self.ctx`` is the app state
+        # the pool handed this worker.
+        ctx = self.ctx
         if ctx is not None:
             with ctx.lock:
                 ctx.state["analysis"] = valid
@@ -347,9 +348,13 @@ class AnalyzeWorker(BackgroundWorker):
                     "of": 5,
                 }
             )
-            counts["faces_found"], counts["face_clusters"] = run_face_phase(
-                conn, valid, config, emit=self._emit, cancel_event=self._cancelled
-            )
+            try:
+                counts["faces_found"], counts["face_clusters"] = run_face_phase(
+                    conn, valid, config, emit=self._emit, cancel_event=self._cancelled
+                )
+            finally:
+                if ctx is not None:
+                    ctx.invalidate_face_cluster_map()
 
         # --- Phase 3: CLIP embedding extraction ---
         if cfg_get(config, "model_clip") and not self._cancelled.is_set():

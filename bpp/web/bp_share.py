@@ -170,13 +170,15 @@ def api_share_pair_status() -> tuple[Response, int]:
     device = get_device_by_fingerprint(ctx.get_conn(), fp)
     if device is None:
         return jsonify({"state": "unknown"}), 200
-    # A phone that keeps polling is still waiting: bump last_seen so the
-    # pending-row expiry doesn't drop it while the owner is away.
-    touch_device(ctx.get_conn(), int(device["id"]))
     if device["revoked_at"] is not None:
         return jsonify({"state": "revoked"}), 200
     if device["trusted_at"] is not None:
         return jsonify({"state": "trusted"}), 200
+    # A phone that keeps polling is still waiting: last_seen tells the
+    # owner so. Only a pending request is touched — a revoked device
+    # polling forever must not look alive — and the request still
+    # expires by its age (prune_expired_pending), not by this bump.
+    touch_device(ctx.get_conn(), int(device["id"]))
     return jsonify({"state": "pending"}), 200
 
 

@@ -9,6 +9,7 @@ centroid distance, and whatever is left clustered in the next block.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 
 def _six_people(rng, per_person=7, dim=16):
@@ -65,3 +66,27 @@ def test_cap_is_sized_for_a_few_hundred_megabytes():
 
     pairs = LINKAGE_MAX_FACES * (LINKAGE_MAX_FACES - 1) // 2
     assert pairs * 8 <= 400 * 1024 * 1024
+
+
+def test_tail_faces_join_by_mean_distance_without_a_dense_cluster_matrix():
+    from bpp.scoring import face_cluster as fc
+
+    rng = np.random.default_rng(5)
+    members = rng.normal(size=(50, 8))
+    labels = rng.integers(0, 7, size=50)
+    block = rng.normal(size=(30, 8))
+    best, dist = fc._nearest_cluster_by_mean(block, members, labels, 7)
+    for i in range(30):
+        means = [np.linalg.norm(members[labels == k] - block[i], axis=1).mean() for k in range(7)]
+        assert best[i] == int(np.argmin(means)), f"row {i}: nearest cluster"
+        assert dist[i] == pytest.approx(min(means)), f"row {i}: mean distance"
+
+
+def test_mean_distance_chunk_is_bounded_by_members_and_clusters():
+    from bpp.scoring import face_cluster as fc
+
+    budget = 64 * 1024 * 1024
+    for n_members, n_clusters in ((8000, 5000), (8000, 10), (100, 100)):
+        rows = fc._rows_per_chunk(n_members, n_clusters)
+        assert rows >= 1, (n_members, n_clusters)
+        assert rows * max(n_members, n_clusters) * 8 <= budget, (n_members, n_clusters, rows)
