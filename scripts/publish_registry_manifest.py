@@ -118,8 +118,8 @@ def main() -> int:
     parser.add_argument(
         "--out",
         type=Path,
-        default=Path("/tmp/registry.json"),
-        help="Output path for the signed manifest. Defaults to /tmp/registry.json.",
+        default=Path("registry.json"),
+        help="Output path for the signed manifest. Defaults to ./registry.json.",
     )
     parser.add_argument(
         "--maintainer",

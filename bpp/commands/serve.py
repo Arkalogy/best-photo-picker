@@ -40,12 +40,13 @@ def do_web(args: argparse.Namespace) -> int:
 
     port = args.port
     app = create_app(input_dir=input_dir, workdir=workdir, config_path=config_path)
+    _launch_url = _configure_loopback_boot(app.extensions["bpp"], port, args)
 
     if not args.no_browser:
         import threading
         import webbrowser
 
-        threading.Timer(1.0, webbrowser.open, args=[f"http://127.0.0.1:{port}"]).start()
+        threading.Timer(1.0, webbrowser.open, args=[_launch_url]).start()
 
     host = getattr(args, "host", None) or "127.0.0.1"
     log.info("Starting web UI at http://%s:%d", host, port)
@@ -92,15 +93,17 @@ def do_serve(args: argparse.Namespace) -> int:
         library_path=library_path,
     )
 
+    ctx = app.extensions["bpp"]
+    _launch_url = _configure_loopback_boot(ctx, port, args)
+
     if not args.no_browser:
         import threading
         import webbrowser
 
-        threading.Timer(1.0, webbrowser.open, args=[f"http://127.0.0.1:{port}"]).start()
+        threading.Timer(1.0, webbrowser.open, args=[_launch_url]).start()
 
     _install_shutdown_handlers()
 
-    ctx = app.extensions["bpp"]
     ctx.port = port
 
     # If LAN sharing is enabled (DB-persisted toggle), surface the share URL
@@ -248,6 +251,36 @@ def _install_shutdown_handlers() -> None:
     atexit.register(_shutdown)
     signal.signal(signal.SIGTERM, _graceful_shutdown)
     signal.signal(signal.SIGINT, _graceful_shutdown)
+
+
+def _configure_loopback_boot(ctx: Any, port: int, args: argparse.Namespace) -> str:
+    """Set the loopback boot secret and return the URL to open.
+
+    Any local process can reach 127.0.0.1:port; without a secret the
+    index page would hand it the owner token (other OS users, sandboxed
+    apps). The desktop shell passes ``BPP_BOOT_SECRET``; ``bpp serve``
+    makes one and prints the tokenized URL, as notebooks do.
+    ``--open-loopback`` / ``BPP_OPEN_LOOPBACK=1`` keep the old open
+    behaviour (the e2e runner, a dev reloading the page by hand).
+    """
+    import secrets
+
+    log = get_logger(__name__)
+    base = f"http://127.0.0.1:{port}"
+    if getattr(args, "open_loopback", False) or os.environ.get("BPP_OPEN_LOOPBACK") == "1":
+        ctx.boot_secret = None
+        return base
+    secret = os.environ.get("BPP_BOOT_SECRET")
+    ctx.boot_secret = secret or secrets.token_urlsafe(24)
+    url = f"{base}/?_boot={ctx.boot_secret}"
+    if secret:  # the desktop shell made it: it already knows
+        log.info("Loopback boot key supplied by the launcher")
+    else:
+        # To the terminal only: server.log is on disk for the run's
+        # lifetime, and the key is what keeps other local users out.
+        print(f"Open Best Photo Picker at {url}  (the key is for this run only)", flush=True)
+        log.info("Loopback boot key generated; the URL to open was printed to the terminal")
+    return url
 
 
 def _bind_host(user_host: str | None, sharing_enabled: bool) -> str:

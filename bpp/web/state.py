@@ -211,6 +211,11 @@ class WebAppState(_LegacyDelegateMixin):
         yaml_overlay = {k: v for k, v in config.items() if v != DEFAULTS.get(k)}
         self.config: Config = Config(yaml_overlay, get_conn=self.get_conn)
         self.auth_token: str = secrets.token_hex(32)
+        # Set by `bpp serve` / the desktop shell: the loopback index page
+        # renders the owner token only to a caller presenting this secret
+        # (first load, then a cookie). None = open loopback (tests, dev
+        # opt-out), the pre-0.1.3 behaviour.
+        self.boot_secret: str | None = None
         # Port is set by the serve command after argparse, so endpoints
         # can render the correct share URL. The LAN sharing toggle
         # itself lives in DB settings (see bpp/web/share.py) so it

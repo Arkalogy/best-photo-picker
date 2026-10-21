@@ -53,6 +53,8 @@ _REDACT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
     # ?_token=<value> or &_token=<value> in URLs / log lines
     (re.compile(r"([?&]_token=)([^\s\"'&#]+)"), r"\1[REDACTED]"),
+    # ?_boot=<value>: the loopback boot key (werkzeug access lines).
+    (re.compile(r"([?&]_boot=)([^\s\"'&#]+)"), r"\1[REDACTED]"),
     # *_auth_token / *_share_token / *_app_token bare key=value or
     # key: value (YAML / Python dict-repr / debug dumps).
     # Optional prefix `\w+_` catches `lan_share_token`,

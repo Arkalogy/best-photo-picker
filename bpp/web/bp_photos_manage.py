@@ -222,7 +222,8 @@ def _absolute_library_path(ctx: Any, filepath: str) -> str:
     resolve those so its read-only lookups still find the row."""
     from bpp.web.lan_redaction import resolve_device_path
 
-    return resolve_device_path(filepath, ctx.library_path)
+    lookup = ctx.thumbs.get_filepath if ctx.thumbs is not None else None
+    return resolve_device_path(filepath, ctx.library_path, lookup)
 
 
 @bp.get("/api/v1/photos/enhance-preview")

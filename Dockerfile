@@ -103,4 +103,6 @@ ENV BPP_TRUSTED_PROXIES=172.16.0.0/12,192.168.65.0/24
 # the server (a loopback bind inside the container is unreachable from
 # the host). Exposure to the outside world is decided by the `-p` flag
 # above, not by this bind. Access via http://localhost:5001 on the host.
-CMD ["bpp", "serve", "--library", "/data", "--host", "0.0.0.0", "--no-browser"]
+# --open-loopback: the per-run boot key that `bpp serve` prints is
+# for a shared desktop; here the container is the boundary.
+CMD ["bpp", "serve", "--library", "/data", "--host", "0.0.0.0", "--no-browser", "--open-loopback"]

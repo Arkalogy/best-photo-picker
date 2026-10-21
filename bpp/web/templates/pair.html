@@ -92,12 +92,13 @@
   <p id="pair-subtitle">Open Best Photo Picker on the host computer and approve this device.</p>
   <div class="pair-spinner"></div>
   <p class="pair-status" id="pair-status">Checking…</p>
-  <button class="pair-cta" id="pair-cta" data-action="_bppReload">Open library</button>
+  <button class="pair-cta" id="pair-cta">Open library</button>
   <button class="pair-request-btn" id="pair-request-btn">Request access again</button>
   <p class="pair-warn" id="pair-warn"></p>
 </div>
 <script nonce="{{ csp_nonce }}">
 (function(){
+  document.getElementById('pair-cta').addEventListener('click', function () { location.reload(); });
   // Strip the _token from the URL so the user doesn't accidentally
   // share it via screenshot (it's already in the cookie / referer-free).
   try {

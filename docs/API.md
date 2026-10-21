@@ -22,9 +22,10 @@ When **LAN sharing is off** (Settings → Share toggle), all non-loopback reques
 
 ## Quick Start
 
-Every `/api/v1/*` call needs the app session token (see **Authentication** above). From the machine running bpp, read it out of the index page — it changes on every server restart:
+Every `/api/v1/*` call needs the app session token (see **Authentication** above). From the machine running bpp, read it out of the index page — it changes on every server restart. The page itself is locked behind the one-time boot key `bpp serve` prints (`?_boot=…`), so for scripting start the server with `--open-loopback` (or `BPP_OPEN_LOOPBACK=1`):
 
 ```bash
+bpp serve --library ~/Pictures/BestPhotoPicker --no-browser --open-loopback &
 TOKEN=$(curl -s http://localhost:5001/ | sed -n 's/.*name="auth-token" content="\([^"]*\)".*/\1/p')
 ```
 

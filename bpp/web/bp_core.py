@@ -41,6 +41,7 @@ from bpp.web.share import (
     FP_COOKIE_NAME,
     _device_name_from_ua,
     _sanitize_device_name,  # re-exported for tests/test_share_cookie.py
+    _token_equals,
     principal_is_local_app,
     requires_local_app,
 )
@@ -95,6 +96,31 @@ def _asset_version() -> str:
         return str(int(max(mtimes)))
     except OSError:
         return "0"
+
+
+BOOT_COOKIE_NAME = "bpp_boot"
+
+
+def _presents_boot_secret(ctx: Any) -> bool:
+    """Whether this loopback request carries the boot secret, as the
+    ``_boot`` query parameter or the cookie the first load set."""
+    secret = ctx.boot_secret
+    if not secret:
+        return True
+    presented = request.args.get("_boot") or request.cookies.get(BOOT_COOKIE_NAME) or ""
+    return _token_equals(presented, secret)
+
+
+@bp.get("/boot-check")
+def api_boot_check() -> tuple[Response, int]:
+    """The desktop shell asks the server to prove it is bpp before
+    navigating to it (another process could hold the port): 204 when
+    the ``_boot`` secret matches, 403 otherwise. Anonymous on purpose
+    (it is outside ``/api``); it reveals nothing."""
+    ctx = get_ctx()
+    if ctx.boot_secret and not _token_equals(request.args.get("_boot") or "", ctx.boot_secret):
+        return Response(status=403), 403
+    return Response(status=204), 204
 
 
 @bp.get("/")
@@ -197,6 +223,15 @@ def index() -> Response:
             secure=request.scheme == "https",
         )
     else:
+        # Loopback: any local process can reach this port, and the page
+        # carries the owner token. With a boot secret configured, only a
+        # caller that presents it (the shell's first navigation, or the
+        # cookie that set) gets the token; others get a locked page.
+        booted = _presents_boot_secret(ctx)
+        if ctx.boot_secret and not booted:
+            resp = make_response(render_template("loopback_locked.html"), 403)
+            resp.headers["Referrer-Policy"] = "no-referrer"
+            return resp
         token = ctx.auth_token
         resp = make_response(
             render_template(
@@ -207,6 +242,15 @@ def index() -> Response:
                 bpp_posture_statement=_bpp_posture_statement(),
             )
         )
+        if ctx.boot_secret:
+            resp.set_cookie(
+                BOOT_COOKIE_NAME,
+                ctx.boot_secret,
+                httponly=True,
+                samesite="Strict",
+                secure=request.scheme == "https",
+                path="/",
+            )
 
     # Defense in depth: prevent the share token from leaking via Referer
     # when the user clicks any outbound link (map tile, video CDN, etc.)

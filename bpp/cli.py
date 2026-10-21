@@ -101,6 +101,12 @@ def _add_web(sub: argparse._SubParsersAction) -> None:
         help="Bind address (default: 127.0.0.1). Pass 0.0.0.0 for Docker port-forwarding.",
     )
     p_web.add_argument("--no-browser", action="store_true", help="Don't auto-open browser")
+    p_web.add_argument(
+        "--open-loopback",
+        action="store_true",
+        help="Serve the app to any local process without the one-time boot key "
+        "(same as BPP_OPEN_LOOPBACK=1); needed when opening the page by hand",
+    )
     p_web.add_argument("--config", help="Path to YAML config file")
     p_web.add_argument("--debug", action="store_true", help="Enable debug logging")
 
@@ -128,6 +134,12 @@ def _add_serve(sub: argparse._SubParsersAction) -> None:
     )
     p_serve.add_argument("--port", type=int, default=5001, help="Port for web server")
     p_serve.add_argument("--no-browser", action="store_true", help="Don't auto-open browser")
+    p_serve.add_argument(
+        "--open-loopback",
+        action="store_true",
+        help="Serve the app to any local process without the one-time boot key "
+        "(same as BPP_OPEN_LOOPBACK=1); needed when opening the page by hand",
+    )
     p_serve.add_argument("--config", help="Path to YAML config file")
     p_serve.add_argument("--debug", action="store_true", help="Enable debug logging")
 

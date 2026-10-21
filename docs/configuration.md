@@ -439,3 +439,40 @@ up a mock registry on `http://127.0.0.1:9088/registry.json` without
 provisioning a TLS cert.
 
 The reader lives in `bpp/registry/remote_registry.py`.
+
+## `BPP_BOOT_SECRET`
+
+**Default:** *(unset)* — `bpp serve` / `bpp web` generate a random key per
+run and print the tokenized URL to open.
+
+**Type:** string (a URL-safe token).
+
+**What it does:** sets the one-time boot key the loopback index page
+expects. Any local process can reach `127.0.0.1:5001`, and the page
+carries the owner token, so the page is rendered only to a caller that
+presents the key (`/?_boot=<key>`, after which an HttpOnly cookie carries
+it). The desktop app passes its own key to the server sidecar this way
+and checks `/boot-check` before navigating.
+
+**Trust / safety implications:** keep it unguessable; it is as sensitive
+as the owner token for the duration of the run. Prefer leaving it unset
+and using the URL the server prints.
+
+The reader lives in `bpp/commands/serve.py`.
+
+## `BPP_OPEN_LOOPBACK`
+
+**Default:** *(unset)* — the boot key above is required.
+
+**Type:** `1` to enable (the `--open-loopback` flag does the same).
+
+**What it does:** serves the app to any local process without the boot
+key, as versions before 0.1.3 did. Use it when opening the page by hand
+or from a test runner that navigates to `/` in fresh browser contexts
+(`scripts/run_e2e.sh` sets it).
+
+**Trust / safety implications:** every process on the machine, including
+other OS users and sandboxed apps, can then read the owner token from
+the index page. Not for shared machines.
+
+The reader lives in `bpp/commands/serve.py`.

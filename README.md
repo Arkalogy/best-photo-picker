@@ -141,7 +141,7 @@ bpp serve
 bpp serve --library ~/Photos/2024
 ```
 
-Open http://127.0.0.1:5001 in your browser. Import folders, adjust scoring weights with sliders, and export your curated selection.
+Your browser opens the app. If it doesn't, use the link the terminal prints: it carries a one-time key, so other programs on the machine can't open your library (pass `--open-loopback` to skip the key). Import folders, adjust scoring weights with sliders, and export your curated selection.
 
 ### CLI Mode (Batch Processing)
 
@@ -494,7 +494,7 @@ pip install -e ".[heic]"
 
 ```bash
 bpp serve --library ~/Pictures/BestPhotoPicker --no-browser
-# Open http://127.0.0.1:5001
+# Open the link it prints, or add --open-loopback and use http://127.0.0.1:5001
 ```
 
 ### 3. Desktop app (Tauri v2)

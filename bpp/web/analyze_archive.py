@@ -13,7 +13,6 @@ Imported from ``analyze_worker.py``; not part of the public API.
 from __future__ import annotations
 
 import os
-import sys
 import tarfile
 import zipfile
 from collections.abc import Callable
@@ -136,9 +135,10 @@ def extract_archive_into_workdir(
                 )
                 return None
             try:
-                if sys.version_info >= (3, 12):
-                    # filter="data" rejects absolute paths, links
-                    # escaping the tree, device files, etc.
+                if hasattr(tarfile, "data_filter"):
+                    # filter="data" (3.11.4+ ships it) rejects absolute
+                    # paths, links escaping the tree, device files, and
+                    # drops the archive's mode bits.
                     tf.extractall(extract_dir, filter="data")
                 else:
                     # Python 3.11: no filter kwarg yet — validate

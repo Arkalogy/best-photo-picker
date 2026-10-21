@@ -224,7 +224,7 @@ class TestJournalsCheck:
 class TestAggregateStatus:
     def test_status_ok_on_clean_ctx(self, client):
         data = client.get("/api/v1/health").get_json()
-        assert data["status"] == "ok"
+        assert data["status"] == "ok", data["checks"]
 
     def test_status_degraded_when_journal_pending(self, app, client):
         from bpp.db.journal import journal_start

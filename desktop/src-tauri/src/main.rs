@@ -72,15 +72,66 @@ struct RestartState {
 fn wait_for_server(port: u16, timeout_secs: u64) -> bool {
     let start = std::time::Instant::now();
     let timeout = Duration::from_secs(timeout_secs);
-    let addr = format!("127.0.0.1:{}", port);
 
     while start.elapsed() < timeout {
-        if std::net::TcpStream::connect(&addr).is_ok() {
+        if server_knows_boot_secret(port) {
             return true;
         }
         std::thread::sleep(Duration::from_millis(200));
     }
     false
+}
+
+/// The per-launch secret the sidecar gets and the webview presents:
+/// 24 bytes of OS entropy, hex.
+fn boot_secret() -> &'static str {
+    use std::sync::OnceLock;
+    static SECRET: OnceLock<String> = OnceLock::new();
+    SECRET.get_or_init(|| {
+        let mut buf = [0u8; 24];
+        getrandom::getrandom(&mut buf).expect("OS entropy unavailable");
+        buf.iter().map(|b| format!("{:02x}", b)).collect()
+    })
+}
+
+/// Port-collision check: a bare TCP connect would accept any process
+/// that happens to hold 5001 (our sidecar then failed to bind). GET
+/// /boot-check?_boot=<secret> -> 204 says the listener is a bpp server
+/// started with our secret. It is not a proof of identity: the secret
+/// goes over the wire first, which is fine because it only unlocks a
+/// page on this same listener.
+fn server_knows_boot_secret(port: u16) -> bool {
+    use std::io::{Read, Write};
+    let addr = format!("127.0.0.1:{}", port);
+    let Ok(mut stream) = std::net::TcpStream::connect_timeout(
+        &addr.parse().unwrap(),
+        Duration::from_secs(2),
+    ) else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+    let req = format!(
+        "GET /boot-check?_boot={} HTTP/1.0\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
+        boot_secret(),
+        port
+    );
+    if stream.write_all(req.as_bytes()).is_err() {
+        return false;
+    }
+    let mut buf = [0u8; 64];
+    let n = stream.read(&mut buf).unwrap_or(0);
+    let head = String::from_utf8_lossy(&buf[..n]);
+    head.starts_with("HTTP/1.0 204") || head.starts_with("HTTP/1.1 204")
+}
+
+/// Open one of our own https links in the user's browser; the webview
+/// can't reach the shell plugin directly (core:default only).
+#[tauri::command]
+fn open_url(app: AppHandle, url: String) -> Result<(), String> {
+    if !url.starts_with("https://github.com/Arkalogy/") {
+        return Err("refused".into());
+    }
+    app.shell().open(url, None).map_err(|e| e.to_string())
 }
 
 fn server_is_alive(port: u16) -> bool {
@@ -115,7 +166,7 @@ fn show_fatal_error(handle: &AppHandle) {
             r#"(function(){
   var o=document.getElementById('bpp-reconnect-overlay');
   var btn='padding:8px 20px;border:none;border-radius:6px;font-size:14px;cursor:pointer';
-  if(o)o.innerHTML='<div style="text-align:center;max-width:400px"><h2 style="margin:0 0 12px;font-size:20px;color:#ff6b6b">Server could not restart</h2><p style="margin:0 0 20px;color:rgba(255,255,255,0.7);font-size:14px">The server failed to restart after several attempts.</p><div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap"><button onclick="window.__TAURI__?.core?.invoke(\'exit_app\')" style="'+btn+';background:#4a9eff;color:#fff">Quit</button><button onclick="location.reload()" style="'+btn+';background:rgba(255,255,255,0.15);color:#fff">Try Again</button><button onclick="window.__TAURI__?.opener?.openUrl(\'https://github.com/Arkalogy/best-photo-picker/issues/new?template=bug_report.md&title=Server+failed+to+restart\')" style="'+btn+';background:rgba(255,255,255,0.1);color:rgba(255,255,255,0.7)">Report Issue</button></div></div>';
+  if(o)o.innerHTML='<div style="text-align:center;max-width:400px"><h2 style="margin:0 0 12px;font-size:20px;color:#ff6b6b">Server could not restart</h2><p style="margin:0 0 20px;color:rgba(255,255,255,0.7);font-size:14px">The server failed to restart after several attempts.</p><div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap"><button onclick="window.__TAURI__?.core?.invoke(\'exit_app\')" style="'+btn+';background:#4a9eff;color:#fff">Quit</button><button onclick="location.reload()" style="'+btn+';background:rgba(255,255,255,0.15);color:#fff">Try Again</button><button onclick="window.__TAURI__?.core?.invoke(\'open_url\',{url:\'https://github.com/Arkalogy/best-photo-picker/issues/new?template=bug_report.md&title=Server+failed+to+restart\'})" style="'+btn+';background:rgba(255,255,255,0.1);color:rgba(255,255,255,0.7)">Report Issue</button></div></div>';
 })()"#
         );
     }
@@ -135,7 +186,7 @@ fn show_update_required(handle: &AppHandle) {
             "<p style=\"margin:0 0 12px;font-size:14px;line-height:1.5;color:rgba(255,255,255,0.65)\">This photo library was created by a newer version of Best Photo Picker, so this older app won&#39;t open it.</p>",
             "<p style=\"margin:0 0 24px;font-size:13px;color:rgba(255,255,255,0.45)\">Your photos and library are safe &mdash; the app stopped on purpose to avoid damaging them. Update to the latest version to continue.</p>",
             "<div style=\"display:flex;gap:8px;justify-content:center;flex-wrap:wrap\">",
-            "<button onclick=\"window.__TAURI__?.opener?.openUrl(\\'https://github.com/Arkalogy/best-photo-picker/releases/latest\\')\" style=\"padding:8px 20px;background:#4a9eff;color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer\">Get the latest version</button>",
+            "<button onclick=\"window.__TAURI__?.core?.invoke(\\'open_url\\',{url:\\'https://github.com/Arkalogy/best-photo-picker/releases/latest\\'})\" style=\"padding:8px 20px;background:#4a9eff;color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer\">Get the latest version</button>",
             "<button onclick=\"window.__TAURI__?.core?.invoke(\\'exit_app\\')\" style=\"padding:8px 20px;background:rgba(255,255,255,0.15);color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer\">Quit</button>",
             "</div></div></div>';"
         ));
@@ -163,7 +214,11 @@ fn spawn_sidecar(
         .shell()
         .sidecar("bpp-server")
         .expect("failed to create sidecar command")
-        .args(["serve", "--no-browser", "--port", &port.to_string()]);
+        .args(["serve", "--no-browser", "--port", &port.to_string()])
+        // The loopback index renders the owner token only to a caller
+        // that presents this secret (our first navigation), not to any
+        // local process that reaches the port.
+        .env("BPP_BOOT_SECRET", boot_secret());
 
     let (mut rx, child) = sidecar.spawn().expect("failed to spawn bpp sidecar");
 
@@ -277,7 +332,7 @@ fn restart_server(handle: &AppHandle) {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![set_app_theme, exit_app])
+        .invoke_handler(tauri::generate_handler![set_app_theme, exit_app, open_url])
         .manage(Mutex::new(ServerState { child: None }))
         .setup(|app| {
             let handle = app.handle().clone();
@@ -340,7 +395,7 @@ fn main() {
                                 "<div style=\"display:flex;gap:8px;justify-content:center;flex-wrap:wrap\">",
                                 "<button onclick=\"location.reload()\" style=\"padding:8px 20px;background:#4a9eff;color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer\">Try Again</button>",
                                 "<button onclick=\"window.__TAURI__?.core?.invoke(\\'exit_app\\')\" style=\"padding:8px 20px;background:rgba(255,255,255,0.15);color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer\">Quit</button>",
-                                "<button onclick=\"window.__TAURI__?.opener?.openUrl(\\'https://github.com/Arkalogy/best-photo-picker/issues/new?template=bug_report.md&title=Server+failed+to+start\\')\" style=\"padding:8px 20px;background:rgba(255,255,255,0.1);color:rgba(255,255,255,0.6);border:none;border-radius:6px;font-size:14px;cursor:pointer\">Report Issue</button>",
+                                "<button onclick=\"window.__TAURI__?.core?.invoke(\\'open_url\\',{url:\\'https://github.com/Arkalogy/best-photo-picker/issues/new?template=bug_report.md&title=Server+failed+to+start\\'})\" style=\"padding:8px 20px;background:rgba(255,255,255,0.1);color:rgba(255,255,255,0.6);border:none;border-radius:6px;font-size:14px;cursor:pointer\">Report Issue</button>",
                                 "</div></div></div>';"
                             ));
                         }
@@ -354,7 +409,9 @@ fn main() {
                     }
 
                     // Redirect webview from splash screen to server
-                    let url = format!("http://localhost:{}", port);
+                    // 127.0.0.1, not localhost: the latter may resolve to
+                    // ::1, where another process could be listening.
+                    let url = format!("http://127.0.0.1:{}/?_boot={}", port, boot_secret());
                     if let Some(window) = handle_nav.get_webview_window("main") {
                         let _ = window.eval(&format!(
                             "window.location.replace('{}')",
@@ -379,8 +436,9 @@ fn main() {
                                 hide_reconnecting_overlay(&handle_nav);
                                 if let Some(window) = handle_nav.get_webview_window("main") {
                                     let _ = window.eval(&format!(
-                                        "window.location.replace('http://localhost:{}')",
-                                        port
+                                        "window.location.replace('http://127.0.0.1:{}/?_boot={}')",
+                                        port,
+                                        boot_secret()
                                     ));
                                 }
                             }

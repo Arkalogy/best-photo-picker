@@ -18,12 +18,14 @@
 <link rel="stylesheet" href="/static/css/app.css?v={{ asset_version }}">
 <script nonce="{{ csp_nonce }}">document.documentElement.setAttribute("data-theme",localStorage.getItem("bpp-theme")||"dark")</script>
 <script nonce="{{ csp_nonce }}">
-// Strip _token from the URL bar after first paint. The token is
-// already captured in the meta tag below; leaving it in the URL
-// just makes screenshots / screen recordings leak it. Idempotent.
+// Strip _token / _boot from the URL bar after first paint. The token
+// is already captured in the meta tag below and the boot key in a
+// cookie; leaving them in the URL just makes screenshots / screen
+// recordings / copied links leak them. Idempotent.
 (function(){
   try {
-    if (window.location.search.indexOf("_token=") !== -1) {
+    var q = window.location.search;
+    if (q.indexOf("_token=") !== -1 || q.indexOf("_boot=") !== -1) {
       var clean = window.location.pathname + window.location.hash;
       window.history.replaceState({}, "", clean);
     }

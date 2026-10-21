@@ -44,7 +44,12 @@ def api_storage_health() -> tuple[Response, int]:
         # Filter any path-shaped fields. check_storage_accessible
         # currently only returns accessible/error/latency_ms, but
         # future-proof against new path fields slipping in.
-        result = {k: v for k, v in result.items() if k in {"accessible", "error", "latency_ms"}}
+        # The OSError text names the absolute library path.
+        result = {
+            "accessible": result.get("accessible", False),
+            "error": None if result.get("accessible") else "storage unreachable",
+            "latency_ms": result.get("latency_ms"),
+        }
     return jsonify(result), 200
 
 

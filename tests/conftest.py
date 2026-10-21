@@ -133,9 +133,12 @@ def _reset_license_gate_state():
     # one test's log must not carry into the next.
     for gate in model_load_gate._ALL_GATES:
         gate.reset()
-    from bpp.web import model_filter
+    from bpp.web import model_download_jobs, model_filter
 
     model_filter._license_blocked_cache.clear()
+    # The download-job registry is process-global: a job another test
+    # left running or failed would degrade /api/v1/health for the next.
+    model_download_jobs._reset_for_tests()
 
 
 @pytest.fixture(autouse=True)

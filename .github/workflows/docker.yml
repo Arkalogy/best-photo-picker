@@ -10,6 +10,9 @@ name: Publish Docker image
 #       types: [published]
 # once Docker Hub publishing goes live (DOCKERHUB_TOKEN + DOCKERHUB_USERNAME
 # var + the arkalogy/bppicker repo). Until then it runs on demand only.
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
     inputs:

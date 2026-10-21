@@ -31,7 +31,9 @@ class TestRewrite:
         assert rw(os.path.join(lib, "photos", "b", "a.jpg")) == os.path.join("photos", "b", "a.jpg")
         assert rw(lib) == "."
         assert rw(os.path.join(home, "Pictures", "x.jpg")) == os.path.join("~", "Pictures", "x.jpg")
-        assert rw("/Volumes/nas/y.jpg") == "/Volumes/nas/y.jpg"
+        # Outside both roots: the volume and folder names stay on the Mac.
+        ext = rw("/Volumes/nas/trip 2024/y.jpg")
+        assert ext.startswith("@ext/") and ext.endswith("/y.jpg") and "nas" not in ext
         assert rw("plain text") == "plain text"
 
     def test_keys_and_nested_values_are_rewritten(self, tmp_path):
@@ -55,6 +57,10 @@ class TestRewrite:
             "~/Pictures/x.jpg"
         )
         assert resolve_device_path("/abs/y.jpg", lib) == "/abs/y.jpg"
+        ext = path_rewriter(lib, home=str(tmp_path / "home"))("/Volumes/nas/y.jpg")
+        table = {ext.split("/")[1]: "/Volumes/nas/y.jpg"}
+        assert resolve_device_path(ext, lib, table.get) == "/Volumes/nas/y.jpg"
+        assert resolve_device_path(ext, lib) == ext
         assert resolve_device_path("", lib) == ""
 
 

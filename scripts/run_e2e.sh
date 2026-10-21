@@ -52,6 +52,8 @@ if [ -z "${BPP_ACCEPTANCE_LOG_PATH:-}" ]; then
   BPP_ACCEPTANCE_LOG_PATH="$(mktemp -t bpp_e2e_accept.XXXXXX)"
 fi
 export BPP_ACCEPTANCE_LOG_PATH
+# The specs navigate to "/" in fresh browser contexts: no boot key.
+export BPP_OPEN_LOOPBACK=1
 
 # Isolate the rest of ~/.config/bpp too (library registry, use context):
 # e2e servers register their temp libraries and the picker tests change

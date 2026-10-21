@@ -15,6 +15,9 @@
 
 name: Randomized tests
 
+permissions:
+  contents: read
+
 on:
   schedule:
     # Sundays at 06:00 UTC — well outside busy hours, doesn't block any
