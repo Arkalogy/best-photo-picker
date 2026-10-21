@@ -28,3 +28,19 @@ def test_web_command_never_runs_flask_in_debug_mode(tmp_path, monkeypatch):
     )
     assert do_web(args) == 0
     assert captured.get("debug") is False
+
+
+def test_demo_command_never_runs_flask_in_debug_mode(monkeypatch):
+    from flask import Flask
+
+    captured: dict = {}
+
+    def fake_run(self, *args, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(Flask, "run", fake_run)
+    from bpp.commands.demo import do_demo
+
+    args = argparse.Namespace(port=5998, no_browser=True, keep=False, debug=True)
+    assert do_demo(args) == 0
+    assert captured.get("debug") is False

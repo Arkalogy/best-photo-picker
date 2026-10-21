@@ -65,5 +65,7 @@ def do_demo(args: argparse.Namespace) -> int:
         threading.Timer(1.0, webbrowser.open, args=[f"http://127.0.0.1:{port}"]).start()
 
     log.info("Starting demo at http://127.0.0.1:%d", port)
-    app.run(host="127.0.0.1", port=port, debug=getattr(args, "debug", False), threaded=True)
+    # ``--debug`` means verbose logging (setup_logging above), never
+    # Werkzeug's interactive debugger (same rule as ``bpp serve``).
+    app.run(host="127.0.0.1", port=port, debug=False, threaded=True)
     return 0

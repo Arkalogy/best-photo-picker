@@ -6,11 +6,50 @@ this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.1.3] — 2026-10-13
+## [0.1.3] — 2026-10-21
 
-Licensing and accuracy release. **Schema version: 44** (unchanged).
+Licensing, accuracy and hardening release. **Schema version: 44** (unchanged).
+
+### Security
+- **LAN sharing.** The server checks the request's `Host` before anything
+  else, so a page on another site can't reach it through DNS rebinding.
+  Pairing a phone needs the share link's token and is rate-limited; a
+  paired device is recognised by its cookie. Local file paths are removed
+  from every API response a paired device receives, and export progress
+  is visible to the owner only. Progress streams re-check that the
+  device is still trusted while they run.
+- `--debug` on `bpp serve`, `bpp web` and `bpp demo` turns on verbose
+  logging only; it never enables the Werkzeug debugger.
+- "Open folder" refuses application bundles, even ones renamed to hide
+  their suffix.
+- **Export with "remove metadata" really removes it.** HEIC and camera
+  RAW files are converted to JPEG for the strip, files whose metadata
+  can't be removed are reported as failed instead of copied with it,
+  and the summary says how many files (videos, linked files) kept
+  theirs.
+
+### Added
+- **Plugins work like the built-ins.** A plugin detector's or scorer's
+  on/off switch appears in Settings → ML Models and is honoured by the
+  run; a plugin face embedder can be picked; a plugin scorer's weight
+  can be adjusted per album; a smart album type can set its own icon,
+  tooltip and sidebar position; `register_post_cluster_hook` callbacks
+  fire for pet, near-duplicate and manual face clustering; a plugin can
+  register how its model bundle downloads (`register_catalog_loader`).
+  The plugin guide (`docs/plugins.md`) covers each of these.
+- Keyboard access to People, Pets, Groups, Memories and On-this-day
+  cards; the model pickers announce themselves as dialogs and return
+  focus when closed.
+- Tag, calendar and duplicate-group lists accept `limit` / `offset`.
 
 ### Changed
+- **Large libraries.** Face clustering of more than 8,000 faces runs in
+  blocks with bounded memory; the face detector is built once per
+  thread; new faces are matched to known people in one pass. The People
+  list, Groups, the Top Rated refresh and Live Photo tagging at startup
+  no longer read every embedding or every photo. Cache cleanup, the hash
+  backfill, thumbnail generation and the duplicate pass do less work per
+  photo.
 - **SCRFD face detector is now opt-in.** Earlier releases downloaded it by
   default and labelled it MIT. InsightFace's terms say its trained models are
   for non-commercial research only, so SCRFD now follows the same path as
@@ -40,6 +79,26 @@ Licensing and accuracy release. **Schema version: 44** (unchanged).
   written offer for the source of any bundled GPL/LGPL component.
 
 ### Fixed
+- **Library stays intact through storage blips and renames.** A short
+  NAS outage no longer marks the whole library missing; renaming the
+  open library keeps the session on it; a failed final write at the end
+  of an analysis is reported instead of the run claiming success;
+  resuming an interrupted face extraction runs in the background
+  (shown in `/api/v1/health`) instead of blocking startup.
+- Late responses no longer overwrite newer state: a slow face list
+  can't show the previous photo's faces, a slow face-outline save can't
+  end a newer edit, and the import finishes correctly even when nobody
+  is watching its progress.
+- Keyboard: person menu shortcuts no longer also trigger lightbox
+  actions, the calendar leaves inputs and dialogs alone, and "E" on a
+  card menu no longer opens Export.
+- Failures that used to be silent now say what failed and why: face
+  recluster, renaming a person during review, import and analysis stream
+  errors, and MediaPipe inference errors (logged).
+- `/api/v1/health` reports install state, download jobs and the hash
+  backfill.
+- The command-line `select` uses the same duplicate detection as the
+  app, including plugin strategies.
 - Docker: the health check always failed (it hit an endpoint that needs a
   token), and the container could not save downloaded models. Models and model
   acceptances now live on the `/data` volume.
