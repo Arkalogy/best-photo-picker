@@ -27,10 +27,6 @@ from bpp.constants import HASH_PREFIX_LEN
 #: Prefix of the opaque form of a path outside the library and home.
 EXT_PREFIX = "@ext"
 
-#: Strings that start like one of the app's own URLs are routes, not
-#: paths (an error hint such as ``/api/v1/photos``); leave them alone.
-_URL_PREFIXES = ("/api/", "/static/", "/share", "/pair")
-
 
 def _path_hash(filepath: str) -> str:
     """The same hash the thumbnail map keys a path by."""
@@ -49,10 +45,14 @@ def path_rewriter(library_path: str | None, home: str | None = None) -> Callable
             return "." if value == root else value[len(root) + 1 :]
         if value == home_dir or value.startswith(home_dir + os.sep):
             return "~" + value[len(home_dir) :]
-        if os.path.isabs(value) and len(value) > 1 and not value.startswith(_URL_PREFIXES):
+        if os.path.isabs(value) and len(value) > 1:
             # Photos analysed in place elsewhere (an external drive, a
             # temp folder): fail closed — the device gets a handle it can
-            # look the photo up by, not the volume and folder names.
+            # look the photo up by, not the volume and folder names. No
+            # exemption for strings shaped like the app's own URLs: the
+            # hook cannot tell a route hint from a photo under a folder
+            # named /static or /api, and a device needs no absolute
+            # path at all (its URLs are built on the phone).
             return f"{EXT_PREFIX}/{_path_hash(value)}/{os.path.basename(value)}"
         return value
 

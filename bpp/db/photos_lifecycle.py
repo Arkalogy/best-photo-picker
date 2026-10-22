@@ -174,21 +174,20 @@ def permanent_delete_photos(conn: sqlite3.Connection, photo_ids: list[int]) -> l
     if not photo_ids:
         return []
     placeholders = ", ".join(["?"] * len(photo_ids))
-    # Only allow permanent delete on photos already in the recycle bin.
+    # Only rows already in the recycle bin, and only the rows this very
+    # statement removed (a restore from another request between a
+    # SELECT and the DELETE would otherwise be reported as deleted).
+    # ON DELETE CASCADE handles album_photos, face_embeddings, clip_embeddings, etc.
     rows = conn.execute(
-        f"SELECT id, filepath FROM photos WHERE id IN ({placeholders}) AND deleted_at IS NOT NULL",
+        f"DELETE FROM photos WHERE id IN ({placeholders}) AND deleted_at IS NOT NULL "
+        "RETURNING id, filepath",
         photo_ids,
     ).fetchall()
+    conn.commit()
     affected_ids = [int(r[0]) for r in rows]
     filepaths = [r[1] for r in rows]
     if not filepaths:
         return []
-    # ON DELETE CASCADE handles album_photos, face_embeddings, clip_embeddings, etc.
-    conn.execute(
-        f"DELETE FROM photos WHERE id IN ({placeholders}) AND deleted_at IS NOT NULL",
-        photo_ids,
-    )
-    conn.commit()
     log.info("Permanently deleted %d photos (requested %d)", len(filepaths), len(photo_ids))
     # Post-commit hook for plugins. Rows are already gone (ON DELETE
     # CASCADE flushed albums, embeddings, etc.) — plugins that need

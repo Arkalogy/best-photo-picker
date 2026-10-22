@@ -91,15 +91,16 @@ def api_photos_restore(filepaths: list[str]) -> tuple[Response, int]:
 @bp.post("/api/v1/photos/delete-permanent")
 @requires_local_app
 def api_photos_delete_permanent() -> tuple[Response, int]:
-    """Permanently delete photos from DB and disk.
+    """Permanently delete recycle-bin photos from the DB and disk.
 
-    Journals the operation before the DB delete: if we crash between
-    DB delete and disk cleanup, startup recovery (in
-    bpp/db/journal.py) re-runs the disk cleanup so files don't
-    orphan. The DB delete itself is one transaction (atomic via
-    SQLite); the at-risk window is the disk-side loop.
+    Journaled and claim-first: each selected file is renamed to a hidden
+    sibling, then the rows go, then the claimed files are unlinked (see
+    bpp/web/permanent_delete.py). A crash at any
+    point is replayed at the next start: files whose rows survived go
+    back, the rest are removed. Files the OS refuses are retried and
+    listed under ``files_failed``.
     """
-    from bpp.db.journal import journal_complete, journal_start
+    from bpp.web.permanent_delete import run_permanent_delete
 
     ctx = get_ctx()
     data = request.get_json(silent=True) or {}
@@ -112,14 +113,17 @@ def api_photos_delete_permanent() -> tuple[Response, int]:
     if not filepaths:
         raise ValidationError("filepaths required", field="filepaths")
     conn = ctx.get_conn()
-    path_to_id = get_photo_id_map_by_paths(conn, filepaths)  # rows of this library only
-    photo_ids = list(path_to_id.values())
+    # Rows of this library that are in the recycle bin: the DB half only
+    # ever deletes those, and the journal (replayed on disk after a
+    # crash) must name no more than the DB half can delete — a photo
+    # restored in another tab keeps its file.
+    path_to_id = get_photo_id_map_by_paths(conn, filepaths, binned=True)
     # Grab sha256 before deletion (needed for content-addressed inpaint cache).
     # Helper lives in bp_photos_manage — lazy import avoids any
     # ordering-sensitivity from blueprint registration.
     from bpp.db.photos_sha import get_sha256_map
 
-    sha256_map = get_sha256_map(conn, filepaths)
+    sha256_map = get_sha256_map(conn, list(path_to_id))
 
     # Build set of allowed parent directories for disk deletion. Done
     # before the journal write so the recovery handler has the same
@@ -132,29 +136,30 @@ def api_photos_delete_permanent() -> tuple[Response, int]:
         workdir=ctx.state.get("workdir"),
     )
 
-    # Open journal entry BEFORE the DB delete. If we crash anywhere
-    # below before journal_complete, startup recovery sees this entry
-    # and re-runs the disk-cleanup half on the same paths.
-    journal_id = journal_start(
+    # Journaled, quarantined, then deleted: see bpp/web/permanent_delete.py
+    # for the order and why a crash anywhere in it loses nothing.
+    result = run_permanent_delete(
+        ctx,
         conn,
-        "permanent_delete",
-        {
-            # Only paths that are rows in this library: recovery replays
-            # the disk half on this list, so it must not be request input.
-            "filepaths": sorted(path_to_id),
-            "sha256_map": dict(sha256_map),
-            "allowed_dirs": allowed,
-        },
+        path_to_id,
+        sha256_map,
+        allowed,
+        delete_rows=lambda ids: permanent_delete_photos(conn, ids),
     )
-
-    deleted_paths = permanent_delete_photos(conn, photo_ids)
-    from bpp.web.permanent_delete import _apply_permanent_delete_disk
-
-    removed = _apply_permanent_delete_disk(ctx, deleted_paths, sha256_map, allowed)
-    journal_complete(conn, journal_id)
-    log.info("Permanently deleted %d photos, %d files removed from disk", len(photo_ids), removed)
+    log.info(
+        "Permanently deleted %d photos, %d files removed from disk",
+        result.rows_deleted,
+        result.removed,
+    )
     ctx.invalidate_analysis()
-    return jsonify({"status": "ok", "count": len(photo_ids), "files_removed": removed}), 200
+    return jsonify(
+        {
+            "status": "partial" if result.failed else "ok",
+            "count": result.rows_deleted,
+            "files_removed": result.removed,
+            "files_failed": result.failed,
+        }
+    ), 200
 
 
 @bp.get("/api/v1/photos/deleted")

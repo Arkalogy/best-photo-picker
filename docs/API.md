@@ -649,8 +649,17 @@ Permanently delete photos from DB and disk.
 **Response:**
 
 ```json
-{ "status": "ok", "count": 3, "files_removed": 3 }
+{ "status": "ok", "count": 3, "files_removed": 3, "files_failed": [] }
 ```
+
+Only photos already in the recycle bin are deleted; other paths are
+ignored. `count` is the number of rows removed. Each selected file is
+first renamed to a hidden sibling (`.<name>.bpp-trash-<token>`), then
+the rows go, then the renamed files are removed, so a crash at any
+point loses nothing. A file that could not be checked or renamed keeps
+its row (delete it again later); one the OS refused to remove is
+retried at the next start. Both are listed in `files_failed` with
+`"status": "partial"`.
 
 ### GET /api/v1/photos/deleted
 

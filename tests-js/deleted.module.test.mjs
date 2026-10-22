@@ -373,6 +373,19 @@ describe("restorePhotos / permanentDeletePhotos", () => {
     expect(call && JSON.parse(call[1].body).confirmation).toBe("delete");
   });
 
+  test("permanentDeletePhotos says which files stayed on disk", async () => {
+    const fetchMock = vi.fn(async (url) =>
+      String(url).includes("delete-permanent")
+        ? jsonResp({ status: "partial", count: 2, files_removed: 1, files_failed: ["/y"] })
+        : jsonResp({ photos: [] })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await withConfirm(() => permanentDeletePhotos(["/y", "/z"]), true);
+    const warn = document.querySelector("#toast-container .toast.warning");
+    expect(warn?.textContent).toContain("1 of 2");
+    expect(warn?.textContent).toContain("retried at the next start");
+  });
+
   test("permanentDeletePhotos declined = no fetch", async () => {
     const fetchMock = vi.fn(async () => jsonResp({ photos: [] }));
     vi.stubGlobal("fetch", fetchMock);

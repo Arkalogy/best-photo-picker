@@ -54,11 +54,10 @@ def auto_purge(ctx: WebAppState) -> None:
     at the next start) and the purged photos' cached variants and crops
     are swept with the files.
     """
-    from bpp.db.journal import journal_complete, journal_start
     from bpp.db.photos_lifecycle import permanent_delete_photos
     from bpp.db.photos_sha import get_sha256_map
     from bpp.utils.path_validation import build_library_allowlist
-    from bpp.web.permanent_delete import _apply_permanent_delete_disk
+    from bpp.web.permanent_delete import run_permanent_delete
 
     try:
         conn = ctx.get_conn()
@@ -70,28 +69,29 @@ def auto_purge(ctx: WebAppState) -> None:
         ).fetchall()
         if not rows:
             return
-        ids = [r[0] for r in rows]
         filepaths = [r[1] for r in rows]
         if ctx.thumbs is None:
             # Startup runs the purge before the thumbnail map is built;
             # the cache folder exists regardless, and the sweep needs it.
             ctx.thumbs = ThumbnailCache(ctx.dirs["thumbs"])
         sha256_map = get_sha256_map(conn, filepaths)
-        allowed = build_library_allowlist(library_path=ctx.state["library_path"])
-        journal_id = journal_start(
-            conn,
-            "permanent_delete",
-            {
-                "filepaths": sorted(filepaths),
-                "sha256_map": dict(sha256_map),
-                "allowed_dirs": allowed,
-            },
+        allowed = build_library_allowlist(
+            library_path=ctx.state["library_path"], workdir=ctx.state.get("workdir")
         )
-        log.info("Purging %d photos soft-deleted more than 30 days ago", len(ids))
-        deleted = permanent_delete_photos(conn, ids)
-        removed = _apply_permanent_delete_disk(ctx, deleted, sha256_map, allowed)
-        journal_complete(conn, journal_id)
-        log.info("Auto-purged %d photos deleted >30 days ago (%d files)", len(deleted), removed)
+        log.info("Purging %d photos soft-deleted more than 30 days ago", len(rows))
+        result = run_permanent_delete(
+            ctx,
+            conn,
+            {r[1]: int(r[0]) for r in rows},
+            sha256_map,
+            allowed,
+            delete_rows=lambda purge_ids: permanent_delete_photos(conn, purge_ids),
+        )
+        log.info(
+            "Auto-purged %d photos deleted >30 days ago (%d files)",
+            result.rows_deleted,
+            result.removed,
+        )
     except Exception:
         # include the traceback so a
         # silent auto-purge failure isn't an unsolvable mystery.

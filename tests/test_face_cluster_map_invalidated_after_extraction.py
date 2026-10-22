@@ -87,7 +87,7 @@ def test_the_analyze_worker_invalidates_even_when_the_face_phase_raises(monkeypa
     assert calls == [1]
 
 
-def test_the_face_worker_invalidates_after_its_subprocess(tmp_path, monkeypatch):
+def test_the_face_worker_invalidates_after_its_subprocess(tmp_path, monkeypatch, offline_downloads):
     from bpp.db.connection import init_db
     from bpp.web.face_worker import FaceWorker
 

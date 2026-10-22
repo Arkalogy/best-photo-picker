@@ -31,7 +31,14 @@ Licensing, accuracy and hardening release. **Schema version: 44** (unchanged).
   upgrade.
 - A paired device sees `@ext/…` instead of the real folder for photos
   that live outside the library, and a plain "storage unreachable"
-  instead of the error text that named the library path.
+  instead of the error text that named the library path, whatever the
+  folder is called (a folder named like one of the app's URLs, such as
+  `/static` or `/shared`, is hidden the same way).
+- The Mac app hands its one-time key only to a server that proves it
+  is the app's own, after a restart as well as at launch; a port taken
+  by another process while the server was down gets nothing. At launch
+  it reclaims the port only from a leftover server whose window is
+  gone, never from another running copy's.
 - `--debug` on `bpp serve`, `bpp web` and `bpp demo` turns on verbose
   logging only; it never enables the Werkzeug debugger.
 - Archives you analyze are unpacked with Python's `data` filter on
@@ -103,6 +110,16 @@ Licensing, accuracy and hardening release. **Schema version: 44** (unchanged).
   written offer for the source of any bundled GPL/LGPL component.
 
 ### Fixed
+- Permanent delete renames each selected file to a hidden sibling
+  before anything is removed and deletes only recycle-bin rows, so a
+  crash at any point loses nothing: a photo whose row survived
+  (restored in another tab, or the delete never reached the database)
+  gets its file back, never over another file, and a file put at the
+  same path later is never mistaken for the deleted one. A file the OS refuses to remove is retried at the next start (a
+  few times, then logged by name) and listed under `files_failed`.
+- BPP Picks recomputes its duplicate pass when a photo's average hash
+  changes, not only its perceptual hash or score.
+- The test suite never resolves the owner's default library folder.
 - **Library stays intact through storage blips and renames.** A short
   NAS outage no longer marks the whole library missing; renaming the
   open library keeps the session on it; a failed final write at the end

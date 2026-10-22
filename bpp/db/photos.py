@@ -216,14 +216,20 @@ def get_photo_id_by_path(conn: sqlite3.Connection, filepath: str) -> int | None:
     return row[0] if row else None
 
 
-def get_photo_id_map_by_paths(conn: sqlite3.Connection, filepaths: list[str]) -> dict[str, int]:
-    """Resolve filepaths to a {filepath: photo_id} map in batched queries."""
+def get_photo_id_map_by_paths(
+    conn: sqlite3.Connection, filepaths: list[str], *, binned: bool | None = None
+) -> dict[str, int]:
+    """Resolve filepaths to a {filepath: photo_id} map in batched queries.
+
+    ``binned=True`` keeps only rows in the recycle bin (the rows a
+    permanent delete may name), ``False`` only live rows, ``None`` all."""
     if not filepaths:
         return {}
+    where = {True: " AND deleted_at IS NOT NULL", False: " AND deleted_at IS NULL", None: ""}
     result: dict[str, int] = {}
     for placeholders, batch in in_batches(filepaths):
         rows = conn.execute(
-            f"SELECT filepath, id FROM photos WHERE filepath IN ({placeholders})",
+            f"SELECT filepath, id FROM photos WHERE filepath IN ({placeholders}){where[binned]}",
             batch,
         ).fetchall()
         for r in rows:

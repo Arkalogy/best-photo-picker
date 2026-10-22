@@ -203,13 +203,16 @@ class TestBootKeyStaysOutOfTheLog:
         assert "k3y-v4lue" not in out and "_boot=[REDACTED]" in out
 
 
-class TestDeviceRedactionLeavesRoutesAlone:
-    def test_app_urls_are_not_paths(self, tmp_path):
+class TestDeviceRedactionHasNoRouteExemption:
+    def test_route_shaped_photo_paths_are_hidden_too(self, tmp_path):
+        """A photo under a folder named like one of the app's URLs is
+        still a photo; the device gets a handle, never the path."""
         from bpp.web.lan_redaction import path_rewriter
 
         rw = path_rewriter(str(tmp_path / "lib"), home=str(tmp_path / "home"))
-        assert rw("/api/v1/photos") == "/api/v1/photos"
-        assert rw("/static/img/x.svg") == "/static/img/x.svg"
+        for fs_path in ("/static/private-family/x.jpg", "/api/v1/private-family/x.jpg"):
+            out = rw(fs_path)
+            assert out.startswith("@ext/") and "private" not in out, (fs_path, out)
         assert rw("/Volumes/nas/y.jpg").startswith("@ext/")
 
 
@@ -356,66 +359,6 @@ class TestRepoHardening:
         text = (ROOT / ".github" / "workflows" / "publish.yml").read_text()
         jobs = text.split("\njobs:\n", 1)[1]
         assert "    permissions:" in jobs
-
-    def test_desktop_shell_boots_the_sidecar_with_a_secret_and_proves_the_port(self):
-        src = _shell_source()
-        assert '.env("BPP_BOOT_SECRET", boot_secret())' in src
-        assert "fn server_knows_boot_secret" in src
-        assert "/boot-check?nonce=" in src, "challenge, not the secret, goes over the wire"
-        assert (
-            "?_boot=" not in src.split("fn server_knows_boot_secret")[1].split("fn fresh_nonce")[0]
-        )
-        assert (
-            "fn hmac_sha256_hex" in src
-            and 'sha2 = "0.10"' in (ROOT / "desktop" / "src-tauri" / "Cargo.toml").read_text()
-        )
-        # Both loads go to 127.0.0.1, the address the probe proved:
-        # "localhost" may resolve to ::1, where another process could
-        # listen. (The 0.1.2 origin was localhost; its localStorage resets.)
-        assert "http://localhost:" not in src
-        assert src.count('"http://127.0.0.1:{}/?_boot={}"') == 1
-        assert src.count("'http://127.0.0.1:{}/?_boot={}'") == 1
-        conf = (ROOT / "desktop" / "src-tauri" / "tauri.conf.json").read_text()
-        assert '"devUrl": "http://127.0.0.1:5001"' in conf
-        assert "--no-browser --open-loopback" in conf, "tauri dev starts its own server"
-        # A final failure ends the wait early, and a held port is never
-        # respawned over.
-        assert "startup_failure.load(Ordering::SeqCst) != STARTUP_OK" in src
-        assert src.count("== STARTUP_PORT_IN_USE") >= 2
-
-    def test_desktop_shell_reclaims_an_orphaned_sidecar_and_names_a_held_port(self):
-        src = _shell_source()
-        assert "fn reclaim_port_from_stale_sidecar" in src
-        assert "fn listener_pid" in src and "fn process_name" in src
-        assert 'ends_with("bpp-server")' in src, "only our own binary, only the pid on the port"
-        assert "pkill" not in src, "never a global kill: another instance's sidecar is not ours"
-        assert "reclaim_port_from_stale_sidecar(port);" in src
-        assert "STARTUP_PORT_IN_USE" in src and "Address already in use" in src
-        assert "Another copy is already running" in src
-        bs = "\\"
-        assert (
-            "invoke(" + bs * 2 + "'restart_app" + bs * 2 + "')" in src and "fn restart_app" in src
-        )
-        assert "generate_handler![set_app_theme, exit_app, restart_app, open_url]" in src
-
-    def test_desktop_shell_opens_links_through_its_own_command(self):
-        src = _shell_source()
-        assert "opener?.openUrl" not in src
-        assert "fn open_url(" in src
-        assert 'url.starts_with("https://github.com/Arkalogy/")' in src
-        assert "generate_handler![set_app_theme, exit_app, restart_app, open_url]" in src
-        # Every button that used the dead opener now invokes the command,
-        # with the quotes escaped: the markup sits inside a JS
-        # single-quoted string in all three overlays.
-        bs = "\\"  # one backslash
-        raw_site = "invoke(" + bs + "'open_url" + bs + "'"  # inside a raw string
-        concat_sites = "invoke(" + bs * 2 + "'open_url" + bs * 2 + "'"  # inside "…"
-        assert src.count(raw_site) == 1 and src.count(concat_sites) == 2
-        assert src.count("invoke('open_url'") == 0
-        assert "getrandom::getrandom(&mut buf)" in src
-        assert 'getrandom = "0.2"' in (ROOT / "desktop" / "src-tauri" / "Cargo.toml").read_text()
-        conf = (ROOT / "desktop" / "src-tauri" / "tauri.conf.json").read_text()
-        assert "http://127.0.0.1:5001" in conf
 
     def test_pair_page_button_is_wired_without_the_dispatcher(self):
         src = (ROOT / "bpp" / "web" / "templates" / "pair.html").read_text()

@@ -60,7 +60,7 @@ class TestImportFinalizesInTheWorker:
 
 
 class TestAnalyzeReportsAFailedFinalWrite:
-    def test_a_failed_save_is_a_warning_and_marked_on_done(self, tmp_path):
+    def test_a_failed_save_is_a_warning_and_marked_on_done(self, tmp_path, offline_downloads):
         from unittest.mock import patch
 
         from bpp.web.analyze_worker import AnalyzeWorker

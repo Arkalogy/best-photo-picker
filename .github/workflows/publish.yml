@@ -83,7 +83,7 @@ jobs:
         # release; one this build's verifier rejects is ignored by every
         # installed copy (with a warning on every start). Republish it
         # (scripts/publish_registry_manifest.py) before tagging.
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true')
         run: |
           pip install dist/*.whl
           python scripts/verify_live_registry.py

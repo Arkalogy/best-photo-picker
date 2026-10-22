@@ -128,3 +128,39 @@ def test_a_date_change_or_a_new_clip_dict_redoes_the_dedupe(monkeypatch):
     rc.recompute(_opts(items, k=2, clip_embeddings=emb))
     rc.recompute(_opts(items, k=2, clip_embeddings=dict(emb)))  # same content, new dict
     assert calls == [1, 1, 1, 1]
+
+
+def test_an_ahash_change_redoes_the_dedupe():
+    """The pass measures distance on both hashes; a re-analysis that
+    changes only the average hash must not replay the old result."""
+    from bpp.web import recompute as rc
+
+    items = [
+        {
+            "filepath": f"/p{i}.jpg",
+            "id": i,
+            "date": "2026-01-01T10:00:00",
+            "date_day": "2026-01-01",
+            "date_month": "2026-01",
+            "aggregate_score": 0.5 + i / 10,
+            "phash": i * ((1 << 64) - 1),
+            "ahash": i * ((1 << 64) - 1),
+        }
+        for i in range(2)
+    ]
+    opts = _opts(
+        items,
+        k=2,
+        config={
+            "hash_distance_threshold": 1,
+            "global_hash_distance_threshold": 0,
+        },
+    )
+    rc.dedupe_cache_clear()
+    assert rc.recompute(opts)["stats"]["after_dedupe"] == 2
+    items[1]["ahash"] = 0
+    cached = rc.recompute(opts)
+    rc.dedupe_cache_clear()
+    fresh = rc.recompute(opts)
+    assert fresh["stats"]["after_dedupe"] == 1
+    assert cached["selected_paths"] == fresh["selected_paths"]

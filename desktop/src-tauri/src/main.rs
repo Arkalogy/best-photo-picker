@@ -17,7 +17,8 @@ mod screens;
 mod sidecar;
 
 use boot::{
-    boot_secret, port_is_held, reclaim_port_from_stale_sidecar, server_is_alive, wait_for_server,
+    boot_secret, port_is_held, reclaim_port_from_stale_sidecar, server_is_alive,
+    server_knows_boot_secret, wait_for_server,
 };
 use menu::install_menu;
 use screens::{hide_reconnecting_overlay, show_reconnecting_overlay, show_start_failure, show_update_required};
@@ -165,14 +166,42 @@ fn main() {
                     // Wait a bit for the app to fully initialize before monitoring
                     std::thread::sleep(Duration::from_secs(5));
                     let mut consecutive_failures = 0u32;
+                    // Ticks on which something answers the port after a crash
+                    // but fails the nonce challenge: not our server.
+                    let mut foreign_ticks = 0u32;
                     loop {
                         std::thread::sleep(Duration::from_secs(5));
                         if server_is_alive(port) {
                             if consecutive_failures > 0 {
                                 eprintln!("[health] Server recovered");
                             }
-                            // Server is back — if we were respawning, reload the page
-                            if respawning_nav.swap(false, Ordering::SeqCst) {
+                            // Server is back — if we were respawning, reload the page.
+                            // A connect alone proves nothing: any local process
+                            // could have taken the port while the sidecar was
+                            // down, and the reload carries the key. Only the
+                            // listener that answers the nonce challenge gets it.
+                            // The flag is read once per tick and the key is sent
+                            // only on a tick that proved the listener first: a
+                            // termination landing between two reads can never
+                            // route the key past the proof.
+                            if respawning_nav.load(Ordering::SeqCst) {
+                                if !server_knows_boot_secret(port) {
+                                    foreign_ticks += 1;
+                                    eprintln!(
+                                        "[health] a listener holds the port but is not our server ({}/6)",
+                                        foreign_ticks
+                                    );
+                                    if foreign_ticks >= 6 {
+                                        // Thirty seconds of someone else on the port:
+                                        // say so instead of reconnecting forever.
+                                        respawning_nav.store(false, Ordering::SeqCst);
+                                        show_start_failure(&handle_nav, true);
+                                        break;
+                                    }
+                                    continue;
+                                }
+                                foreign_ticks = 0;
+                                respawning_nav.store(false, Ordering::SeqCst);
                                 eprintln!("[health] Server respawned successfully — reloading");
                                 respawn_count_nav.store(0, Ordering::SeqCst);
                                 hide_reconnecting_overlay(&handle_nav);

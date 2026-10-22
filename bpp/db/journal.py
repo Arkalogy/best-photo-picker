@@ -144,6 +144,17 @@ def journal_start(conn: sqlite3.Connection, kind: str, payload: dict[str, Any]) 
     return int(cur.lastrowid or 0)
 
 
+def journal_update(conn: sqlite3.Connection, journal_id: int, payload: dict[str, Any]) -> None:
+    """Rewrite a pending entry's payload in place (a delete that must be
+    retried for a few of its files keeps its one entry, now naming only
+    those files). Committed before returning, like ``journal_start``."""
+    conn.execute(
+        "UPDATE operation_journal SET payload_json = ? WHERE id = ?",
+        (json.dumps(payload), journal_id),
+    )
+    conn.commit()
+
+
 def journal_complete(conn: sqlite3.Connection, journal_id: int) -> None:
     """Mark a journal entry complete. We delete rather than just
     timestamp — keeps the table small, and we don't currently expose

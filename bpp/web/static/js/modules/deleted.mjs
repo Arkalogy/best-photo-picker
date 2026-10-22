@@ -220,12 +220,20 @@ export async function permanentDeletePhotos(filepaths) {
   );
   if (!ok) return;
   try {
-    await apiFetch("/api/v1/photos/delete-permanent", {
+    const result = await apiFetch("/api/v1/photos/delete-permanent", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ filepaths, confirmation: "delete" }),
     });
-    toast(`Permanently deleted ${filepaths.length} photo${filepaths.length > 1 ? "s" : ""}`);
+    const failed = Array.isArray(result?.files_failed) ? result.files_failed.length : 0;
+    if (failed > 0) {
+      toast(
+        `Removed ${filepaths.length - failed} of ${filepaths.length} photos; ${failed} file${failed > 1 ? "s" : ""} couldn't be removed from disk (read-only or in use) — retried at the next start`,
+        "warning"
+      );
+    } else {
+      toast(`Permanently deleted ${filepaths.length} photo${filepaths.length > 1 ? "s" : ""}`);
+    }
     await loadDeletedPhotos();
   } catch (e) {
     toastError("delete the photo", e);

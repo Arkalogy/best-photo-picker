@@ -110,10 +110,12 @@ pub(crate) fn port_is_held(port: u16) -> bool {
 /// A sidecar of ours that outlived a force-quit or crash still holds
 /// the port with the old secret; the new sidecar could not bind and the
 /// user would get a dead end. Reclaim it: only the process that listens
-/// on the port, and only when it is our own `bpp-server` binary — never
-/// a `bpp serve` the user runs by hand, never another instance's live
-/// sidecar (its listener answers the probe with a different secret, so
-/// it is also not ours to kill: that case ends on the held-port screen).
+/// on the port, only when it is our own `bpp-server` binary, and only
+/// when its shell is gone (the sidecar has been reparented to launchd).
+/// Never a `bpp serve` the user runs by hand, never another running
+/// copy's live sidecar: that one also fails our probe (different
+/// secret), but its parent shell is alive — that case ends on the
+/// held-port screen.
 pub(crate) fn reclaim_port_from_stale_sidecar(port: u16) {
     if !port_is_held(port) || server_knows_boot_secret(port) {
         return;
@@ -126,6 +128,13 @@ pub(crate) fn reclaim_port_from_stale_sidecar(port: u16) {
         eprintln!(
             "[startup] port {} is held by pid {} ({}); leaving it alone",
             port, pid, name
+        );
+        return;
+    }
+    if !sidecar_is_orphaned(pid) {
+        eprintln!(
+            "[startup] port {} is held by bpp-server pid {} whose shell is still running; leaving it alone",
+            port, pid
         );
         return;
     }
@@ -174,6 +183,45 @@ fn process_name(pid: u32) -> Option<String> {
             .ok()?;
         let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
         return if name.is_empty() { None } else { Some(name) };
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        None
+    }
+}
+
+/// Is the listening sidecar an orphan — its shell gone? The one-file
+/// PyInstaller build runs as a bootloader parent plus the child that
+/// binds the port, so the chain is walked past every ancestor that is
+/// itself `bpp-server`; the first other ancestor must be launchd (pid 1).
+fn sidecar_is_orphaned(pid: u32) -> bool {
+    let mut cur = pid;
+    for _ in 0..4 {
+        let Some(parent) = parent_pid(cur) else {
+            return false;
+        };
+        if parent == 1 {
+            return true;
+        }
+        let name = process_name(parent).unwrap_or_default();
+        if !name.ends_with("bpp-server") && !name.ends_with("bpp-server.exe") {
+            return false;
+        }
+        cur = parent;
+    }
+    false
+}
+
+/// The parent of a process (1 is launchd / init).
+fn parent_pid(pid: u32) -> Option<u32> {
+    #[cfg(unix)]
+    {
+        let out = std::process::Command::new("ps")
+            .args(["-o", "ppid=", "-p", &pid.to_string()])
+            .output()
+            .ok()?;
+        return String::from_utf8_lossy(&out.stdout).trim().parse::<u32>().ok();
     }
     #[cfg(not(unix))]
     {

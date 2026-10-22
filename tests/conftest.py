@@ -23,6 +23,41 @@ def _isolate_config_home(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _register_model_files_under_the_real_cache():
+    """Every built-in model module computes its weight path at import
+    from the cache location. A test that redirects the cache (``BPP_MODELS_DIR``)
+    and happens to be the first in its worker to import such a module
+    would pin that module's path to its temp dir for the rest of the
+    session, and later real-weight tests would skip as "not on disk".
+    Register them all first, under the real location."""
+    from bpp.scoring.model_lifecycle import ensure_builtin_model_files_registered
+
+    ensure_builtin_model_files_registered()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_default_library(tmp_path, monkeypatch):
+    """An app built with only a workdir resolves its library to the
+    default path and runs the start-up recoveries there; that must never
+    be the owner's real ``~/Pictures/BestPhotoPicker``."""
+    from bpp.db import library
+
+    monkeypatch.setattr(library, "DEFAULT_LIBRARY_PATH", str(tmp_path / "default-library"))
+
+
+@pytest.fixture(autouse=True)
+def _reset_pairing_rate_limits():
+    """The pairing and destructive-request buckets are process-global and
+    keyed by IP; every LAN test uses the same few addresses, so a worker
+    that served many pairing requests would start answering 429 to a
+    later test's first share-link visit (and the test would see no
+    fingerprint cookie)."""
+    from bpp.web.share_runtime import _reset_pair_request_buckets_for_tests
+
+    _reset_pair_request_buckets_for_tests()
+
+
 @pytest.fixture(autouse=True)
 def _isolate_install_state(tmp_path, monkeypatch):
     """Nothing held for a restart, and the installer's hold file and notes

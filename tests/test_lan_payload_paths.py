@@ -178,3 +178,23 @@ class TestExportStreamIsOwnerOnly:
     def test_a_paired_device_cannot_follow_the_export_stream(self, shared_app):
         app, _lib, _paths, token = shared_app
         assert _as_phone(app, token, "/api/v1/export/progress").status_code == 403
+
+
+def test_route_lookalike_filesystem_paths_are_still_hidden(tmp_path):
+    """No string shaped like one of the app's URLs is exempt: a photo
+    under /share, /shared, /pair, /static or /api on the Mac is still an
+    @ext handle."""
+    rw = path_rewriter(str(tmp_path / "lib"), home=str(tmp_path / "home"))
+    for fs_path in (
+        "/shared/private-family/photo.jpg",
+        "/share/x.jpg",
+        "/pair/y.jpg",
+        "/static/private-family/z.jpg",
+        "/api/v1/private-family/w.jpg",
+    ):
+        out = rw(fs_path)
+        assert (
+            out.startswith("@ext/")
+            and "private" not in out
+            and out.endswith(os.path.basename(fs_path))
+        ), (fs_path, out)

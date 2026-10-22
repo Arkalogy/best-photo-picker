@@ -99,11 +99,18 @@ def dedupe_cache_stats() -> dict[str, int]:
 
 
 def _dedupe_key(items: list[dict[str, Any]], config: dict[str, Any], opts: RecomputeOptions):
-    """What the dedupe result depends on: the candidates (path + score,
-    so a re-analysis invalidates), the dedupe-relevant config, and the
-    CLIP inputs. Weights and k/seed are left out."""
+    """What the dedupe result depends on: the candidates (path, score and
+    both hashes, so a re-analysis invalidates), the dedupe-relevant
+    config, and the CLIP inputs. Weights and k/seed are left out."""
     rows = tuple(
-        (d["filepath"], d.get("aggregate_score"), d.get("phash"), d.get("date")) for d in items
+        (
+            d["filepath"],
+            d.get("aggregate_score"),
+            d.get("phash"),
+            d.get("ahash"),
+            d.get("date"),
+        )
+        for d in items
     )
     cfg = tuple(
         sorted(
