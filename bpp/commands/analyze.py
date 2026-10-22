@@ -71,7 +71,6 @@ def do_analyze(args: argparse.Namespace) -> int:
                 workdir=workdir,
                 config=cfg,
                 workers=args.workers,
-                seed=args.seed,
             )
     except ModelIntegrityError as exc:
         log.error(
@@ -139,7 +138,7 @@ def do_select(args: argparse.Namespace) -> int:
     )
 
     with timer.section("select"):
-        selected = choose(candidates, k=args.k, config=cfg, seed=args.seed)
+        selected = choose(candidates, k=args.k, config=cfg)
 
     log.info("Selected %d photos", len(selected))
 
@@ -179,7 +178,6 @@ def do_run(args: argparse.Namespace) -> int:
         workers=args.workers,
         debug=getattr(args, "debug", False),
         dry_run=args.dry_run,
-        seed=args.seed,
         extensions=args.extensions,
     )
     rc = do_analyze(analyze_ns)
@@ -197,7 +195,6 @@ def do_run(args: argparse.Namespace) -> int:
         export_mode=args.export_mode,
         gallery=getattr(args, "gallery", False),
         dry_run=args.dry_run,
-        seed=args.seed,
         extensions=args.extensions,
     )
     return do_select(select_ns)

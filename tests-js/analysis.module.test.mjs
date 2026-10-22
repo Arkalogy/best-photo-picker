@@ -236,7 +236,6 @@ describe("getParams / scheduleRecompute / doRecompute", () => {
     const params = getParams();
     expect(params.k).toBe(75);
     expect(params.selected_faces).toEqual([1, 2]);
-    expect(params.seed).toBe(42);
   });
 
   test("getParams omits delta=true when photos array is empty", () => {

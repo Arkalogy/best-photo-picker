@@ -63,8 +63,14 @@ def _switch_library_locked(ctx: WebAppState, new_path: str, new_dirs: dict[str, 
     ``ctx._switch_library_lock`` already held. Split out so the lock
     boundary is the only thing the public function does.
     """
+    old_workdir = ctx.state.get("workdir")
     _drain_current_library(ctx)
     _adopt_library(ctx, new_path, new_dirs, new_dirs["data"])
+    # Served no longer: another process may open the old library now.
+    if old_workdir and old_workdir != new_dirs["data"]:
+        from bpp.utils.serving_lock import clear_lock
+
+        clear_lock(old_workdir)
 
 
 class RenameIncompleteError(RuntimeError):

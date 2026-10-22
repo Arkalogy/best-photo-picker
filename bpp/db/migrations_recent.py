@@ -308,15 +308,21 @@ def _migrate_v35(conn: sqlite3.Connection) -> None:
         log.info("Migration v35: face_embeddings is empty — nothing to re-encode")
         return
 
-    cursor = conn.execute("SELECT id, embedding FROM face_embeddings")
     converted = 0
     skipped_already_f32 = 0
     skipped_bad_size = 0
     batch: list[tuple[bytes, int]] = []
+    last_id = 0
     while True:
-        rows = cursor.fetchmany(BATCH_SIZE)
+        # One page by id at a time, fully read before its UPDATEs run:
+        # an UPDATE under a still-open SELECT is undefined in SQLite.
+        rows = conn.execute(
+            "SELECT id, embedding FROM face_embeddings WHERE id > ? ORDER BY id LIMIT ?",
+            (last_id, BATCH_SIZE),
+        ).fetchall()
         if not rows:
             break
+        last_id = rows[-1][0]
         for row_id, blob in rows:
             n = len(blob) if blob else 0
             if n == EXPECTED_F32_BYTES:

@@ -283,11 +283,10 @@ class TestBackfillDupClustersAndRefresh:
             mock_assign.assert_called_once_with(conn)
             mock_refresh.assert_called_once()
 
-    def test_cluster_assignment_failure_logged_and_swallowed(self, caplog):
+    def test_cluster_assignment_failure_is_logged_and_raised(self, caplog):
         conn = MagicMock()
         conn.execute.side_effect = RuntimeError("query failed")
-        with caplog.at_level("WARNING"):
-            # No raise.
+        with caplog.at_level("WARNING"), pytest.raises(RuntimeError, match="query failed"):
             state_init.backfill_dup_clusters_and_refresh(conn, force_refresh=False)
         assert any("cluster backfill failed" in r.message for r in caplog.records)
 

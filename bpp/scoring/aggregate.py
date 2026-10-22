@@ -324,6 +324,8 @@ def process_one(args: tuple) -> dict[str, Any] | None:
                 filepath,
                 max_long_side,
                 model_toggles=model_toggles,
+                face_confidence=face_confidence,
+                min_face_area_frac=float(cfg_get(config, "min_face_area_pct")) / 100.0,
             )
         else:
             result = analyze_single_image(
@@ -398,7 +400,6 @@ def analyze_all(
     workdir: str,
     config: dict[str, Any],
     workers: int = 0,
-    seed: int = 42,
 ) -> dict[str, Any]:
     """Run full analysis pipeline on all images."""
     db_path = os.path.join(workdir, DB_NAME)

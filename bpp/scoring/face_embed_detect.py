@@ -198,7 +198,12 @@ def detect_face_rows(
     seen: list[tuple[int, int, int, int]] = []
 
     # 1. Direct YuNet on the full image — real landmarks, calibrated gate.
-    direct = _yunet_detect_raw(image, min_confidence=min_confidence)
+    # With YuNet switched off in Settings it detects nothing here: faces
+    # then come only from the enabled detectors below, and YuNet serves
+    # as the landmark finder on their crops (alignment, not detection).
+    direct = None
+    if (model_toggles or {}).get("model_yunet", True):
+        direct = _yunet_detect_raw(image, min_confidence=min_confidence)
     if direct is not None:
         for f in direct:
             if float(f[-1]) < embedding_confidence:

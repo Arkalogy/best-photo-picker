@@ -180,7 +180,7 @@ export async function calendarPickBestFromRange() {
   _calPickBestPending = true;
   try {
     /** @type {Record<string, any>} */
-    const params = getParams() || { k: 50, seed: 42 };
+    const params = getParams() || { k: 50 };
     params.start_date = _calSelStart;
     params.end_date = _calSelEnd;
     const data = await apiFetch("/api/v1/recompute", {

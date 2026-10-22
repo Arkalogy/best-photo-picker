@@ -267,6 +267,7 @@ from bpp.scoring.face_embed_landmarks import (  # noqa: E402, F401
     _validate_face_landmarks,
     _validate_yunet_landmarks,
 )
+from bpp.scoring.face_embed_plugin import _extract_plugin  # noqa: E402
 
 # ── Public API ──
 
@@ -278,6 +279,7 @@ def extract_face_embeddings(
     embedding_confidence: float = DEFAULT_EMBEDDING_CONFIDENCE,
     min_embedding_quality: float = MIN_EMBEDDING_QUALITY,
     method: str | None = None,
+    model_toggles: dict[str, bool] | None = None,
 ) -> list[dict]:
     """Extract face locations and 128-d embeddings from a BGR image.
 
@@ -300,6 +302,8 @@ def extract_face_embeddings(
             real-world photos (97.3% precision, <5% true face loss).
         method: ``"sface"`` | ``"dlib"`` | ``"buffalo_s"`` | a registered
             plugin embedder's name | ``None``. See above.
+        model_toggles: The user's detector switches (``model_scrfd`` …):
+            the detection pass here runs the same detectors scoring did.
     """
     if method == EMBEDDING_METHOD_DLIB:
         # User explicitly chose dlib — skip SFace entirely.
@@ -308,6 +312,7 @@ def extract_face_embeddings(
             min_confidence,
             embedding_confidence,
             min_quality=min_embedding_quality,
+            model_toggles=model_toggles,
         )
 
     if method == EMBEDDING_METHOD_BUFFALO_S:
@@ -323,6 +328,7 @@ def extract_face_embeddings(
             min_confidence,
             embedding_confidence,
             min_quality=min_embedding_quality,
+            model_toggles=model_toggles,
         )
 
     if method and method not in _BUILTIN_METHODS:
@@ -343,7 +349,12 @@ def extract_face_embeddings(
             # built-ins (embeddings from different models don't compare).
             return (
                 _extract_plugin(
-                    image, embedder, min_confidence, embedding_confidence, min_embedding_quality
+                    image,
+                    embedder,
+                    min_confidence,
+                    embedding_confidence,
+                    min_embedding_quality,
+                    model_toggles,
                 )
                 or []
             )
@@ -354,6 +365,7 @@ def extract_face_embeddings(
         min_confidence,
         embedding_confidence,
         min_quality=min_embedding_quality,
+        model_toggles=model_toggles,
     )
 
     if result is not None:
@@ -365,6 +377,7 @@ def extract_face_embeddings(
         min_confidence,
         embedding_confidence,
         min_quality=min_embedding_quality,
+        model_toggles=model_toggles,
     )
 
 
@@ -383,53 +396,6 @@ def is_known_method(method: str) -> bool:
 _BUILTIN_METHODS = frozenset(
     {EMBEDDING_METHOD_SFACE, EMBEDDING_METHOD_DLIB, EMBEDDING_METHOD_BUFFALO_S}
 )
-
-
-def _extract_plugin(image, embedder, min_confidence, embedding_confidence, min_quality):
-    """Embed every detected face with a plugin's ``embed(image, box)``,
-    once its registry entry's license allows it.
-
-    Each vector must have the declared ``embedding_dim`` and finite,
-    non-zero values; it is then normalised to unit length and scaled
-    like SFace's, so the face-grouping threshold applies. Anything else
-    is dropped (one warning per plugin)."""
-    from bpp.scoring.face_embed_buffalo import _extract_with_embedder
-    from bpp.scoring.model_load_gate import license_allows
-
-    feature = f"Face embedder {embedder.name}"
-    if not license_allows(embedder.registry_id, feature=feature):
-        return []
-
-    def embed(img, box, _row):
-        raw = embedder.embed(img, box)
-        if raw is None:  # the contract's "can't embed this face"
-            return None
-        vec = np.asarray(raw, dtype=np.float64).ravel()
-        norm = float(np.linalg.norm(vec)) if np.isfinite(vec).all() else 0.0
-        if vec.shape != (embedder.embedding_dim,) or norm <= 0.0:
-            _warn_bad_plugin_vector(embedder, vec)
-            return None
-        return vec / norm * SFACE_DISTANCE_SCALE
-
-    return _extract_with_embedder(
-        image, min_confidence, embedding_confidence, min_quality, embed, embedder.name
-    )
-
-
-_bad_vector_warned: set[str] = set()
-
-
-def _warn_bad_plugin_vector(embedder, vec) -> None:
-    if embedder.name in _bad_vector_warned:
-        return
-    _bad_vector_warned.add(embedder.name)
-    log.warning(
-        "Face embedder %r returned an unusable vector (shape %s, declared %d floats, "
-        "or non-finite / all-zero); those faces are skipped.",
-        embedder.name,
-        vec.shape,
-        embedder.embedding_dim,
-    )
 
 
 # ── public embedder registry ──

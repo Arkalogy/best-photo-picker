@@ -30,6 +30,7 @@ def _extract_buffalo_s(
     min_confidence: float,
     embedding_confidence: float = DEFAULT_EMBEDDING_CONFIDENCE,
     min_quality: float = MIN_EMBEDDING_QUALITY,
+    model_toggles: dict[str, bool] | None = None,
 ) -> list[dict] | None:
     """Extract face embeddings via the full detector pipeline + buffalo_s
     ArcFace recognition (512-d).
@@ -53,7 +54,13 @@ def _extract_buffalo_s(
         return face_embed_buffalo_s.embed_face(align_image, bbox, yunet_row=row)
 
     return _extract_with_embedder(
-        image, min_confidence, embedding_confidence, min_quality, embed, "buffalo_s"
+        image,
+        min_confidence,
+        embedding_confidence,
+        min_quality,
+        embed,
+        "buffalo_s",
+        model_toggles=model_toggles,
     )
 
 
@@ -64,6 +71,7 @@ def _extract_with_embedder(
     min_quality: float,
     embed,
     name: str,
+    model_toggles: dict[str, bool] | None = None,
 ) -> list[dict] | None:
     """Shared detect → align → embed → quality loop for every embedder
     that works per face (buffalo_s, plugin embedders).
@@ -78,7 +86,9 @@ def _extract_with_embedder(
     # Full-coverage detection (see face_embed_detect): the whole detector
     # pipeline plus per-face YuNet landmark recovery, so every face
     # scoring found gets embedded. Mirrors _extract_sface.
-    all_raw = detect_face_rows(image, min_confidence, embedding_confidence)
+    all_raw = detect_face_rows(
+        image, min_confidence, embedding_confidence, model_toggles=model_toggles
+    )
 
     if not all_raw:
         return None

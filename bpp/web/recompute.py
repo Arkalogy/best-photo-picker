@@ -63,7 +63,6 @@ class RecomputeOptions:
     analysis: list[dict[str, Any]]
     config: dict[str, Any]
     k: int = DEFAULTS["default_selection_k"]
-    seed: int = DEFAULTS["default_selection_seed"]
     force_include: list[str] = field(default_factory=list)
     force_exclude: list[str] = field(default_factory=list)
     selected_faces: list[int] = field(default_factory=list)
@@ -74,7 +73,7 @@ class RecomputeOptions:
 
 
 _DEDUPE_CACHE: dict[str, Any] = {}
-_NOT_DEDUPE_KEYS = ("default_selection_k", "default_selection_seed")
+_NOT_DEDUPE_KEYS = ("default_selection_k",)
 #: Fields the dedupe pass rewrites on dicts that already carry them.
 _DEDUPE_REWRITTEN = ("cluster_size", "similar_photos")
 
@@ -101,7 +100,7 @@ def dedupe_cache_stats() -> dict[str, int]:
 def _dedupe_key(items: list[dict[str, Any]], config: dict[str, Any], opts: RecomputeOptions):
     """What the dedupe result depends on: the candidates (path, score and
     both hashes, so a re-analysis invalidates), the dedupe-relevant
-    config, and the CLIP inputs. Weights and k/seed are left out."""
+    config, and the CLIP inputs. Weights and k are left out."""
     rows = tuple(
         (
             d["filepath"],
@@ -250,8 +249,8 @@ def recompute(opts: RecomputeOptions) -> dict[str, Any]:
 
     # Deduplicate only normal candidates, through the one shared path
     # (a strategy named in config wins; else CLIP; else skip; else hash).
-    # The result is kept while its inputs are unchanged: a k or seed
-    # change (every slider nudge) must not redo the O(N²) pass, which
+    # The result is kept while its inputs are unchanged: a k change
+    # (every slider nudge) must not redo the O(N²) pass, which
     # takes minutes at 200k photos.
     candidates, dedup_mode = _dedupe_cached(normal_for_dedupe, config, opts)
 
@@ -263,7 +262,6 @@ def recompute(opts: RecomputeOptions) -> dict[str, Any]:
         candidates,
         k=remaining_k,
         config=config,
-        seed=opts.seed,
         clip_embeddings=opts.clip_embeddings,
     )
 
@@ -372,7 +370,6 @@ def optimize(
             candidates,
             k=opts.k,
             config=trial_cfg,
-            seed=opts.seed,
             clip_embeddings=opts.clip_embeddings,
         )
         avg_quality = sum(s["aggregate_score"] for s in selected) / max(len(selected), 1)

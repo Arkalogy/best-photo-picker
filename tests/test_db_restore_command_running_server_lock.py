@@ -342,69 +342,21 @@ class TestRestoreMaintenanceLock:
             "--force must NOT bypass the maintenance lock; live parallel restore must still block"
         )
 
-    def test_lock_published_with_pid_atomically(self, tmp_path):
-        """The lockfile, once it exists, must contain the
-        owner's PID — no empty-content window. Previously the lock
-        was created via O_EXCL and the PID was written later;
-        a racing contender during that gap could see empty content,
-        treat it as stale, remove the lock, and silently double-
-        acquire.
-
-        With the atomic tmp+link fix, the file becomes visible at
-        the lock path ONLY after the PID is already inside it.
-        Verify by intercepting os.link mid-restore: if we read the
-        path between the tmp-write and the link, the lockfile
-        shouldn't exist; after link succeeds, it exists with the
-        PID inside.
-        """
-        from bpp.commands import do_db_restore_backup as do_restore
+    def test_lock_always_carries_the_pid_once_readable(self, tmp_path):
+        """A contender that reads the lock sees our PID, never a stale
+        verdict: an empty file is a creator still writing, waited for."""
+        from bpp.commands import db_restore
 
         library, db_path = _make_library(tmp_path)
         backup_db(db_path)
-        data_dir = os.path.dirname(db_path)
-        lock_path_canonical = os.path.join(data_dir, ".restore.lock")
-
-        # Run a normal restore. Then verify the lock is gone (cleaned
-        # up by the try/finally) — but mid-restore we can't easily
-        # observe atomicity in a single-threaded test. The behavior
-        # contract we lock here is: at every point the lockfile
-        # exists, it has the PID inside it. We approximate this
-        # by asserting the lockfile content shape AT one observable
-        # point in the lifecycle.
-        seen_lock_content: list[str] = []
-
-        original_link = os.link
-
-        def _spy_link(src, dst):
-            # If a contender raced us right now, what content
-            # would they see in `dst`? At this point, dst doesn't
-            # exist yet (link hasn't been called). After link
-            # succeeds, dst exists and is hard-linked to src
-            # which already has the PID. Capture src content as
-            # the "what's about to appear" preview.
-            with contextlib.suppress(OSError), open(src, encoding="utf-8") as f:
-                seen_lock_content.append(f.read().strip())
-            return original_link(src, dst)
-
-        import contextlib
-        from unittest.mock import patch
-
-        with patch.object(os, "link", _spy_link):
-            rc = do_restore(_args(library))
-
+        lock = os.path.join(os.path.dirname(db_path), ".restore.lock")
+        assert db_restore._acquire_maintenance_lock(lock, b"424242") is None
+        with open(lock, encoding="utf-8") as f:
+            assert f.read().strip() == "424242"
+        os.remove(lock)
+        rc = do_db_restore_backup(_args(library))
         assert rc == 0
-        assert seen_lock_content, "os.link should have been called during restore"
-        # Every captured pre-publish content must be the PID
-        # (not empty, not zero)
-        my_pid = str(os.getpid())
-        for content in seen_lock_content:
-            assert content == my_pid, (
-                f"Lockfile atomicity broken: tmp file linked with content {content!r} "
-                f"instead of PID {my_pid!r}. The lockfile would appear "
-                "empty to a racing contender."
-            )
-        # And the lock is cleaned up after success
-        assert not os.path.isfile(lock_path_canonical)
+        assert not os.path.isfile(lock)
 
 
 # ─── Refuse restore when .backup.corrupt-* sibling exists ────

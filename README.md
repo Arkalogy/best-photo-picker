@@ -399,7 +399,7 @@ bpp model {list|accept|accept-attribution|accepted|use-context|byom|remove|regis
                    Apache 2.0 / BSD-style model in one step.
 bpp db restore-backup --library PATH [--previous] [--yes] [--accept-stale] [--force]
 
-Global: --seed INT (default 42), --extensions STR (default "jpg,jpeg,png,heic")
+Global: --extensions STR (default "jpg,jpeg,png,heic")
 ```
 
 ## Privacy

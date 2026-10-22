@@ -4,7 +4,7 @@ Extracted from bp_photos.py during the v0.1 cleanup. Both endpoints
 drive scoring re-runs over the analyzed photo set:
 
 * ``/api/v1/recompute`` — re-run global selection with optional
-  weight, k, seed, face-filter, force-include/exclude, and
+  weight, k, face-filter, force-include/exclude, and
   date-range overrides. Persists the selection on All Photos.
 * ``/api/v1/optimize`` — weight-tuning optimizer that suggests
   scoring weights maximizing coverage of selected_faces at a given k.
@@ -51,7 +51,7 @@ bp = Blueprint("recompute", __name__)
 @requires_local_app
 def api_recompute() -> tuple[Response, int]:
     """Re-run global selection over all analyzed photos with optional
-    weight, k, seed, face filter, force-include/exclude, and date-range
+    weight, k, face filter, force-include/exclude, and date-range
     overrides. Persists the selection on All Photos. ``delta: true``
     returns only paths and per-photo scores.
 
@@ -71,7 +71,6 @@ def api_recompute() -> tuple[Response, int]:
     cfg = _config_with_overrides(ctx.config, params)
 
     k = clamp_k(params.get("k", cfg_get(cfg, "default_selection_k")))
-    seed = int(params.get("seed", cfg_get(cfg, "default_selection_seed")))
     selected_faces = params.get("selected_faces", [])
 
     conn = ctx.get_conn()
@@ -117,7 +116,6 @@ def api_recompute() -> tuple[Response, int]:
             analysis=active,
             config=cfg,
             k=k,
-            seed=seed,
             force_include=force_include,
             force_exclude=force_exclude,
             selected_faces=selected_faces,

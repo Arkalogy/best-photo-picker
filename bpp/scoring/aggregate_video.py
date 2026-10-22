@@ -19,7 +19,7 @@ from bpp.registry import ModelLoadBlockedError
 from bpp.scoring.blur import score_blur_raw
 from bpp.scoring.composition import score_composition
 from bpp.scoring.exposure import score_exposure
-from bpp.scoring.face import detect_faces, score_face
+from bpp.scoring.face import MIN_FACE_AREA_FRAC, detect_faces, score_face
 from bpp.scoring.model_load_gate import log_blocked_once
 from bpp.scoring.pets import is_available as pets_available
 from bpp.scoring.skin import score_skin_exposure
@@ -33,11 +33,15 @@ def analyze_single_video(
     max_long_side: int = 1024,
     num_samples: int = 5,
     model_toggles: dict[str, bool] | None = None,
+    *,
+    face_confidence: float = 0.3,
+    min_face_area_frac: float = MIN_FACE_AREA_FRAC,
 ) -> dict[str, Any] | None:
     """Analyze a video by sampling frames and averaging scores.
 
     Extracts `num_samples` evenly-spaced frames, scores each through the
-    image pipeline, and returns the averaged result with video metadata.
+    image pipeline (with the same face confidence and minimum face area
+    the photos get), and returns the averaged result with video metadata.
     """
     mt = model_toggles or {}
     from bpp.media_types import MediaKind, media_kind_from_path
@@ -85,8 +89,19 @@ def analyze_single_video(
     for frame in frames:
         accum["blur_raw"] += score_blur_raw(frame)
         accum["exposure_score"] += score_exposure(frame)
-        faces = detect_faces(frame, model_toggles=mt)
-        face_result = score_face(frame, faces=faces, model_toggles=mt)
+        faces = detect_faces(
+            frame,
+            min_confidence=face_confidence,
+            min_face_area_frac=min_face_area_frac,
+            model_toggles=mt,
+        )
+        face_result = score_face(
+            frame,
+            min_confidence=face_confidence,
+            min_face_area_frac=min_face_area_frac,
+            faces=faces,
+            model_toggles=mt,
+        )
         accum["face_score"] += face_result["face_score"]
         accum["face_count"] += face_result["face_count"]
         accum["largest_face_ratio"] += face_result["largest_face_ratio"]

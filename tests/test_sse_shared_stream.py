@@ -97,14 +97,16 @@ def test_a_cancelled_run_ends_every_stream_at_once():
 
 
 def test_a_revoked_device_is_cut_off(monkeypatch):
+    monkeypatch.setattr("bpp.web.share_runtime.is_lan_sharing_enabled", lambda conn: True)
     monkeypatch.setattr("bpp.web.share_devices.is_device_trusted", lambda conn, fp: False)
     ctx = SimpleNamespace(get_conn=lambda: None)
     worker = _Chatty(n=8)  # enough messages to reach a trust re-check
     assert worker.start()
     worker.release.set()
     frames = _frames(stream_worker_progress(worker, ctx=ctx, device_fp="phone-1"))
-    assert frames[-1] == {"type": "error", "message": "auth_revoked"}
-    assert {"type": "done"} not in frames
+    # Nothing is sent to a device that lost its standing, not even the
+    # events already queued: the check runs before every batch.
+    assert frames == [{"type": "error", "message": "auth_revoked"}]
 
 
 def test_the_local_app_is_never_re_checked(worker, monkeypatch):

@@ -28,7 +28,13 @@ def download_model(model: ModelSingleton, repairing: bool) -> tuple[Path | None,
     import time
 
     from bpp.scoring.model_base import ModelIntegrityError
-    from bpp.utils.download import announce, download_file, download_temp_path, plain_reason
+    from bpp.utils.download import (
+        DownloadSkippedError,
+        announce,
+        download_file,
+        download_temp_path,
+        plain_reason,
+    )
 
     assert model.model_path is not None and model.model_url is not None
     try:
@@ -67,6 +73,12 @@ def download_model(model: ModelSingleton, repairing: bool) -> tuple[Path | None,
             tmp_path.unlink(missing_ok=True)
             log.error("Refused to download %s from %s", model.name, model.model_url)
             raise
+        except DownloadSkippedError as exc:
+            # The registry says no (license not accepted, entry
+            # withdrawn): retrying asks the same question again.
+            tmp_path.unlink(missing_ok=True)
+            log.info("Not downloading %s: %s", model.name, exc)
+            return None, plain_reason(exc)
         except Exception as exc:
             tmp_path.unlink(missing_ok=True)
             if attempt < _MAX_ATTEMPTS:

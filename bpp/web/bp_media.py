@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+from typing import Any
 
 from flask import Blueprint, Response, jsonify, request, send_file
 
@@ -260,6 +261,7 @@ def api_video_trim() -> tuple[Response, int]:
             start=start,
             end=end,
         )
+    start_s, end_s = _trim_range(start, end)
 
     # Validate filepath is within the library directory.
     # shared allowlist helper — same realpath-resolve +
@@ -292,7 +294,7 @@ def api_video_trim() -> tuple[Response, int]:
         raise ForbiddenError("Invalid filepath", reason="output_outside_library")
 
     try:
-        result = trim_video(filepath, out_path, start=float(start), end=float(end))
+        result = trim_video(filepath, out_path, start=start_s, end=end_s)
         if not result["ok"]:
             raise ValidationError(result["error"], reason="trim_failed")
 
@@ -316,51 +318,66 @@ def api_video_trim() -> tuple[Response, int]:
     from bpp.utils.video import extract_video_metadata
 
     conn = ctx.get_conn()
-    old = conn.execute("SELECT sha256 FROM photos WHERE filepath=?", (filepath,)).fetchone()
+    # The row is found by the path as stored, or by the resolved path:
+    # the request may spell it differently (a "./", a symlinked folder).
+    old = conn.execute(
+        "SELECT id, filepath, sha256 FROM photos WHERE filepath IN (?, ?)",
+        (filepath, final_target),
+    ).fetchone()
+    vmeta = extract_video_metadata(final_target)
+    if old is None:
+        log.warning("Trimmed %s, which has no photo row to update", filepath)
+        return jsonify({"status": "ok", "duration": vmeta["duration"] if vmeta else None}), 200
     st = os.stat(final_target)
     digest = _sha256_file(final_target)  # chunked: a 4K clip is not read into RAM
     conn.execute(
         "UPDATE photos SET sha256=?, file_size=?, file_mtime=?, "
-        "phash=NULL, ahash=NULL, dup_cluster_id=0, cluster_size=1 WHERE filepath=?",
-        (digest, st.st_size, st.st_mtime, filepath),
+        "phash=NULL, ahash=NULL, dup_cluster_id=0, cluster_size=1 WHERE id=?",
+        (digest, st.st_size, st.st_mtime, old["id"]),
     )
-    vmeta = extract_video_metadata(filepath)
     if vmeta:
         conn.execute(
             "UPDATE photos SET video_duration=?, video_width=?, video_height=?, video_fps=?, "
-            "video_codec=? WHERE filepath=?",
+            "video_codec=? WHERE id=?",
             (
                 vmeta["duration"],
                 vmeta.get("width"),
                 vmeta.get("height"),
                 vmeta.get("fps"),
                 vmeta.get("codec"),
-                filepath,
+                old["id"],
             ),
         )
     conn.commit()
-    # The row changed and the old bytes' cached derivatives are stale.
+    # The row changed and the old bytes' cached derivatives are stale:
+    # the cached sprite + thumbnail are content-addressed against the
+    # OLD bytes, so without this the next /video/sprite or /thumb serves
+    # frames that were chopped off the head or tail.
     ctx.invalidate_analysis()
     if ctx.thumbs is not None:
-        old_sha = old["sha256"] if old and old["sha256"] else None
+        old_sha = old["sha256"] or None
         invalidate_photo_cache(
             ctx,
-            ctx.thumbs.get_hash(filepath),
+            ctx.thumbs.get_hash(old["filepath"]),
             content_hash=old_sha[:HASH_PREFIX_LEN] if old_sha else None,
         )
 
-    # The trim overwrites the
-    # underlying file but the cached sprite + thumbnail are content-
-    # addressed against the OLD bytes. Without the invalidate, the
-    # next /video/sprite or /thumb request serves a sprite generated
-    # from frames that are no longer in the trimmed clip — the user
-    # sees frames that were chopped off the head/tail.
-    if ctx.thumbs is not None:
-        path_hash = ctx.thumbs.get_hash(filepath)
-        if path_hash:
-            invalidate_photo_cache(ctx, path_hash)
-
     return jsonify({"status": "ok", "duration": vmeta["duration"] if vmeta else None}), 200
+
+
+def _trim_range(start: Any, end: Any) -> tuple[float, float]:
+    """``(start, end)`` in seconds, or a 400: both finite numbers, start
+    at or after 0 and before end (a bad value used to be a 500 from
+    ``float()``)."""
+    import math
+
+    try:
+        start_s, end_s = float(start), float(end)
+    except (TypeError, ValueError) as e:
+        raise ValidationError("start and end must be numbers", start=start, end=end) from e
+    if not (math.isfinite(start_s) and math.isfinite(end_s)) or start_s < 0 or end_s <= start_s:
+        raise ValidationError("start must be 0 or more and before end", start=start_s, end=end_s)
+    return start_s, end_s
 
 
 # Photo edits engine moved to bpp.web.photo_edits. Re-exported here

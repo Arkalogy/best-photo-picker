@@ -232,8 +232,13 @@ def backfill_dup_clusters_and_refresh(conn: Any, force_refresh: bool) -> None:
     The ``force_refresh`` flag flows in from Phase 4a — when sidecars
     were linked, the smart-album refresh must run regardless of whether
     new clusters were assigned.
+
+    Either step failing raises after the other has had its turn, so the
+    caller's health flag (``phase5_failed``) says so instead of a clean
+    "ok" over stale counts.
     """
     _needs_smart_refresh = force_refresh
+    backfill_error: Exception | None = None
     try:
         unclust = conn.execute(
             "SELECT 1 FROM photos "
@@ -245,14 +250,14 @@ def backfill_dup_clusters_and_refresh(conn: Any, force_refresh: bool) -> None:
 
             assign_near_duplicate_clusters(conn)
             _needs_smart_refresh = True
-    except Exception:
+    except Exception as exc:
         log.warning("Near-duplicate cluster backfill failed", exc_info=True)
+        backfill_error = exc
 
     if _needs_smart_refresh:
-        try:
-            from bpp.db.smart_albums import refresh_smart_albums
+        from bpp.db.smart_albums import refresh_smart_albums
 
-            refresh_smart_albums(conn)
-            log.info("Smart albums refreshed after startup backfill")
-        except Exception:
-            log.warning("Smart album refresh after backfill failed", exc_info=True)
+        refresh_smart_albums(conn)
+        log.info("Smart albums refreshed after startup backfill")
+    if backfill_error is not None:
+        raise backfill_error

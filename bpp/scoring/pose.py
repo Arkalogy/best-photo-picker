@@ -8,6 +8,7 @@ or "person jumping".
 from __future__ import annotations
 
 import os
+import threading
 
 import cv2
 import numpy as np
@@ -79,6 +80,10 @@ _LEFT_WRIST = 15
 _RIGHT_WRIST = 16
 
 
+#: MediaPipe tasks are not thread-safe: one inference at a time per instance.
+_pose_lock = threading.Lock()
+
+
 def ensure_pose_model() -> list[str]:
     """Pre-download pose model. Returns list of warnings."""
     warnings: list[str] = []
@@ -112,7 +117,8 @@ def detect_poses(
     h, w = rgb.shape[:2]
     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
     try:
-        result = detector.detect(mp_image)
+        with _pose_lock:
+            result = detector.detect(mp_image)
     except Exception:
         report_inference_failure("Pose")
         return []

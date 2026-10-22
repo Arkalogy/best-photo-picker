@@ -8,7 +8,7 @@ import os
 from flask import Blueprint, Response, jsonify, request, send_file
 
 from bpp.config import cfg_get
-from bpp.constants import ACTIVE_PHOTO_SQL, PET_CROP_PADDING, PET_CROP_SIZE
+from bpp.constants import ACTIVE_PHOTO_SQL, PET_CROP_PADDING, PET_CROP_SIZE, active_photo_sql
 from bpp.db.albums import list_albums as db_list_albums
 from bpp.db.pets import (
     dismiss_pet_cluster,
@@ -27,6 +27,7 @@ from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx
 
 _ACTIVE = ACTIVE_PHOTO_SQL
+_P_ACTIVE = active_photo_sql("p")
 
 log = get_logger(__name__)
 
@@ -188,7 +189,7 @@ def api_pet_cluster_detail(cluster_id: int) -> tuple[Response, int]:
         "SELECT pd.id, pd.detection_index, p.filepath, pd.confidence "
         "FROM pet_detections pd "
         "JOIN photos p ON p.id = pd.photo_id "
-        f"WHERE pd.cluster_id = ? AND p.{_ACTIVE} "
+        f"WHERE pd.cluster_id = ? AND {_P_ACTIVE} "
         "ORDER BY COALESCE(pd.confidence, 0) DESC, p.filepath, pd.detection_index",
         (cluster_id,),
     ).fetchall()

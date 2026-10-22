@@ -187,6 +187,22 @@ Licensing, accuracy and hardening release. **Schema version: 44** (unchanged).
 - Three Settings sliders showed the wrong starting values (duplicate
   sensitivity, burst gap, across dates); they now match the real defaults.
 - License links in the model dialogs that returned 404.
+- Videos are scored with the face confidence and minimum face size from
+  Settings, and face grouping runs only the detectors switched on there,
+  as photo scoring already did. The scoring helper's loss is noticed
+  within a second rather than at its five-minute message timeout.
+- Switching sharing off ends a paired phone's open progress streams.
+  After a crash, the batch-rename recovery leaves alone the renames
+  the database had already recorded. A failed near-duplicate backfill
+  at startup shows in `/api/v1/health`.
+- `bpp db restore-backup` works on exFAT and SMB volumes (its lock no
+  longer needs hard links). Album config is validated on create as on
+  update; a video trim with a bad time range is a 400, not a 500, and
+  updates the row however the path was spelled; renaming the folder of
+  an unmounted library is refused instead of renaming the entry only.
+- Removed the `--seed` flag, the recompute `seed` parameter and the
+  "Selection RNG seed" setting: selection was always deterministic, so
+  none of them did anything.
 
 ### Documentation
 - Corrected statements that didn't match the code or the repo settings,

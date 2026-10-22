@@ -11,7 +11,6 @@ def _opts(items, **kw):
 
     config = {
         "default_selection_k": 50,
-        "default_selection_seed": 42,
         "selection_similarity_threshold": 0.0,
         "max_per_day": 3,
         "min_per_month": 1,
@@ -40,7 +39,7 @@ def _items(n=6):
     ]
 
 
-def test_k_and_seed_changes_reuse_the_dedupe_result(monkeypatch):
+def test_k_changes_reuse_the_dedupe_result(monkeypatch):
     from bpp.web import recompute as rc
 
     rc._dedupe_cache_clear()
@@ -49,7 +48,7 @@ def test_k_and_seed_changes_reuse_the_dedupe_result(monkeypatch):
     monkeypatch.setattr(rc, "dedupe_candidates", lambda *a, **k: calls.append(1) or real(*a, **k))
     items = _items()
     rc.recompute(_opts(items, k=2))
-    rc.recompute(_opts(items, k=3, seed=7))
+    rc.recompute(_opts(items, k=3))
     assert calls == [1]
 
 
@@ -90,7 +89,7 @@ def test_a_cache_hit_replays_every_field_the_pass_added(monkeypatch):
     for it in items:
         it.pop("phash", None)
     first = rc.recompute(_opts([dict(i) for i in items]))
-    second = rc.recompute(_opts([dict(i) for i in items], config={"default_selection_seed": 7}))
+    second = rc.recompute(_opts([dict(i) for i in items], config={"default_selection_k": 7}))
     assert all(p.get("strategy_note") == "kept" for p in second["photos"])
     assert [p["filepath"] for p in first["photos"]] == [p["filepath"] for p in second["photos"]]
 

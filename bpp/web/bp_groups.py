@@ -14,7 +14,7 @@ import json
 
 from flask import Blueprint, Response, jsonify, request
 
-from bpp.constants import ACTIVE_PHOTO_SQL
+from bpp.constants import ACTIVE_PHOTO_SQL, active_photo_sql
 from bpp.utils.logging import get_logger
 from bpp.web.state import get_ctx
 
@@ -23,6 +23,7 @@ log = get_logger(__name__)
 bp = Blueprint("groups", __name__)
 
 _ACTIVE = ACTIVE_PHOTO_SQL
+_P_ACTIVE = active_photo_sql("p")
 
 
 @bp.get("/api/v1/groups")
@@ -55,7 +56,7 @@ def api_groups() -> tuple[Response, int]:
                 "SELECT fe.cluster_id, fe.face_index, p.filepath, fe.quality "
                 "FROM face_embeddings fe "
                 "JOIN photos p ON p.id = fe.photo_id "
-                f"WHERE fe.cluster_id IN ({ph}) AND p.{_ACTIVE}",
+                f"WHERE fe.cluster_id IN ({ph}) AND {_P_ACTIVE}",
                 batch,
             ).fetchall()
             for r in rows:

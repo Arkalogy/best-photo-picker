@@ -46,6 +46,12 @@ SFACE_DISTANCE_SCALE = 0.65
 _sface_tls = threading.local()  # per-thread recognizer instances
 _SFACE_AVAILABLE: bool | None = None
 _sface_lock = threading.Lock()
+#: Bumped by every reset: a thread whose recognizer predates it rebuilds
+#: (the same pattern as ``face_yunet._yunet_generation``).
+_sface_generation = 0
+#: The generation whose model file passed the gate and the hash check:
+#: workers arriving together wait on the lock and find it done.
+_sface_verified_generation = -1
 
 # Load-time license gate for SFace (``sface_yunet``). ``download_file``
 # already gates SFace at *download* time, but ``_ensure_sface_model``
@@ -137,12 +143,15 @@ def _ensure_sface_model() -> bool:
 
 
 def _sface_available() -> bool:
-    """Check if SFace model file exists or can be downloaded."""
-    global _SFACE_AVAILABLE
+    """Whether SFace can be used: not blocked by the license gate, and
+    the model file is present or fetchable (OpenCV has the class)."""
     if _SFACE_AVAILABLE is not None:
         return _SFACE_AVAILABLE
-    avail = os.path.exists(_SFACE_MODEL_PATH) or hasattr(cv2, "FaceRecognizerSF")
-    return avail
+    from bpp.registry.policy import is_load_blocked
+
+    if is_load_blocked("sface_yunet"):
+        return False
+    return os.path.exists(_SFACE_MODEL_PATH) or hasattr(cv2, "FaceRecognizerSF")
 
 
 def _get_sface_recognizer() -> cv2.FaceRecognizerSF | None:
@@ -150,27 +159,37 @@ def _get_sface_recognizer() -> cv2.FaceRecognizerSF | None:
 
     Each thread gets its own recognizer via thread-local storage
     so that ThreadPoolExecutor workers don't share mutable DNN state.
+    The model file is verified (hashed) once per process, by whichever
+    thread loads first; a reset re-arms that.
     """
-    global _SFACE_AVAILABLE
+    global _SFACE_AVAILABLE, _sface_verified_generation
     if _SFACE_AVAILABLE is False:
         return None
 
     # Check thread-local cache
+    generation = _sface_generation
     rec = getattr(_sface_tls, "recognizer", None)
-    if rec is not None:
+    if rec is not None and getattr(_sface_tls, "generation", -1) == generation:
         return rec
 
-    with _sface_lock:
-        if _SFACE_AVAILABLE is False:
-            return None
-        if not _ensure_sface_model():
-            _SFACE_AVAILABLE = False
-            return None
+    if _SFACE_AVAILABLE is not True:
+        with _sface_lock:
+            if _SFACE_AVAILABLE is False:
+                return None
+            if _sface_verified_generation != generation:
+                if not _ensure_sface_model():
+                    _SFACE_AVAILABLE = False
+                    return None
+                _sface_verified_generation = generation
     # Create per-thread recognizer outside the lock
     try:
         rec = cv2.FaceRecognizerSF.create(_SFACE_MODEL_PATH, "")
         _sface_tls.recognizer = rec
-        _SFACE_AVAILABLE = True
+        _sface_tls.generation = generation
+        with _sface_lock:
+            # A reset meanwhile re-armed the gate: leave its None alone.
+            if _sface_generation == generation:
+                _SFACE_AVAILABLE = True
         return rec
     except Exception as exc:
         log.warning("SFace recognizer creation failed: %s", exc)
@@ -345,8 +364,9 @@ def _reset_sface_cache() -> None:
     Also re-arms the license gate so a reset re-evaluates acceptance
     (e.g. after a revoke); otherwise a passed gate would let the next
     load skip the check."""
-    global _SFACE_AVAILABLE
+    global _SFACE_AVAILABLE, _sface_generation
     _SFACE_AVAILABLE = None
+    _sface_generation += 1  # every thread's recognizer is now stale
     _sface_gate.reset()
 
 

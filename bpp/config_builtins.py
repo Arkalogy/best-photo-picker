@@ -80,14 +80,6 @@ def _selection(ConfigField: type[ConfigField]) -> list[ConfigField]:
             ui_type="slider",
             category="Selection",
         ),
-        ConfigField(
-            key="default_selection_seed",
-            type=int,
-            label="Selection RNG seed",
-            description="Reproducibility seed for the greedy chooser.",
-            ui_type="text",
-            category="Selection",
-        ),
     ]
 
 

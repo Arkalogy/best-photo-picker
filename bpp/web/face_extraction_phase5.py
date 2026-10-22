@@ -33,6 +33,7 @@ import numpy as np
 from bpp.config import cfg_get
 from bpp.constants import CLUSTER_DISMISSED
 from bpp.scoring.face_embed import producing_model_id_for
+from bpp.scoring.toggles import toggles_from_config
 from bpp.utils.logging import get_logger
 from bpp.web.face_extraction_phases import ExtractionPartition, PreExtractSnapshot
 
@@ -138,6 +139,7 @@ def extract_new_embeddings(
     needs_iter = iter(need_extract)
     inflight: dict[Any, tuple[int, str, int]] = {}
     max_inflight_cap = max(1, n_workers * 4)
+    toggles = toggles_from_config(config)  # Settings' detector switches apply here too
 
     with Pool(max_workers=n_workers) as pool:
 
@@ -156,6 +158,7 @@ def extract_new_embeddings(
                 embed_conf,
                 min_eq,
                 method,
+                model_toggles=toggles,
             )
             inflight[fut] = (idx, fp_, pid)
             return True

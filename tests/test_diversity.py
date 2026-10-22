@@ -76,8 +76,8 @@ def test_choose_deterministic():
         _make_candidate(f"{i}.jpg", score=0.5 + i * 0.01, day=f"2024-01-{i + 1:02d}")
         for i in range(20)
     ]
-    s1 = choose(candidates, k=5, seed=42)
-    s2 = choose(candidates, k=5, seed=42)
+    s1 = choose(candidates, k=5)
+    s2 = choose(candidates, k=5)
     assert [x["filepath"] for x in s1] == [x["filepath"] for x in s2]
 
 

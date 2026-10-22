@@ -41,6 +41,25 @@ def _store_scored(conn: Any, valid: list[dict[str, Any]], config: dict[str, Any]
     assign_near_duplicate_clusters(conn)
 
 
+def _store_pet_detections(conn: Any, valid: list[dict[str, Any]]) -> int:
+    """Write every scored photo's pet detections: one id lookup and one
+    bulk upsert for the batch, not a statement per photo. Returns the
+    number of detections stored."""
+    from bpp.db.pets import bulk_upsert_pet_detections
+    from bpp.db.photos import get_photo_id_map_by_paths
+
+    with_pets = [item for item in valid if item.get("pet_detections")]
+    if not with_pets:
+        return 0
+    id_map = get_photo_id_map_by_paths(conn, [item["filepath"] for item in with_pets])
+    items = [
+        (id_map[item["filepath"]], item["pet_detections"])
+        for item in with_pets
+        if item["filepath"] in id_map
+    ]
+    return bulk_upsert_pet_detections(conn, items)
+
+
 class ImportWorker(BackgroundWorker):
     """Runs photo import + analysis in a background thread, reporting progress via a queue."""
 
@@ -198,29 +217,9 @@ class ImportWorker(BackgroundWorker):
         if valid:
             _store_scored(conn, valid, config)
 
-            # Save pet detections.
-            # pre-load filepath → photo_id in ONE round-trip
-            # via the batched `get_photo_id_map_by_paths` instead of
-            # the per-item lookup that previously ran inside the
-            # loop. On a 1000-photo import that was 1000 extra DB
-            # round-trips; the dict lookup below is O(1).
-            from bpp.db.pets import (
-                assign_pet_clusters,
-                upsert_pet_detections,
-            )
-            from bpp.db.photos import get_photo_id_map_by_paths
+            from bpp.db.pets import assign_pet_clusters
 
-            paths_with_pets = [item["filepath"] for item in valid if item.get("pet_detections")]
-            id_map = get_photo_id_map_by_paths(conn, paths_with_pets) if paths_with_pets else {}
-
-            pet_count = 0
-            for item in valid:
-                dets = item.get("pet_detections", [])
-                if dets:
-                    photo_id = id_map.get(item["filepath"])
-                    if photo_id is not None:
-                        upsert_pet_detections(conn, photo_id, dets)
-                        pet_count += len(dets)
+            pet_count = _store_pet_detections(conn, valid)
             if pet_count > 0:
                 assign_pet_clusters(conn)
                 # refresh the pet smart album immediately so

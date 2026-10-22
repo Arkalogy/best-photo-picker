@@ -156,6 +156,8 @@ def recover_pending_face_extractions(
                     "it stays pending",
                     run_id,
                 )
+                # Not a failed attempt: the stop was ours.
+                journal.decrement_retry_count(conn, run_id)
                 break
             resumed += 1
             log.info("Recovery: resumed face extraction run %s to completion", run_id)

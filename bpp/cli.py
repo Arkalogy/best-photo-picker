@@ -14,7 +14,6 @@ def build_parser() -> argparse.ArgumentParser:
         description=f"{APP_NAME} — score, deduplicate, and select the best photos.",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed for determinism")
     # default pulled from the config registry so a plugin
     # override (e.g. AVIF / RAW format support) propagates without
     # touching this argparse declaration.

@@ -83,6 +83,7 @@ def _extract_dlib(
     min_confidence: float,
     embedding_confidence: float = DEFAULT_EMBEDDING_CONFIDENCE,
     min_quality: float = MIN_EMBEDDING_QUALITY,
+    model_toggles: dict[str, bool] | None = None,
 ) -> list[dict]:
     """Extract face embeddings using dlib (face_recognition) pipeline."""
     # Fail-closed before touching dlib: an unaccepted entry raises
@@ -103,7 +104,7 @@ def _extract_dlib(
     boxes_conf = detect_faces_with_confidence(
         image,
         min_confidence=min_confidence,
-        model_toggles={"model_scrfd": False, "model_blazeface_fr": False},
+        model_toggles={**(model_toggles or {}), "model_scrfd": False, "model_blazeface_fr": False},
     )
     if not boxes_conf:
         return []

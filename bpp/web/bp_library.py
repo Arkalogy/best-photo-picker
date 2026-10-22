@@ -117,11 +117,19 @@ def api_libraries_rename() -> tuple[Response, int]:
     known = {lib["path"] for lib in list_libraries()}
     if path not in known and path != ctx.library_path:
         raise NotFoundError("Not a known library", path=path)
+    if rename_folder and not os.path.isdir(path):
+        # Renaming only the registry entry while the folder keeps its
+        # name would split the two the next time the volume is mounted.
+        raise NotFoundError(
+            "The library folder isn't reachable (unmounted or moved); "
+            "reconnect it before renaming the folder",
+            path=path,
+        )
     # Ensure the library is in the registry even if it was started via
     # `bpp serve --library` without going through the picker/switch flow.
     add_library(path)
 
-    if rename_folder and os.path.isdir(path):
+    if rename_folder:
         new_path = os.path.join(os.path.dirname(path), name)
         ctx = get_ctx()
         moved = False

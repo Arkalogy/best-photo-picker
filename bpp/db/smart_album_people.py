@@ -16,13 +16,14 @@ import re
 import sqlite3
 from typing import Any
 
-from bpp.constants import ACTIVE_PHOTO_SQL
+from bpp.constants import ACTIVE_PHOTO_SQL, active_photo_sql
 from bpp.db.dialect import dialect
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
 
 _ACTIVE = ACTIVE_PHOTO_SQL
+_P_ACTIVE = active_photo_sql("p")
 
 
 def _is_default_person_name(name: str) -> bool:
@@ -48,7 +49,7 @@ def _load_person_tags(conn: sqlite3.Connection) -> dict[int, set[int]]:
         tag_rows = conn.execute(
             "SELECT pt.cluster_id, pt.photo_id FROM photo_person_tags pt "
             "JOIN photos p ON p.id = pt.photo_id "
-            f"WHERE p.{_ACTIVE}"
+            f"WHERE {_P_ACTIVE}"
         ).fetchall()
     except sqlite3.OperationalError as e:
         log.debug("photo_person_tags table not ready, skipping: %s", e)
@@ -68,7 +69,7 @@ def _load_cluster_photo_map(
     mapping_rows = conn.execute(
         "SELECT fe.cluster_id, fe.photo_id FROM face_embeddings fe "
         "JOIN photos p ON p.id = fe.photo_id "
-        f"WHERE fe.cluster_id >= 0 AND p.{_ACTIVE}"
+        f"WHERE fe.cluster_id >= 0 AND {_P_ACTIVE}"
     ).fetchall()
     out: dict[int, set[int]] = {}
     for cid, pid in mapping_rows:
@@ -252,7 +253,7 @@ def _refresh_person_albums(conn: sqlite3.Connection) -> None:
             "SELECT fe.cluster_id, COUNT(DISTINCT fe.photo_id) as cnt "
             "FROM face_embeddings fe "
             "JOIN photos p ON p.id = fe.photo_id "
-            f"WHERE fe.cluster_id >= 0 AND p.{_ACTIVE} "
+            f"WHERE fe.cluster_id >= 0 AND {_P_ACTIVE} "
             "GROUP BY fe.cluster_id HAVING cnt >= 1 "
             "ORDER BY cnt DESC"
         ).fetchall()

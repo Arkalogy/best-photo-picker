@@ -28,6 +28,7 @@ from bpp.utils.logging import get_logger
 log = get_logger(__name__)
 
 _ACTIVE = ACTIVE_PHOTO_SQL
+_P_ACTIVE = active_photo_sql("p")
 # Aliased active filters for self-join queries (e.g., duplicates)
 _P1_ACTIVE = active_photo_sql("p1")
 _P2_ACTIVE = active_photo_sql("p2")
@@ -201,7 +202,7 @@ def _refresh_unsorted_album(conn: sqlite3.Connection) -> None:
         rule={"unsorted": True},
         photo_query=(
             "SELECT p.id FROM photos p "
-            f"WHERE p.{_ACTIVE} "
+            f"WHERE {_P_ACTIVE} "
             "AND p.id NOT IN ("
             "  SELECT ap.photo_id FROM album_photos ap "
             "  JOIN albums a ON a.id = ap.album_id "
@@ -395,7 +396,7 @@ from bpp.db.smart_album_document import _refresh_document_album  # noqa: E402, F
 def _refresh_recently_edited_album(conn: sqlite3.Connection) -> None:
     """Create or remove a 'Recently Edited' smart album for photos with edits."""
     row = conn.execute(
-        f"SELECT COUNT(*) FROM photo_edits pe JOIN photos p ON p.id = pe.photo_id WHERE p.{_ACTIVE}"
+        f"SELECT COUNT(*) FROM photo_edits pe JOIN photos p ON p.id = pe.photo_id WHERE {_P_ACTIVE}"
     ).fetchone()
     count = row[0] if row else 0
 
@@ -408,7 +409,7 @@ def _refresh_recently_edited_album(conn: sqlite3.Connection) -> None:
             photo_query=(
                 f"SELECT pe.photo_id FROM photo_edits pe "
                 f"JOIN photos p ON p.id = pe.photo_id "
-                f"WHERE p.{_ACTIVE} ORDER BY pe.modified_at DESC",
+                f"WHERE {_P_ACTIVE} ORDER BY pe.modified_at DESC",
                 (),
             ),
         )
@@ -420,7 +421,7 @@ def _get_enhanced_ids(conn: sqlite3.Connection) -> set[int]:
     rows = conn.execute(
         f"SELECT pe.photo_id FROM photo_edits pe "
         f"JOIN photos p ON p.id = pe.photo_id "
-        f"WHERE pe.auto_enhanced = 1 AND p.{_ACTIVE}"
+        f"WHERE pe.auto_enhanced = 1 AND {_P_ACTIVE}"
     ).fetchall()
     return {r[0] for r in rows}
 
@@ -429,7 +430,7 @@ def _refresh_enhanced_album(conn: sqlite3.Connection) -> None:
     """Create or remove the 'Enhanced' smart album (auto-enhanced photos only)."""
     count = conn.execute(
         f"SELECT COUNT(*) FROM photo_edits pe JOIN photos p ON p.id = pe.photo_id "
-        f"WHERE pe.auto_enhanced = 1 AND p.{_ACTIVE}"
+        f"WHERE pe.auto_enhanced = 1 AND {_P_ACTIVE}"
     ).fetchone()[0]
 
     if count > 0:
@@ -441,7 +442,7 @@ def _refresh_enhanced_album(conn: sqlite3.Connection) -> None:
             photo_query=(
                 f"SELECT pe.photo_id FROM photo_edits pe "
                 f"JOIN photos p ON p.id = pe.photo_id "
-                f"WHERE pe.auto_enhanced = 1 AND p.{_ACTIVE} ORDER BY pe.modified_at DESC",
+                f"WHERE pe.auto_enhanced = 1 AND {_P_ACTIVE} ORDER BY pe.modified_at DESC",
                 (),
             ),
         )

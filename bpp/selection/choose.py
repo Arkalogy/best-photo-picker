@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import random
+from collections import defaultdict
 from typing import Any
 
 import numpy as np
@@ -18,7 +18,6 @@ def choose(
     candidates: list[dict[str, Any]],
     k: int = 50,
     config: dict[str, Any] | None = None,
-    seed: int = 42,
     clip_embeddings: dict[int, np.ndarray] | None = None,
 ) -> list[dict[str, Any]]:
     """Select k photos using deterministic greedy algorithm with diversity constraints.
@@ -31,8 +30,6 @@ def choose(
     """
     if config is None:
         config = {}
-
-    random.seed(seed)
 
     # A partial config falls back to the app's own defaults (a private
     # fallback here once left the similarity check off while the default
@@ -67,19 +64,22 @@ def choose(
     selected: list[dict[str, Any]] = []
     used_paths: set[str] = set()
 
-    # Phase 1: Ensure month coverage (pick min_per_month from each month)
+    # Phase 1: Ensure month coverage (pick min_per_month from each month).
+    # Candidates are bucketed by month once (still in score order) so
+    # this pass is one walk over the list, not one per month.
+    by_month: dict[Any, list[dict[str, Any]]] = defaultdict(list)
+    for cand in sorted_candidates:
+        by_month[cand.get("date_month")].append(cand)
     for month in sorted(all_months):
         if len(selected) >= k:
             break
         picked_for_month = 0
-        for cand in sorted_candidates:
+        for cand in by_month.get(month, ()):
             if picked_for_month >= min_per_month:
                 break
             if len(selected) >= k:
                 break
             if cand["filepath"] in used_paths:
-                continue
-            if cand.get("date_month") != month:
                 continue
             ok, _reason = tracker.can_accept(cand)
             if ok:

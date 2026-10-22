@@ -96,14 +96,35 @@ def _run_recovery(
     """
     store = ctx.analysis_store
     store.recovery_running = True
+    failed = False
     try:
         _recover(ctx, missing_fps, spawn_generation, spawn_event)
     except Exception:
         log.warning("Derived recovery failed; hashes may be incomplete", exc_info=True)
         store.recovery_failed = True  # /api/v1/health shows it
         store.phash_running = False
+        failed = True
     finally:
         store.recovery_running = False
+    # Only once this thread's flag is down: the re-run is a new thread
+    # that raises the flag for itself. (An analyze that finished during
+    # a failed run still wants its rows hashed.)
+    _start_queued_rerun(ctx, spawn_generation, "after a failed run" if failed else "")
+
+
+def _start_queued_rerun(ctx: WebAppState, spawn_generation: int, why: str) -> None:
+    """Run the re-run an analyze queued while this recovery ran (see
+    :func:`precompute_phashes`), unless the library has changed since:
+    then the queued rows belong to the old library and are dropped."""
+    store = ctx.analysis_store
+    rerun, store.recovery_rerun = store.recovery_rerun, None
+    if rerun is None:
+        return
+    if store.phash_generation != spawn_generation:
+        log.info("Derived recovery: dropping the queued re-run (library switched)")
+        return
+    log.info("Derived recovery: queued re-run starting %s (%d items)", why, len(rerun))
+    precompute_phashes(ctx, rerun)
 
 
 def _recover(
@@ -119,7 +140,10 @@ def _recover(
 
     backfilled = _backfill_hashes(ctx, conn, missing_fps)
     if backfilled is None:
-        return  # cancelled
+        # Cancelled (shutdown or library switch): whatever was queued
+        # for after this run is for a library we no longer serve.
+        ctx.analysis_store.recovery_rerun = None
+        return
     computed, errors = backfilled
     # bail before touching shared state if the library
     # was switched out from under us. `switch_library` joins
@@ -149,15 +173,8 @@ def _recover(
         _cluster_derived_state(conn, ctx.analysis_store)
         _refresh_smart_albums(conn, ctx.analysis_store)
     # Don't close — get_db() pool manages lifecycle via
-    # close_all_connections() at shutdown.
-
-    # Re-entrancy: an analyze that finished while this recovery ran
-    # queued its data instead of racing a second thread — run it now.
-    rerun = ctx.analysis_store.recovery_rerun
-    ctx.analysis_store.recovery_rerun = None
-    if rerun is not None and ctx.analysis_store.phash_generation == spawn_generation:
-        log.info("Derived recovery: queued re-run starting (%d items)", len(rerun))
-        precompute_phashes(ctx, rerun)
+    # close_all_connections() at shutdown. A queued re-run (an analyze
+    # that finished meanwhile) starts from _run_recovery.
 
 
 def _backfill_hashes(

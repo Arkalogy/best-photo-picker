@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import sqlite3
 
-from bpp.constants import ACTIVE_PHOTO_SQL
+from bpp.constants import ACTIVE_PHOTO_SQL, active_photo_sql
 from bpp.utils.json_utils import safe_json_loads
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
 
 _ACTIVE = ACTIVE_PHOTO_SQL
+_P_ACTIVE = active_photo_sql("p")
 
 
 def _refresh_tag_albums(conn: sqlite3.Connection) -> None:
@@ -38,7 +39,7 @@ def _refresh_tag_albums(conn: sqlite3.Connection) -> None:
         rows = conn.execute(
             f"SELECT pt.tag_id, p.id FROM photos p "
             f"JOIN photo_tags pt ON pt.photo_id = p.id "
-            f"WHERE pt.tag_id IN ({placeholders}) AND p.{_ACTIVE}",
+            f"WHERE pt.tag_id IN ({placeholders}) AND {_P_ACTIVE}",
             tag_ids_with_photos,
         ).fetchall()
         for tid, pid in rows:

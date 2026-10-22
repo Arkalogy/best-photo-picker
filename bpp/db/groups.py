@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import sqlite3
 
-from bpp.constants import ACTIVE_PHOTO_SQL, FACE_MIN_PHOTOS
+from bpp.constants import ACTIVE_PHOTO_SQL, FACE_MIN_PHOTOS, active_photo_sql
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
 
 _ACTIVE = ACTIVE_PHOTO_SQL
+_P_ACTIVE = active_photo_sql("p")
 
 
 def group_min_photos(conn: sqlite3.Connection) -> int:
@@ -43,7 +44,7 @@ def _significant_clusters(conn: sqlite3.Connection) -> set[int]:
             "SELECT fe.cluster_id, COUNT(DISTINCT fe.photo_id) "
             "FROM face_embeddings fe "
             "JOIN photos p ON p.id = fe.photo_id "
-            f"WHERE fe.cluster_id >= 0 AND p.{_ACTIVE} "
+            f"WHERE fe.cluster_id >= 0 AND {_P_ACTIVE} "
             "GROUP BY fe.cluster_id"
         ).fetchall()
     )
@@ -74,7 +75,7 @@ def compute_cooccurrence(
             "  ON fe1.photo_id = fe2.photo_id "
             "  AND fe1.cluster_id < fe2.cluster_id "
             "JOIN photos p ON p.id = fe1.photo_id "
-            f"WHERE fe1.cluster_id >= 0 AND fe2.cluster_id >= 0 AND p.{_ACTIVE} "
+            f"WHERE fe1.cluster_id >= 0 AND fe2.cluster_id >= 0 AND {_P_ACTIVE} "
             "GROUP BY fe1.cluster_id, fe2.cluster_id "
             "HAVING shared >= ? "
             "ORDER BY shared DESC",
@@ -192,7 +193,7 @@ def _photo_sets(conn: sqlite3.Connection, cluster_ids: list[int]) -> dict[int, f
         rows = conn.execute(
             "SELECT DISTINCT fe.cluster_id, fe.photo_id FROM face_embeddings fe "
             "JOIN photos p ON p.id = fe.photo_id "
-            f"WHERE fe.cluster_id IN ({ph}) AND p.{_ACTIVE}",
+            f"WHERE fe.cluster_id IN ({ph}) AND {_P_ACTIVE}",
             batch,
         ).fetchall()
         for cid, pid in rows:
@@ -208,7 +209,7 @@ def get_group_photo_ids(conn: sqlite3.Connection, cluster_ids: list[int]) -> lis
         rows = conn.execute(
             "SELECT DISTINCT fe.photo_id FROM face_embeddings fe "
             "JOIN photos p ON p.id = fe.photo_id "
-            f"WHERE fe.cluster_id = ? AND p.{_ACTIVE}",
+            f"WHERE fe.cluster_id = ? AND {_P_ACTIVE}",
             (cluster_ids[0],),
         ).fetchall()
         return [r[0] for r in rows]
@@ -220,7 +221,7 @@ def get_group_photo_ids(conn: sqlite3.Connection, cluster_ids: list[int]) -> lis
         parts.append(
             "SELECT DISTINCT fe.photo_id FROM face_embeddings fe "
             "JOIN photos p ON p.id = fe.photo_id "
-            f"WHERE fe.cluster_id = ? AND p.{_ACTIVE}"
+            f"WHERE fe.cluster_id = ? AND {_P_ACTIVE}"
         )
         params.append(cid)
     query = " INTERSECT ".join(parts)

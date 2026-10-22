@@ -11,6 +11,7 @@ from flask import Blueprint, Response, jsonify, request
 from bpp.constants import (
     ACTIVE_PHOTO_SQL,
     CLUSTER_DISMISSED,
+    active_photo_sql,
 )
 from bpp.db.settings import delete_setting, set_setting
 from bpp.errors import ValidationError
@@ -28,6 +29,7 @@ log = get_logger(__name__)
 bp = Blueprint("faces", __name__)
 
 _ACTIVE = ACTIVE_PHOTO_SQL
+_P_ACTIVE = active_photo_sql("p")
 
 # Upper bound on rows pulled into RAM for the sampled face grids
 # (dismissed faces, cluster/avatar picker). The endpoints render a sampled
@@ -261,14 +263,14 @@ def api_faces_dismissed() -> tuple[Response, int]:
     # is drawn from the highest-quality rows.
     total = conn.execute(
         "SELECT COUNT(*) FROM face_embeddings fe JOIN photos p ON p.id = fe.photo_id "
-        f"WHERE fe.cluster_id = {CLUSTER_DISMISSED} AND p.{_ACTIVE}"
+        f"WHERE fe.cluster_id = {CLUSTER_DISMISSED} AND {_P_ACTIVE}"
     ).fetchone()[0]
     rows = conn.execute(
         "SELECT fe.id, fe.face_index, p.filepath, fe.quality, "
         "p.original_filename, p.date, p.aggregate_score "
         "FROM face_embeddings fe "
         "JOIN photos p ON p.id = fe.photo_id "
-        f"WHERE fe.cluster_id = {CLUSTER_DISMISSED} AND p.{_ACTIVE} "
+        f"WHERE fe.cluster_id = {CLUSTER_DISMISSED} AND {_P_ACTIVE} "
         "ORDER BY COALESCE(fe.quality, 0) DESC, p.filepath, fe.face_index "
         "LIMIT ?",
         (_FACE_SCAN_CAP,),
@@ -340,14 +342,14 @@ def api_faces_cluster_detail(cluster_id: int) -> tuple[Response, int]:
     # subject with thousands of faces) doesn't fetch every row to sample 80.
     total = conn.execute(
         f"SELECT COUNT(*) FROM face_embeddings fe JOIN photos p ON p.id = fe.photo_id "
-        f"WHERE fe.cluster_id = ? AND p.{_ACTIVE}",
+        f"WHERE fe.cluster_id = ? AND {_P_ACTIVE}",
         (cluster_id,),
     ).fetchone()[0]
     rows = conn.execute(
         "SELECT fe.id, fe.face_index, p.filepath, fe.quality "
         "FROM face_embeddings fe "
         "JOIN photos p ON p.id = fe.photo_id "
-        f"WHERE fe.cluster_id = ? AND p.{_ACTIVE} "
+        f"WHERE fe.cluster_id = ? AND {_P_ACTIVE} "
         "ORDER BY COALESCE(fe.quality, 0) DESC, p.filepath, fe.face_index "
         "LIMIT ?",
         (cluster_id, _FACE_SCAN_CAP),

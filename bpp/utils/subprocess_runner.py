@@ -29,6 +29,7 @@ from __future__ import annotations
 import multiprocessing
 import queue
 import threading
+import time
 from collections.abc import Callable
 from typing import Any, Generic, Protocol, TypeVar
 
@@ -137,6 +138,11 @@ class BoundedSubprocessRunner(Generic[I, O]):
     each phase's responsibility (e.g. face-extraction chunks for
     bounded allocator growth).
     """
+
+    #: How often the drain looks up from the queue to see whether the
+    #: child is still alive: a SIGKILLed child never sends SENTINEL, and
+    #: without this check its loss surfaces only at the message timeout.
+    dead_child_poll_s: float = 1.0
 
     def __init__(
         self,
@@ -295,26 +301,52 @@ class BoundedSubprocessRunner(Generic[I, O]):
         """
         state = self.phase.initial_state()
         child_crashed = False
+        deadline = time.monotonic() + self.message_timeout_s
         while True:
             try:
-                msg = result_queue.get(timeout=self.message_timeout_s)
+                wait = min(self.dead_child_poll_s, max(0.0, deadline - time.monotonic()))
+                msg = result_queue.get(timeout=wait)
+                deadline = time.monotonic() + self.message_timeout_s
             except queue.Empty:
-                log.warning(
-                    "Phase %r queue timeout — pid=%s alive=%s exitcode=%s",
-                    self.phase.name,
-                    proc.pid,
-                    proc.is_alive(),
-                    proc.exitcode,
-                )
-                if progress_callback:
-                    progress_callback(
-                        {
-                            "type": "error",
-                            "message": f"{self.phase.name} timed out",
-                        }
+                if not proc.is_alive():
+                    # Gone without a SENTINEL (SIGKILL, OOM killer): one
+                    # last look for messages that landed as it died.
+                    try:
+                        msg = result_queue.get(timeout=self.dead_child_poll_s)
+                    except queue.Empty:
+                        log.error(
+                            "Phase %r subprocess died without finishing (pid=%s exitcode=%s)",
+                            self.phase.name,
+                            proc.pid,
+                            proc.exitcode,
+                        )
+                        if progress_callback:
+                            progress_callback(
+                                {
+                                    "type": "error",
+                                    "message": f"{self.phase.name} stopped unexpectedly",
+                                }
+                            )
+                        child_crashed = True
+                        break
+                    # A last message did land (SENTINEL, fatal_error or
+                    # progress): handled below like any other.
+                elif time.monotonic() < deadline:
+                    continue
+                else:
+                    log.warning(
+                        "Phase %r queue timeout — pid=%s alive=%s exitcode=%s",
+                        self.phase.name,
+                        proc.pid,
+                        proc.is_alive(),
+                        proc.exitcode,
                     )
-                child_crashed = True
-                break
+                    if progress_callback:
+                        progress_callback(
+                            {"type": "error", "message": f"{self.phase.name} timed out"}
+                        )
+                    child_crashed = True
+                    break
 
             if msg == SENTINEL:
                 break

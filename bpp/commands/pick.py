@@ -66,7 +66,7 @@ def do_pick(args: argparse.Namespace) -> int:
                 _apply_face_boost(conn, analyzed, selected_faces, config)
 
         # Select top K
-        selected = choose(analyzed, k=args.top, config=config, seed=getattr(args, "seed", 42))
+        selected = choose(analyzed, k=args.top, config=config)
         _print_selection(selected, args)
 
         # Export if --out specified and not --dry-run

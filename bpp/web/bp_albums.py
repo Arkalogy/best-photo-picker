@@ -45,6 +45,21 @@ def _allowed_config_keys() -> frozenset[str]:
     return frozenset(recompute_weight_keys()) | {"k_user_set"}
 
 
+def _validated_config(cfg: Any) -> dict[str, Any]:
+    """The album config a request may store: a weight clamped to its 0-1
+    range, anything else checked against the schema, unknown keys
+    dropped — a stored value is used unchecked at recompute time."""
+    if not isinstance(cfg, dict):
+        raise ValidationError("config must be an object", field="config")
+    weight_keys = recompute_weight_keys()
+    allowed = _allowed_config_keys()
+    return {
+        k: clamp_override(k, v) if k in weight_keys else validate_value(k, v)
+        for k, v in cfg.items()
+        if k in allowed
+    }
+
+
 bp = Blueprint("albums", __name__)
 
 
@@ -81,6 +96,8 @@ def api_albums_create() -> tuple[Response, int]:
         )
     conn = ctx.get_conn()
     config = data.get("config")
+    if config is not None:
+        config = _validated_config(config)
     k = clamp_k(data.get("k", 50))
     parent_id = data.get("parent_id")
     if parent_id is not None:
@@ -128,16 +145,7 @@ def api_album_update(album_id: int) -> tuple[Response, int]:
     if "config" in data:
         cfg_update = data["config"]
         if cfg_update is not None:
-            # Values pass the same gate as a recompute override: a weight
-            # clamped to its 0-1 range, anything else checked against the
-            # schema — a stored value is used unchecked at recompute time.
-            weight_keys = recompute_weight_keys()
-            allowed = _allowed_config_keys()
-            cfg_update = {
-                k: clamp_override(k, v) if k in weight_keys else validate_value(k, v)
-                for k, v in cfg_update.items()
-                if k in allowed
-            }
+            cfg_update = _validated_config(cfg_update)
             existing = album.get("config") or {}
             kwargs["config"] = {**existing, **cfg_update}
     if "k" in data:

@@ -52,7 +52,6 @@ export function getParams(opts) {
   params.sensitive_in_picks = getSensitiveMode();
   const kInput = /** @type {HTMLInputElement | null} */ (document.getElementById("param-k"));
   params.k = parseInt(kInput?.value || "0") || 50;
-  params.seed = 42;
   const selectedFaceIds = /** @type {Set<number>} */ (win.selectedFaceIds || new Set());
   if (selectedFaceIds.size > 0) {
     params.selected_faces = [...selectedFaceIds];

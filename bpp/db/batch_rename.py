@@ -77,6 +77,14 @@ def recover_interrupted_rename(conn: sqlite3.Connection, library_path: str) -> l
     if entries is None:
         return []
 
+    try:
+        committed = _committed_paths(conn, entries)
+    except sqlite3.Error as exc:
+        # Without the rows there is no telling which renames were
+        # committed: nothing moves, the journal waits for the next start.
+        logger.warning("Can't read the photo rows for the rename journal (%s); will retry", exc)
+        return []
+
     reverted: list[dict[str, Any]] = []
     malformed = retry = False
     for entry in entries:
@@ -84,6 +92,11 @@ def recover_interrupted_rename(conn: sqlite3.Connection, library_path: str) -> l
         new_path = entry.get("new") if isinstance(entry, dict) else None
         if not (isinstance(old_path, str) and old_path and isinstance(new_path, str) and new_path):
             malformed = True
+            continue
+        if committed.get(entry.get("id")) == new_path:
+            # The database already names the new path: that rename was
+            # committed before the crash, so the file is where the row
+            # says. Reverting it would strand the row.
             continue
         # If new_path exists on disk but old_path does not, revert.
         if os.path.exists(new_path) and not os.path.exists(old_path):
@@ -110,6 +123,18 @@ def recover_interrupted_rename(conn: sqlite3.Connection, library_path: str) -> l
     if reverted:
         logger.info("Recovered %d interrupted renames from journal", len(reverted))
     return reverted
+
+
+def _committed_paths(conn: sqlite3.Connection, entries: list[Any]) -> dict[int, str]:
+    """``{photo id: filepath}`` as the database has it, for every journal
+    entry that names a photo — the record of which renames were
+    committed before the interruption."""
+    ids = sorted(
+        {int(e["id"]) for e in entries if isinstance(e, dict) and isinstance(e.get("id"), int)}
+    )
+    if not ids:
+        return {}
+    return _owners(conn, [{"id": i} for i in ids])
 
 
 def parse_pattern(pattern: str) -> list[tuple[str, str]]:

@@ -21,7 +21,6 @@ T = TypeVar("T")
 _TRANSIENT_ERRNOS = frozenset(
     {
         errno.EIO,  # I/O error
-        errno.EACCES,  # Permission denied (temporary on reconnect)
         errno.ETIMEDOUT,  # Connection timed out
         errno.EHOSTDOWN,  # Host is down
         errno.EHOSTUNREACH,  # No route to host

@@ -293,6 +293,24 @@ def get_phases_complete(conn: sqlite3.Connection, run_id: str) -> int:
     return int(row[0]) if row else 0
 
 
+def decrement_retry_count(conn: sqlite3.Connection, run_id: str) -> int:
+    """Give back the attempt a resume spent when it was cancelled rather
+    than failed (shutdown, library switch). Floors at 0; same pre-v39
+    degradation as :func:`increment_retry_count`."""
+    if not _has_journal_table(conn):
+        return 0
+    try:
+        conn.execute(
+            "UPDATE face_extraction_journal SET retry_count = MAX(retry_count - 1, 0) "
+            "WHERE run_id = ?",
+            (run_id,),
+        )
+        conn.commit()
+    except sqlite3.OperationalError:
+        return 0
+    return get_retry_count(conn, run_id)
+
+
 def pending_runs(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """List every face-extraction run that didn't finish.
 

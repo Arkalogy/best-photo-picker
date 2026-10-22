@@ -473,7 +473,6 @@ Recompute the photo selection with given weights and parameters.
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
 | `k` | int | 50 | Number of photos to select |
-| `seed` | int | 42 | Random seed for reproducibility |
 | `blur_weight` | float | config (0.30) | Sharpness weight, clamped to 0–1 |
 | `exposure_weight` | float | config (0.20) | Lighting weight, clamped to 0–1 |
 | `face_weight` | float | config (0.35) | Face quality weight, clamped to 0–1 |

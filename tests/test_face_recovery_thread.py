@@ -176,7 +176,7 @@ def test_a_cancelled_resume_is_not_counted_and_stays_pending(tmp_path, monkeypat
         assert recover_pending_face_extractions(conn, ctx=ctx, cancel_event=cancel) == 0
         assert ran == [1], "the resume must have started"
         assert [r["run_id"] for r in journal.pending_runs(conn)] == [run_id]
-        assert journal.get_retry_count(conn, run_id) == 1
+        assert journal.get_retry_count(conn, run_id) == 0, "a cancel is not a failed attempt"
 
 
 def test_a_cancel_before_the_run_costs_no_retry(tmp_path, monkeypatch):

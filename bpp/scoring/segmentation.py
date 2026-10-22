@@ -8,6 +8,7 @@ in a photo, enabling composition scoring even when no face is detected
 from __future__ import annotations
 
 import os
+import threading
 from pathlib import Path
 
 import cv2
@@ -68,6 +69,10 @@ _segmenter = ModelSingleton(
 )
 
 
+#: MediaPipe tasks are not thread-safe: one inference at a time per instance.
+_segmenter_lock = threading.Lock()
+
+
 def _get_segmenter():
     """Get or create the ImageSegmenter singleton (thread-safe)."""
     return _segmenter.get()
@@ -101,7 +106,8 @@ def segment_subject(image: np.ndarray) -> np.ndarray | None:
 
     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
     try:
-        result = segmenter.segment(mp_image)
+        with _segmenter_lock:
+            result = segmenter.segment(mp_image)
     except Exception:
         report_inference_failure("Subject segmentation")
         return None

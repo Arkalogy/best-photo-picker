@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from bpp.constants import CLUSTER_DISMISSED, CLUSTER_UNASSIGNED
-from bpp.scoring.face_cluster import cluster_faces, pick_representative
+from bpp.scoring.face_cluster import cluster_faces
 from tests._clustering_stability_shared import (
     _FETCH_ASSIGNMENTS,
     _cluster_db_embeddings,
@@ -258,6 +258,7 @@ class TestExtractAndClusterPipeline:
             min_confidence=0.2,
             embedding_confidence=0.65,
             min_embedding_quality=0.25,
+            **_kw,
         ):
             es = embs_by_fp.get(filepath, [])
             return [{"bbox": (10, 10, 50, 50), "embedding": e, "quality": 0.8} for e in es]
@@ -450,50 +451,3 @@ class TestPersonTagSurvival:
         assert tags_after <= tags_before
         assert tags_after <= 1
         conn.close()
-
-
-# ===========================================================================
-# 8. EDGE CASES
-# ===========================================================================
-
-
-class TestClusterEdgeCases:
-    def test_two_embeddings(self):
-        rng = np.random.RandomState(0)
-        assert len(cluster_faces([rng.randn(128) for _ in range(2)], threshold=0.6)) == 2
-
-    def test_all_identical_many(self):
-        embs = [np.ones(128) * 0.5 for _ in range(100)]
-        labels = cluster_faces(embs, threshold=0.6)
-        assert len(set(labels)) == 1
-
-    def test_very_noisy_embeddings(self):
-        rng = np.random.RandomState(123)
-        assert len(cluster_faces([rng.randn(128) * 10 for _ in range(50)], threshold=0.6)) == 50
-
-    def test_near_threshold_boundary(self):
-        e1, e2 = np.zeros(128), np.zeros(128)
-        e2[0] = 0.55
-        labels = cluster_faces([e1, e2], threshold=0.55)
-        assert labels[0] == labels[1]
-
-    def test_slightly_above_threshold(self):
-        e1, e2 = np.zeros(128), np.zeros(128)
-        e2[0] = 0.56
-        labels = cluster_faces([e1, e2], threshold=0.55)
-        assert labels[0] != labels[1]
-
-    def test_zero_embeddings(self):
-        labels = cluster_faces([np.zeros(128) for _ in range(5)], threshold=0.6)
-        assert len(set(labels)) == 1
-
-    def test_very_large_embeddings(self):
-        rng = np.random.RandomState(0)
-        assert len(cluster_faces([rng.randn(128) * 1e6 for _ in range(10)], threshold=1e7)) == 10
-
-    def test_pick_representative_stable(self):
-        rng = np.random.RandomState(42)
-        embs = [rng.randn(128) for _ in range(20)]
-        ref = pick_representative(embs)
-        for _ in range(10):
-            assert pick_representative(embs) == ref

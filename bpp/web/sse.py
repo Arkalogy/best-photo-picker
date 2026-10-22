@@ -18,7 +18,6 @@ from typing import Any
 from bpp.constants import PROGRESS_QUEUE_TIMEOUT_S
 
 #: Progress messages between two trust re-checks of a paired device.
-_RECHECK_EVERY = 5
 
 
 def sse_event(payload: dict[str, Any]) -> str:
@@ -43,11 +42,16 @@ def captured_device_fingerprint() -> str | None:
 
 
 def _revoked(ctx: Any, device_fp: str | None) -> bool:
+    """A paired device loses its stream when its trust is revoked or
+    when sharing is switched off altogether (the switch is what the
+    request guard checks for new requests; open streams re-check it)."""
     if device_fp is None:
         return False
     from bpp.web.share_devices import is_device_trusted
+    from bpp.web.share_runtime import is_lan_sharing_enabled
 
-    return not is_device_trusted(ctx.get_conn(), device_fp)
+    conn = ctx.get_conn()
+    return not is_lan_sharing_enabled(conn) or not is_device_trusted(conn, device_fp)
 
 
 _AUTH_REVOKED = {"type": "error", "message": "auth_revoked"}
@@ -67,11 +71,12 @@ def stream_worker_progress(
     Stops on a terminal message (``done`` / ``error`` / ``cancelled``).
     ``on_done`` runs when ``done`` arrives, before the stream ends, once
     per run however many readers see it. With ``ctx`` and ``device_fp`` (a
-    paired device's fingerprint) the device's trust is re-checked every
-    few messages and on every keepalive.
+    paired device's fingerprint) the device's trust and the sharing
+    switch are re-checked before every batch of events and on every
+    keepalive: one settings read per wake-up, and nothing private is
+    sent after the device lost its standing.
     """
     run_id, seq = int(worker.run_id), 0
-    since_check = 0
     while True:
         run_id, seq, msgs = worker.events_since(run_id, seq, timeout=PROGRESS_QUEUE_TIMEOUT_S)
         if not msgs:
@@ -89,18 +94,15 @@ def stream_worker_progress(
                     return
             else:
                 continue
+        if device_fp is not None and _revoked(ctx, device_fp):
+            yield sse_event(_AUTH_REVOKED)
+            return
         for msg in msgs:
             yield sse_event(msg)
             if msg.get("type") in terminal:
                 if msg.get("type") == "done" and on_done is not None:
                     _finalize_once(worker, run_id, msg, on_done)
                 return
-            since_check += 1
-            if device_fp is not None and since_check >= _RECHECK_EVERY:
-                since_check = 0
-                if _revoked(ctx, device_fp):
-                    yield sse_event(_AUTH_REVOKED)
-                    return
 
 
 def _finalize_once(worker: Any, run_id: int, msg: dict, on_done: Callable[[dict], None]) -> None:

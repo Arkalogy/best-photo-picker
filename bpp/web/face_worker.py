@@ -85,6 +85,7 @@ def _extract_one(
     embedding_confidence: float = 0.65,
     min_embedding_quality: float = 0.25,
     method: str | None = None,
+    model_toggles: dict[str, bool] | None = None,
 ) -> list[dict] | None:
     """Extract face embeddings from a single image (process-safe).
 
@@ -113,6 +114,7 @@ def _extract_one(
             embedding_confidence=embedding_confidence,
             min_embedding_quality=min_embedding_quality,
             method=method,
+            model_toggles=model_toggles,
         )
     except ModelIntegrityError:
         log.error("Face model integrity failure on %s", filepath, exc_info=True)

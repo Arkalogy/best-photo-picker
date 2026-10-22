@@ -140,6 +140,7 @@ def _sandbox_extract_one(
     embedding_confidence=0.65,
     min_embedding_quality=0.25,
     method=None,
+    model_toggles=None,
 ):
     """Thread-safe extraction: deterministic embeddings per filepath + random delay.
 

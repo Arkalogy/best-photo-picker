@@ -17,7 +17,6 @@ DEFAULTS: dict[str, Any] = {
     "thumbnail_size": 64,  # px, grid thumbnail size
     # Selection
     "default_selection_k": 50,  # number of photos to select (1-10000)
-    "default_selection_seed": 42,  # RNG seed for reproducibility
     # Dedup — perceptual hash distance (0=exact, higher=more lenient)
     "hash_distance_threshold": 20,  # within time window (0-64)
     "time_window_seconds": 30,  # seconds between shots for near-dedup
