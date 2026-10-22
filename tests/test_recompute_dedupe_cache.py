@@ -70,6 +70,31 @@ def test_changed_scores_or_members_redo_the_dedupe(monkeypatch):
     assert calls == [1, 1, 1, 1]
 
 
+def test_a_cache_hit_replays_every_field_the_pass_added(monkeypatch):
+    """The hash strategy fills phash/ahash on rows without them and a
+    plugin strategy may annotate; a hit must hand the next call the
+    same dicts the first call got."""
+    from bpp.web import recompute as rc
+
+    rc.dedupe_cache_clear()
+    real = rc.dedupe_candidates
+
+    def annotating(items, config, **kw):
+        cands, mode = real(items, config, **kw)
+        for c in cands:
+            c.setdefault("strategy_note", "kept")
+        return cands, mode
+
+    monkeypatch.setattr(rc, "dedupe_candidates", annotating)
+    items = _items()
+    for it in items:
+        it.pop("phash", None)
+    first = rc.recompute(_opts([dict(i) for i in items]))
+    second = rc.recompute(_opts([dict(i) for i in items], config={"default_selection_seed": 7}))
+    assert all(p.get("strategy_note") == "kept" for p in second["photos"])
+    assert [p["filepath"] for p in first["photos"]] == [p["filepath"] for p in second["photos"]]
+
+
 def test_a_cache_hit_still_carries_the_duplicate_cluster_fields(monkeypatch):
     from bpp.web import recompute as rc
 

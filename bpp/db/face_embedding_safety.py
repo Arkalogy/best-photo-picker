@@ -46,6 +46,7 @@ the only authorized way to turn a stored BLOB back into an ndarray.
 
 from __future__ import annotations
 
+import sqlite3
 import threading
 from collections import Counter
 from collections.abc import Iterable
@@ -202,7 +203,7 @@ def active_embedding_dim(conn: Any) -> int:
                 "SELECT length(embedding) FROM face_embeddings WHERE embedding IS NOT NULL "
                 "GROUP BY length(embedding) ORDER BY COUNT(*) DESC LIMIT 1"
             ).fetchone()
-        except Exception:  # no face table yet
+        except sqlite3.OperationalError:  # no face table yet
             row = None
         if row and row[0] and row[0] % 4 == 0:
             return int(row[0]) // 4
@@ -210,7 +211,14 @@ def active_embedding_dim(conn: Any) -> int:
             "SELECT value FROM settings WHERE key='face_embedding_method'"
         ).fetchone()
         return embedding_dim_for(row[0] if row else None)
-    except Exception:
+    except sqlite3.Error:
+        # Every face read path filters rows by this size: a wrong guess
+        # makes real rows look malformed (empty People view, needless
+        # re-extraction), so the fallback must be visible in the log.
+        log.warning(
+            "Couldn't read the stored face-embedding size; assuming the default",
+            exc_info=True,
+        )
         return embedding_dim_for(None)
 
 

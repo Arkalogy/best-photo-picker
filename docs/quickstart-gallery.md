@@ -2,10 +2,12 @@
 
 A walkthrough of what BPP actually looks like in use. If you want to evaluate the product without running `pip install` first, this page is the next-best thing — it covers the core flow from import through pick and export, plus the side surfaces (faces, calendar, map, duplicates) that make a large library navigable.
 
-For a 30-second hands-on trial with no setup, run:
+For a hands-on trial with no photos of your own (a few minutes; the
+first analysis offers to download the on-device models), with Python
+3.11 installed, run:
 
 ```bash
-pip install "bppicker[web]" && bpp demo
+pipx install --python python3.11 "bppicker[web]" && bpp demo
 ```
 
 That generates a synthetic library and launches the full UI locally. Your photos are never uploaded; the few network calls bpp does make (model registry check, model downloads, update check, map tiles) are listed in the README's [Privacy](../README.md#privacy) section.

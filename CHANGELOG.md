@@ -18,8 +18,29 @@ Licensing, accuracy and hardening release. **Schema version: 44** (unchanged).
   from every API response a paired device receives, and export progress
   is visible to the owner only. Progress streams re-check that the
   device is still trusted while they run.
+- **The app page is locked to the window that opened it.** Any program
+  on the computer could read the session token off the page at
+  `127.0.0.1:5001`. `bpp serve`, `bpp web` and `bpp demo` now print a
+  link with a one-time key and open it for you; without the key the page
+  only says the app is open elsewhere. The Mac app handles the key
+  itself. For scripts, Docker and opening the page by hand, pass
+  `--open-loopback` (or set `BPP_OPEN_LOOPBACK=1`) to get the old open
+  page; the key never appears in the server log. The Mac app now loads
+  the page from `127.0.0.1` rather than `localhost`, so its window
+  settings (theme, the update-check switch, filters) reset once on this
+  upgrade.
+- A paired device sees `@ext/…` instead of the real folder for photos
+  that live outside the library, and a plain "storage unreachable"
+  instead of the error text that named the library path.
 - `--debug` on `bpp serve`, `bpp web` and `bpp demo` turns on verbose
   logging only; it never enables the Werkzeug debugger.
+- Archives you analyze are unpacked with Python's `data` filter on
+  3.11.4 and later (it was 3.12+ only), so a crafted `.tar` can't write
+  outside its folder. A camera RAW that declares more than 200 million
+  pixels is refused like an oversized JPEG instead of being decoded.
+- A pairing request nobody approves expires 24 hours after the phone
+  first asked; a model download with no pinned checksum is refused and
+  the reason shown.
 - "Open folder" refuses application bundles, even ones renamed to hide
   their suffix.
 - **Export with "remove metadata" really removes it.** HEIC and camera
@@ -41,6 +62,9 @@ Licensing, accuracy and hardening release. **Schema version: 44** (unchanged).
   cards; the model pickers announce themselves as dialogs and return
   focus when closed.
 - Tag, calendar and duplicate-group lists accept `limit` / `offset`.
+- Plugins create their smart-album rows with
+  `bpp.db.smart_albums.ensure_smart_album`, which honours a user's
+  dismissal.
 
 ### Changed
 - **Large libraries.** Face clustering of more than 8,000 faces runs in
@@ -85,6 +109,32 @@ Licensing, accuracy and hardening release. **Schema version: 44** (unchanged).
   of an analysis is reported instead of the run claiming success;
   resuming an interrupted face extraction runs in the background
   (shown in `/api/v1/health`) instead of blocking startup.
+- Re-analysing a photo keeps its checksum, import batch and original
+  file name; exported copies are upright (camera orientation applied)
+  and keep their metadata unless you chose to strip it; the automatic
+  purge of long-deleted photos is journaled, so a crash halfway through
+  finishes on the next start instead of leaving half the files.
+- Right-click menus built at runtime ran none of their items; they work
+  again and return keyboard focus. A video trim can no longer overwrite
+  another file, and a failed trim leaves no stray file. Exported
+  galleries and CSV files escape photo names.
+- The People list loads in pages, the duplicate review loads every
+  group, and the Tags and Calendar views page their lists, so large
+  libraries open them without a stall.
+- While an interrupted face extraction resumes after a restart, Analyze,
+  Import and face edits wait ("Face extraction is resuming after a
+  restart") instead of racing it; a failed resume and a refused
+  missing-file scan show in `/api/v1/health`; an analysis helper that
+  refuses a job shows its own reason instead of "crashed; see
+  server.log".
+- Folders named `data` or `cache` inside an import source are scanned
+  again; only bpp's own folders at the library root are skipped. The
+  automatic restore after a corrupt start brings the backup's newest
+  rows along.
+- Recluster refuses past the face-embedding cap, as merge and restore
+  do, instead of risking an out-of-memory stop.
+- Mac app: the Report Issue and Get the latest version buttons on its
+  error screens work; the phone pairing page's Open library button works.
 - Late responses no longer overwrite newer state: a slow face list
   can't show the previous photo's faces, a slow face-outline save can't
   end a newer edit, and the import finishes correctly even when nobody

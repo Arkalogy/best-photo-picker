@@ -50,6 +50,17 @@ CHECK_FILE_RECOVERY = (
 )
 
 
+#: Same cap as PIL / OpenCV decodes (``MAX_IMAGE_PIXELS`` in
+#: ``bpp/scoring/aggregate.py``, ``OPENCV_IO_MAX_IMAGE_PIXELS`` in
+#: ``bpp/__init__.py``): LibRaw's postprocess allocates 16-bit RGB for
+#: the whole frame, so a crafted header could ask for gigabytes.
+MAX_RAW_PIXELS = 200_000_000
+
+
+class RawTooLarge(ValueError):
+    """The RAW header declares more pixels than :data:`MAX_RAW_PIXELS`."""
+
+
 class RawSupportMissing(RuntimeError):
     """RAW photos can't be decoded in this install (rawpy unavailable)."""
 
@@ -71,8 +82,22 @@ def _note_missing_rawpy(raw_path: str) -> None:
 def _decode_path(raw_path: str, half_size: bool) -> np.ndarray:
     import rawpy
 
-    with rawpy.imread(raw_path) as raw:
+    if not hasattr(rawpy, "RawPy"):  # a minimal stand-in: no header access
+        with rawpy.imread(raw_path) as raw:
+            return raw.postprocess(use_camera_wb=True, half_size=half_size)
+    # open_file + sizes + unpack + postprocess on one handle: the pixel
+    # cap is checked from the header before the frame is unpacked, and
+    # the file is opened once (a NAS library pays per open).
+    raw = rawpy.RawPy()
+    try:
+        raw.open_file(raw_path)
+        sizes = raw.sizes
+        if sizes.width * sizes.height > MAX_RAW_PIXELS:
+            raise RawTooLarge(f"{sizes.width}x{sizes.height} exceeds {MAX_RAW_PIXELS} pixels")
+        raw.unpack()
         return raw.postprocess(use_camera_wb=True, half_size=half_size)
+    finally:
+        raw.close()
 
 
 def decode_raw_rgb(raw_path: str, *, half_size: bool = False) -> np.ndarray:

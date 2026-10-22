@@ -25,6 +25,8 @@ jobs:
   build:
     name: Build wheel + sdist
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -75,6 +77,16 @@ jobs:
               *) echo "FAIL: $base does not start with 'bppicker-'"; exit 1 ;;
             esac
           done
+
+      - name: Verify the live model registry manifest
+        # The published manifest is how a model is withdrawn after
+        # release; one this build's verifier rejects is ignored by every
+        # installed copy (with a warning on every start). Republish it
+        # (scripts/publish_registry_manifest.py) before tagging.
+        if: github.event_name == 'release'
+        run: |
+          pip install dist/*.whl
+          python scripts/verify_live_registry.py
 
       - name: Upload distributions
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7

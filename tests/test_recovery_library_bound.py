@@ -143,7 +143,7 @@ class TestRealHandlersGetWrapped:
 
     def test_permanent_delete_wraps_when_library_path_given(self):
         from bpp.db.journal import _RECOVERY_HANDLERS, _reset_handlers_for_tests
-        from bpp.web.bp_photos_lifecycle import register_permanent_delete_recovery
+        from bpp.web.permanent_delete import register_permanent_delete_recovery
 
         _reset_handlers_for_tests()
         ctx = object()  # opaque — wrapper only reads .paths.library_path

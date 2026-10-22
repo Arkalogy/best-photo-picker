@@ -5,4 +5,4 @@ contact_links:
     about: Report security issues privately via GitHub Private Vulnerability Reporting (do NOT file a public issue)
   - name: Question or discussion
     url: https://github.com/Arkalogy/best-photo-picker/discussions
-    about: Ask a question or start a discussion (Discussions must be enabled by the maintainer first)
+    about: Ask a question or start a discussion

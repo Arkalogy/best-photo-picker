@@ -155,6 +155,15 @@ def _current_rss_bytes() -> int | None:
         return None
 
 
+def _dedupe_cache_stats() -> dict[str, int]:
+    """What the recompute's single-entry dedupe cache holds (entries and
+    candidate count), imported lazily so this module stays free of a
+    recompute import at load time."""
+    from bpp.web.recompute import dedupe_cache_stats
+
+    return dedupe_cache_stats()
+
+
 @bp.get("/api/v1/debug/memory")
 @requires_local_app
 def api_debug_memory() -> tuple[Response, int]:
@@ -172,12 +181,16 @@ def api_debug_memory() -> tuple[Response, int]:
     # ru_maxrss is the process's PEAK (bytes on macOS, kilobytes on
     # Linux); it never goes down, so it can't show memory being freed.
     # ``rss_mb`` is the current resident size, read from the OS.
+    # The current size is read first: the peak the kernel reports lags
+    # a growing process by a moment, and the peak can't be below now.
+    current_bytes = _current_rss_bytes()
     ru = resource.getrusage(resource.RUSAGE_SELF)
     peak_bytes = ru.ru_maxrss
     if sys.platform != "darwin":
         peak_bytes *= 1024
+    peak_bytes = max(peak_bytes, current_bytes or 0)
     peak_rss_mb = round(peak_bytes / (1024 * 1024), 1)
-    rss_mb = round((_current_rss_bytes() or peak_bytes) / (1024 * 1024), 1)
+    rss_mb = round((current_bytes or peak_bytes) / (1024 * 1024), 1)
 
     # ── Cache sizes ──────────────────────────────────────────────────────────
     clip_emb = ctx.caches.clip_cache.get("embeddings") or {}
@@ -225,6 +238,7 @@ def api_debug_memory() -> tuple[Response, int]:
                 "auto_enhanced_ids_count": len(auto_ids) if auto_ids is not None else -1,
                 "log_ring_buffer": log_ring,
                 "bpe_cache_size": bpe_cache_size,
+                "dedupe_cache": _dedupe_cache_stats(),
             },
             "gc": {
                 "garbage_objects": garbage_count,

@@ -273,6 +273,10 @@ class TestSmartAlbumRegistryExtras:
         assert SmartAlbumRegistry.is_undeletable("does_not_exist") is False
 
     def test_smart_duplicates_has_ui_metadata_fn(self):
+        # The hook is registered by the web layer (bp_albums imports
+        # album_siblings); a worker that hasn't built the app yet has no
+        # UI to decorate, so load it explicitly here.
+        import bpp.web.album_siblings  # noqa: F401
         from bpp.db.smart_albums import SmartAlbumRegistry
 
         fn = SmartAlbumRegistry.get_ui_metadata_fn("smart_duplicates")

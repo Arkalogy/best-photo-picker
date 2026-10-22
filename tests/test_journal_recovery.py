@@ -59,7 +59,7 @@ class TestPermanentDeleteRecovery:
         recover_pending must invoke the registered handler, the handler
         re-runs the disk cleanup, and the orphaned files disappear."""
         from bpp.db.journal import journal_start, pending_journals
-        from bpp.web.bp_photos_manage import register_permanent_delete_recovery
+        from bpp.web.permanent_delete import register_permanent_delete_recovery
 
         ctx = app.extensions["bpp"]
         lib = ctx.state["library_path"]
@@ -108,7 +108,7 @@ class TestPermanentDeleteRecovery:
         upstream — if a future bug ever wrote one, recovery shouldn't
         amplify it)."""
         from bpp.db.journal import journal_start, recover_pending
-        from bpp.web.bp_photos_manage import register_permanent_delete_recovery
+        from bpp.web.permanent_delete import register_permanent_delete_recovery
 
         ctx = app.extensions["bpp"]
         lib = ctx.state["library_path"]
@@ -141,7 +141,7 @@ class TestPermanentDeleteRecovery:
         were deleted by the original request before the crash, so the
         recovery's os.path.isfile check skips them. No exceptions."""
         from bpp.db.journal import journal_start, recover_pending
-        from bpp.web.bp_photos_manage import register_permanent_delete_recovery
+        from bpp.web.permanent_delete import register_permanent_delete_recovery
 
         ctx = app.extensions["bpp"]
         lib = ctx.state["library_path"]

@@ -13,6 +13,10 @@ from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
 
+#: After a refused full scan, the next scans are skipped for 1, 2, 4 …
+#: ticks of the 5-minute sampler, up to this many (an hour).
+SCAN_BACKOFF_MAX_TICKS = 12
+
 
 class HealthCheckHandle(NamedTuple):
     """Handle returned by start_health_checks for lifecycle management."""
@@ -33,6 +37,7 @@ def periodic_sample_tick(
     dirs: dict[str, str],
     invalidate_fn: Callable[[], None],
     on_scan_refused: Callable[[tuple[int, int] | None], None] | None,
+    backoff: dict[str, int] | None = None,
 ) -> None:
     """One periodic check: sample ~100 random photos; a missing one
     triggers the full scan. A clean sample also retires an earlier
@@ -52,6 +57,20 @@ def periodic_sample_tick(
         # the library is back; a flapping mount must not clear the flag.
         if on_scan_refused and all(present is True for present in answers):
             on_scan_refused(None)
+        if backoff is not None:
+            backoff.clear()
+        return
+    if backoff is not None and backoff.get("skip", 0) > 0:
+        # The last full scan was refused (mass-missing guard) and
+        # nothing has changed: the sample still hits missing files.
+        # Every 5 minutes a 200k-stat walk of a NAS is not useful.
+        backoff["skip"] -= 1
+        log.info(
+            "Periodic check: %d/%d sampled files missing; full scan skipped (%d ticks left)",
+            len(missing_in_sample),
+            len(sample),
+            backoff["skip"],
+        )
         return
     log.warning(
         "Periodic check: %d/%d sampled files missing, running full scan",
@@ -61,6 +80,12 @@ def periodic_sample_tick(
     scan = scan_missing(conn, photos_dir=dirs.get("photos") or None)
     if on_scan_refused and scan.completed:
         on_scan_refused(scan.refused)
+    if backoff is not None:
+        if scan.completed and scan.refused:
+            wait = min(max(backoff.get("wait", 0) * 2, 1), SCAN_BACKOFF_MAX_TICKS)
+            backoff.update(wait=wait, skip=wait)
+        else:
+            backoff.clear()
     if scan.newly_missing:
         photos_dir = dirs.get("photos", "")
         if photos_dir and os.path.isdir(photos_dir):
@@ -144,9 +169,10 @@ def start_health_checks(
 
     # Periodic sampling: check ~100 random photos every 5 minutes
     def _periodic_sample() -> None:
+        backoff: dict[str, int] = {}
         while not stop_event.wait(300):
             try:
-                periodic_sample_tick(get_conn(), dirs, invalidate_fn, on_scan_refused)
+                periodic_sample_tick(get_conn(), dirs, invalidate_fn, on_scan_refused, backoff)
             except Exception:
                 log.warning("Periodic file check failed", exc_info=True)
             # Explicit GC pass to collect Python reference cycles. CPython's

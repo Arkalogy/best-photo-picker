@@ -10,6 +10,7 @@ metadata, the update check, and `recheck-missing`.
 
 from __future__ import annotations
 
+import hmac
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -98,29 +99,34 @@ def _asset_version() -> str:
         return "0"
 
 
-BOOT_COOKIE_NAME = "bpp_boot"
-
-
 def _presents_boot_secret(ctx: Any) -> bool:
-    """Whether this loopback request carries the boot secret, as the
-    ``_boot`` query parameter or the cookie the first load set."""
+    """Whether this loopback request carries the boot secret as the
+    ``_boot`` query parameter. Never a cookie: browsers send cookies to
+    every port of 127.0.0.1, which would hand the key to any other
+    local listener. The page keeps the key in ``sessionStorage`` (scoped
+    to the origin, port included) and re-presents it on reload."""
     secret = ctx.boot_secret
     if not secret:
         return True
-    presented = request.args.get("_boot") or request.cookies.get(BOOT_COOKIE_NAME) or ""
-    return _token_equals(presented, secret)
+    return _token_equals(request.args.get("_boot") or "", secret)
 
 
 @bp.get("/boot-check")
-def api_boot_check() -> tuple[Response, int]:
-    """The desktop shell asks the server to prove it is bpp before
-    navigating to it (another process could hold the port): 204 when
-    the ``_boot`` secret matches, 403 otherwise. Anonymous on purpose
-    (it is outside ``/api``); it reveals nothing."""
+def api_boot_check() -> Response:
+    """The desktop shell asks the server to prove it was started with
+    the shell's boot key before navigating to it (another process could
+    hold the port): the shell sends a fresh ``nonce`` and checks
+    ``X-Boot-Proof`` = HMAC-SHA256(key, nonce). The key itself never
+    crosses the wire. Anonymous on purpose (outside ``/api``); without
+    a key configured (open loopback) the reply is a bare 204."""
     ctx = get_ctx()
-    if ctx.boot_secret and not _token_equals(request.args.get("_boot") or "", ctx.boot_secret):
-        return Response(status=403), 403
-    return Response(status=204), 204
+    resp = Response(status=204)
+    nonce = request.args.get("nonce") or ""
+    if ctx.boot_secret and nonce:
+        resp.headers["X-Boot-Proof"] = hmac.new(
+            ctx.boot_secret.encode(), nonce.encode(), "sha256"
+        ).hexdigest()
+    return resp
 
 
 @bp.get("/")
@@ -225,8 +231,9 @@ def index() -> Response:
     else:
         # Loopback: any local process can reach this port, and the page
         # carries the owner token. With a boot secret configured, only a
-        # caller that presents it (the shell's first navigation, or the
-        # cookie that set) gets the token; others get a locked page.
+        # caller that presents it (the launcher's first navigation, or
+        # the page re-presenting it from sessionStorage) gets the token;
+        # others get a locked page.
         booted = _presents_boot_secret(ctx)
         if ctx.boot_secret and not booted:
             resp = make_response(render_template("loopback_locked.html"), 403)
@@ -242,15 +249,6 @@ def index() -> Response:
                 bpp_posture_statement=_bpp_posture_statement(),
             )
         )
-        if ctx.boot_secret:
-            resp.set_cookie(
-                BOOT_COOKIE_NAME,
-                ctx.boot_secret,
-                httponly=True,
-                samesite="Strict",
-                secure=request.scheme == "https",
-                path="/",
-            )
 
     # Defense in depth: prevent the share token from leaking via Referer
     # when the user clicks any outbound link (map tile, video CDN, etc.)

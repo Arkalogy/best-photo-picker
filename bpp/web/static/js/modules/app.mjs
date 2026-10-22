@@ -38,6 +38,7 @@ import {
 import { getSetting, loadSettings } from "./settings-client.mjs";
 import { initActivityLog } from "./activity-log.mjs";
 import { monitorPhashBackfill } from "./phash-status.mjs";
+import { monitorBootHealth } from "./boot-health.mjs";
 import { beaconClientError } from "./client-error-beacon.mjs";
 import { initToolbarIcons } from "./toolbar.mjs";
 import { initSliders, initTooltips, updateContentFilterLabel } from "./ui-helpers.mjs";
@@ -278,6 +279,9 @@ function _applyStatus(st) {
   // (fire-and-forget; self-stops when the backfill finishes or if none
   // is running). It was a silent machine-pegging op before.
   monitorPhashBackfill();
+  // A face extraction resuming after a restart (every face edit waits on
+  // it), a failed resume, a refused missing-file scan: shown, not silent.
+  monitorBootHealth();
   if (st.face_extraction_done && win.faceRecognitionAvailable) {
     const section = /** @type {HTMLElement | null} */ (
       document.getElementById("settings-face-section")

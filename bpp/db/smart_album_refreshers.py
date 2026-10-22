@@ -94,10 +94,16 @@ def _greedy_dissimilar(
     """
     import numpy as np
 
-    from bpp.dedupe.phash import dual_hash_distance, hamming_distance
+    from bpp.selection.diversity import _hamming_many
 
     accepted_ids: list[int] = []
-    accepted_hashes: list[tuple[int | None, int | None]] = []
+    # Kept hashes as uint64 buffers: one vectorised Hamming pass per
+    # candidate instead of a Python loop over every kept photo (200k
+    # photos: 60k candidates x 20k kept calls).
+    kept_ph = np.empty(limit, dtype=np.uint64)
+    kept_ah = np.empty(limit, dtype=np.uint64)
+    kept_has_ah = np.empty(limit, dtype=bool)
+    n_hashes = 0
     first = next(iter(clip_embs.values()), None)
     kept = np.empty((limit, first.shape[0]), dtype=first.dtype) if first is not None else None
     n_kept = 0
@@ -109,26 +115,25 @@ def _greedy_dissimilar(
         if emb is not None and n_kept and threshold > 0:
             if float(np.max(kept[:n_kept] @ emb)) >= threshold:
                 continue
-        elif phash is not None and accepted_hashes and threshold > 0:
-            too_similar = False
-            for acc_ph, acc_ah in accepted_hashes:
-                if acc_ph is None:
-                    continue
-                if acc_ah is not None and ahash is not None:
-                    dist = dual_hash_distance(phash, ahash, acc_ph, acc_ah)
-                else:
-                    dist = hamming_distance(phash, acc_ph)
-                if dist <= 16:
-                    too_similar = True
-                    break
-            if too_similar:
+        elif phash is not None and n_hashes and threshold > 0:
+            dist = _hamming_many(phash, kept_ph[:n_hashes])
+            if ahash is not None:
+                # dual-hash distance: the smaller of the two, where the
+                # kept photo has an aHash too
+                a_dist = _hamming_many(ahash, kept_ah[:n_hashes])
+                dist = np.where(kept_has_ah[:n_hashes], np.minimum(dist, a_dist), dist)
+            if int(dist.min()) <= 16:
                 continue
 
         accepted_ids.append(photo_id)
         if emb is not None and kept is not None:
             kept[n_kept] = emb
             n_kept += 1
-        accepted_hashes.append((phash, ahash))
+        if phash is not None:
+            kept_ph[n_hashes] = np.uint64(phash & 0xFFFFFFFFFFFFFFFF)
+            kept_ah[n_hashes] = np.uint64((ahash or 0) & 0xFFFFFFFFFFFFFFFF)
+            kept_has_ah[n_hashes] = ahash is not None
+            n_hashes += 1
     return accepted_ids
 
 

@@ -151,7 +151,7 @@ export async function calendarOpenRange() {
           rangePhotos.push(...more);
           win.vgrid?.appendItems?.(more);
         },
-      }).catch(() => {});
+      }).catch((e) => toastError("load the rest of that date range", e));
     }
     win.hide?.("calendar-view");
     win.show?.("photo-grid");
@@ -161,7 +161,8 @@ export async function calendarOpenRange() {
       d1.toLocaleDateString(undefined, { month: "long", day: "numeric" }) +
       " – " +
       d2.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" });
-    win.updateToolbarTitle?.(title, `${rangePhotos.length} photos`);
+    const total = typeof data.total === "number" ? data.total : rangePhotos.length;
+    win.updateToolbarTitle?.(title, `${total} photos`);
     win.updateBreadcrumbs?.(title, "Calendar", "navigateToCalendar()");
     win.updateToolbarForView?.();
     renderGridFromItems(rangePhotos);

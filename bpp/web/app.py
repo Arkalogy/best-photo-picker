@@ -314,7 +314,8 @@ def _install_host_gate(app: Flask) -> None:
             return None
         raise HostNotAllowedError(
             "This address isn't one the app answers to: open it from its own "
-            "address, or list the host in BPP_TRUSTED_HOSTS"
+            "address, or list the host in BPP_TRUSTED_HOSTS",
+            host=request.host or "",
         )
 
 

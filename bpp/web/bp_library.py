@@ -150,6 +150,26 @@ def api_libraries_rename() -> tuple[Response, int]:
                     rename_open_library(ctx, new_path, _move)
             else:
                 _move()
+                # The folder moved; the rows inside its database still
+                # name the old folder. Rewrite them and rename the cached
+                # derivatives (hashed by path) so the library opens whole.
+                from bpp.db.library import get_library_dirs
+                from bpp.web.state_lifecycle import (
+                    RenameIncompleteError,
+                    _move_cache_files,
+                    _rewrite_photo_paths,
+                )
+
+                new_dirs = get_library_dirs(new_path)
+                try:
+                    pairs = _rewrite_photo_paths(new_dirs["data"], path, new_path)
+                    _move_cache_files(new_dirs, pairs)
+                except Exception as e:  # sqlite "database is locked", a cache OSError
+                    raise RenameIncompleteError(
+                        "The folder was renamed, but its photo paths couldn't be updated "
+                        "(is that library open in another app?). Close it, rename the "
+                        "folder back, and try again."
+                    ) from e
         except FileExistsError as e:
             raise ValidationError(
                 "A folder with that name already exists",

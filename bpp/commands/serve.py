@@ -10,6 +10,7 @@ the CLI and tests.
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 from typing import Any
 
@@ -49,7 +50,7 @@ def do_web(args: argparse.Namespace) -> int:
         threading.Timer(1.0, webbrowser.open, args=[_launch_url]).start()
 
     host = getattr(args, "host", None) or "127.0.0.1"
-    log.info("Starting web UI at http://%s:%d", host, port)
+    log.info("Starting web UI on %s:%d", host, port)
     # ``--debug`` means verbose logging (setup_logging above), never
     # Werkzeug's interactive debugger: that would hand a traceback page
     # and a code console to anyone who can reach the port.
@@ -122,7 +123,7 @@ def do_serve(args: argparse.Namespace) -> int:
     ctx.bound_host = host
 
     log.info("Library: %s", library_path)
-    log.info("Starting server at http://%s:%d", host, port)
+    log.info("Starting server on %s:%d", host, port)
     _log_share_advisories(host, port, sharing_enabled)
 
     if (ctx.config or {}).get("behind_proxy"):
@@ -269,18 +270,57 @@ def _configure_loopback_boot(ctx: Any, port: int, args: argparse.Namespace) -> s
     base = f"http://127.0.0.1:{port}"
     if getattr(args, "open_loopback", False) or os.environ.get("BPP_OPEN_LOOPBACK") == "1":
         ctx.boot_secret = None
+        get_logger(__name__).info("Loopback open: no boot key (--open-loopback)")
         return base
     secret = os.environ.get("BPP_BOOT_SECRET")
     ctx.boot_secret = secret or secrets.token_urlsafe(24)
     url = f"{base}/?_boot={ctx.boot_secret}"
     if secret:  # the desktop shell made it: it already knows
+        _replace_bare_url_banner(None)
         log.info("Loopback boot key supplied by the launcher")
     else:
         # To the terminal only: server.log is on disk for the run's
         # lifetime, and the key is what keeps other local users out.
-        print(f"Open Best Photo Picker at {url}  (the key is for this run only)", flush=True)
-        log.info("Loopback boot key generated; the URL to open was printed to the terminal")
+        # Printed when Werkzeug reports the bind (its "Running on" line),
+        # so a failed bind prints no link and the keyed link is the
+        # last, most visible thing in the terminal.
+        _replace_bare_url_banner(url)
+        log.info("Loopback boot key generated; the URL to open is printed when the port is bound")
     return url
+
+
+class _KeyedUrlBanner(logging.Filter):
+    """Swap Werkzeug's "Running on http://127.0.0.1:5001" lines for the
+    keyed link: with a boot key in force the bare URL leads to the
+    locked page, and the README tells the user to click the link the
+    terminal prints. ``url`` None (the launcher knows the key) drops
+    the lines without printing anything."""
+
+    def __init__(self, url: str | None) -> None:
+        super().__init__()
+        self.url = url
+        self.printed = False
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        if "Running on" in msg:
+            if self.url and not self.printed:
+                self.printed = True
+                print(
+                    f"\nOpen Best Photo Picker at {self.url}\n"
+                    "(the key is for this run only; the page without it is locked)",
+                    flush=True,
+                )
+            return False
+        return "Press CTRL+C" not in msg
+
+
+def _replace_bare_url_banner(url: str | None) -> None:
+    werkzeug = logging.getLogger("werkzeug")
+    for f in list(werkzeug.filters):
+        if isinstance(f, _KeyedUrlBanner):
+            werkzeug.removeFilter(f)
+    werkzeug.addFilter(_KeyedUrlBanner(url))
 
 
 def _bind_host(user_host: str | None, sharing_enabled: bool) -> str:

@@ -90,7 +90,7 @@ class FaceEmbeddingsTooLarge(_ResourceExhaustedError, RuntimeError):
             f"Face embedding load: {count} rows, above the {cap} cap. "
             f"Peak would be ~{peak_mb:.0f} MB (matrix + dict + distance buffer "
             f"≈ 3x {dict_mb:.0f} MB). Refusing to load to avoid OOM. "
-            f"Override in Settings → Faces, or raise BPP_FACE_MAX_PHOTOS."
+            f"Raise BPP_FACE_MAX_PHOTOS to allow it on a machine with the memory."
         )
 
     def __reduce__(self) -> tuple:

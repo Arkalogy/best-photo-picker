@@ -11,6 +11,7 @@
 import { apiFetch } from "./api-client.mjs";
 import { fetchAllPages } from "./paging.mjs";
 import { toast, toastError } from "./toast.mjs";
+import { hideStatusProgress, showStatusProgress } from "./analysis-status.mjs";
 
 /**
  * @typedef {Object} DupePhoto
@@ -66,18 +67,29 @@ export function _resetDupeState() {
  * view on the first one, and wraps the compare actions for
  * auto-advance.
  */
-/** Duplicate groups fetched per request. */
-const DUPE_PAGE = 200;
+/** Duplicate groups fetched per request: the server's page cap. Every
+ * page rebuilds the whole group list server-side, so fewer, larger
+ * pages are cheaper than many small ones. */
+const DUPE_PAGE = 5000;
+
+let _dupeLoadSeq = 0;
 
 export async function startDupeReview() {
+  const seq = ++_dupeLoadSeq;
+  /** @type {any} */
+  const win = window;
+  const showProgress = win.activeOperation !== "analyze";
   try {
+    if (showProgress) showStatusProgress("Loading duplicate groups…", 0);
     // Paged requests (the server caps each page), but all groups are
     // in hand before the review starts: resolving groups shrinks the
     // server's list, so a later offset would skip groups never shown.
     _dupeGroups = await fetchAllPages("/api/v1/duplicates/groups", {
       pageSize: DUPE_PAGE,
       key: "groups",
+      stillWanted: () => seq === _dupeLoadSeq,
     });
+    if (seq !== _dupeLoadSeq) return;
     if (!_dupeGroups || _dupeGroups.length === 0) {
       _dupeGroups = null;
       toast("No duplicate groups to review");
@@ -89,6 +101,8 @@ export async function startDupeReview() {
     _showDupeGroup(_dupeIndex);
   } catch (e) {
     toastError("load duplicate groups", e);
+  } finally {
+    if (showProgress) hideStatusProgress();
   }
 }
 

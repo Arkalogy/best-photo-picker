@@ -259,9 +259,9 @@ SFace embedding is 128 × float32 ≈ 512 bytes. Peak memory is matrix + dict
 500K cap costs ~750 MB peak; bumping to `BPP_FACE_MAX_PHOTOS=1000000` is
 reasonable on 32 GB.
 
-Per-library bypass: users can also opt out per library via Settings → Faces
-(the DB-level `face_max_override = "bypass"` setting). Tauri users get that
-path; CLI / dev users get the env var.
+Per-library bypass: the DB-level `face_max_override = "bypass"` setting
+(no UI writes it yet; set it with `bpp db` tooling or the env var above —
+desktop users can put the variable in the app's launch environment).
 
 **Trust / safety implications:** memory safety knob, not a security
 boundary. Setting it above what the host can hold OOM-kills the server
@@ -450,8 +450,9 @@ run and print the tokenized URL to open.
 **What it does:** sets the one-time boot key the loopback index page
 expects. Any local process can reach `127.0.0.1:5001`, and the page
 carries the owner token, so the page is rendered only to a caller that
-presents the key (`/?_boot=<key>`, after which an HttpOnly cookie carries
-it). The desktop app passes its own key to the server sidecar this way
+presents the key (`/?_boot=<key>`; the page then keeps it in that tab's
+`sessionStorage`, so a reload works but a new tab or a new browser
+session needs the link again — restart `bpp serve` for a fresh one). The desktop app passes its own key to the server sidecar this way
 and checks `/boot-check` before navigating.
 
 **Trust / safety implications:** keep it unguessable; it is as sensitive

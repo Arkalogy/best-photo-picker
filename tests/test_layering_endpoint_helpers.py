@@ -24,13 +24,10 @@ ALLOWED = {
     ("web/bp_library.py", "bp_install"),
     ("web/bp_inpaint.py", "bp_install"),
     ("web/install_stream.py", "bp_install"),
-    ("web/state_lifecycle.py", "bp_photos_lifecycle"),
     # The faces blueprints share one Blueprint object.
     ("web/bp_faces_recluster.py", "bp_faces_cluster_ops"),
     # Route registration for the shared Blueprint (module import form).
     ("web/bp_faces_cluster_ops.py", "bp_faces_recluster"),
-    # Photo lifecycle routes are registered on the photos-manage blueprint.
-    ("web/bp_photos_manage.py", "bp_photos_lifecycle"),
 }
 
 _IMPORT = re.compile(r"^\s*from bpp\.web\.(bp_[a-z_]+) import", re.MULTILINE)

@@ -176,6 +176,11 @@ def _drain_current_library(ctx: WebAppState) -> None:
         fire_on_library_close(ctx)
     except Exception:
         log.warning("plugin_protocol.fire_on_library_close failed", exc_info=True)
+    # The recompute cache pins the outgoing library's candidate list and
+    # its CLIP embeddings (hundreds of MB at the cap).
+    from bpp.web.recompute import dedupe_cache_clear
+
+    dedupe_cache_clear()
 
     # Cancel all running workers and wait for them to finish
     # Single canonical cancel-all path lives on WorkerPool.
@@ -365,6 +370,9 @@ def startup(ctx: WebAppState) -> None:
     # payload-driven re-fire. Best-effort: failures are logged but
     # don't block startup.
     _start_face_recovery(ctx)
+    from bpp.web.install_status import log_interrupted_installs
+
+    log_interrupted_installs()
     # Start background file-health checks (non-blocking, serve mode only).
     if ctx.serve_mode:
         ctx._start_file_health_checks()
@@ -393,12 +401,12 @@ def _register_journal_recovery_handlers(ctx: WebAppState) -> None:
     ``switch_library``.
     """
     # Local imports to avoid circulars: these modules import state.
-    from bpp.web.bp_photos_lifecycle import register_permanent_delete_recovery
     from bpp.web.clip_worker import register_clip_extraction_recovery
     from bpp.web.face_worker import (
         register_face_clustering_recovery,
         register_face_extraction_retry_recovery,
     )
+    from bpp.web.permanent_delete import register_permanent_delete_recovery
 
     library_path = ctx.paths.library_path
 

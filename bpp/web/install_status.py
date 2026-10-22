@@ -13,6 +13,9 @@ import time
 from typing import Any
 
 from bpp.scoring.install_hold import held_keys
+from bpp.utils.logging import get_logger
+
+log = get_logger(__name__)
 
 
 def install_state(*, owner: bool = True) -> dict[str, Any]:
@@ -114,3 +117,22 @@ def redact_for_paired_device(state: dict[str, Any]) -> None:
     state["install_blocked"] = ""
     state["interrupted"] = []
     state["interrupted_keys"] = []
+
+
+def log_interrupted_installs() -> None:
+    """An install pip was cut off in degrades health ("faces stopped
+    working"); say so in the log of the run the user will attach, with
+    the repair the API offers."""
+    from bpp.web.pip_process import notes_state
+
+    try:
+        interrupted, _left_running = notes_state()
+    except Exception:
+        log.warning("Couldn't read the install notes", exc_info=True)
+        return
+    for key in sorted(interrupted):
+        log.warning(
+            "Install of %s was interrupted; repair: %s",
+            key,
+            interrupted[key] or "(note unreadable; reinstall the feature)",
+        )

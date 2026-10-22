@@ -13,8 +13,8 @@ Three constants and one enum live here:
 * :data:`BIOMETRIC_RESPONSIBILITY_TEXT` — paragraph telling
   the user face embeddings are biometric data and they are
   responsible for consent / compliance (Colorado HB24-1130 and
-  Texas CUBI mentioned as the obvious US examples without claiming
-  legal advice).
+  Texas CUBI mentioned as the obvious US examples, without
+  interpreting those laws).
 * :data:`SEPARATE_RIGHTS_ASSERTION_TEMPLATE` — the model-specific
   rights-assertion sentence, with the model display
   name interpolated at acceptance time.

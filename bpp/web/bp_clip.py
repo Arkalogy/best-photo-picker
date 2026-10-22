@@ -85,7 +85,10 @@ def api_clip_progress() -> Response:
         # Invalidate + reload the CLIP cache so search/dedup pick up the
         # new vectors without a server restart.
         with ctx.lock:
+            from bpp.web.recompute import dedupe_cache_clear
+
             ctx.caches.clip_cache["ready"] = False
+            dedupe_cache_clear()
         ctx.load_clip_embeddings()
 
     return Response(

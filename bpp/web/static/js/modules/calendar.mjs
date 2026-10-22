@@ -382,7 +382,7 @@ export async function calendarOpenDay(dateStr) {
           dayPhotos.push(...more);
           win.vgrid?.appendItems?.(more);
         },
-      }).catch(() => {});
+      }).catch((e) => toastError("load the rest of that day", e));
     }
     win.hide?.("calendar-view");
     win.show?.("photo-grid");
@@ -393,7 +393,8 @@ export async function calendarOpenDay(dateStr) {
       day: "numeric",
       year: "numeric",
     });
-    win.updateToolbarTitle?.(title, `${dayPhotos.length} photos`);
+    const total = typeof data.total === "number" ? data.total : dayPhotos.length;
+    win.updateToolbarTitle?.(title, `${total} photos`);
     win.updateBreadcrumbs?.(title, "Calendar", "navigateToCalendar()");
     win.updateToolbarForView?.();
     renderGridFromItems(dayPhotos);

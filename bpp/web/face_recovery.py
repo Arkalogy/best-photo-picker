@@ -55,7 +55,7 @@ def recover_pending_face_extractions(
     left in place and recovery re-fires on the next startup. A
     persistent failure (corrupted journal, unloadable analysis) gets
     a WARNING log; the row stays pending until the user manually
-    completes face extraction via Settings → Faces → Retry.
+    re-runs face extraction (analyze menu → Re-extract faces).
     """
     from bpp.web import face_extraction_journal as journal
     from bpp.web.face_worker import extract_and_cluster_faces
@@ -86,7 +86,7 @@ def recover_pending_face_extractions(
             log.warning(
                 "Recovery: run %s exceeded MAX_RECOVERY_RETRIES (%d). "
                 "Force-completing with GAVE_UP_SENTINEL so future startups "
-                "skip it. User can re-run via Settings → Faces → Retry.",
+                "skip it. User can re-run it from the analyze menu → Re-extract faces.",
                 run_id,
                 journal.MAX_RECOVERY_RETRIES,
             )
@@ -178,10 +178,18 @@ def recover_pending_face_extractions(
 
 def _mark_resume_failed(ctx: Any) -> None:
     """A run that didn't resume is a failed resume as far as
-    /api/v1/health is concerned (the row stays pending; retries count)."""
+    /api/v1/health is concerned (the row stays pending; retries count).
+    Only the thread the store still owns may say so: a resume that
+    outlived a library switch must not flag the next library."""
+    import threading
+
     store = getattr(ctx, "analysis_store", None)
-    if store is not None:
-        store.face_recovery_failed = True
+    if store is None:
+        return
+    owner = getattr(store, "face_recovery_thread", None)
+    if owner is not None and owner is not threading.current_thread():
+        return
+    store.face_recovery_failed = True
 
 
 def register_face_clustering_recovery() -> None:

@@ -75,10 +75,27 @@ class RecomputeOptions:
 
 _DEDUPE_CACHE: dict[str, Any] = {}
 _NOT_DEDUPE_KEYS = ("default_selection_k", "default_selection_seed")
+#: Fields the dedupe pass rewrites on dicts that already carry them.
+_DEDUPE_REWRITTEN = ("cluster_size", "similar_photos")
 
 
 def _dedupe_cache_clear() -> None:
     _DEDUPE_CACHE.clear()
+
+
+def dedupe_cache_clear() -> None:
+    """Forget the last dedupe outcome: on a library switch and whenever
+    the CLIP cache is reset (its identity is part of the key)."""
+    _DEDUPE_CACHE.clear()
+
+
+def dedupe_cache_stats() -> dict[str, int]:
+    """For /api/v1/debug/memory: what the single-entry cache holds."""
+    entry = _DEDUPE_CACHE.get("entry")
+    if not entry:
+        return {"entries": 0, "candidates": 0}
+    _key, (outcome, _mode) = entry
+    return {"entries": 1, "candidates": len(outcome)}
 
 
 def _dedupe_key(items: list[dict[str, Any]], config: dict[str, Any], opts: RecomputeOptions):
@@ -99,7 +116,19 @@ def _dedupe_key(items: list[dict[str, Any]], config: dict[str, Any], opts: Recom
     )
     clip = opts.clip_embeddings
     clip_len = len(clip) if clip else 0
-    return (hash(rows), len(rows), cfg, clip_len, opts.skip_dedupe, opts.clip_threshold)
+    # The CLIP dict by identity, not by reference: holding it would pin
+    # the whole embedding matrix (410 MB at the cap) after a reload. A
+    # reload also calls ``dedupe_cache_clear``, so a reused address
+    # can't produce a stale hit.
+    return (
+        hash(rows),
+        len(rows),
+        cfg,
+        clip_len,
+        id(clip) if clip is not None else 0,
+        opts.skip_dedupe,
+        opts.clip_threshold,
+    )
 
 
 def _dedupe_cached(
@@ -107,24 +136,21 @@ def _dedupe_cached(
 ) -> tuple[list[dict[str, Any]], str]:
     key = _dedupe_key(items, config, opts)
     hit = _DEDUPE_CACHE.get("entry")
-    # The CLIP dict is compared by identity (held in the entry, so its
-    # address can't be reused by a reloaded cache).
-    if hit is not None and hit[0] == key and hit[2] is opts.clip_embeddings:
-        cached, mode = hit[1]
+    if hit is not None and hit[0] == key:
+        outcome, mode = hit[1]
         # recompute copies the analysis per call: the dedupe's fields
         # (cluster_size, similar_photos) must land on THIS call's dicts,
         # and the candidates returned must be those dicts.
         by_path = {d["filepath"]: d for d in items}
         candidates = []
-        for c in cached:
-            cur = by_path.get(c["filepath"])
+        for filepath, added in outcome:
+            cur = by_path.get(filepath)
             if cur is None:
                 continue
-            for k, v in c.items():
-                if k not in cur or k in ("cluster_size", "similar_photos"):
-                    cur[k] = v
+            cur.update(added)
             candidates.append(cur)
         return candidates, mode
+    before = {d["filepath"]: frozenset(d) for d in items}
     candidates, mode = dedupe_candidates(
         items,
         config,
@@ -132,7 +158,18 @@ def _dedupe_cached(
         skip_dedupe=opts.skip_dedupe,
         clip_threshold=opts.clip_threshold,
     )
-    _DEDUPE_CACHE["entry"] = (key, (candidates, mode), opts.clip_embeddings)
+    # Only what the next call has to replay: the fields the pass added
+    # or rewrote (cluster_size, similar_photos, a hash it computed, a
+    # plugin strategy's annotations), not the 50-key dicts (~300 MB at
+    # the cap).
+    outcome = []
+    for c in candidates:
+        keep = {k: v for k, v in c.items() if k not in before.get(c["filepath"], frozenset())}
+        for k in _DEDUPE_REWRITTEN:
+            if k in c:
+                keep[k] = c[k]
+        outcome.append((c["filepath"], keep))
+    _DEDUPE_CACHE["entry"] = (key, (outcome, mode))
     return list(candidates), mode
 
 

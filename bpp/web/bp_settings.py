@@ -83,7 +83,10 @@ def api_set_clip_max_override() -> tuple[Response, int]:
     # Invalidate the cached CLIP matrix so the next load reflects the
     # new cap decision instead of serving the old cached state.
     with ctx.lock:
+        from bpp.web.recompute import dedupe_cache_clear
+
         ctx.caches.clip_cache["ready"] = False
+        dedupe_cache_clear()
         ctx.caches.clip_cache["embeddings"] = None
         ctx.caches.clip_cache["matrix"] = None
         # Match the key actually written at state.py:650; "ids" was a

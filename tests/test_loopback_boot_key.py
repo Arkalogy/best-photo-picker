@@ -2,7 +2,7 @@
 
 The loopback index page carries the owner token; with a boot secret set
 only the caller that presents it (the shell's first navigation, then
-the cookie that set) gets it. Paired phones never see storage error
+the page re-presenting it from sessionStorage) gets it. Paired phones never see storage error
 text or the layout of volumes outside the library. The desktop shell
 proves the port is ours before navigating, and opens links through a
 command it owns.
@@ -17,10 +17,14 @@ from pathlib import Path
 
 import pytest
 
-from bpp.web.bp_core import BOOT_COOKIE_NAME
-
 ROOT = Path(__file__).resolve().parent.parent
 LAN = {"REMOTE_ADDR": "192.168.1.5"}
+
+
+def _shell_source() -> str:
+    """Every Rust file of the desktop shell crate, in one string."""
+    src_dir = ROOT / "desktop" / "src-tauri" / "src"
+    return "\n".join(p.read_text() for p in sorted(src_dir.glob("*.rs")))
 
 
 @pytest.fixture
@@ -44,31 +48,28 @@ class TestLoopbackBootSecret:
         body = resp.get_data(as_text=True)
         assert ctx.auth_token not in body
         assert "auth-token" not in body
-        assert BOOT_COOKIE_NAME not in resp.headers.get("Set-Cookie", "")
+        assert "This link has expired" in body
+        assert 'sessionStorage.getItem("bpp_boot")' in body, "a reload re-presents the key"
+        assert "Set-Cookie" not in resp.headers
 
-    def test_index_with_the_secret_renders_the_token_and_sets_the_cookie(self, locked_app):
+    def test_index_with_the_secret_renders_the_token_and_sets_no_cookie(self, locked_app):
         ctx = locked_app.extensions["bpp"]
         with locked_app.test_client() as c:
             resp = c.get("/?_boot=boot-secret-123")
         assert resp.status_code == 200
         assert ctx.auth_token in resp.get_data(as_text=True)
-        cookie = resp.headers.get("Set-Cookie", "")
-        assert cookie.startswith(f"{BOOT_COOKIE_NAME}=boot-secret-123")
-        assert "HttpOnly" in cookie and "SameSite=Strict" in cookie
+        # Cookies ignore the port: one would reach every other 127.0.0.1
+        # listener. The page keeps the key in sessionStorage instead.
+        assert "Set-Cookie" not in resp.headers
 
-    def test_index_with_the_cookie_renders_the_token(self, locked_app):
-        ctx = locked_app.extensions["bpp"]
+    def test_a_cookie_is_never_enough(self, locked_app):
         with locked_app.test_client() as c:
-            c.set_cookie(BOOT_COOKIE_NAME, "boot-secret-123")
-            resp = c.get("/")
-        assert resp.status_code == 200
-        assert ctx.auth_token in resp.get_data(as_text=True)
+            c.set_cookie("bpp_boot", "boot-secret-123")
+            assert c.get("/").status_code == 403
 
     def test_a_wrong_secret_is_locked(self, locked_app):
         with locked_app.test_client() as c:
             assert c.get("/?_boot=nope").status_code == 403
-            c.set_cookie(BOOT_COOKIE_NAME, "nope")
-            assert c.get("/").status_code == 403
 
     def test_no_secret_configured_keeps_the_open_loopback(self, locked_app):
         ctx = locked_app.extensions["bpp"]
@@ -77,16 +78,24 @@ class TestLoopbackBootSecret:
             resp = c.get("/")
         assert resp.status_code == 200
         assert ctx.auth_token in resp.get_data(as_text=True)
-        assert BOOT_COOKIE_NAME not in resp.headers.get("Set-Cookie", "")
 
-    def test_boot_check_answers_only_the_right_secret(self, locked_app):
+    def test_boot_check_proves_the_key_without_revealing_it(self, locked_app):
+        import hmac
+
         with locked_app.test_client() as c:
-            assert c.get("/boot-check?_boot=boot-secret-123").status_code == 204
-            assert c.get("/boot-check?_boot=nope").status_code == 403
-            assert c.get("/boot-check").status_code == 403
+            resp = c.get("/boot-check?nonce=abc123")
+        assert resp.status_code == 204
+        assert (
+            resp.headers["X-Boot-Proof"]
+            == hmac.new(b"boot-secret-123", b"abc123", "sha256").hexdigest()
+        )
+        assert "boot-secret-123" not in str(resp.headers)
+        with locked_app.test_client() as c:
+            assert "X-Boot-Proof" not in c.get("/boot-check").headers, "no nonce, no proof"
         locked_app.extensions["bpp"].boot_secret = None
         with locked_app.test_client() as c:
-            assert c.get("/boot-check").status_code == 204
+            resp = c.get("/boot-check?nonce=abc123")
+        assert resp.status_code == 204 and "X-Boot-Proof" not in resp.headers
 
 
 class TestServeWiring:
@@ -133,7 +142,7 @@ class TestServeWiring:
         from bpp.cli import build_parser
 
         parser = build_parser()
-        for cmd in ("serve", "web"):
+        for cmd in ("serve", "web", "demo"):
             ns = parser.parse_args([cmd, "--open-loopback", "--no-browser"])
             assert ns.open_loopback is True, cmd
         assert "BPP_OPEN_LOOPBACK=1" in (ROOT / "scripts" / "run_e2e.sh").read_text()
@@ -155,12 +164,24 @@ class TestBootKeyStaysOutOfTheLog:
         ctx = Ctx()
         with caplog.at_level(logging.DEBUG):
             _configure_loopback_boot(ctx, 5001, argparse.Namespace())
-        assert ctx.boot_secret in capsys.readouterr().out
+        # Nothing printed until Werkzeug reports the bind: a failed bind
+        # must not print a link to a server that isn't running.
+        assert ctx.boot_secret not in capsys.readouterr().out
+        rec = logging.LogRecord(
+            "werkzeug", logging.INFO, "", 0, " * Running on http://127.0.0.1:5001", (), None
+        )
+        werkzeug = logging.getLogger("werkzeug")
+        assert werkzeug.filter(rec) is False, "the bare URL banner is dropped"
+        out = capsys.readouterr().out
+        assert ctx.boot_secret in out and "Open Best Photo Picker at" in out
+        assert werkzeug.filter(rec) is False
+        assert ctx.boot_secret not in capsys.readouterr().out, "printed once"
         assert ctx.boot_secret not in caplog.text
         monkeypatch.setenv("BPP_BOOT_SECRET", "from-shell")
         with caplog.at_level(logging.DEBUG):
             _configure_loopback_boot(Ctx(), 5001, argparse.Namespace())
-        assert "from-shell" not in capsys.readouterr().out
+        assert werkzeug.filter(rec) is False
+        assert "from-shell" not in capsys.readouterr().out, "the launcher knows its key"
         assert "from-shell" not in caplog.text
 
     def test_access_log_lines_lose_the_key(self):
@@ -190,6 +211,14 @@ class TestDeviceRedactionLeavesRoutesAlone:
         assert rw("/api/v1/photos") == "/api/v1/photos"
         assert rw("/static/img/x.svg") == "/static/img/x.svg"
         assert rw("/Volumes/nas/y.jpg").startswith("@ext/")
+
+
+class TestDemoUsesTheBootKey:
+    def test_demo_wires_the_launch_url_through_the_boot_helper(self):
+        src = (ROOT / "bpp" / "commands" / "demo.py").read_text()
+        assert '_configure_loopback_boot(app.extensions["bpp"], port, args)' in src
+        assert "args=[launch_url]" in src
+        assert 'args=[f"http://127.0.0.1:{port}"]' not in src
 
 
 class TestStorageHealthForDevices:
@@ -237,6 +266,74 @@ class TestStorageHealthForDevices:
         assert lib in owner.get_json()["error"]
 
 
+class TestRawPixelCap:
+    def test_a_raw_header_over_the_cap_is_refused_before_unpacking(self, monkeypatch):
+        import sys
+        import types
+
+        from bpp.utils import raw
+
+        unpacked = []
+
+        class FakeRaw:
+            def __init__(self):
+                self.sizes = None
+
+            def open_file(self, path):
+                big = "huge" in path
+                w, h = (20_000, 20_000) if big else (6000, 4000)
+                self.sizes = types.SimpleNamespace(width=w, height=h)
+
+            def unpack(self):
+                unpacked.append(self.sizes.width)
+
+            def postprocess(self, **kw):
+                return "pixels"
+
+            def close(self):
+                pass
+
+        monkeypatch.setitem(sys.modules, "rawpy", types.SimpleNamespace(RawPy=FakeRaw))
+        monkeypatch.setattr(raw, "RAWPY_AVAILABLE", True)
+        with pytest.raises(raw.RawTooLarge):
+            raw.decode_raw_rgb("/x/huge.cr2")
+        assert unpacked == [], "the frame is never unpacked past the cap"
+        assert raw.decode_raw_rgb("/x/ok.cr2") == "pixels"
+        assert unpacked == [6000]
+
+
+class TestLayeringFollowUps:
+    def test_the_journal_registrar_lives_with_the_disk_half(self):
+        from bpp.web import permanent_delete
+
+        assert hasattr(permanent_delete, "register_permanent_delete_recovery")
+        src = (ROOT / "bpp" / "web" / "bp_photos_manage.py").read_text()
+        assert "register_permanent_delete_recovery" not in src
+
+    def test_worker_failures_keep_their_traceback(self, caplog):
+        import logging
+
+        from bpp.utils.concurrency import parallel_map
+
+        def boom(x):
+            raise KeyError("foo")
+
+        with caplog.at_level(logging.WARNING):
+            out = parallel_map(boom, [1], workers=1)
+        assert out == [None]
+        assert "KeyError" in caplog.text and "Traceback" in caplog.text
+
+    def test_host_refusal_names_the_host(self, tmp_path):
+        from bpp.web.app import create_app
+
+        app = create_app(library_path=str(tmp_path / "lib"))
+        app.config["TESTING"] = True
+        with app.test_client() as c:
+            resp = c.get("/api/v1/status", headers={"Host": "evil.example:5001"})
+        assert resp.status_code == 421
+        assert resp.get_json().get("context", {}).get("host") == "evil.example:5001"
+
+
 class TestArchiveFilter:
     def test_tar_data_filter_is_used_wherever_python_ships_it(self):
         src = (ROOT / "bpp" / "web" / "analyze_archive.py").read_text()
@@ -261,23 +358,52 @@ class TestRepoHardening:
         assert "    permissions:" in jobs
 
     def test_desktop_shell_boots_the_sidecar_with_a_secret_and_proves_the_port(self):
-        src = (ROOT / "desktop" / "src-tauri" / "src" / "main.rs").read_text()
+        src = _shell_source()
         assert '.env("BPP_BOOT_SECRET", boot_secret())' in src
         assert "fn server_knows_boot_secret" in src
-        assert "/boot-check?_boot=" in src
-        assert 'format!("http://127.0.0.1:{}/?_boot={}", port, boot_secret())' in src
-        assert "http://localhost:" not in src, "every navigation carries the key on 127.0.0.1"
-        assert src.count("/?_boot={}") == 2, "first load and the respawn reload"
+        assert "/boot-check?nonce=" in src, "challenge, not the secret, goes over the wire"
+        assert (
+            "?_boot=" not in src.split("fn server_knows_boot_secret")[1].split("fn fresh_nonce")[0]
+        )
+        assert (
+            "fn hmac_sha256_hex" in src
+            and 'sha2 = "0.10"' in (ROOT / "desktop" / "src-tauri" / "Cargo.toml").read_text()
+        )
+        # Both loads go to 127.0.0.1, the address the probe proved:
+        # "localhost" may resolve to ::1, where another process could
+        # listen. (The 0.1.2 origin was localhost; its localStorage resets.)
+        assert "http://localhost:" not in src
+        assert src.count('"http://127.0.0.1:{}/?_boot={}"') == 1
+        assert src.count("'http://127.0.0.1:{}/?_boot={}'") == 1
         conf = (ROOT / "desktop" / "src-tauri" / "tauri.conf.json").read_text()
         assert '"devUrl": "http://127.0.0.1:5001"' in conf
         assert "--no-browser --open-loopback" in conf, "tauri dev starts its own server"
+        # A final failure ends the wait early, and a held port is never
+        # respawned over.
+        assert "startup_failure.load(Ordering::SeqCst) != STARTUP_OK" in src
+        assert src.count("== STARTUP_PORT_IN_USE") >= 2
+
+    def test_desktop_shell_reclaims_an_orphaned_sidecar_and_names_a_held_port(self):
+        src = _shell_source()
+        assert "fn reclaim_port_from_stale_sidecar" in src
+        assert "fn listener_pid" in src and "fn process_name" in src
+        assert 'ends_with("bpp-server")' in src, "only our own binary, only the pid on the port"
+        assert "pkill" not in src, "never a global kill: another instance's sidecar is not ours"
+        assert "reclaim_port_from_stale_sidecar(port);" in src
+        assert "STARTUP_PORT_IN_USE" in src and "Address already in use" in src
+        assert "Another copy is already running" in src
+        bs = "\\"
+        assert (
+            "invoke(" + bs * 2 + "'restart_app" + bs * 2 + "')" in src and "fn restart_app" in src
+        )
+        assert "generate_handler![set_app_theme, exit_app, restart_app, open_url]" in src
 
     def test_desktop_shell_opens_links_through_its_own_command(self):
-        src = (ROOT / "desktop" / "src-tauri" / "src" / "main.rs").read_text()
+        src = _shell_source()
         assert "opener?.openUrl" not in src
         assert "fn open_url(" in src
         assert 'url.starts_with("https://github.com/Arkalogy/")' in src
-        assert "generate_handler![set_app_theme, exit_app, open_url]" in src
+        assert "generate_handler![set_app_theme, exit_app, restart_app, open_url]" in src
         # Every button that used the dead opener now invokes the command,
         # with the quotes escaped: the markup sits inside a JS
         # single-quoted string in all three overlays.
@@ -307,8 +433,41 @@ class TestRepoHardening:
     def test_index_strips_the_boot_key_from_the_address_bar(self):
         src = (ROOT / "bpp" / "web" / "templates" / "index.html").read_text()
         assert 'q.indexOf("_boot=") !== -1' in src
+        assert 'sessionStorage.setItem("bpp_boot"' in src
 
     def test_publish_manifest_default_is_not_in_tmp(self):
         src = (ROOT / "scripts" / "publish_registry_manifest.py").read_text()
         assert '"/tmp/registry.json"' not in src
         assert 'default=Path("registry.json")' in src
+
+
+class TestLiveRegistryGate:
+    def test_release_workflows_verify_the_live_manifest(self):
+        assert (ROOT / "scripts" / "verify_live_registry.py").exists()
+        for wf in ("publish", "release-desktop"):
+            text = (ROOT / ".github" / "workflows" / f"{wf}.yml").read_text()
+            assert "python scripts/verify_live_registry.py" in text, wf
+            assert "if: github.event_name == 'release'" in text, wf
+
+    def test_the_script_fails_closed_on_an_unversioned_manifest(self, monkeypatch, capsys):
+        import importlib.util
+        import json
+
+        spec = importlib.util.spec_from_file_location(
+            "verify_live_registry", ROOT / "scripts" / "verify_live_registry.py"
+        )
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)
+        from bpp.registry import remote_registry
+
+        manifest = {"schema_version": 1, "entries": [], "signatures": []}
+        monkeypatch.setattr(
+            remote_registry, "fetch_remote_manifest", lambda url: json.dumps(manifest).encode()
+        )
+        assert mod.main() == 1
+        out = capsys.readouterr().out
+        assert "FAIL" in out and "manifest_version" in out
+        monkeypatch.setattr(remote_registry, "fetch_remote_manifest", lambda url: None)
+        assert mod.main() == 1
+        assert "could not fetch" in capsys.readouterr().out

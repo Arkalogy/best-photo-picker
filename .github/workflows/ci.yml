@@ -1,5 +1,5 @@
-# CI runs only on pull requests targeting main (release gate).
-# Day-to-day development on develop is tested locally.
+# CI runs only on pull requests targeting main (release gate);
+# feature branches are tested locally with the same gates.
 #
 # Gates (lint job):
 #   - Python: version sync, ruff check, ruff format --check
@@ -7,13 +7,13 @@
 #             tsc --noEmit (@ts-check opt-in), vitest
 #   - E2E:    playwright test --list (parse-only, no browser/server)
 # Gates (test job):
-#   - pytest (~2050 tests, Python 3.11 only)
+#   - pytest (~5,500 tests, Python 3.11 only)
 #
-# Full Playwright runs are gated to workflow_dispatch in e2e.yml — they
-# need an analyzed library and add several minutes per run.
+# Full Playwright runs live in e2e.yml (release tags and manual runs);
+# they need an analyzed library and add several minutes per run.
 #
-# Python 3.11 only matches the Tauri sidecar. Re-enable matrix
-# (3.12, 3.13) and `develop` triggers when adding contributors.
+# Python 3.11 only matches the Tauri sidecar; a 3.12/3.13 matrix
+# returns when the sidecar pin moves.
 
 name: CI
 

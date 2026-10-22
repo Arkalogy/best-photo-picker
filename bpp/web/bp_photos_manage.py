@@ -422,11 +422,3 @@ def api_photo_date(photo_id: int) -> tuple[Response, int]:
     ctx.invalidate_analysis()
 
     return jsonify({"date": new_date, "date_day": new_date[:10], "date_month": new_date[:7]}), 200
-
-
-# register_permanent_delete_recovery moved to bp_photos_lifecycle.
-# Re-exported here because WebAppState.startup imports it from
-# bpp.web.bp_photos_manage. Keep callers stable across the v0.1 split.
-from bpp.web.bp_photos_lifecycle import (  # noqa: E402, F401
-    register_permanent_delete_recovery,
-)

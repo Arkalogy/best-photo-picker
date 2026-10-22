@@ -149,6 +149,12 @@ def _add_demo(sub: argparse._SubParsersAction) -> None:
     p_demo = sub.add_parser("demo", help="Launch demo with sample photos")
     p_demo.add_argument("--port", type=int, default=5001, help="Port for web server")
     p_demo.add_argument("--no-browser", action="store_true", help="Don't auto-open browser")
+    p_demo.add_argument(
+        "--open-loopback",
+        action="store_true",
+        help="Serve the app to any local process without the one-time boot key "
+        "(same as BPP_OPEN_LOOPBACK=1); needed when opening the page by hand",
+    )
     p_demo.add_argument("--keep", action="store_true", help="Keep demo library after exit")
     p_demo.add_argument("--debug", action="store_true", help="Enable debug logging")
 

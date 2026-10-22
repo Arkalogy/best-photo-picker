@@ -108,6 +108,9 @@ dev = [
 Homepage = "https://github.com/Arkalogy/best-photo-picker"
 Repository = "https://github.com/Arkalogy/best-photo-picker"
 Issues = "https://github.com/Arkalogy/best-photo-picker/issues"
+Changelog = "https://github.com/Arkalogy/best-photo-picker/blob/main/CHANGELOG.md"
+Documentation = "https://github.com/Arkalogy/best-photo-picker/tree/main/docs"
+Funding = "https://buymeacoffee.com/arkalogy"
 
 [project.scripts]
 bpp = "bpp.cli:main"

@@ -29,7 +29,7 @@ pre-commit install
 npm install
 
 # Verify everything works
-pytest -v                       # ~5,200 tests; never downloads models (tests about real weights skip when they aren't on disk)
+pytest -v                       # ~5,500 tests; never downloads models (tests about real weights skip when they aren't on disk)
 ruff check . && ruff format --check .
 npm run lint                    # ESLint + auto-generated globals
 npm run format:check            # Prettier (scoped to dev-tool JS)
@@ -39,7 +39,7 @@ npm run test:js                 # Vitest + jsdom
 
 ## Making Changes
 
-1. **Create a branch** from `develop` for your work
+1. **Create a branch** from `main` for your work
 2. **Write tests** for new functionality or bug fixes
 3. **Run the checks** before committing:
    ```bash
@@ -99,7 +99,7 @@ tests/          # pytest test suite
 | `npm run typecheck` | `tsc --noEmit` on files annotated with `// @ts-check`. JSDoc is honored. |
 | `npm run test:js` | Vitest + jsdom suite under `tests-js/`. |
 | `npm run test:e2e:list` | `playwright test --list` — parse-only check, no browser/server. CI runs this on every PR to `main`. |
-| `npm run test:e2e` | Full Playwright suite under `tests-e2e/`. Requires server on :5001 with a populated library; runs in CI via the `E2E` workflow on version tags or manual runs. |
+| `npm run test:e2e` | Full Playwright suite under `tests-e2e/`. Requires a server on :5001 with a populated library, started with `--open-loopback` (the specs open `/` in fresh browser contexts; `scripts/run_e2e.sh` sets `BPP_OPEN_LOOPBACK=1` itself); runs in CI via the `E2E` workflow on version tags or manual runs. |
 | `python -m build --sdist --wheel` | Build smoke — catches packaging breakage (missing `MANIFEST.in` entries, broken entry points) before `publish.yml` runs in CI. |
 
 At minimum, run `npm run lint && npm run typecheck && npm run test:js` before committing JS changes.
@@ -223,8 +223,12 @@ already.
 ## Running the Web UI
 
 ```bash
-bpp serve --library /path/to/your/photos --no-browser
+bpp serve --library /path/to/your/photos --no-browser --open-loopback
 ```
+
+`--open-loopback` serves the page to any local process (the way earlier
+releases did); without it `bpp serve` prints a one-time `?_boot=` link and
+the bare address shows a locked page.
 
 The web UI binds to `127.0.0.1:5001` by default — don't change the port without coordinating with the Tauri sidecar, which hardcodes it. Always pass `--no-browser` when restarting during development to avoid opening a new browser tab on every reload.
 

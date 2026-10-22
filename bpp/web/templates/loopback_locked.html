@@ -7,18 +7,38 @@
 <style>
   body { margin: 0; font-family: -apple-system, system-ui, sans-serif; background: #111; color: #eee;
          display: flex; align-items: center; justify-content: center; min-height: 100vh; }
-  main { max-width: 420px; padding: 24px; text-align: center; }
+  main { max-width: 460px; padding: 24px; }
   h1 { font-size: 20px; margin: 0 0 12px; }
-  p { color: rgba(255,255,255,0.7); font-size: 14px; line-height: 1.5; }
+  p, li { color: rgba(255,255,255,0.75); font-size: 14px; line-height: 1.5; }
+  ol { padding-left: 20px; }
   code { color: #fff; }
 </style>
 </head>
 <body>
 <main>
-  <h1>Best Photo Picker is open elsewhere</h1>
-  <p>This server only shows the app to the window that started it. Use the
-  Best Photo Picker app, or the link <code>bpp serve</code> printed when it
-  started (it contains a one-time key).</p>
+  <h1>This link has expired</h1>
+  <p>Best Photo Picker opens only from the link that was created when it
+  started, so other programs on this computer can't read your library.</p>
+  <ol>
+    <li>Go to the Terminal window running <code>bpp serve</code> and click
+    the link that starts with <code>http://127.0.0.1:5001/?_boot=</code>.</li>
+    <li>If that window is gone, stop the server (Ctrl+C) and run
+    <code>bpp serve</code> again; it opens the app for you.</li>
+  </ol>
+  <p>Using the Mac app? Quit it and open it again.</p>
 </main>
+<script nonce="{{ csp_nonce }}">
+// A reload of a tab that already opened the app: the key is in this
+// tab's sessionStorage, so present it again instead of showing the
+// instructions.
+(function(){
+  try {
+    var key = sessionStorage.getItem("bpp_boot");
+    if (key && window.location.search.indexOf("_boot=") === -1) {
+      window.location.replace("/?_boot=" + encodeURIComponent(key) + window.location.hash);
+    }
+  } catch (e) {}
+})();
+</script>
 </body>
 </html>

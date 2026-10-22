@@ -44,6 +44,7 @@ hardening path.
 | Token leaks via browser history | `history.replaceState` strips `?_token=` after first paint |
 | Token leaks via Referer (outbound clicks) | `Referrer-Policy: no-referrer` on the index page |
 | Another local user or a sandboxed app reads the index page on 127.0.0.1 | Boot key: `bpp serve` prints a one-time `?_boot=` URL (the desktop app passes its own key to the sidecar); without it the page is a 403 with no token. `--open-loopback` restores the open page for single-user setups |
+| A paired phone learns the owner's folder layout | Every JSON response to a device is rewritten: library paths become relative, home becomes `~/…`, anything else becomes an opaque `@ext/<hash>/<name>` the device can still look the photo up by |
 | XSS exfiltrates the fingerprint cookie | `HttpOnly` cookie attribute |
 | CSRF via cross-origin form | `SameSite=Lax` cookie + custom `X-Auth-Token` header check |
 | Access log spammed by every phone API call | Dedup by (ip, user-agent) within a 10-minute window — one row per session |
@@ -145,6 +146,11 @@ A device's lifecycle in `share_devices`:
          ▼             ▼
        revoked       pending (with prev_revoked=1 sticky)
 ```
+
+A pending request that nobody approves expires 24 hours after the
+phone first asked (`PENDING_TTL_SECONDS`, keyed on `first_seen`): the
+row is pruned, and the phone has to tap "request access" again, which
+needs the current share link.
 
 Two transitions matter for security UX:
 

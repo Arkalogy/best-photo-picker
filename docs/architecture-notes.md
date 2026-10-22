@@ -2,7 +2,57 @@
 
 Schema-level details and design choices that affect how data flows
 through the codebase. Read the relevant section before touching the
-modules it mentions.
+modules it mentions. The first section is the map; the rest are the
+deep dives.
+
+## How the pieces fit (start here)
+
+```
+ Mac app (Tauri shell, desktop/)          Browser (bpp serve / bpp demo)
+   spawns `bpp-server` (PyInstaller)         opens the printed ?_boot= link
+            │ boot key, port 5001                   │
+            ▼                                       ▼
+ ┌──────────────────── Flask app (bpp/web) ─────────────────────┐
+ │ blueprints bp_*.py (REST + SSE)  ·  auth/share gate  ·  LAN  │
+ │ WebAppState: workers · caches · analysis store · lifecycle   │
+ └──────┬──────────────┬──────────────────┬─────────────────────┘
+        │              │                  │
+   subprocess       in-process         SQLite (bpp/db)
+   workers          threads            <library>/data/photopicker.db
+   (analyze,        (hash backfill,    WAL, pooled get_db(),
+   face extract)    recovery, health)  versioned migrations (v44)
+        │
+   scoring (bpp/scoring): sharpness · exposure · faces (YuNet + SFace;
+   SCRFD / dlib opt-in) · pets (YOLO) · CLIP · content filter
+   selection (bpp/selection, bpp/dedupe): near-duplicates, diversity,
+   per-person boosts → the picks
+   registry (bpp/registry): signed model manifest, licence acceptance,
+   download gate; plugins (bpp/plugins) register scorers, albums, hooks
+```
+
+- **One process, one library.** `bpp serve --library X` opens one
+  library folder: photos live in `photos/`, everything derived in
+  `data/` (the database) and `cache/` (thumbnails, crops). Nothing
+  leaves the machine except the documented model downloads, the
+  signed registry check and the update check.
+- **Why Flask + vanilla ES modules.** The UI is served straight from
+  `bpp/web/static/js/modules/*.mjs` with no build step; the Python side
+  owns every rule (scores, picks, licences), so a phone on the LAN and
+  the desktop shell get the same app. Tests run under pytest, Vitest
+  and Playwright against the same endpoints.
+- **Why a Tauri sidecar.** The desktop app is the same server frozen
+  with PyInstaller and a thin Rust shell that starts it, proves the
+  port is ours (a boot key), and shows the page. Python is pinned to
+  3.11 because the frozen runtime is; the pip install matches it.
+- **Long work is a job, not a request.** Analyze and face extraction
+  run in subprocesses with journaled progress, so a crash or a quit
+  resumes on the next start; cheaper background work (hash backfill,
+  derived recovery, file-health sampling) runs on owned threads that
+  report through `/api/v1/health`.
+- **Models are gated.** Every model has a registry entry with its
+  licence and checksum; restricted ones download only after the user
+  accepts their terms, and the signed remote manifest can withdraw one
+  after release. The decisions behind this are in `docs/adr/0005`.
 
 ## GPS coordinates (schema v30)
 

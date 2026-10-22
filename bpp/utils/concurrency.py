@@ -39,7 +39,7 @@ def _run_one(
     except fatal_exceptions:
         raise
     except Exception as e:
-        log.warning("Worker failed for item %s: %s", item, e)
+        log.warning("Worker failed for item %s: %s", item, e, exc_info=True)
         return None
 
 
@@ -91,7 +91,8 @@ def parallel_map(
                     except (BrokenProcessPool, *fatal_exceptions):
                         raise
                     except Exception as e:
-                        log.warning("Worker failed for item %s: %s", items[idx], e)
+                        # The remote traceback rides along as __cause__.
+                        log.warning("Worker failed for item %s: %s", items[idx], e, exc_info=True)
                         results[idx] = None
                     finished += 1
                     if on_done is not None:

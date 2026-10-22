@@ -13,6 +13,7 @@
 import { apiFetch, LONG_OP_TIMEOUT_MS } from "./api-client.mjs";
 import { state } from "./state.mjs";
 import { toast, toastError } from "./toast.mjs";
+import { hideStatusProgress, showStatusProgress } from "./analysis-status.mjs";
 import { loadAlbumList } from "./albums.mjs";
 import { _resetAnalysisState, updateStatusSummary } from "./analysis.mjs";
 import { syncToolbarK, updateShowPicksChip } from "./toolbar.mjs";
@@ -90,6 +91,16 @@ export async function doRecompute(opts) {
   const _seq = (win._recomputeSeq = (win._recomputeSeq || 0) + 1);
   const _scope = win.currentAlbumId ?? null;
   const _recomputeT0 = performance.now();
+  // A first recompute on a large library runs for minutes: after a
+  // second with no answer, say so in the status bar (analyze owns the
+  // bar while it runs).
+  let _progressShown = false;
+  const _slowTimer = setTimeout(() => {
+    if (win.activeOperation !== "analyze") {
+      showStatusProgress("Choosing your best photos…", 0);
+      _progressShown = true;
+    }
+  }, 1000);
   try {
     const data = await apiFetch(url, {
       method: "POST",
@@ -109,7 +120,7 @@ export async function doRecompute(opts) {
     const _serverMs = data?.stats?.elapsed_ms;
     const _shown = typeof _serverMs === "number" ? _serverMs : _wallMs;
     if (_shown >= 300) {
-      toast(`Recomputed in ${(_shown / 1000).toFixed(2)}s`);
+      toast(`Picks updated in ${(_shown / 1000).toFixed(1)} s`);
     }
 
     const isDelta = !data.photos && !!data.scores;
@@ -139,6 +150,9 @@ export async function doRecompute(opts) {
     if (win.currentAlbumId) win.loadAlbumList?.();
   } catch (e) {
     toastError("recompute the selection", e);
+  } finally {
+    clearTimeout(_slowTimer);
+    if (_progressShown && win.activeOperation !== "analyze") hideStatusProgress();
   }
 }
 

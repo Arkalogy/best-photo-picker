@@ -19,12 +19,15 @@
 <script nonce="{{ csp_nonce }}">document.documentElement.setAttribute("data-theme",localStorage.getItem("bpp-theme")||"dark")</script>
 <script nonce="{{ csp_nonce }}">
 // Strip _token / _boot from the URL bar after first paint. The token
-// is already captured in the meta tag below and the boot key in a
-// cookie; leaving them in the URL just makes screenshots / screen
+// is already captured in the meta tag below; the boot key is kept in
+// sessionStorage (this tab, this origin) so a reload can re-present
+// it. Leaving them in the URL just makes screenshots / screen
 // recordings / copied links leak them. Idempotent.
 (function(){
   try {
     var q = window.location.search;
+    var m = /[?&]_boot=([^&#]+)/.exec(q);
+    if (m) { try { sessionStorage.setItem("bpp_boot", decodeURIComponent(m[1])); } catch (e) {} }
     if (q.indexOf("_token=") !== -1 || q.indexOf("_boot=") !== -1) {
       var clean = window.location.pathname + window.location.hash;
       window.history.replaceState({}, "", clean);

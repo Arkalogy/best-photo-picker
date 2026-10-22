@@ -156,6 +156,39 @@ class ThumbnailCache:
                 removed += 1
         return removed
 
+    @staticmethod
+    def remove_crops_for_hashes(
+        face_crop_dir: str | None, pet_crop_dir: str | None, path_hashes: set[str]
+    ) -> int:
+        """Delete the face / pet crops of many photos with one listing per
+        folder (``remove_for_hash`` globs per photo: fine for one delete,
+        two scans per photo for a purge of thousands)."""
+        removed = 0
+        width = len(next(iter(path_hashes))) if path_hashes else 0
+        for folder, prefix in ((face_crop_dir, ""), (pet_crop_dir, "pet_")):
+            if not folder or not width or not os.path.isdir(folder):
+                continue
+            try:
+                names = os.listdir(folder)
+            except OSError as e:
+                log.warning("Couldn't list crop folder %s: %s", folder, e)
+                continue
+            for name in names:
+                if not name.startswith(prefix):
+                    continue
+                if name[len(prefix) : len(prefix) + width] not in path_hashes:
+                    continue
+                if name[len(prefix) + width : len(prefix) + width + 1] != "_":
+                    continue
+                try:
+                    os.remove(os.path.join(folder, name))
+                    removed += 1
+                except FileNotFoundError:
+                    continue
+                except OSError as e:
+                    log.warning("Couldn't remove crop %s: %s", name, e)
+        return removed
+
     def clear(self) -> int:
         """Delete all cached thumbnails. Returns the count of files actually
         removed; any that couldn't be deleted are logged at WARNING and left

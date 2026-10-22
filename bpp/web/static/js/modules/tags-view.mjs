@@ -162,7 +162,8 @@ export async function navigateToTagPhotos(tagId) {
        <div class="desc">No active photos carry this tag.</div></div>`;
   }
   win.show?.("photo-grid");
-  win.updateToolbarTitle?.(`Tag: ${name}`, `${photos.length} photo${photos.length === 1 ? "" : "s"}`);
+  const total = typeof data.total === "number" ? data.total : photos.length;
+  win.updateToolbarTitle?.(`Tag: ${name}`, `${total} photo${total === 1 ? "" : "s"}`);
   win.renderAlbumNav?.();
 }
 

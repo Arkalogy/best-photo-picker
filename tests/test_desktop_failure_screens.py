@@ -12,11 +12,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-MAIN_RS = Path(__file__).resolve().parent.parent / "desktop" / "src-tauri" / "src" / "main.rs"
+SRC_DIR = Path(__file__).resolve().parent.parent / "desktop" / "src-tauri" / "src"
 
 
 def _source() -> str:
-    return MAIN_RS.read_text(encoding="utf-8")
+    """Every Rust file of the shell crate, in one string."""
+    return "\n".join(p.read_text(encoding="utf-8") for p in sorted(SRC_DIR.glob("*.rs")))
 
 
 class TestServerFailedToStartScreen:
@@ -28,7 +29,7 @@ class TestServerFailedToStartScreen:
         # Anchor on the eprintln that immediately follows the failed wait — the
         # function *definition* of wait_for_server appears much earlier and
         # must not be used as the search start.
-        start = src.find('eprintln!("Server failed to start within 30 seconds")')
+        start = src.find("fn show_start_failure(")
         assert start != -1, "Anchor line not found in main.rs"
         return src[start : start + 3000]
 

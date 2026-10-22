@@ -140,7 +140,9 @@ def test_tauri_invoked_commands_are_registered():
     the handler list."""
     import re
 
-    rust_full = Path("desktop/src-tauri/src/main.rs").read_text(encoding="utf-8")
+    rust_full = "\n".join(
+        p.read_text(encoding="utf-8") for p in sorted(Path("desktop/src-tauri/src").glob("*.rs"))
+    )
     # Strip line comments before scanning — explanatory `// the old
     # form was __TAURI__?.invoke(...)` text in source comments would
     # otherwise trip the regex.

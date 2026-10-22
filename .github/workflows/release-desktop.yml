@@ -94,6 +94,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install ".[${BPP_EXTRAS}]" pyinstaller
 
+      - name: Verify the live model registry manifest
+        # Same gate as publish.yml: the app must not ship against a
+        # manifest its own verifier rejects.
+        if: github.event_name == 'release'
+        run: python scripts/verify_live_registry.py
+
       # ── Third-party inventory + corresponding sources ────────────────
       # These steps run after the Release is already published, so none
       # of them may stop the DMG from being attached: each records its

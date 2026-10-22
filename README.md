@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/Arkalogy/best-photo-picker/blob/main/LICENSE)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-green.svg)](https://www.python.org/downloads/)
 
-**Drowning in 15,000 family photos?** Apple Photos and Google Photos bury your best shots in their feed. Best Photo Picker runs entirely on your machine, scores every photo on sharpness, lighting, faces, and composition, and lets you curate the perfect 50 in minutes — no cloud, no subscription, no compromise.
+**Drowning in 15,000 family photos?** Apple Photos and Google Photos bury your best shots in their feed. Best Photo Picker runs entirely on your machine, scores every photo on sharpness, lighting, faces, and composition, and lets you curate the perfect 50 in minutes once it's analyzed — no cloud, no subscription, no compromise.
 
 It **auto-scores your whole library for curation without uploading anything**, **clusters the near-duplicates**, and lets you **boost specific people** so the final pick favors the faces that matter — your kid, for the grandparents.
 
@@ -13,9 +13,9 @@ It **auto-scores your whole library for curation without uploading anything**, *
   <img src="https://raw.githubusercontent.com/Arkalogy/best-photo-picker/main/docs/screenshots/demo.gif" width="720" alt="Demo: a library of thousands of photos, open one child's photos, BPP Picks narrows them to her best shots, then the top pick opens with its sharpness, exposure, faces and composition scores">
 </p>
 
-> **Try it — no photos needed:**
+> **Try it — no photos needed** (needs Python 3.11: `brew install python@3.11` on a Mac, or use the [desktop app](#desktop-app-macos-apple-silicon)):
 > ```bash
-> pip install "bppicker[web]" && bpp demo
+> pipx install --python python3.11 "bppicker[web]" && bpp demo
 > ```
 > Generates a sample library, runs the full UI locally, and deletes the sample library when you stop it (Ctrl+C). **The first analysis asks before downloading the on-device AI models (up to ~660 MB, mostly CLIP for visual search); they're cached, so that's a one-time download.** Your photos are never uploaded. bpp still makes a few small network calls of its own (a signed model-registry check at startup, an update check, map tiles) — all listed under [Privacy](#privacy).
 
@@ -39,7 +39,7 @@ If you live in the Apple/Google ecosystem and your collection fits their feeds, 
 
 Claude writes the code. I own the product and the architecture, and nothing ships without my sign-off. What keeps that honest:
 
-- 4,400+ Python and 1,400+ UI tests run in CI on every pull request to `main`, plus 68 end-to-end tests that click through the real app on every release tag
+- 5,500+ Python and 1,700+ UI tests run in CI on every pull request to `main`, plus 68 end-to-end tests that click through the real app on every release tag
 - Key decisions written up in [`docs/adr/`](https://github.com/Arkalogy/best-photo-picker/tree/main/docs/adr)
 - A signed, notarized Mac app and releases on PyPI
 - I use it on my own photo library, and the bugs it finds become tests
@@ -79,16 +79,20 @@ Recommended — [pipx](https://pipx.pypa.io/) keeps bpp in its own
 environment and makes updating one command:
 
 ```bash
-pipx install "bppicker[web]"
+pipx install --python python3.11 "bppicker[web]"
 
 # Update to the latest release later:
 pipx upgrade bppicker
 ```
 
+`--python python3.11` matters: pipx otherwise uses whatever Python it
+was installed with (Homebrew's is newer), and the install ends with
+"No matching distribution found for bppicker".
+
 Plain pip works too:
 
 ```bash
-pip install "bppicker[web]"
+python3.11 -m pip install "bppicker[web]"
 
 # Optional: face recognition
 pip install "bppicker[web,faces]"
@@ -121,7 +125,7 @@ update, download the newer `.dmg` the same way; your photo library and
 settings live outside the app and carry over untouched.
 
 > Apple Silicon (M1/M2/M3 and later) only. On an Intel Mac, or on
-> Windows/Linux, use the `pipx install "bppicker[web]"` path above.
+> Windows/Linux, use the `pipx install --python python3.11 "bppicker[web]"` path above.
 
 ### Try the Demo
 
@@ -378,9 +382,9 @@ addresses); see
 [docs/security.md](https://github.com/Arkalogy/best-photo-picker/blob/main/docs/security.md).
 
 ```
-bpp serve [--library PATH] [--host HOST] [--port 5001] [--no-browser] [--config FILE]
-bpp demo [--port 5001] [--no-browser] [--keep]
-bpp web [--input DIR] [--workdir DIR] [--port 5001] [--no-browser]
+bpp serve [--library PATH] [--host HOST] [--port 5001] [--no-browser] [--open-loopback] [--config FILE] [--debug]
+bpp demo [--port 5001] [--no-browser] [--open-loopback] [--keep]
+bpp web [--input DIR] [--workdir DIR] [--host HOST] [--port 5001] [--no-browser] [--open-loopback]
 bpp analyze --input DIR --out WORKDIR [--config FILE] [--max N] [--workers K]
 bpp select --workdir DIR --k N --out DIR [--copy|--hardlink|--symlink] [--gallery]
 bpp run --input DIR --k N --out DIR [all options from analyze + select]
@@ -472,7 +476,7 @@ to any server, and soft-delete keeps recoverable copies for 30 days.
 ### Prerequisites
 
 - **Python 3.11** (CI tests this version only — 3.12+ is not validated). On macOS, Homebrew ships 3.14 by default — install 3.11 via `brew install python@3.11` or `pyenv install 3.11`.
-- **Node.js 18+** and npm (for desktop app only)
+- **Node.js 20+** and npm (for desktop app only)
 - **Rust** (stable, for desktop app only) — install via [rustup.rs](https://rustup.rs)
 - **CMake + C++ compiler** (for dlib face recognition) — macOS: `brew install cmake`
 

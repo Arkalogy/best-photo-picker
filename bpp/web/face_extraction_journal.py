@@ -272,8 +272,8 @@ def force_complete_after_retries(
         return
     log.warning(
         "Face extraction run_id=%s force-completed after %d failed recovery "
-        "attempts. Manual intervention required: run Settings → Faces → Retry "
-        "to re-run face extraction from scratch.",
+        "attempts. Manual intervention required: re-run face extraction "
+        "from the analyze menu → Re-extract faces.",
         run_id,
         MAX_RECOVERY_RETRIES,
     )

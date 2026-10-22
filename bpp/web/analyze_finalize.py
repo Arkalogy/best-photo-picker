@@ -94,7 +94,10 @@ def finalize_in_worker(clip_computed: int, ctx: Any = None) -> None:
         load_analysis_if_needed(ctx, kick_recovery=False)
         if clip_computed > 0:
             with ctx.lock:
+                from bpp.web.recompute import dedupe_cache_clear
+
                 ctx.caches.clip_cache["ready"] = False
+                dedupe_cache_clear()
             ctx.load_clip_embeddings()
     except Exception:
         log.warning("Post-analyze finalize failed", exc_info=True)

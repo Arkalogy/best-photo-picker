@@ -7,7 +7,8 @@ the Recently Deleted / Hidden listing views in the UI.
 Sub-clusters:
 * Soft delete + restore: api_photos_delete, api_photos_restore
 * Permanent delete (with crash-safe journal): api_photos_delete_permanent,
-  register_permanent_delete_recovery, _apply_permanent_delete_disk
+  (register_permanent_delete_recovery and _apply_permanent_delete_disk
+  now live in bpp/web/permanent_delete.py)
 * Hide / unhide: api_photos_hide, api_photos_unhide
 * Listings (paginated): api_photos_deleted, api_photos_hidden
 
@@ -36,7 +37,6 @@ from bpp.db.photos import (
 )
 from bpp.errors import ValidationError
 from bpp.utils.logging import get_logger
-from bpp.web.permanent_delete import _apply_permanent_delete_disk
 from bpp.web.request_validation import field, validate_json
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx
@@ -148,55 +148,13 @@ def api_photos_delete_permanent() -> tuple[Response, int]:
     )
 
     deleted_paths = permanent_delete_photos(conn, photo_ids)
+    from bpp.web.permanent_delete import _apply_permanent_delete_disk
+
     removed = _apply_permanent_delete_disk(ctx, deleted_paths, sha256_map, allowed)
     journal_complete(conn, journal_id)
     log.info("Permanently deleted %d photos, %d files removed from disk", len(photo_ids), removed)
     ctx.invalidate_analysis()
     return jsonify({"status": "ok", "count": len(photo_ids), "files_removed": removed}), 200
-
-
-def register_permanent_delete_recovery(ctx: object, library_path: str | None = None) -> None:
-    """Bind a recovery handler for the 'permanent_delete' journal kind.
-
-    Called once during WebAppState.startup() with the live ctx so the
-    handler can reach `ctx.thumbs`, `ctx.dirs`, etc. Idempotent
-    registration (the journal module itself rejects different handlers
-    for the same kind, so re-running this with the same ctx is safe;
-    re-running with a different ctx during library switch picks up
-    the new ctx via closure).
-
-    ``library_path`` (optional, but passed by the state lifecycle):
-    when provided, the handler is wrapped with
-    :func:`bpp.db.journal.library_bound_recovery` so a switch_library
-    between registration and recovery refuses to delete files in the
-    wrong library. Without this, the disk-deletion branch would resolve
-    paths against the new library's allowlist and ``ctx.thumbs``, which
-    could remove files that share names across libraries.
-    """
-    from bpp.db.journal import library_bound_recovery, register_recovery_handler
-
-    def _recover(_conn: object, payload: dict) -> bool:
-        filepaths = payload.get("filepaths") or []
-        sha256_map = payload.get("sha256_map") or {}
-        allowed = payload.get("allowed_dirs") or []
-        if not filepaths:
-            return True  # nothing to do — entry can be deleted
-        log.info("Recovering interrupted permanent_delete for %d files", len(filepaths))
-        _apply_permanent_delete_disk(ctx, filepaths, sha256_map, allowed)
-        return True
-
-    if library_path is not None:
-
-        def _live_library_path() -> str | None:
-            paths = getattr(ctx, "paths", None)
-            return getattr(paths, "library_path", None) if paths is not None else None
-
-        handler = library_bound_recovery(
-            library_path, _recover, library_path_getter=_live_library_path
-        )
-    else:
-        handler = _recover
-    register_recovery_handler("permanent_delete", handler, replace=True)
 
 
 @bp.get("/api/v1/photos/deleted")
