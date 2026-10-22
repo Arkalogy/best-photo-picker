@@ -14,6 +14,10 @@ That generates a synthetic library and launches the full UI locally. Your photos
 
 ---
 
+*The screenshots show a sample library built from stock photos of models
+([Pexels](https://www.pexels.com/license/)) plus generated test images
+(`scripts/generate_demo_library.py`), not the author's family.*
+
 ## 1. Library grid
 
 ![Library grid](screenshots/tauri/01-grid.png)

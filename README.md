@@ -11,6 +11,7 @@ It **auto-scores your whole library for curation without uploading anything**, *
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/Arkalogy/best-photo-picker/main/docs/screenshots/demo.gif" width="720" alt="Demo: a library of thousands of photos, open one child's photos, BPP Picks narrows them to her best shots, then the top pick opens with its sharpness, exposure, faces and composition scores">
+  <br><sub>The recording and the screenshots show a sample library built from stock photos of models (<a href="https://www.pexels.com/license/">Pexels</a>) plus generated test images, not the author's family.</sub>
 </p>
 
 > **Try it — no photos needed** (needs Python 3.11: `brew install python@3.11` on a Mac, or use the [desktop app](#desktop-app-macos-apple-silicon)):
