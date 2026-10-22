@@ -9,6 +9,10 @@ from typing import Any
 
 from bpp.constants import ACTIVE_PHOTO_SQL
 
+#: Cluster members attached to one page row (the compare strip shows a
+#: handful; the rest are reachable through the cluster id).
+SIBLINGS_PER_ROW = 24
+
 _COLUMNS = (
     "filepath, {key}, aggregate_score, blur_score, exposure_score, face_score,"
     " composition_score, date_day, original_filename"
@@ -35,7 +39,8 @@ def attach_cluster_siblings(
     placeholders = ",".join("?" for _ in keys)
     rows = conn.execute(
         f"SELECT {_COLUMNS.format(key=group_key)} FROM photos"
-        f" WHERE {group_key} IN ({placeholders}) AND {ACTIVE_PHOTO_SQL}",
+        f" WHERE {group_key} IN ({placeholders}) AND {ACTIVE_PHOTO_SQL}"
+        " ORDER BY aggregate_score DESC, filepath",
         list(keys),
     ).fetchall()
     groups: dict[Any, list[dict[str, Any]]] = defaultdict(list)
@@ -59,13 +64,17 @@ def attach_cluster_siblings(
             continue
         my_fp = raw.get("filepath", "")
         # A hamming-distance cluster is not a scored match: no similarity.
+        # A page row carries at most SIBLINGS_PER_ROW of its cluster (a
+        # 5,000-frame cluster would otherwise repeat itself per row, a
+        # gigabyte of JSON per page); ``cluster_size`` carries the count.
+        members = [item for item in groups[key] if item["filepath"] != my_fp]
         siblings = [
             build_similar_entry(item, thumbs, similarity=None)
-            for item in groups[key]
-            if item["filepath"] != my_fp
+            for item in members[:SIBLINGS_PER_ROW]
         ]
         if siblings:
             photos[i]["similar_photos"] = siblings
+            photos[i]["cluster_size"] = len(members) + 1
 
 
 def _smart_duplicates_ui_metadata(conn: Any, ctx: Any, photos: Any, photos_data: Any) -> None:

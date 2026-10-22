@@ -57,14 +57,17 @@ class TestDesktopShellBoot:
         assert "fn open_url(" in src
         assert 'url.starts_with("https://github.com/Arkalogy/")' in src
         assert "generate_handler![set_app_theme, exit_app, restart_app, open_url]" in src
-        # Every button that used the dead opener now invokes the command,
-        # with the quotes escaped: the markup sits inside a JS
-        # single-quoted string in all three overlays.
+        # Every button that used the dead opener now invokes the command.
+        # The overlays injected into the loaded page bind listeners (its
+        # CSP has no unsafe-inline); the two whole-page screens, drawn
+        # before any page loaded, keep their escaped inline form.
         bs = "\\"  # one backslash
-        raw_site = "invoke(" + bs + "'open_url" + bs + "'"  # inside a raw string
         concat_sites = "invoke(" + bs * 2 + "'open_url" + bs * 2 + "'"  # inside "…"
-        assert src.count(raw_site) == 1 and src.count(concat_sites) == 2
+        assert src.count(concat_sites) == 2
+        assert "inv('open_url',{url:'https://github.com/Arkalogy/" in src
         assert src.count("invoke('open_url'") == 0
+        overlays = src.split("fn show_update_required")[0]
+        assert "onclick=" not in overlays.split("fn show_reconnecting_overlay")[1]
         assert "getrandom::getrandom(&mut buf)" in src
         assert 'getrandom = "0.2"' in (ROOT / "desktop" / "src-tauri" / "Cargo.toml").read_text()
         conf = (ROOT / "desktop" / "src-tauri" / "tauri.conf.json").read_text()

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
+
 from bpp.config import cfg_get
 from bpp.constants import CLUSTER_UNASSIGNED
 from bpp.dedupe.common import within_time_window
@@ -15,6 +17,8 @@ from bpp.dedupe.phash import (
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
+
+_U64 = (1 << 64) - 1
 
 
 def _hash_distance(item1: dict[str, Any], item2: dict[str, Any]) -> int:
@@ -142,7 +146,23 @@ def _global_dedup(items: list[dict[str, Any]], threshold: int) -> list[dict[str,
             month_reps.add(item["filepath"])
 
     representatives: list[dict[str, Any]] = []
-    rep_items: list[dict[str, Any]] = []
+    # The representatives' hashes as growing uint64 buffers: one item is
+    # compared with all of them in a single vectorised popcount instead
+    # of a Python loop (200k x 200k / 2 comparisons at the cap).
+    from bpp.selection.diversity import _hamming_many
+
+    rep_ph = np.empty(len(sorted_items), dtype=np.uint64)
+    rep_ah = np.empty(len(sorted_items), dtype=np.uint64)
+    rep_has_ah = np.zeros(len(sorted_items), dtype=bool)
+    n_reps = 0
+
+    def _remember(it: dict[str, Any]) -> None:
+        nonlocal n_reps
+        rep_ph[n_reps] = np.uint64(int(it["phash"]) & _U64)
+        ah = it.get("ahash")
+        rep_ah[n_reps] = np.uint64(int(ah) & _U64) if ah is not None else np.uint64(0)
+        rep_has_ah[n_reps] = ah is not None
+        n_reps += 1
 
     for item in sorted_items:
         if item.get("phash") is None:
@@ -152,19 +172,22 @@ def _global_dedup(items: list[dict[str, Any]], threshold: int) -> list[dict[str,
         # Month representatives are always kept
         if item["filepath"] in month_reps:
             representatives.append(item)
-            rep_items.append(item)
+            _remember(item)
             continue
 
         matched = False
-        for rep in rep_items:
-            dist = _hash_distance(item, rep)
-            if dist <= threshold:
-                matched = True
-                break
+        if n_reps:
+            dist = _hamming_many(int(item["phash"]) & _U64, rep_ph[:n_reps])
+            ah = item.get("ahash")
+            if ah is not None:
+                # Dual hash where both sides have one: min of the two.
+                a_dist = _hamming_many(int(ah) & _U64, rep_ah[:n_reps])
+                dist = np.where(rep_has_ah[:n_reps], np.minimum(dist, a_dist), dist)
+            matched = bool((dist <= threshold).any())
 
         if not matched:
             representatives.append(item)
-            rep_items.append(item)
+            _remember(item)
 
     if len(representatives) < len(items):
         log.info(

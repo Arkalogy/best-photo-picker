@@ -245,6 +245,20 @@ def _preaccept_permissive_attribution_entries(request, tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _restore_album_domains():
+    """Undo album-domain registrations a test made (a plugin that maps a
+    mutation domain to its smart album): the map is process-global, and
+    a domain left behind fails the test that checks every domain has a
+    caller in the tree."""
+    from bpp.db import smart_album_domains as domains
+
+    saved = dict(domains._DOMAIN_ALBUM_MAP)
+    yield
+    domains._DOMAIN_ALBUM_MAP.clear()
+    domains._DOMAIN_ALBUM_MAP.update(saved)
+
+
+@pytest.fixture(autouse=True)
 def _restore_face_backend_registries():
     """Undo face detectors / embedders a test registered.
 

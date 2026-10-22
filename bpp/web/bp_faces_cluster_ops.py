@@ -43,6 +43,9 @@ bp = Blueprint("faces_cluster_ops", __name__)
 
 log = get_logger(__name__)
 
+#: Budget for one block of the face x centroid distance product.
+NEAREST_BLOCK_BYTES = 64 * 1024 * 1024
+
 _ACTIVE = ACTIVE_PHOTO_SQL
 
 
@@ -410,14 +413,34 @@ def _nearest_cluster_updates(
     centroids_mat = np.stack([centroids[c] for c in cluster_ids])
     cid_to_col = {c: i for i, c in enumerate(cluster_ids)}
     # ||a-b||^2 = ||a||^2 + ||b||^2 - 2 a·b; clip to 0 before sqrt
-    # to absorb tiny negative values from float roundoff.
-    a2 = (embs_mat * embs_mat).sum(axis=1)
+    # to absorb tiny negative values from float roundoff. The faces go
+    # through in blocks so the distance product stays within
+    # NEAREST_BLOCK_BYTES (an N x M matrix at 100k x 10k would be 4 GB).
     b2 = (centroids_mat * centroids_mat).sum(axis=1)
-    dist2 = a2[:, None] + b2[None, :] - 2.0 * (embs_mat @ centroids_mat.T)
-    np.maximum(dist2, 0, out=dist2)
-    dist_mat = np.sqrt(dist2)
-    best_cols = dist_mat.argmin(axis=1)
-    best_dists = dist_mat[np.arange(len(face_ids)), best_cols]
+    n_faces = len(face_ids)
+    best_cols = np.empty(n_faces, dtype=np.int64)
+    best_dists = np.empty(n_faces, dtype=np.float64)
+    # The hard-negative check needs, per face, only the distances to the
+    # partners of its own best cluster: gathered per block as they are
+    # computed, never as another N x M matrix.
+    neg_dists: dict[int, dict[int, float]] = {}
+    block = max(1, NEAREST_BLOCK_BYTES // max(1, len(cluster_ids) * 8))
+    for start in range(0, n_faces, block):
+        chunk = embs_mat[start : start + block]
+        a2 = (chunk * chunk).sum(axis=1)
+        dist2 = a2[:, None] + b2[None, :] - 2.0 * (chunk @ centroids_mat.T)
+        np.maximum(dist2, 0, out=dist2)
+        np.sqrt(dist2, out=dist2)
+        cols = dist2.argmin(axis=1)
+        best_cols[start : start + len(chunk)] = cols
+        best_dists[start : start + len(chunk)] = dist2[np.arange(len(chunk)), cols]
+        for r, col in enumerate(cols):
+            partners = hard_neg_map.get(cluster_ids[int(col)])
+            if partners:
+                neg_dists[start + r] = {
+                    p: float(dist2[r, cid_to_col[p]]) for p in partners if p in cid_to_col
+                }
+        del dist2
 
     updates: list[tuple[int, int]] = []
     assigned_count = 0
@@ -431,9 +454,8 @@ def _nearest_cluster_updates(
             # confusable partner and this face is close to both,
             # create a new cluster instead of guessing wrong.
             skip = False
-            for neg_cid in hard_neg_map.get(best_cid, set()):
-                neg_col = cid_to_col.get(neg_cid)
-                if neg_col is not None and dist_mat[i, neg_col] < ambiguity_radius:
+            for neg_dist in neg_dists.get(i, {}).values():
+                if neg_dist < ambiguity_radius:
                     skip = True
                     break
             if not skip:

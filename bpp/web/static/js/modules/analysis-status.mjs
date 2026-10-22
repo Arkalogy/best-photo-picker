@@ -15,6 +15,7 @@
  */
 
 import { apiFetch } from "./api-client.mjs";
+import { fetchAllPages } from "./paging.mjs";
 import { escapeAttr } from "./text-format.mjs";
 import { MONTHS_SHORT, formatDate } from "./date-format.mjs";
 import { loadAlbumList } from "./albums.mjs";
@@ -305,9 +306,9 @@ export async function showPreviewGallery(importedCount) {
   document.querySelector("main")?.classList.add("analyzing-pending");
   showSkeletonGrid(importedCount || 12);
 
-  const data = await apiFetch("/api/v1/photos/preview");
-  if (data.photos && data.photos.length > 0) {
-    win.photos = data.photos;
+  const photos = await fetchAllPages("/api/v1/photos/preview", { pageSize: 500 });
+  if (photos.length > 0) {
+    win.photos = photos;
     win.selectedPaths = new Set();
     win.renderGrid?.();
   }

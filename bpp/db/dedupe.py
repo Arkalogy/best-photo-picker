@@ -59,6 +59,7 @@ Idempotency
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 
 from bpp.utils.logging import get_logger
 
@@ -69,51 +70,96 @@ log = get_logger(__name__)
 DEFAULT_HAMMING_THRESHOLD = 8
 
 
-def _hamming(a: int, b: int) -> int:
-    """Count differing bits between two 64-bit integers."""
-    return bin(a ^ b).count("1")
-
-
-def _date_seconds_diff(a: str | None, b: str | None) -> float:
-    """Return elapsed seconds between two ISO-8601 date strings.
-
-    Returns 0 if either is None/empty (treat as same time — still cluster).
-    Returns a large value if parsing fails (conservative: don't cluster).
-    """
-    if not a or not b:
-        return 0.0
+def _date_to_seconds(date: str | None) -> float | None:
+    """An ISO-8601 date as seconds, or None when missing / unparseable."""
+    if not date:
+        return None
     try:
         from datetime import datetime
 
-        fmt = "%Y-%m-%dT%H:%M:%S" if "T" in a else "%Y-%m-%d %H:%M:%S"
-        ta = datetime.strptime(a[:19], fmt)
-        tb = datetime.strptime(b[:19], fmt)
-        return abs((tb - ta).total_seconds())
+        fmt = "%Y-%m-%dT%H:%M:%S" if "T" in date else "%Y-%m-%d %H:%M:%S"
+        return datetime.strptime(date[:19], fmt).timestamp()
     except Exception:
-        return float("inf")
-
-
-def _min_hash_distance(
-    ph1: int | None,
-    ah1: int | None,
-    ph2: int | None,
-    ah2: int | None,
-) -> int:
-    """Return the minimum hamming distance across the two hash types.
-
-    A photo pair is near-duplicate if either dHash OR aHash agrees on
-    similarity — matching on one robust hash is sufficient evidence.
-    Returns 65 (impossible value) when both comparisons are unavailable.
-    """
-    distances = []
-    if ph1 is not None and ph2 is not None:
-        distances.append(_hamming(ph1, ph2))
-    if ah1 is not None and ah2 is not None:
-        distances.append(_hamming(ah1, ah2))
-    return min(distances) if distances else 65
+        return None
 
 
 DEFAULT_TIME_WINDOW_SECONDS = 60
+
+
+def _link_near_duplicates(
+    rows: list,
+    union: Callable[[int, int], None],
+    hamming_threshold: int,
+    time_window_seconds: int,
+) -> None:
+    """Union every pair of ``rows`` (``(id, phash, ahash, date)``) that is
+    within the hash threshold and the time window.
+    """
+    # Dates parsed once; rows sorted by time so each row's window is a
+    # contiguous slice found by bisection. Undated rows (no EXIF, not yet
+    # scored) sit in their own bucket at the end: they are compared with
+    # each other only, and all of it vectorised, so a batch that shares
+    # one timestamp or none at all is not a Python-level quadratic.
+    import bisect
+
+    import numpy as np
+
+    from bpp.selection.diversity import _hamming_many
+
+    u64 = (1 << 64) - 1
+    dated: list[tuple[float, int]] = []
+    undated: list[int] = []
+    for i, (_id, _ph, _ah, date) in enumerate(rows):
+        secs = _date_to_seconds(date)
+        if secs is None:
+            undated.append(i)
+        else:
+            dated.append((secs, i))
+    dated.sort()
+
+    def _buffers(indices: list[int]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        ph = np.zeros(len(indices), dtype=np.uint64)
+        ah = np.zeros(len(indices), dtype=np.uint64)
+        has = np.zeros((len(indices), 2), dtype=bool)
+        for k, i in enumerate(indices):
+            _id, p, a, _d = rows[i]
+            if p is not None:
+                ph[k] = np.uint64(int(p) & u64)
+                has[k, 0] = True
+            if a is not None:
+                ah[k] = np.uint64(int(a) & u64)
+                has[k, 1] = True
+        return ph, ah, has
+
+    def _link_window(order: list[int], lo: int, hi: int, k: int) -> None:
+        """Union row ``order[k]`` with every row in ``order[lo:hi]`` within
+        the hash threshold (min over the hash types both rows carry)."""
+        if hi <= lo:
+            return
+        i = order[k]
+        _id, p, a, _d = rows[i]
+        sl = slice(lo, hi)
+        best = np.full(hi - lo, 65, dtype=np.int64)
+        if p is not None:
+            d = _hamming_many(int(p) & u64, ph_buf[sl]).astype(np.int64)
+            best = np.where(has_buf[sl, 0], np.minimum(best, d), best)
+        if a is not None:
+            d = _hamming_many(int(a) & u64, ah_buf[sl]).astype(np.int64)
+            best = np.where(has_buf[sl, 1], np.minimum(best, d), best)
+        for off in np.nonzero(best <= hamming_threshold)[0]:
+            union(i, order[lo + int(off)])
+
+    order = [i for _s, i in dated]
+    times = [s for s, _i in dated]
+    ph_buf, ah_buf, has_buf = _buffers(order)
+    for k in range(len(order)):
+        hi = bisect.bisect_right(times, times[k] + time_window_seconds)
+        _link_window(order, k + 1, hi, k)
+    if undated:
+        order = undated
+        ph_buf, ah_buf, has_buf = _buffers(order)
+        for k in range(len(order)):
+            _link_window(order, k + 1, len(order), k)
 
 
 def assign_near_duplicate_clusters(
@@ -169,26 +215,7 @@ def assign_near_duplicate_clusters(
         if rx != ry:
             parent[ry] = rx
 
-    # Sort by phash to allow early-exit: once phash values differ by
-    # more than 2^threshold, no later pair can be within threshold.
-    # (Note: this is an approximation — phash bit difference doesn't map
-    # linearly to hamming distance, but it dramatically reduces inner loop
-    # iterations in practice.)
-    # Sort by date so the inner loop can break early once timestamps diverge
-    indexed = list(enumerate(rows))
-    indexed.sort(key=lambda t: t[1][3] or "")  # sort by date ISO string
-
-    for i in range(len(indexed)):
-        idx_i, (_id_i, ph_i, ah_i, date_i) = indexed[i]
-        for j in range(i + 1, len(indexed)):
-            idx_j, (_id_j, ph_j, ah_j, date_j) = indexed[j]
-            secs = _date_seconds_diff(date_i, date_j)
-            # Sorted by date: once the gap exceeds the window no later j qualifies
-            if secs > time_window_seconds:
-                break
-            dist = _min_hash_distance(ph_i, ah_i, ph_j, ah_j)
-            if dist <= hamming_threshold:
-                union(idx_i, idx_j)
+    _link_near_duplicates(rows, union, hamming_threshold, time_window_seconds)
 
     # Build cluster groups from union-find roots
     from collections import defaultdict

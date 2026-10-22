@@ -41,13 +41,13 @@ def analyze_single_video(
     """
     mt = model_toggles or {}
     from bpp.media_types import MediaKind, media_kind_from_path
-    from bpp.utils.video import extract_video_metadata
+    from bpp.utils.video import extract_video_metadata, open_capture
 
     if media_kind_from_path(filepath) is not MediaKind.VIDEO:
         return None
 
-    cap = cv2.VideoCapture(filepath)
-    if not cap.isOpened():
+    cap = open_capture(filepath)
+    if cap is None:
         return None
 
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))

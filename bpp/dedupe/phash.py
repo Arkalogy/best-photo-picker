@@ -147,9 +147,14 @@ def compute_dhash_from_file(filepath: str) -> int | None:
         return None
 
 
+#: Hashes are 64-bit patterns; SQLite hands them back as signed ints.
+_HASH_MASK = (1 << 64) - 1
+
+
 def hamming_distance(hash1: int, hash2: int) -> int:
-    """Compute Hamming distance between two hashes."""
-    xor = hash1 ^ hash2
+    """Compute Hamming distance between two hashes (as 64-bit patterns,
+    whatever sign the storage gave them)."""
+    xor = (hash1 & _HASH_MASK) ^ (hash2 & _HASH_MASK)
     return bin(xor).count("1")
 
 

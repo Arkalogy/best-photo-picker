@@ -164,13 +164,18 @@ export function updateStats(s) {
   updateDedupStats(s);
 }
 
+/** The most skeleton cards worth drawing (about two screens). */
+export const SKELETON_MAX = 48;
+
 /**
  * @param {number} [count]
  */
 export function showSkeletonGrid(count) {
   const grid = document.getElementById("photo-grid");
   if (!grid) return;
-  const n = count || 12;
+  // A screen shows a few dozen cards; an import of 200k must not build
+  // a million placeholder elements.
+  const n = Math.min(count || 12, SKELETON_MAX);
   grid.innerHTML = Array.from(
     { length: n },
     () =>

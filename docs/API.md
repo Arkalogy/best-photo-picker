@@ -384,7 +384,7 @@ fixture — used by the Playwright suite's safety gate.
 ### POST /api/v1/settings/clip_max_override
 
 Owner-only. Set or clear the per-library CLIP load-cap bypass.
-Body: `{"value": "bypass"}` to set, `{"value": null}` to clear.
+Body: `{"enable": true}` to set, `{"enable": false}` to clear.
 
 ## Photos
 

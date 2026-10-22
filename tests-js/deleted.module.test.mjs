@@ -397,12 +397,12 @@ describe("restorePhotos / permanentDeletePhotos", () => {
 
 describe("restoreAllDeleted / permanentDeleteAll / unhideAllHidden", () => {
   test("restoreAllDeleted gathers filepaths and restores", async () => {
-    const grid = /** @type {HTMLElement} */ (document.getElementById("photo-grid"));
-    grid.innerHTML = `
-      <div class="deleted-card" data-filepath="/a"></div>
-      <div class="deleted-card" data-filepath="/b"></div>
-    `;
-    const fetchMock = vi.fn(async () => jsonResp({ photos: [] }));
+    // Every page of the listing, not the cards on screen.
+    const fetchMock = vi.fn(async (url) =>
+      String(url).includes("/photos/deleted")
+        ? jsonResp({ photos: [{ filepath: "/a" }, { filepath: "/b" }], total: 2 })
+        : jsonResp({ photos: [], count: 2 })
+    );
     vi.stubGlobal("fetch", fetchMock);
     await restoreAllDeleted();
     const calls = /** @type {any[][]} */ (fetchMock.mock.calls);
@@ -415,13 +415,17 @@ describe("restoreAllDeleted / permanentDeleteAll / unhideAllHidden", () => {
     const fetchMock = vi.fn(async () => jsonResp({}));
     vi.stubGlobal("fetch", fetchMock);
     await permanentDeleteAll();
-    expect(fetchMock).not.toHaveBeenCalled();
+    // The listing is read (one page, empty); nothing is deleted.
+    const calls = /** @type {any[][]} */ (fetchMock.mock.calls);
+    expect(calls.find((c) => String(c[0]).includes("delete-permanent"))).toBeUndefined();
   });
 
   test("unhideAllHidden gathers and unhides", async () => {
-    const grid = /** @type {HTMLElement} */ (document.getElementById("photo-grid"));
-    grid.innerHTML = `<div class="deleted-card" data-filepath="/h"></div>`;
-    const fetchMock = vi.fn(async () => jsonResp({ photos: [] }));
+    const fetchMock = vi.fn(async (url) =>
+      String(url).includes("/photos/hidden")
+        ? jsonResp({ photos: [{ filepath: "/h" }], total: 1 })
+        : jsonResp({ photos: [], count: 1 })
+    );
     vi.stubGlobal("fetch", fetchMock);
     await unhideAllHidden();
     const calls = /** @type {any[][]} */ (fetchMock.mock.calls);

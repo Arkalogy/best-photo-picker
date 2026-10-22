@@ -198,23 +198,45 @@ def api_photo_detail(photo_id: int) -> tuple[Response, int]:
     return jsonify(ctx.build_photo_dict(row)), 200
 
 
+#: The preview is a first look, not the library view: one page at a time.
+PREVIEW_PAGE_MAX = 500
+
+
 @bp.get("/api/v1/photos/preview")
 def api_photos_preview() -> tuple[Response, int]:
-    """Return photos from DB for preview before analysis is complete."""
+    """Return photos from DB for preview before analysis is complete.
+
+    Paged: ``?limit=`` (default and at most ``PREVIEW_PAGE_MAX``) and
+    ``?offset=``; ``total`` is the full row count, ``count`` the slice.
+    """
     ctx = get_ctx()
     conn = ctx.get_conn()
     data = db_get_all_photos(conn)
     if not data:
-        return jsonify({"photos": [], "count": 0}), 200
+        return jsonify({"photos": [], "count": 0, "total": 0}), 200
     if ctx.thumbs is None:
         ctx.thumbs = ThumbnailCache(ctx.dirs["thumbs"])
     ctx.thumbs.build_map(data)
+    try:
+        limit = min(int(request.args.get("limit", PREVIEW_PAGE_MAX)), PREVIEW_PAGE_MAX)
+        offset = max(int(request.args.get("offset", 0)), 0)
+    except ValueError:
+        limit, offset = PREVIEW_PAGE_MAX, 0
+    page = data[offset : offset + max(limit, 0)]
     photos_out = []
-    for item in data:
+    for item in page:
         d = ctx.build_photo_dict(item)
         d["analyzed"] = item.get("aggregate_score") is not None
         photos_out.append(d)
-    return jsonify({"photos": photos_out, "count": len(photos_out)}), 200
+    return jsonify(
+        {
+            "photos": photos_out,
+            "count": len(photos_out),
+            "total": len(data),
+            "limit": limit,
+            "offset": offset,
+        }
+    ), 200
 
 
 @bp.post("/api/v1/override")

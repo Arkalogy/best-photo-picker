@@ -72,13 +72,16 @@ export async function batchOverride(mode) {
       const m = prevOverrides[fp] || "null";
       (byMode[m] = byMode[m] || []).push(fp);
     }
-    for (const [m, fps] of Object.entries(byMode)) {
+    const calls = Object.entries(byMode).map(([m, fps]) =>
       apiFetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ filepaths: fps, mode: m === "null" ? null : m }),
-      }).catch((e) => console.warn("Batch override undo failed:", e));
-    }
+      })
+    );
+    Promise.all(calls).catch((e) => {
+      toastError("undo the batch change", e, "reload to see the saved state");
+    });
   });
 }
 
@@ -122,18 +125,32 @@ export async function batchFavorite(favorite) {
     renderGrid();
     const toFav = filepaths.filter((fp) => prevFavs[fp]);
     const toUnfav = filepaths.filter((fp) => !prevFavs[fp]);
+    const calls = [];
     if (toFav.length)
-      apiFetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filepaths: toFav, favorite: true }),
-      }).catch((e) => console.warn("Batch favorite undo failed:", e));
+      calls.push(
+        apiFetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filepaths: toFav, favorite: true }),
+        })
+      );
     if (toUnfav.length)
-      apiFetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filepaths: toUnfav, favorite: false }),
-      }).catch((e) => console.warn("Batch favorite undo failed:", e));
+      calls.push(
+        apiFetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filepaths: toUnfav, favorite: false }),
+        })
+      );
+    Promise.all(calls).catch((e) => {
+      // The server kept the batch: put the view back the way it is.
+      for (const fp of filepaths) {
+        if (favorite) favorites.add(fp);
+        else favorites.delete(fp);
+      }
+      renderGrid();
+      toastError("undo the favorite change", e, "reload to see the saved state");
+    });
   });
 }
 

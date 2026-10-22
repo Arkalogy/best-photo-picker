@@ -228,8 +228,15 @@ export async function _editorRevertToOriginal() {
     p._enhanced = false;
 
     const cacheBust = "?t=" + Date.now();
+    // Only the lightbox still showing this photo gets its new image;
+    // the grid card and thumbnail are updated either way.
+    const shown = (/** @type {any} */ (window).currentGridItems || [])[
+      /** @type {any} */ (window).lightboxIdx
+    ];
     const img = /** @type {HTMLImageElement | null} */ (document.getElementById("lb-img"));
-    if (img) img.src = authedSrc("/photo/" + p.thumb_hash + cacheBust);
+    if (img && shown && shown.filepath === p.filepath) {
+      img.src = authedSrc("/photo/" + p.thumb_hash + cacheBust);
+    }
     _bustGridThumb(p.thumb_hash, cacheBust);
     updateCardInPlace(p.filepath);
     // Remove pencil badge from grid card — updateCardInPlace doesn't touch it.
@@ -337,8 +344,15 @@ async function _saveEdits(p) {
     }
 
     const cacheBust = "?t=" + Date.now();
+    // Only the lightbox still showing this photo gets its new image;
+    // the grid card and thumbnail are updated either way.
+    const shown = (/** @type {any} */ (window).currentGridItems || [])[
+      /** @type {any} */ (window).lightboxIdx
+    ];
     const img = /** @type {HTMLImageElement | null} */ (document.getElementById("lb-img"));
-    if (img) img.src = authedSrc("/photo/" + p.thumb_hash + cacheBust);
+    if (img && shown && shown.filepath === p.filepath) {
+      img.src = authedSrc("/photo/" + p.thumb_hash + cacheBust);
+    }
     _bustGridThumb(p.thumb_hash, cacheBust);
     updateCardInPlace(p.filepath);
   } catch (err) {

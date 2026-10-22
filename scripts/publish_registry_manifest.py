@@ -158,7 +158,11 @@ def main() -> int:
     print()
 
     try:
-        pasted = input(
+        # Never echoed: the key would otherwise land in the terminal's
+        # scrollback and in any recording of the session.
+        import getpass
+
+        pasted = getpass.getpass(
             "Paste the private key (paste-friendly password vault), then press Enter: "
         ).strip()
     except EOFError:

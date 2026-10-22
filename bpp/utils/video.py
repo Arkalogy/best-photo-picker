@@ -32,6 +32,39 @@ def is_video_file(filepath: str) -> bool:
     return ext in VIDEO_EXTENSIONS
 
 
+#: FFmpeg (OpenCV's backend) follows the URLs inside a DASH / HLS manifest
+#: that merely carries a video extension; the capture options pin it to
+#: the local file protocol. Read when a capture opens, so set at import.
+os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "protocol_whitelist;file")
+
+
+def _looks_like_a_manifest(filepath: str) -> bool:
+    """A text file (an XML / M3U playlist with a video extension) is not a
+    video container: every container this app reads starts with binary
+    bytes. Such a file is never handed to the decoder at all."""
+    try:
+        with open(filepath, "rb") as f:
+            head = f.read(64)
+    except OSError:
+        return False
+    if not head:
+        return True
+    text = head.lstrip(b"\xef\xbb\xbf \t\r\n")
+    return text[:1] in (b"<", b"#") or all(32 <= b < 127 or b in (9, 10, 13) for b in head)
+
+
+def open_capture(filepath: str) -> cv2.VideoCapture | None:
+    """The one way this app opens a video: refuses manifests, pins the
+    decoder to local files, returns None when the file does not open."""
+    if _looks_like_a_manifest(filepath):
+        return None
+    cap = cv2.VideoCapture(filepath, cv2.CAP_FFMPEG)
+    if not cap.isOpened():
+        cap.release()
+        return None
+    return cap
+
+
 def extract_video_frame(filepath: str, position: float = 0.5) -> Image.Image | None:
     """Extract a single frame from a video file using OpenCV.
 
@@ -43,8 +76,8 @@ def extract_video_frame(filepath: str, position: float = 0.5) -> Image.Image | N
         PIL Image of the frame, or None if extraction fails.
     """
     try:
-        cap = cv2.VideoCapture(filepath)
-        if not cap.isOpened():
+        cap = open_capture(filepath)
+        if cap is None:
             return None
 
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -77,8 +110,8 @@ def extract_video_metadata(filepath: str) -> dict | None:
     Returns None if the file cannot be opened as a video.
     """
     try:
-        cap = cv2.VideoCapture(filepath)
-        if not cap.isOpened():
+        cap = open_capture(filepath)
+        if cap is None:
             return None
 
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -138,8 +171,8 @@ def generate_video_sprite(
     try:
         import numpy as np
 
-        cap = cv2.VideoCapture(filepath)
-        if not cap.isOpened():
+        cap = open_capture(filepath)
+        if cap is None:
             return False
 
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))

@@ -32,8 +32,12 @@ export async function fetchAllPages(url, opts = {}) {
     const items = /** @type {any[]} */ (data?.[key] || []);
     all.push(...items);
     opts.onPage?.(items);
-    if (!data?.has_more || items.length === 0) break;
     offset += items.length;
+    // Endpoints signal the end with has_more, or with total (the Trash /
+    // Hidden listings); without either, one page is all there is.
+    const more =
+      data?.has_more ?? (typeof data?.total === "number" ? offset < data.total : false);
+    if (!more || items.length === 0) break;
   }
   return all;
 }

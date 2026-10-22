@@ -278,10 +278,11 @@ def api_clear_library() -> tuple[Response, int]:
     ctx.invalidate_analysis()
     with ctx.lock:
         ctx.thumbs = None
-        ctx.caches.clip_cache["embeddings"] = {}
         from bpp.web.recompute import dedupe_cache_clear
 
-        ctx.caches.clip_cache["ready"] = False
+        # The whole cache, matrix and ids included (410 MB at the cap):
+        # nothing of the cleared library stays referenced.
+        ctx.caches.clip_cache = {"embeddings": {}, "ready": False}
         dedupe_cache_clear()
     return jsonify({"status": "cleared", **result}), 200
 
