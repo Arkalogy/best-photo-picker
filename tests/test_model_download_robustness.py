@@ -265,7 +265,7 @@ def test_every_model_writer_uses_a_per_writer_temp_file(tmp_path, monkeypatch, w
     assert str(os.getpid()) in seen[0], seen[0]
 
 
-# ── review round 2 ──────────────────────────────────────────────────
+# ── repair from the bundle ──────────────────────────────────────────
 
 
 def test_a_bad_bundled_copy_is_not_loaded_on_repair(tmp_path):
@@ -402,7 +402,7 @@ def test_buffalo_s_uninstall_clears_partial_downloads(tmp_path, monkeypatch):
     assert not leftover.exists()
 
 
-# ── review round 3 ──────────────────────────────────────────────────
+# ── failures while removing local weights ────────────────────────────
 
 
 @pytest.mark.parametrize(

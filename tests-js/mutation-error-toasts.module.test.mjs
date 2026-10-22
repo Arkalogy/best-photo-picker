@@ -1,7 +1,7 @@
 // @ts-check
 /**
  * Every mutating handler names the action, the reason and a way out when
- * it fails (CLAUDE.md error-toast policy), and never leaves a control
+ * it fails (the error-toast policy), and never leaves a control
  * stuck. Three handlers slipped past that: Apply on the face-threshold
  * slider (a failed request left the button on "Applying…"), Name &
  * Confirm in the people review (an unhandled rejection) and the analyze /
