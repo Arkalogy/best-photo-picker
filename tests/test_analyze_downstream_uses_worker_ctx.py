@@ -26,5 +26,7 @@ def test_downstream_phases_kick_recovery_through_the_worker_ctx(monkeypatch):
     valid = [{"filepath": "/x/a.jpg", "phash": None, "ahash": None}]
     counts: dict = {}
     worker._downstream_phases(None, valid, {"model_clip": False}, counts)
-    assert ctx.state["analysis"] is valid
+    # The raw scoring dicts carry no row ids: the cache is dropped so
+    # readers reload the stored rows instead.
+    assert ctx.state["analysis"] is None
     assert kicked == [valid], "derived recovery must start without a request context"

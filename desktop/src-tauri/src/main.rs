@@ -1,7 +1,7 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{
@@ -77,6 +77,7 @@ fn main() {
 
             // Shared state for respawn coordination
             let respawning = Arc::new(AtomicBool::new(false));
+            let generation = Arc::new(AtomicU64::new(0));
             let respawn_count = Arc::new(AtomicU32::new(0));
             // Diagnosis the sidecar stderr scanner writes when it spots a
             // known, non-retryable startup failure (e.g. newer-schema DB).
@@ -88,6 +89,7 @@ fn main() {
                 respawning: respawning.clone(),
                 respawn_count: respawn_count.clone(),
                 startup_failure: startup_failure.clone(),
+                generation: generation.clone(),
             });
 
             // In release mode, spawn the sidecar binary.
@@ -104,6 +106,7 @@ fn main() {
                 let respawning_nav = respawning.clone();
                 let respawn_count_nav = respawn_count.clone();
                 let startup_failure_nav = startup_failure.clone();
+                let generation_nav = generation.clone();
                 std::thread::spawn(move || {
                     let splash_start = std::time::Instant::now();
                     let min_splash = Duration::from_millis(1500);
@@ -116,6 +119,7 @@ fn main() {
                             respawning_nav.clone(),
                             respawn_count_nav.clone(),
                             startup_failure_nav.clone(),
+                            generation_nav.clone(),
                         );
                     }
 

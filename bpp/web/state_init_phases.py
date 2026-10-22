@@ -93,6 +93,14 @@ def backup_or_refuse_corrupt(db_p: str, wd: str) -> None:
 
     backup_result = backup_db(db_p)
     if backup_result is None and os.path.isfile(db_p) and os.path.getsize(db_p) > 0:
+        from bpp.db.integrity import check_integrity
+
+        if check_integrity(db_p):
+            # The database is fine; the copy failed (disk full, a
+            # permission, a bad copy). Never tell the owner to restore an
+            # older backup over a healthy database for that.
+            log.warning("Could not write a fresh backup of %s; continuing without one", db_p)
+            return
         backup_path = db_p + ".backup"
         if os.path.isfile(backup_path):
             raise RuntimeError(

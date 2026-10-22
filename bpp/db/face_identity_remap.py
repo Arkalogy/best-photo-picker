@@ -482,6 +482,8 @@ def _assign_new_faces(
         used_ids = set(centroids.keys())
         sub_remap: dict[int, int] = {}
         for sl in sub_labels:
+            if sl == CLUSTER_UNASSIGNED:
+                continue  # a malformed row stays unassigned, never a new person
             if sl not in sub_remap:
                 while next_id in used_ids:
                     next_id += 1
@@ -490,6 +492,7 @@ def _assign_new_faces(
                 next_id += 1
 
         for j, idx in enumerate(leftover_indices):
-            labels[idx] = sub_remap[sub_labels[j]]
+            if sub_labels[j] != CLUSTER_UNASSIGNED:
+                labels[idx] = sub_remap[sub_labels[j]]
 
     return labels

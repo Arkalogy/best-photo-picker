@@ -13,6 +13,7 @@
  * keep working unchanged.
  */
 
+import { reloadSafely } from "./boot-proof.mjs";
 import { toastError } from "./toast.mjs";
 
 /**
@@ -25,6 +26,14 @@ import { toastError } from "./toast.mjs";
  */
 export const _authToken =
   document.querySelector('meta[name="auth-token"]')?.getAttribute("content") || "";
+
+/**
+ * The library this page was rendered for. Every request carries it, so
+ * a tab left open across a library switch cannot act on the other
+ * library's rows (the server answers 409 instead).
+ */
+export const _libraryId =
+  document.querySelector('meta[name="library-id"]')?.getAttribute("content") || "";
 
 /**
  * Append the auth token to a URL for use in `<img src>` / `<video src>`
@@ -87,7 +96,11 @@ export const LONG_OP_TIMEOUT_MS = 10 * 60 * 1000;
 export async function apiFetch(url, opts) {
   opts = opts || {};
   if (!opts.signal) opts.signal = AbortSignal.timeout(30000);
-  opts.headers = Object.assign({ "X-Auth-Token": _authToken }, opts.headers || {});
+  opts.headers = Object.assign(
+    { "X-Auth-Token": _authToken },
+    _libraryId ? { "X-Library-Id": _libraryId } : {},
+    opts.headers || {}
+  );
   const resp = await fetch(url, opts);
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({}));
@@ -98,8 +111,11 @@ export async function apiFetch(url, opts) {
     if (resp.status === 403 && !_sessionLostHandled) {
       _sessionLostHandled = true;
       // Tiny delay so any cleanup tasks (timers, abort signals) settle.
+      // The reload carries the boot key only to a listener that proved
+      // it is this app's server (see boot-proof.mjs): a 403 is also what
+      // a stranger on the port would answer.
       setTimeout(() => {
-        try { window.location.reload(); } catch { /* fallback no-op */ }
+        reloadSafely();
       }, 50);
     }
     const err = /** @type {Error & {status?: number, body?: any}} */ (

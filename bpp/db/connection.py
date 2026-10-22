@@ -257,6 +257,10 @@ def checkpoint_wal(conn: sqlite3.Connection) -> None:
 
 def close_all_connections() -> None:
     """Checkpoint WAL and close all thread-local SQLite connections."""
+    global _INIT_EPOCH
+    with _INIT_LOCK:
+        _INITIALIZED_PATHS.clear()
+        _INIT_EPOCH += 1
     keys = [k for k in _local.__dict__ if k.startswith("conn_")]
     for key in keys:
         db_path = key[len("conn_") :]
@@ -279,6 +283,15 @@ def close_all_connections() -> None:
                 fin()
 
 
+#: Database paths whose tables/migrations this process has already run,
+#: in the current pool epoch: ``close_all_connections`` (a library switch,
+#: a restore) starts a new epoch so a database re-created at the same
+#: path gets its tables again.
+_INITIALIZED_PATHS: set[str] = set()
+_INIT_LOCK = threading.Lock()
+_INIT_EPOCH = 0
+
+
 def init_db(db_path: str) -> sqlite3.Connection:
     """Create tables if needed and return a connection.
 
@@ -290,8 +303,13 @@ def init_db(db_path: str) -> sqlite3.Connection:
     face extraction).
     """
     init_key = f"initialized_{db_path}"
-    if not getattr(_local, init_key, False):
-        conn = get_db(db_path)
-        create_tables(conn)
-        setattr(_local, init_key, True)
+    if getattr(_local, init_key, None) != _INIT_EPOCH:
+        # One thread runs the DDL / migrations; the others wait for it
+        # instead of racing the same ALTER TABLEs on their own connections.
+        with _INIT_LOCK:
+            if db_path not in _INITIALIZED_PATHS:
+                conn = get_db(db_path)
+                create_tables(conn)
+                _INITIALIZED_PATHS.add(db_path)
+        setattr(_local, init_key, _INIT_EPOCH)
     return get_db(db_path)

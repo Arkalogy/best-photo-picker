@@ -20,6 +20,7 @@ from bpp.db.dialect import dialect
 from bpp.db.journal import pending_journals
 from bpp.utils.logging import get_logger
 from bpp.utils.retry import check_storage_accessible
+from bpp.web.e2e_fixture import _e2e_fixture_cache, is_e2e_fixture_library  # noqa: F401
 from bpp.web.share import principal_is_local_app
 from bpp.web.state import get_ctx
 
@@ -53,42 +54,11 @@ def api_storage_health() -> tuple[Response, int]:
     return jsonify(result), 200
 
 
-_E2E_FIXTURE_SENTINEL = ".bpp-e2e-fixture"
-
 # Cache: library root → is-fixture bool. The sentinel never appears or
 # vanishes mid-session, and switching libraries produces a different root
 # (a fresh key), so a plain dict is safe and spares a filesystem stat on
 # every destructive request — the rate-limit gate in app.py calls this on
 # each POST/PUT/DELETE.
-_e2e_fixture_cache: dict[str, bool] = {}
-
-
-def is_e2e_fixture_library() -> bool:
-    """True when the active ``--library`` has the e2e sentinel at its root.
-
-    Consumed by (a) the ``/api/v1/_diag/is_e2e_fixture`` diagnostic the
-    mutation helpers gate on, and (b) the destructive-endpoint rate-limit
-    bypass in ``app.py``. The Playwright suite fires far more mutations
-    per minute than any human, so without the bypass later mutating specs
-    hit the 60/min limiter and 429. A real user library never carries the
-    sentinel, so production rate limits are untouched.
-
-    ``ctx.dirs['root']`` is the actual ``--library`` path. ``state``'s
-    ``library_path`` can fall back to a default user library under TESTING,
-    so don't trust it here — the wrong default would silently green-light
-    mutations (or a limiter bypass) against the user's real photos.
-    """
-    import os
-
-    ctx = get_ctx()
-    library_root = (ctx.dirs or {}).get("root") or ""
-    if not library_root:
-        return False
-    cached = _e2e_fixture_cache.get(library_root)
-    if cached is None:
-        cached = os.path.exists(os.path.join(library_root, _E2E_FIXTURE_SENTINEL))
-        _e2e_fixture_cache[library_root] = cached
-    return cached
 
 
 @bp.get("/api/v1/_diag/is_e2e_fixture")

@@ -332,10 +332,18 @@ class AnalyzeWorker(BackgroundWorker):
         # The worker thread has no request, so the request-bound
         # ``get_ctx`` would find nothing; ``self.ctx`` is the app state
         # the pool handed this worker.
+        # The scoring dicts carry no row ids; publishing them would make
+        # the recompute endpoint fail for the whole faces + CLIP window.
+        # Drop the cache instead: readers reload the stored rows (and the
+        # thumbnail map picks up the new photos).
         ctx = self.ctx
         if ctx is not None:
-            with ctx.lock:
-                ctx.state["analysis"] = valid
+            invalidate = getattr(ctx, "invalidate_analysis", None)
+            if invalidate is not None:
+                invalidate()
+            else:  # a bare test double
+                with ctx.lock:
+                    ctx.state["analysis"] = None
 
         # --- Phase 2: Face extraction + clustering ---
         if config.get("face_recognition_available") and not self._cancelled.is_set():

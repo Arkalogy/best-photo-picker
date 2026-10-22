@@ -214,6 +214,7 @@ def index() -> Response:
                     "index.html",
                     serve_mode=ctx.serve_mode,
                     auth_token=token,
+                    library_id=ctx.library_id,
                     asset_version=_asset_version(),
                     bpp_posture_statement=_bpp_posture_statement(),
                 )
@@ -245,6 +246,7 @@ def index() -> Response:
                 "index.html",
                 serve_mode=ctx.serve_mode,
                 auth_token=token,
+                library_id=ctx.library_id,
                 asset_version=_asset_version(),
                 bpp_posture_statement=_bpp_posture_statement(),
             )

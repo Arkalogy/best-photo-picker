@@ -211,6 +211,10 @@ class WebAppState(_LegacyDelegateMixin):
         yaml_overlay = {k: v for k, v in config.items() if v != DEFAULTS.get(k)}
         self.config: Config = Config(yaml_overlay, get_conn=self.get_conn)
         self.auth_token: str = secrets.token_hex(32)
+        # Which library this process is serving, as an opaque id the page
+        # echoes on every request: a tab opened before a library switch
+        # is refused instead of acting on the other library's rows.
+        self.library_id: str = secrets.token_hex(8)
         # Set by `bpp serve` / the desktop shell: the loopback index page
         # renders the owner token only to a caller presenting this secret
         # (first load, then a cookie). None = open loopback (tests, dev

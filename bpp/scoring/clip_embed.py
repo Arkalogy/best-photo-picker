@@ -206,7 +206,10 @@ def _preprocess(image: np.ndarray) -> np.ndarray:
     # Resize shortest side to 224, then center crop
     h, w = rgb.shape[:2]
     scale = _CLIP_SIZE / min(h, w)
-    new_h, new_w = int(h * scale), int(w * scale)
+    # Round, and never below the crop size: truncation gave 223 for
+    # about 8% of sizes (2448 among them), leaving a 1-pixel crop.
+    new_h = max(_CLIP_SIZE, round(h * scale))
+    new_w = max(_CLIP_SIZE, round(w * scale))
     resized = cv2.resize(rgb, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
     # Center crop

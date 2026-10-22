@@ -6,10 +6,25 @@ from collections import Counter
 
 import numpy as np
 
+from bpp.constants import CLUSTER_UNASSIGNED
 from bpp.scoring.install_hold import import_gated
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
+
+
+def _majority_shape_indices(embeddings: list[np.ndarray], *, where: str) -> list[int]:
+    """Positions of the rows that share the majority shape (all of them
+    when the shapes agree); the minority is logged, as in
+    :func:`_filter_to_majority_shape`, but the caller keeps alignment."""
+    if not embeddings:
+        return []
+    shapes = Counter(e.shape for e in embeddings)
+    if len(shapes) == 1:
+        return list(range(len(embeddings)))
+    majority, _ = shapes.most_common(1)[0]
+    _filter_to_majority_shape(embeddings, where=where)  # logs the drop once
+    return [i for i, e in enumerate(embeddings) if e.shape == majority]
 
 
 def _filter_to_majority_shape(embeddings: list[np.ndarray], *, where: str) -> list[np.ndarray]:
@@ -196,18 +211,24 @@ def cluster_faces(
     if len(embeddings) == 1:
         return [0]
 
-    embeddings = _filter_to_majority_shape(embeddings, where="cluster_faces")
-    if not embeddings:
-        return []
-    if len(embeddings) == 1:
-        return [0]
-
-    matrix = np.stack(embeddings)
+    # Rows of a minority shape (corruption that slipped past decode) are
+    # not clustered, but they keep their position: callers zip the
+    # labels with their face ids, so the result is always input-length.
+    kept = _majority_shape_indices(embeddings, where="cluster_faces")
+    labels_out = [CLUSTER_UNASSIGNED] * len(embeddings)
+    if not kept:
+        return labels_out
+    if len(kept) == 1:
+        labels_out[kept[0]] = 0
+        return labels_out
+    matrix = np.stack([embeddings[i] for i in kept])
     if len(matrix) > LINKAGE_MAX_FACES:
         labels = _blocked_labels(matrix, threshold, LINKAGE_MAX_FACES)
     else:
         labels = _linkage_labels(matrix, threshold)
-    return [int(v) for v in labels]
+    for i, v in zip(kept, labels, strict=True):
+        labels_out[i] = int(v)
+    return labels_out
 
 
 def pick_representative(
@@ -228,9 +249,14 @@ def pick_representative(
     """
     if not embeddings:
         return 0
-    embeddings = _filter_to_majority_shape(embeddings, where="pick_representative")
-    if not embeddings:
+    # The index returned is into the caller's list: cluster on the rows
+    # of the majority shape and map the winner back.
+    kept = _majority_shape_indices(embeddings, where="pick_representative")
+    if not kept:
         return 0
+    if qualities is not None:
+        qualities = [qualities[i] for i in kept]
+    embeddings = [embeddings[i] for i in kept]
     matrix = np.stack(embeddings)
     centroid = matrix.mean(axis=0)
     dists = np.linalg.norm(matrix - centroid, axis=1)
@@ -240,7 +266,7 @@ def pick_representative(
     typicality = 1.0 - dists / max_dist if max_dist > 0 else np.ones(len(dists))
 
     if qualities is None or not any(q is not None for q in qualities):
-        return int(np.argmin(dists))
+        return kept[int(np.argmin(dists))]
 
     # Fill None entries with median of known qualities
     known = [q for q in qualities if q is not None]
@@ -248,4 +274,4 @@ def pick_representative(
     q_arr = np.array([q if q is not None else median_q for q in qualities])
 
     combined = (1.0 - quality_weight) * typicality + quality_weight * q_arr
-    return int(np.argmax(combined))
+    return kept[int(np.argmax(combined))]

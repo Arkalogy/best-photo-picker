@@ -95,11 +95,11 @@ def _mediapipe_detect(
     min_confidence: float = 0.2,
 ) -> list[tuple[int, int, int, int, float]]:
     """Detect faces using MediaPipe BlazeFace. Returns (x, y, w, h, confidence)."""
-    import mediapipe as mp
-
     detector = _get_mediapipe_detector()
     if detector is None:
-        return []
+        return []  # mediapipe not installed (no ``faces`` extra) or model off
+    import mediapipe as mp
+
     # MediaPipe expects 3-channel RGB
     if len(image.shape) == 2:
         rgb = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)

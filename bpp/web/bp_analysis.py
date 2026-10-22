@@ -251,11 +251,25 @@ def api_clear_library() -> tuple[Response, int]:
             "Must send confirmation: 'delete'",
             field="confirmation",
         )
-    if ctx.worker.is_alive or ctx.import_worker.is_alive:
+    busy = [name for name, w in ctx.workers.items() if getattr(w, "is_alive", False)]
+    if busy:
+        labels = {
+            "analyze": "analysis",
+            "import": "an import",
+            "face": "face extraction",
+            "clip": "CLIP extraction",
+            "export": "an export",
+        }
         raise ConflictError(
-            "Cannot clear while analysis or import is running",
-            blocker="analysis_or_import",
+            f"Cannot clear the library while {labels.get(busy[0], busy[0])} is running; "
+            "wait for it to finish",
+            blocker=busy[0],
         )
+    # Background recovery threads (hashes, clustering) write too: let
+    # them finish before the rows and folders go, then re-arm them (the
+    # join sets the cancel flag the next backfill would otherwise honour).
+    ctx.analysis_store.join_threads(timeout=30.0)
+    ctx.analysis_store.bump_generation_and_reset_phash()
     conn = ctx.get_conn()
     library_path = ctx.library_path
     if not library_path:

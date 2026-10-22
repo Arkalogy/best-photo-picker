@@ -9,6 +9,7 @@ re-exported from export.py for back-compat with plugins.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import zipfile
@@ -23,6 +24,28 @@ from bpp.utils.retry import retry_io
 log = get_logger(__name__)
 
 _FMT_EXT = {"jpeg": ".jpg", "png": ".png"}
+
+
+def _fresh_dest(dest: str) -> str:
+    """A sibling temp name to write into; the caller replaces it onto
+    ``dest``. Never open ``dest`` itself for writing: an earlier export in
+    hardlink mode may have made it a second name of the library original,
+    and truncating it would destroy the original's pixels."""
+    out_dir, base = os.path.split(dest)
+    return os.path.join(out_dir, f".{base}.part")
+
+
+def _replace_into(tmp: str, dest: str) -> None:
+    """Move a finished temp file onto ``dest`` (atomic; the old directory
+    entry is replaced, whatever it linked to)."""
+    os.replace(tmp, dest)
+
+
+def _unlink_existing(dest: str) -> None:
+    """Drop an existing entry at ``dest`` before a link is created there.
+    Removing a hard link never touches the file it pointed at."""
+    with contextlib.suppress(FileNotFoundError):
+        os.unlink(dest)
 
 
 def _process_image(
@@ -40,39 +63,49 @@ def _process_image(
     # exits. `img.convert(...)` returns a new Image instance independent
     # of the source file, so rebinding `img` inside the block is fine —
     # the original FD still closes correctly on exit.
-    with Image.open(src) as raw:
-        try:
-            img = ImageOps.exif_transpose(raw)
-        except Exception as e:  # a malformed APP1 block raises SyntaxError
-            log.warning("Exporting %s without applying its EXIF (unreadable): %s", src, e)
-            img = raw.copy()
-        # Resize if needed
-        if max_size and max(img.size) > max_size:
-            img.thumbnail((max_size, max_size), Image.LANCZOS)
-        save_kw: dict = {}
-        if keep_exif:
+    tmp = None
+    try:
+        with Image.open(src) as raw:
             try:
-                exif = img.getexif()
-                exif.pop(0x0112, None)  # orientation is applied, not re-declared
-                if exif:
-                    save_kw["exif"] = exif.tobytes()
+                img = ImageOps.exif_transpose(raw)
             except Exception as e:  # a malformed APP1 block raises SyntaxError
-                log.warning("Exporting %s without its EXIF (unreadable): %s", src, e)
+                log.warning("Exporting %s without applying its EXIF (unreadable): %s", src, e)
+                img = raw.copy()
+            # Resize if needed
+            if max_size and max(img.size) > max_size:
+                img.thumbnail((max_size, max_size), Image.LANCZOS)
+            save_kw: dict = {}
+            if keep_exif:
+                try:
+                    exif = img.getexif()
+                    exif.pop(0x0112, None)  # orientation is applied, not re-declared
+                    if exif:
+                        save_kw["exif"] = exif.tobytes()
+                except Exception as e:  # a malformed APP1 block raises SyntaxError
+                    log.warning("Exporting %s without its EXIF (unreadable): %s", src, e)
 
-        # Determine output format and extension
-        if fmt == "jpeg":
-            if img.mode in ("RGBA", "P", "LA"):
-                img = img.convert("RGB")
-            dest = _swap_ext(dest, ".jpg")
-            img.save(dest, "JPEG", quality=quality, **save_kw)
-        elif fmt == "png":
-            dest = _swap_ext(dest, ".png")
-            img.save(dest, "PNG", **save_kw)
-        else:
-            # original format but resized
-            img.save(dest, **save_kw)
-
-    return dest
+            # Determine output format and extension. The pixels go to a
+            # sibling temp file first (see _fresh_dest), then onto dest.
+            if fmt == "jpeg":
+                if img.mode in ("RGBA", "P", "LA"):
+                    img = img.convert("RGB")
+                dest = _swap_ext(dest, ".jpg")
+                tmp = _fresh_dest(dest)
+                img.save(tmp, "JPEG", quality=quality, **save_kw)
+            elif fmt == "png":
+                dest = _swap_ext(dest, ".png")
+                tmp = _fresh_dest(dest)
+                img.save(tmp, "PNG", **save_kw)
+            else:
+                # original format but resized
+                tmp = _fresh_dest(dest)
+                img.save(tmp, format=raw.format, **save_kw)
+        _replace_into(tmp, dest)
+        return dest
+    finally:
+        if tmp is not None:
+            with contextlib.suppress(OSError):
+                os.remove(tmp)
 
 
 def _swap_ext(path: str, new_ext: str) -> str:
@@ -152,8 +185,7 @@ def _copy_image_without_metadata(src: str, dest: str, quality: int) -> str:
     # A sibling ".part" file, written with the process umask like any
     # export (mkstemp would make it owner-only), replaced into place at
     # the end so an earlier export's file at that name survives a failure.
-    out_dir, base = os.path.split(dest)
-    tmp = os.path.join(out_dir, f".{base}.part")
+    tmp = _fresh_dest(dest)
     try:
         written = _strip_and_save(src, tmp, quality)
         final = dest if written == tmp else os.path.splitext(dest)[0] + ".jpg"
@@ -184,14 +216,22 @@ def metadata_not_strippable(src: str, why: str) -> MetadataNotStrippableError:
 
 
 def _export_copy(src: str, dest: str) -> None:
-    retry_io(shutil.copy2, src, dest, label="export-copy")
+    tmp = _fresh_dest(dest)
+    try:
+        retry_io(shutil.copy2, src, tmp, label="export-copy")
+        _replace_into(tmp, dest)
+    finally:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
 
 
 def _export_hardlink(src: str, dest: str) -> None:
+    _unlink_existing(dest)
     retry_io(os.link, src, dest, label="export-link")
 
 
 def _export_symlink(src: str, dest: str) -> None:
+    _unlink_existing(dest)
     retry_io(os.symlink, os.path.abspath(src), dest, label="export-symlink")
 
 

@@ -193,9 +193,16 @@ async function _pollUntilServerBack() {
     try {
       const r = await fetch("/", {signal: AbortSignal.timeout(3000)});
       if (r.ok) {
+        // Something answers again. The reload carries the boot key only
+        // if the listener proves it is our server (boot-proof.mjs,
+        // bridged onto window); otherwise the key is forgotten first.
         _serverDownPolling = false;
         _healthFailures = 0;
-        location.reload();
+        if (typeof window.reloadSafely === "function") {
+          await window.reloadSafely();
+        } else {
+          location.reload();
+        }
         return;
       }
     } catch {}

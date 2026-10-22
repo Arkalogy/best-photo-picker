@@ -2,7 +2,7 @@
 //! failures that are final (a newer-schema library, a held port),
 //! respawning it with backoff, and the menu's Restart Server.
 
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
@@ -51,6 +51,11 @@ pub(crate) struct RestartState {
     pub(crate) respawning: Arc<AtomicBool>,
     pub(crate) respawn_count: Arc<AtomicU32>,
     pub(crate) startup_failure: Arc<AtomicU8>,
+    /// Bumped by Restart Server before it kills the child: a Terminated
+    /// handler whose child belongs to an older generation stands down
+    /// instead of spawning a second replacement next to the one Restart
+    /// Server spawns (and a stale dead handle can never arm anything).
+    pub(crate) generation: Arc<AtomicU64>,
 }
 
 /// Spawn the sidecar process and wire up log forwarding + termination handling.
@@ -60,7 +65,10 @@ pub(crate) fn spawn_sidecar(
     respawning: Arc<AtomicBool>,
     respawn_count: Arc<AtomicU32>,
     startup_failure: Arc<AtomicU8>,
+    generation: Arc<AtomicU64>,
 ) {
+    // The generation this child belongs to; bumped by Restart Server.
+    let my_generation = generation.load(Ordering::SeqCst);
     let sidecar = handle
         .shell()
         .sidecar("bpp-server")
@@ -109,6 +117,12 @@ pub(crate) fn spawn_sidecar(
                         "[server] terminated: code={:?} signal={:?}",
                         payload.code, payload.signal
                     );
+                    // Restart Server killed this child on purpose and spawns
+                    // the replacement itself: one supervisor, one child.
+                    if generation.load(Ordering::SeqCst) != my_generation {
+                        eprintln!("[server] stopped on purpose — the restart spawns the replacement");
+                        break;
+                    }
                     // A newer-schema DB is a deterministic, non-retryable
                     // failure: respawning just crashes the same way. Skip the
                     // respawn loop and show the actionable update screen now.
@@ -147,6 +161,7 @@ pub(crate) fn spawn_sidecar(
                         respawning.clone(),
                         respawn_count.clone(),
                         startup_failure.clone(),
+                        generation.clone(),
                     );
                     break;
                 }
@@ -163,11 +178,16 @@ pub(crate) fn restart_server(handle: &AppHandle) {
     let respawning = rs.respawning.clone();
     let respawn_count = rs.respawn_count.clone();
     let startup_failure = rs.startup_failure.clone();
+    let generation = rs.generation.clone();
 
-    // Kill existing child
+    // Kill existing child; its Terminated handler sees the flag and
+    // leaves the respawn to us.
     {
         let state = handle.state::<Mutex<ServerState>>();
         let mut guard = state.lock().unwrap();
+        // A new generation: the old child's Terminated handler sees it
+        // and stands down, whether the kill lands or the handle is stale.
+        generation.fetch_add(1, Ordering::SeqCst);
         if let Some(child) = guard.child.take() {
             eprintln!("[restart] Killing existing server");
             let _ = child.kill();
@@ -182,7 +202,7 @@ pub(crate) fn restart_server(handle: &AppHandle) {
 
     // Brief pause for port release, then spawn
     std::thread::sleep(Duration::from_millis(500));
-    spawn_sidecar(handle, port, respawning, respawn_count, startup_failure);
+    spawn_sidecar(handle, port, respawning, respawn_count, startup_failure, generation);
 
     // Health-check loop will detect server is back and reload the page
     eprintln!("[restart] Server restart initiated");

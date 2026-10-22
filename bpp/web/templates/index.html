@@ -1117,6 +1117,7 @@
 </div>
 
 <meta name="auth-token" content="{{ auth_token }}">
+<meta name="library-id" content="{{ library_id }}">
 <script nonce="{{ csp_nonce }}">const serveMode = {{ 'true' if serve_mode else 'false' }};</script>
 
 <!-- ES modules bridge — re-exposes module exports as window globals so
@@ -1137,6 +1138,7 @@
   import * as formatHelpers from "/static/js/modules/format-helpers.mjs";
   import * as scoreFormat from "/static/js/modules/score-format.mjs";
   import * as apiClient from "/static/js/modules/api-client.mjs";
+  import * as bootProof from "/static/js/modules/boot-proof.mjs";
   import * as viewGuard from "/static/js/modules/view-guard.mjs";
   import * as toastModule from "/static/js/modules/toast.mjs";
   import * as theme from "/static/js/modules/theme.mjs";
@@ -1234,7 +1236,7 @@
   Object.assign(
     window,
     stateModule, dateFormat, textFormat, formatHelpers, scoreFormat,
-    apiClient, viewGuard, toastModule, theme, settingsClient, dialogs, modal,
+    apiClient, bootProof, viewGuard, toastModule, theme, settingsClient, dialogs, modal,
     updateChecker, nudges, timeline, presets, memories, onThisDay, wizard,
     importWorker, clipModule, activityLog, groupsModule, mapModule,
     libraryModule, batchRename, onboarding, tagsModule, tagsViewModule, editorRedeye,
