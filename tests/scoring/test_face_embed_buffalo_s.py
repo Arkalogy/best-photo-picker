@@ -20,26 +20,12 @@ import pytest
 from bpp.registry import (
     ModelLoadBlockedError,
     UseContext,
-    confirm_acceptance,
-    get_entry,
-    prepare_acceptance,
     set_use_context,
-    utc_now_iso,
 )
 from bpp.scoring import face_embed_buffalo_s as bs
+from tests._models import accept_buffalo_s
 
-
-def _accept_buffalo_s() -> None:
-    set_use_context(UseContext.PERSONAL, set_via="test")
-    entry = get_entry("insightface_buffalo_s")
-    draft = prepare_acceptance(entry, use_context=UseContext.PERSONAL)
-    confirm_acceptance(
-        draft,
-        checkbox_responses={cb_id: True for cb_id, _ in draft.required_checkboxes},
-        accepted_at=utc_now_iso(),
-        separate_rights_asserted=False,
-        source_of_rights_note="",
-    )
+_accept_buffalo_s = accept_buffalo_s
 
 
 @pytest.fixture(autouse=True)
