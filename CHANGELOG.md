@@ -6,6 +6,17 @@ this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-10-23
+
+### Fixed
+- **The Mac app starts.** The 0.2.0 Mac build did not: macOS refused to
+  let its signed server load the Python runtime it unpacks (library
+  validation under the hardened runtime), so the app never reached its
+  server. The app now carries the entitlements a PyInstaller build
+  needs, and the release pipeline runs the signed server from the
+  installer before anything is uploaded. Install 0.2.1 over 0.2.0.
+  The Python package was not affected.
+
 ## [0.2.0] — 2026-10-23
 
 Licensing, accuracy and hardening release. **Schema version: 44** (unchanged).
@@ -434,7 +445,8 @@ External calls are limited to documented features:
   desktop wrapper currently builds only the macOS bundle.
 - Python 3.11 only (CI tests this version; 3.12+ is unvalidated).
 
-[Unreleased]: https://github.com/Arkalogy/best-photo-picker/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Arkalogy/best-photo-picker/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/Arkalogy/best-photo-picker/releases/tag/v0.2.1
 [0.2.0]: https://github.com/Arkalogy/best-photo-picker/releases/tag/v0.2.0
 [0.1.2]: https://github.com/Arkalogy/best-photo-picker/releases/tag/v0.1.2
 [0.1.1]: https://github.com/Arkalogy/best-photo-picker/releases/tag/v0.1.1
