@@ -8,7 +8,7 @@ import os
 
 import pytest
 
-# Disable the Batch 8 remote-registry fetch for every test run. The
+# Disable the signed remote-registry fetch for every test run. The
 # placeholder URL doesn't exist yet, and even once it does, tests that
 # rely on a stable in-process registry should not depend on a live
 # network call. Set in the module's import-time scope so the fetch
@@ -21,6 +21,63 @@ os.environ.setdefault("BPP_DISABLE_REMOTE_REGISTRY", "1")
 def _isolate_config_home(tmp_path, monkeypatch):
     """Redirect XDG_CONFIG_HOME for every test."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _register_model_files_under_the_real_cache():
+    """Every built-in model module computes its weight path at import
+    from the cache location. A test that redirects the cache (``BPP_MODELS_DIR``)
+    and happens to be the first in its worker to import such a module
+    would pin that module's path to its temp dir for the rest of the
+    session, and later real-weight tests would skip as "not on disk".
+    Register them all first, under the real location."""
+    from bpp.scoring.model_lifecycle import ensure_builtin_model_files_registered
+
+    ensure_builtin_model_files_registered()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_default_library(tmp_path, monkeypatch):
+    """An app built with only a workdir resolves its library to the
+    default path and runs the start-up recoveries there; that must never
+    be the owner's real ``~/Pictures/BestPhotoPicker``."""
+    from bpp.db import library
+
+    monkeypatch.setattr(library, "DEFAULT_LIBRARY_PATH", str(tmp_path / "default-library"))
+
+
+@pytest.fixture(autouse=True)
+def _reset_pairing_rate_limits():
+    """The pairing and destructive-request buckets are process-global and
+    keyed by IP; every LAN test uses the same few addresses, so a worker
+    that served many pairing requests would start answering 429 to a
+    later test's first share-link visit (and the test would see no
+    fingerprint cookie)."""
+    from bpp.web.share_runtime import _reset_pair_request_buckets_for_tests
+
+    _reset_pair_request_buckets_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_install_state(tmp_path, monkeypatch):
+    """Nothing held for a restart, and the installer's hold file and notes
+    in this test's folder — never the real cache (or the venv's notes)."""
+    from bpp.scoring import install_hold
+    from bpp.web import pip_process
+
+    held_file = tmp_path / "install-held" / "held-app.txt"
+    monkeypatch.setattr(install_hold, "_installed", frozenset())
+    monkeypatch.setattr(install_hold, "_written", frozenset())
+    monkeypatch.setattr(install_hold, "_inherited", frozenset())
+    monkeypatch.setattr(install_hold, "_held", frozenset())
+    monkeypatch.setattr(install_hold, "_own_file", held_file)
+    monkeypatch.setattr(install_hold, "_own_file_path", lambda: held_file)  # (become_app)
+    monkeypatch.setenv(install_hold._ENV, str(held_file))
+    monkeypatch.setattr(pip_process, "MARKER_DIR", tmp_path / "install-notes")
+    monkeypatch.setattr(pip_process, "_notes_cache", None)
+    from bpp.web import install_status
+
+    monkeypatch.setattr(install_status, "_facts_cache", None)
 
 
 @pytest.fixture(autouse=True)
@@ -95,11 +152,37 @@ def _close_db_connections():
 
 
 @pytest.fixture(autouse=True)
-def _preaccept_permissive_attribution_entries(request, tmp_path, monkeypatch):
-    """Pre-accept the permissive-attribution entries (SFace, YuNet, dlib).
+def _reset_license_gate_state():
+    """Forget cached license-gate passes and the face_recognition import.
 
-    Under the Option B legal posture (only MIT bypasses the
-    click-through), these Apache-2.0 / Boost models require an
+    Some tests put a fake ``face_recognition`` in ``sys.modules``. The
+    loader caches whatever it imports first, and since it only imports
+    once the dlib license is accepted, that first import can happen
+    inside such a test — the fake would then leak into later tests.
+    """
+    yield
+    from bpp.scoring import face_recognition_loader, model_load_gate
+
+    face_recognition_loader._reset_for_tests()
+    # Each test has its own acceptance log; a gate pass memoized under
+    # one test's log must not carry into the next.
+    for gate in model_load_gate._ALL_GATES:
+        gate.reset()
+    from bpp.web import model_download_jobs, model_filter
+
+    model_filter._license_blocked_cache.clear()
+    # The download-job registry is process-global: a job another test
+    # left running or failed would degrade /api/v1/health for the next.
+    model_download_jobs._reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def _preaccept_permissive_attribution_entries(request, tmp_path, monkeypatch):
+    """Pre-accept every attribution-licensed model plus dlib.
+
+    Because only MIT-licensed models bypass the
+    click-through, these models (Apache-2.0 attribution; dlib is
+    restricted for commercial use) require an
     acceptance row before the runtime gate lets them load. Most
     integration tests aren't intentionally exercising the gate —
     they're testing scoring behaviour that happens to use these
@@ -122,22 +205,18 @@ def _preaccept_permissive_attribution_entries(request, tmp_path, monkeypatch):
     log_path = tmp_path / "preaccept-acceptance.jsonl"
     monkeypatch.setenv("BPP_ACCEPTANCE_LOG_PATH", str(log_path))
     from bpp.registry.acceptance_log import AcceptanceRow, append_row
-    from bpp.registry.disclaimers import (
-        PERMISSIVE_ATTRIBUTION_DISCLAIMER_VERSION,
-        permissive_attribution_disclaimer_sha256,
-    )
-    from bpp.registry.model_registry import get_entry
+    from bpp.registry.attribution_bundle import is_attribution_entry
+    from bpp.registry.model_registry import get_entry, iter_entries
 
-    # Use the real disclaimer hash so ``is_acceptance_valid_for``
-    # accepts the row. Without this the row writes but the gate
-    # still rejects because the ack_text_sha256 mismatches the
-    # entry's current value.
-    ack_sha = permissive_attribution_disclaimer_sha256()
-    for entry_id in (
-        "sface_yunet",
-        "dlib_face_recognition_resnet_v1",
-        "opencv_yunet",
-    ):
+    # Use each entry's own current ack text version + hash so
+    # ``is_acceptance_valid_for`` accepts the row. Without this the row
+    # writes but the gate still rejects because the ack_text_sha256
+    # mismatches the entry's current value.
+    # Every model a default analysis loads (SFace, YuNet, MediaPipe, the
+    # Haar cascade), derived from the registry so a new attribution
+    # model is covered automatically; plus dlib, which many face tests use.
+    preaccepted = [e.id for e in iter_entries() if is_attribution_entry(e)]
+    for entry_id in [*preaccepted, "dlib_face_recognition_resnet_v1"]:
         entry = get_entry(entry_id)
         # Defensive: if a future test runner imports a registry that
         # doesn't have one of these entries, skip rather than fail.
@@ -147,8 +226,8 @@ def _preaccept_permissive_attribution_entries(request, tmp_path, monkeypatch):
             AcceptanceRow(
                 model_id=entry_id,
                 model_sha256="",
-                ack_text_version=PERMISSIVE_ATTRIBUTION_DISCLAIMER_VERSION,
-                ack_text_sha256=ack_sha,
+                ack_text_version=entry.ack_text_version,
+                ack_text_sha256=entry.ack_text_sha256,
                 use_context_text_version="",
                 use_context_text_sha256="",
                 use_context_at_acceptance="personal",
@@ -163,3 +242,231 @@ def _preaccept_permissive_attribution_entries(request, tmp_path, monkeypatch):
             ),
             path=log_path,
         )
+
+
+@pytest.fixture(autouse=True)
+def _restore_album_domains():
+    """Undo album-domain registrations a test made (a plugin that maps a
+    mutation domain to its smart album): the map is process-global, and
+    a domain left behind fails the test that checks every domain has a
+    caller in the tree."""
+    from bpp.db import smart_album_domains as domains
+
+    saved = dict(domains._DOMAIN_ALBUM_MAP)
+    yield
+    domains._DOMAIN_ALBUM_MAP.clear()
+    domains._DOMAIN_ALBUM_MAP.update(saved)
+
+
+@pytest.fixture(autouse=True)
+def _restore_face_backend_registries():
+    """Undo face detectors / embedders a test registered.
+
+    Registered detectors run on every photo, so one left behind by a
+    test (a spy that returns a box) would change later tests' results.
+    """
+    # Register the built-ins before the snapshot, so a first import
+    # during a test can't be "undone" afterwards.
+    import bpp.scoring.face_embed
+    import bpp.scoring.face_pipeline  # noqa: F401
+    from bpp.scoring.face_detector_registry import _REGISTRY as detectors
+    from bpp.scoring.face_embedder_registry import _REGISTRY as embedders
+
+    saved = (dict(detectors._store), dict(embedders._store))
+    yield
+    detectors._store.clear()
+    detectors._store.update(saved[0])
+    embedders._store.clear()
+    embedders._store.update(saved[1])
+
+
+class NetworkBlockedInTests(BaseException):
+    """A test reached the network. Tests stub what they fetch; a test that
+    truly needs the network opts in with ``@pytest.mark.network``.
+
+    A ``BaseException``, not an ``Exception``: the model loaders catch
+    ``Exception`` and degrade to "model unavailable", which would let an
+    un-stubbed test pass (and sleep through the download retries)."""
+
+
+#: (thread, error) for every hit from a thread other than the main one;
+#: recorded here rather than through ``threading.excepthook``, which
+#: pytest swaps in and out around every test phase.
+_thread_hits: list[tuple[object, BaseException]] = []
+
+
+def _blocked(url, *args, **kwargs):
+    import threading
+
+    target = getattr(url, "full_url", url)
+    err = NetworkBlockedInTests(f"test tried to fetch {target}; stub it or mark the test network")
+    if threading.current_thread() is not threading.main_thread():
+        _thread_hits.append((threading.current_thread(), err))
+    raise err
+
+
+def _blocked_open(self, fullurl, *args, **kwargs):  # OpenerDirector.open is a method
+    _blocked(fullurl)
+
+
+class _NetworkBlock:
+    """The suite-wide refusal, installed once per process and never taken
+    down: a worker thread or child process that outlives its test (the
+    derived-recovery thread outlived a whole xdist session once and pulled
+    254 MB of CLIP after the last test) must stay covered. ``saved`` holds
+    the originals so a ``network`` test can have them back."""
+
+    def __init__(self) -> None:
+        self.saved: list[tuple[object, str, object]] = []
+
+    def install(self) -> None:
+        import multiprocessing.process as mp_process
+        import subprocess
+        import sys
+        import urllib.request
+
+        real_popen = subprocess.Popen
+        real_start = mp_process.BaseProcess.start
+
+        class _PopenNoDownloads(real_popen):
+            """Child processes (scoring / face workers) refuse every download."""
+
+            def __init__(  # Popen's own parameter order, so env may arrive positionally
+                self,
+                args,
+                bufsize=-1,
+                executable=None,
+                stdin=None,
+                stdout=None,
+                stderr=None,
+                preexec_fn=None,
+                close_fds=True,
+                shell=False,
+                cwd=None,
+                env=None,
+                *a,
+                **kw,
+            ):
+                env = dict(env if env is not None else os.environ)
+                env["BPP_SKIP_DOWNLOADS"] = "*"
+                super().__init__(
+                    args,
+                    bufsize,
+                    executable,
+                    stdin,
+                    stdout,
+                    stderr,
+                    preexec_fn,
+                    close_fds,
+                    shell,
+                    cwd,
+                    env,
+                    *a,
+                    **kw,
+                )
+
+        # multiprocessing children (spawn context) copy the parent's
+        # environment when they start: carry the refusal across that
+        # start, and only that start, so the parent's own download tests
+        # keep their fakes.
+        def _start_without_downloads(proc, *a, **kw):
+            before = os.environ.get("BPP_SKIP_DOWNLOADS")
+            os.environ["BPP_SKIP_DOWNLOADS"] = "*"
+            try:
+                return real_start(proc, *a, **kw)
+            finally:
+                if before is None:
+                    os.environ.pop("BPP_SKIP_DOWNLOADS", None)
+                else:
+                    os.environ["BPP_SKIP_DOWNLOADS"] = before
+
+        patches: list[tuple[object, str, object]] = [
+            (urllib.request, "urlopen", _blocked),
+            (urllib.request.OpenerDirector, "open", _blocked_open),
+            (subprocess, "Popen", _PopenNoDownloads),
+            (mp_process.BaseProcess, "start", _start_without_downloads),
+        ]
+        for name in ("torch.hub",):  # bound urlopen by name before the block
+            mod = sys.modules.get(name)
+            if mod is not None:
+                patches += [(mod, "urlopen", _blocked), (mod, "download_url_to_file", _blocked)]
+        self.saved = [(obj, attr, getattr(obj, attr)) for obj, attr, _ in patches]
+        for obj, attr, new in patches:
+            setattr(obj, attr, new)
+
+
+@pytest.fixture
+def real_face_pipeline():
+    """Skip unless the real face pipeline (detect → landmarks → embed) can
+    run from weights on disk; see ``tests/_models.py``."""
+    from tests._models import skip_unless_face_pipeline
+
+    skip_unless_face_pipeline()
+
+
+@pytest.fixture
+def sface_configured(monkeypatch):
+    """``embedding_method()`` loads the SFace recognizer just to answer
+    which backend is configured; without the weights that reads as a
+    switch to dlib. Tests about the orchestration don't need the weights."""
+    from bpp.scoring import face_embed
+    from bpp.web import face_phase_classes
+
+    monkeypatch.setattr(face_embed, "embedding_method", lambda conn=None: "sface")
+    monkeypatch.setattr(face_phase_classes, "embedding_method", lambda conn=None: "sface")
+
+
+@pytest.fixture
+def offline_downloads(monkeypatch):
+    """The app under test is offline, like a machine without network: a
+    model that isn't on disk is simply off for the run (download_file
+    refuses instead of fetching). For tests that run an import / analyze
+    in-process and aren't about the models."""
+    monkeypatch.setenv("BPP_SKIP_DOWNLOADS", "*")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _no_network_session():
+    """No test downloads anything. A fresh clone with an empty model cache
+    once pulled ~600 MB of models through the suite; now code that reaches
+    the network fails naming the URL, so the test gets a stub (or, for a
+    test about real weights, a skip when they're absent). Processes a test
+    starts inherit the refusal through ``BPP_SKIP_DOWNLOADS=*``. CI, which
+    keeps a model cache, opts out with ``BPP_TEST_ALLOW_DOWNLOADS=1`` so
+    the real-weight tests run there."""
+    from tests._models import downloads_allowed
+
+    if downloads_allowed():
+        return None
+    block = _NetworkBlock()
+    block.install()
+    return block
+
+
+@pytest.fixture(autouse=True)
+def _no_network(request, monkeypatch, _no_network_session):
+    """Per test: a ``network``-marked test gets the real network back for
+    its duration; every other test fails at teardown if a thread it
+    started reached the network (a thread an earlier test left running
+    is blocked too, but reported only on stderr). Tests that patch
+    ``urlopen`` themselves still can."""
+    import threading
+
+    block = _no_network_session
+    if block is None:
+        yield
+        return
+    if request.node.get_closest_marker("network"):
+        for obj, attr, old in block.saved:
+            monkeypatch.setattr(obj, attr, old)
+        yield
+        return
+    # A background thread (model download jobs run in one) that hits the
+    # block dies with the BaseException instead of reporting failure, so
+    # the test would only see a stuck job: fail it by URL at teardown.
+    already_running = set(threading.enumerate())  # by object: thread ids get recycled
+    _thread_hits.clear()
+    yield
+    own = [err for thread, err in _thread_hits if thread not in already_running]
+    if own:
+        pytest.fail(f"a thread this test started reached the network: {own[0]}")

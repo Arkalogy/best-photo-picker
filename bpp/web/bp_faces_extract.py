@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import shutil
+from typing import Any
 
 from flask import Blueprint, Response, jsonify
 
@@ -26,7 +27,7 @@ from bpp.errors import BppError, ConflictError, FeatureUnavailableError, NotFoun
 from bpp.scoring.face_embed import is_available as face_recognition_available
 from bpp.utils.logging import get_logger
 from bpp.web.share import requires_local_app
-from bpp.web.sse import stream_worker_progress
+from bpp.web.sse import captured_device_fingerprint, stream_worker_progress
 from bpp.web.state import get_ctx, with_face_lock
 
 log = get_logger(__name__)
@@ -44,6 +45,8 @@ def api_faces_extract() -> tuple[Response, int]:
     exist. Returns 409 when analysis or another extraction is
     already running."""
     ctx = get_ctx()
+    # (A resume after a restart owns the face tables: with_face_lock
+    # answers 409 for it before this body runs.)
     analysis = ctx.load_analysis_if_needed()
     if analysis is None:
         raise NotFoundError("No analysis data")
@@ -75,6 +78,8 @@ def api_faces_retry() -> tuple[Response, int]:
     face-extraction worker from scratch. Used when detection settings
     change or initial extraction produced bad clusters."""
     ctx = get_ctx()
+    # (A resume after a restart owns the face tables: with_face_lock
+    # answers 409 for it before this body runs.)
     analysis = ctx.load_analysis_if_needed()
     if analysis is None:
         raise NotFoundError("No analysis data")
@@ -94,6 +99,21 @@ def api_faces_retry() -> tuple[Response, int]:
             blocker="analysis",
         )
 
+    # The wipe below can't be undone: no install may start from here until
+    # the extraction has (it would refuse to, leaving no faces at all) —
+    # and if the extraction can't start now (an install running or waiting
+    # for a restart), nothing is wiped.
+    from bpp.web.base_worker import raise_if_blocked
+    from bpp.web.bp_install import no_install_during
+
+    with no_install_during("face detection to restart"):
+        raise_if_blocked(ctx.face_worker)
+        _wipe_faces_and_restart(ctx, analysis)
+    return jsonify({"status": "started"}), 202
+
+
+def _wipe_faces_and_restart(ctx: Any, analysis: Any) -> None:
+    """Wipe face embeddings, person tags and crops; restart the extraction."""
     # Clear existing face embeddings + manual person tags from main DB.
     # photo_person_tags references cluster IDs that the next extraction
     # will renumber. Without wiping them, _create_tag_only_clusters
@@ -155,7 +175,6 @@ def api_faces_retry() -> tuple[Response, int]:
             user_message="Could not start face extraction",
             diagnostic_message="face_worker.start returned False on retry path",
         )
-    return jsonify({"status": "started"}), 202
 
 
 @bp.get("/api/v1/faces/extract/progress")
@@ -167,6 +186,6 @@ def api_faces_progress() -> Response:
     if the queue starves while the worker is no longer alive."""
     ctx = get_ctx()
     return Response(
-        stream_worker_progress(ctx.face_worker),
+        stream_worker_progress(ctx.face_worker, ctx=ctx, device_fp=captured_device_fingerprint()),
         mimetype="text/event-stream",
     )

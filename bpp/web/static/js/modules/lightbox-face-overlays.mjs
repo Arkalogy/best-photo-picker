@@ -23,7 +23,7 @@
  *   closeLightbox.
  */
 
-import { apiFetch, authedSrc } from "./api-client.mjs";
+import { apiFetch, faceCropUrl } from "./api-client.mjs";
 import { appConfirm } from "./dialogs.mjs";
 import { esc, escapeAttr } from "./text-format.mjs";
 import { toast, toastError } from "./toast.mjs";
@@ -40,11 +40,26 @@ import { _lbShowFaceAssignPicker } from "./lightbox-face-assign.mjs";
 /** @type {any[]} */
 let _lbFaceData = [];
 
+// Each load takes a ticket; a response whose ticket is no longer the
+// newest belongs to a photo the user has already left. Rendering it would
+// draw that photo's boxes and chips on the current one, and a drag or
+// dismiss would then edit the wrong photo's faces.
+let _lbFacesTicket = 0;
+
+/** True when the lightbox has moved on from `p` since this load began. */
+function _lbLeftPhoto(ticket, p) {
+  if (ticket !== _lbFacesTicket) return true;
+  /** @type {any} */
+  const win = window;
+  const open = (win.currentGridItems || [])[win.lightboxIdx];
+  return Boolean(open && open.thumb_hash && p.thumb_hash && open.thumb_hash !== p.thumb_hash);
+}
 
 export async function updateLightboxFaces(p) {
   /** @type {any} */
   const win = window;
   const container = document.getElementById("lb-faces");
+  const ticket = ++_lbFacesTicket;
   _lbFaceData = [];
 
   let faces = [];
@@ -52,9 +67,11 @@ export async function updateLightboxFaces(p) {
   if (p.thumb_hash) {
     try {
       const data = await apiFetch(`/api/v1/faces/photo/${p.thumb_hash}`);
+      if (_lbLeftPhoto(ticket, p)) return;
       faces = data.faces || [];
       personTags = data.person_tags || [];
     } catch (err) {
+      if (_lbLeftPhoto(ticket, p)) return;
       console.warn("Failed to load faces:", err);
     }
   }
@@ -83,7 +100,7 @@ export async function updateLightboxFaces(p) {
   const chips = activeFaces
     .map((f) => {
       const name = f.name || personDisplayName(f.cluster_id) || `Person ${f.cluster_id + 1}`;
-      const cropUrl = authedSrc(`/api/v1/faces/crop/${esc(p.thumb_hash)}/${f.face_index}`);
+      const cropUrl = faceCropUrl(p.thumb_hash, f.face_index);
       return `<div class="lb-face-chip" data-cluster-id="${f.cluster_id}" data-action="_lbOpenPersonAlbum" data-pass-event="true" data-arg0="${f.cluster_id}" data-oncontextmenu="showPersonCtxMenu" title="Open ${escapeAttr(name)}'s photos &nbsp;·&nbsp; right-click for options">
       <img src="${cropUrl}">
       <span class="lb-face-name">${esc(name)}</span>
@@ -98,7 +115,7 @@ export async function updateLightboxFaces(p) {
       const cluster = faceClusters.find((c) => c.cluster_id === pt.cluster_id);
       const rep = cluster && cluster.representative;
       const avatarUrl = rep
-        ? authedSrc(`/api/v1/faces/crop/${esc(rep.thumb_hash)}/${rep.face_index}`)
+        ? faceCropUrl(rep.thumb_hash, rep.face_index)
         : "";
       const img = avatarUrl
         ? `<img src="${avatarUrl}">`
@@ -161,6 +178,18 @@ export async function _lbUntagPerson(e, thumbHash, clusterId) {
  * @param {MouseEvent} e
  * @param {number} clusterId
  */
+/**
+ * Place a face overlay at its bbox (percent of the image).
+ * @param {HTMLElement} box
+ * @param {{x: number, y: number, w: number, h: number}} bboxPct
+ */
+export function applyBboxStyle(box, bboxPct) {
+  box.style.left = bboxPct.x + "%";
+  box.style.top = bboxPct.y + "%";
+  box.style.width = bboxPct.w + "%";
+  box.style.height = bboxPct.h + "%";
+}
+
 export function _lbOpenPersonAlbum(e, clusterId) {
   e.stopPropagation();
   /** @type {any} */
@@ -284,10 +313,7 @@ export function _lbRenderFaceOverlays(faces, thumbHash) {
     if (f.cluster_id !== null && f.cluster_id >= 0) {
       box.classList.add("lb-face-overlay-assigned");
     }
-    box.style.left = f.bbox_pct.x + "%";
-    box.style.top = f.bbox_pct.y + "%";
-    box.style.width = f.bbox_pct.w + "%";
-    box.style.height = f.bbox_pct.h + "%";
+    applyBboxStyle(box, f.bbox_pct);
     box.dataset.faceId = f.face_id;
     box.dataset.faceIndex = f.face_index;
     box.dataset.clusterId = String(f.cluster_id ?? CLUSTER_UNASSIGNED);

@@ -1,10 +1,10 @@
-"""R9-fr-M2: bind-address default depends on the LAN-share toggle.
+"""Bind-address default depends on the LAN-share toggle.
 
 `bpp serve` historically defaulted `--host` to `0.0.0.0`, which
 means a casual run on a public network (coffee-shop Wi-Fi, hotel,
 conference) makes the server visible to a port scan even though
-the auth layer would reject any non-loopback request. The audit
-asked us to default loopback-only when sharing is OFF and let
+the auth layer would reject any non-loopback request. The default is now
+loopback-only when sharing is OFF and let
 the share toggle (or an explicit `--host 0.0.0.0`) opt back into
 LAN binding.
 
@@ -67,7 +67,7 @@ class TestHostDefault:
         host = _run_serve(fake_library)
         assert host == "127.0.0.1", (
             f"Default with sharing OFF should be loopback; got {host!r}. "
-            "Round-9 audit fix: 0.0.0.0 used to be the unconditional default, "
+            "0.0.0.0 used to be the unconditional default, "
             "exposing the service to port scans on coffee-shop Wi-Fi."
         )
 

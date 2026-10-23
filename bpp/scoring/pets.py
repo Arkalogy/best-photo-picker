@@ -18,6 +18,7 @@ from typing import Any
 import cv2
 import numpy as np
 
+from bpp.scoring.install_hold import requires
 from bpp.scoring.model_base import ModelSingleton
 from bpp.utils.logging import get_logger
 
@@ -43,8 +44,8 @@ _CLASS_NAMES = {_CAT_CLASS: "cat", _DOG_CLASS: "dog"}
 #         photo library. `v8.3.0` is the YOLOv11 release tag (the
 #         repo is named "ultralytics/assets" but ships YOLOv11
 #         alongside legacy YOLOv8 weights).
-# License: AGPL-3.0 (Ultralytics) — bpp's [pets] extra is opt-in for
-#         this reason; non-AGPL deployments should skip the extra.
+# License: see the bpp.registry entry ``ultralytics_yolov11n_pets``.
+REGISTRY_ID = "ultralytics_yolov11n_pets"
 # To bump: replace v8.3.0 + filename + SHA together; class IDs 15
 #         and 16 are stable across COCO so no caller-side changes.
 _MODEL_URL = "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.onnx"
@@ -89,13 +90,13 @@ def _create_yolo_session(path: Path | None):
 from bpp.utils.paths import models_dir as _models_dir  # noqa: E402
 
 _yolo = ModelSingleton(
-    name="YOLOv8n pet detector",
+    name="YOLO11n pet detector",
     model_path=_models_dir() / _MODEL_FILENAME,
     model_url=_MODEL_URL,
     model_sha256=_MODEL_SHA256,
     create_fn=_create_yolo_session,
-    registry_id="ultralytics_yolov11n_pets",
-    import_check=lambda: __import__("onnxruntime"),
+    registry_id=REGISTRY_ID,
+    import_check=requires("onnxruntime"),
 )
 
 
@@ -116,39 +117,42 @@ def ensure_model() -> str:
     the integrity check was supposed to prevent.
     """
     from bpp.scoring.model_base import ModelIntegrityError
-    from bpp.utils.download import download_file, verify_existing
+    from bpp.utils.download import download_file, download_temp_path, verify_existing
 
-    model_path = _get_model_path()
-    if os.path.exists(model_path):
-        # Verify cached bytes — propagate ModelIntegrityError
-        verify_existing(model_path, sha256=_MODEL_SHA256)
+    # One download at a time (and uninstall waits for it): same lock as
+    # the loader uses.
+    with _yolo.download_lock:
+        model_path = _get_model_path()
+        if os.path.exists(model_path):
+            # Verify cached bytes — propagate ModelIntegrityError
+            verify_existing(model_path, sha256=_MODEL_SHA256)
+            return model_path
+
+        log.info("Downloading YOLO11n model to %s ...", model_path)
+
+        tmp_path = download_temp_path(model_path)
+        try:
+            download_file(
+                _MODEL_URL,
+                tmp_path,
+                registry_id=REGISTRY_ID,
+                sha256=_MODEL_SHA256,
+            )
+            os.rename(tmp_path, model_path)
+            log.info("Model downloaded (%d KB)", os.path.getsize(model_path) // 1024)
+        except ModelIntegrityError:
+            # Loud failure — propagate.
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            log.error("YOLO model integrity failure", exc_info=True)
+            raise
+        except Exception:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            log.warning("Failed to download YOLOv8n model", exc_info=True)
+            raise
+
         return model_path
-
-    log.info("Downloading YOLOv8n model to %s ...", model_path)
-
-    tmp_path = model_path + ".tmp"
-    try:
-        download_file(
-            _MODEL_URL,
-            tmp_path,
-            registry_id="ultralytics_yolov11n_pets",
-            sha256=_MODEL_SHA256,
-        )
-        os.rename(tmp_path, model_path)
-        log.info("Model downloaded (%d KB)", os.path.getsize(model_path) // 1024)
-    except ModelIntegrityError:
-        # Loud failure — propagate.
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-        log.error("YOLO model integrity failure", exc_info=True)
-        raise
-    except Exception:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-        log.warning("Failed to download YOLOv8n model", exc_info=True)
-        raise
-
-    return model_path
 
 
 def _get_session():
@@ -160,10 +164,7 @@ def _get_session():
     in commercial mode) before the weights load. Raises
     :class:`bpp.registry.ModelLoadBlockedError` otherwise.
     """
-    from bpp.registry import enforce_load_policy_for
-
-    enforce_load_policy_for("ultralytics_yolov11n_pets")
-    return _yolo.get()
+    return _yolo.get_or_raise()  # per photo: one cached license check
 
 
 def _preprocess(
@@ -456,5 +457,6 @@ ModelRegistry.register(
         url=_MODEL_URL,
         sha256=_MODEL_SHA256,
         reset=_yolo.reset,
+        legal_id=REGISTRY_ID,
     )
 )

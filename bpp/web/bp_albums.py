@@ -7,6 +7,7 @@ from typing import Any
 
 from flask import Blueprint, Response, jsonify, request
 
+from bpp.config_schema import validate_value
 from bpp.constants import ACTIVE_PHOTO_SQL, active_photo_sql
 from bpp.db.albums import (
     add_photos_to_album,
@@ -23,113 +24,43 @@ from bpp.db.albums import (
 from bpp.db.photos import (
     get_photo_ids_by_paths,
 )
+from bpp.db.smart_albums import SmartAlbumRegistry
 from bpp.errors import NotFoundError, ValidationError
 from bpp.utils.logging import get_logger
+from bpp.web import album_siblings  # noqa: F401  (registers the Duplicates response hook)
 from bpp.web.recompute import (
-    RECOMPUTE_WEIGHT_KEYS,
+    recompute_weight_keys,
 )
 from bpp.web.share import requires_local_app
 from bpp.web.state import clamp_k, get_ctx
+from bpp.web.state_helpers import clamp_override
 
 log = get_logger(__name__)
 
+
 # Keys allowed through the PUT /api/v1/albums/:id config update.
-# Scoring weights auto-populate from RECOMPUTE_WEIGHT_KEYS; UI state
+# Scoring weights come from recompute_weight_keys() at use time; UI state
 # flags are listed explicitly. Unknown keys are silently dropped.
-_ALLOWED_CONFIG_KEYS: frozenset[str] = frozenset(RECOMPUTE_WEIGHT_KEYS) | {"k_user_set"}
+def _allowed_config_keys() -> frozenset[str]:
+    return frozenset(recompute_weight_keys()) | {"k_user_set"}
+
+
+def _validated_config(cfg: Any) -> dict[str, Any]:
+    """The album config a request may store: a weight clamped to its 0-1
+    range, anything else checked against the schema, unknown keys
+    dropped — a stored value is used unchecked at recompute time."""
+    if not isinstance(cfg, dict):
+        raise ValidationError("config must be an object", field="config")
+    weight_keys = recompute_weight_keys()
+    allowed = _allowed_config_keys()
+    return {
+        k: clamp_override(k, v) if k in weight_keys else validate_value(k, v)
+        for k, v in cfg.items()
+        if k in allowed
+    }
+
+
 bp = Blueprint("albums", __name__)
-
-
-def _attach_cluster_siblings_from_db(
-    conn: Any,
-    thumbs: Any,
-    photos: list[dict[str, Any]],
-    raw_data: list[dict[str, Any]],
-) -> None:
-    """Attach similar_photos siblings for Duplicates album photos.
-
-    Uses dup_cluster_id (set by assign_near_duplicate_clusters) when
-    available so burst shots with different-but-close phash values are
-    grouped correctly.  Falls back to exact phash matching for libraries
-    that haven't been clustered yet.
-    """
-    from collections import defaultdict
-
-    from bpp.constants import ACTIVE_PHOTO_SQL
-
-    # Check if clustering has run — prefer dup_cluster_id grouping
-    use_clusters = (
-        conn.execute("SELECT 1 FROM photos WHERE dup_cluster_id > 0 LIMIT 1").fetchone() is not None
-    )
-
-    if use_clusters:
-        # Gather cluster IDs from this page (skip singletons, cluster_id=0)
-        cluster_ids: set[int] = set()
-        for raw in raw_data:
-            cid = raw.get("dup_cluster_id")
-            if cid and cid > 0:
-                cluster_ids.add(cid)
-        if not cluster_ids:
-            return
-        placeholders = ",".join("?" for _ in cluster_ids)
-        rows = conn.execute(
-            f"SELECT filepath, dup_cluster_id, aggregate_score, blur_score,"
-            f" exposure_score, face_score, composition_score, date_day,"
-            f" original_filename"
-            f" FROM photos WHERE dup_cluster_id IN ({placeholders})"
-            f" AND {ACTIVE_PHOTO_SQL}",
-            list(cluster_ids),
-        ).fetchall()
-        groups: dict[int, list] = defaultdict(list)
-        for row in rows:
-            groups[row[1]].append(row)
-        group_key = "dup_cluster_id"
-    else:
-        # Fallback: exact phash grouping
-        phashes: set[int] = set()
-        for raw in raw_data:
-            ph = raw.get("phash")
-            if ph is not None:
-                phashes.add(ph)
-        if not phashes:
-            return
-        placeholders = ",".join("?" for _ in phashes)
-        rows = conn.execute(
-            f"SELECT filepath, phash, aggregate_score, blur_score,"
-            f" exposure_score, face_score, composition_score, date_day,"
-            f" original_filename"
-            f" FROM photos WHERE phash IN ({placeholders})"
-            f" AND {ACTIVE_PHOTO_SQL}",
-            list(phashes),
-        ).fetchall()
-        groups = defaultdict(list)
-        for row in rows:
-            groups[row[1]].append(row)
-        group_key = "phash"
-
-    for i, raw in enumerate(raw_data):
-        key = raw.get(group_key)
-        if not key or key not in groups:
-            continue
-        my_fp = raw.get("filepath", "")
-        siblings = [
-            {
-                "filepath": row[0],
-                "thumb_hash": thumbs.get_hash(row[0]) if thumbs else "",
-                "similarity": None,  # hamming-distance cluster — not a scored match
-                "aggregate_score": row[2] or 0,
-                "blur_score": row[3] or 0,
-                "exposure_score": row[4] or 0,
-                "face_score": row[5] or 0,
-                "composition_score": row[6] or 0,
-                "date_day": row[7] or "",
-                "filename": row[8] or "",
-            }
-            for row in groups[key]
-            if row[0] != my_fp
-        ]
-        if siblings:
-            photos[i]["similar_photos"] = siblings
 
 
 @bp.get("/api/v1/albums")
@@ -140,6 +71,8 @@ def api_albums_list() -> tuple[Response, int]:
     ctx = get_ctx()
     conn = ctx.get_conn()
     albums = db_list_albums(conn)
+    for album in albums:
+        album.update(SmartAlbumRegistry.presentation(album.get("album_type", "")))
     return jsonify({"albums": albums}), 200
 
 
@@ -163,6 +96,8 @@ def api_albums_create() -> tuple[Response, int]:
         )
     conn = ctx.get_conn()
     config = data.get("config")
+    if config is not None:
+        config = _validated_config(config)
     k = clamp_k(data.get("k", 50))
     parent_id = data.get("parent_id")
     if parent_id is not None:
@@ -210,7 +145,7 @@ def api_album_update(album_id: int) -> tuple[Response, int]:
     if "config" in data:
         cfg_update = data["config"]
         if cfg_update is not None:
-            cfg_update = {k: v for k, v in cfg_update.items() if k in _ALLOWED_CONFIG_KEYS}
+            cfg_update = _validated_config(cfg_update)
             existing = album.get("config") or {}
             kwargs["config"] = {**existing, **cfg_update}
     if "k" in data:
@@ -245,7 +180,7 @@ def api_album_delete(album_id: int) -> tuple[Response, int]:
     album = get_album(conn, album_id)
     if not album:
         raise NotFoundError("Album not found", album_id=album_id)
-    # L1 / review 2026-05-31: registry-driven undeletable check so
+    # Registry-driven undeletable check so
     # plugins can mark their own album types undeletable without
     # editing this site. SmartAlbumRegistry.is_undeletable("all")
     # returns True for the built-in.
@@ -297,9 +232,9 @@ def api_album_photos(album_id: int) -> tuple[Response, int]:
         photo["override"] = raw.get("override")
         photo["favorite"] = bool(raw.get("favorite"))
 
-    # M6 / review 2026-05-31: registry-driven UI metadata. The
+    # Registry-driven UI metadata. The
     # Duplicates album registered _smart_duplicates_ui_metadata which
-    # delegates to _attach_cluster_siblings_from_db; plugins can ship
+    # delegates to album_siblings.attach_cluster_siblings; plugins can ship
     # their own ``ui_metadata_fn`` for new types without editing here.
     from bpp.db.smart_albums import SmartAlbumRegistry
 

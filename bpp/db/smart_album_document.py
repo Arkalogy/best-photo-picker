@@ -33,21 +33,19 @@ _ACTIVE = ACTIVE_PHOTO_SQL
 def _refresh_document_album(conn: sqlite3.Connection) -> None:
     """Create or remove a 'Documents' smart album using CLIP semantic matching."""
 
-    import numpy as np
-
     from bpp.db.smart_album_refreshers import (
         _ensure_smart_album,
         _remove_smart_album_if_exists,
     )
 
     try:
-        from bpp.db.clip import get_all_clip_embeddings
+        from bpp.db.clip import load_clip_matrix
         from bpp.scoring.clip_embed import compute_text_embedding
     except ImportError:
         return
 
-    embeddings = get_all_clip_embeddings(conn)
-    if not embeddings:
+    photo_ids_list, emb_matrix = load_clip_matrix(conn)  # one copy, no per-photo dict
+    if not photo_ids_list:
         _remove_smart_album_if_exists(conn, "smart_document", {"document": True})
         return
 
@@ -56,8 +54,6 @@ def _refresh_document_album(conn: sqlite3.Connection) -> None:
         return
 
     # Vectorized cosine similarity (embeddings are L2-normalized)
-    photo_ids_list = list(embeddings.keys())
-    emb_matrix = np.stack([embeddings[pid] for pid in photo_ids_list])
     similarities = emb_matrix @ text_emb
     threshold = DOCUMENT_CLIP_THRESHOLD
     matching_ids = [

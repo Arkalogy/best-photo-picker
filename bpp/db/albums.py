@@ -28,7 +28,7 @@ def create_album(
 ) -> int:
     """Create a new album and return its id.
 
-    P5/v36: when ``album_type == 'smart_person'`` and ``rule['cluster_id']``
+    Schema v36: when ``album_type == 'smart_person'`` and ``rule['cluster_id']``
     is an int, the shadow column ``smart_person_cluster_id`` is populated
     in the same INSERT. Readers that previously joined via
     ``json_extract(rule_json, '$.cluster_id')`` can now probe the indexed
@@ -58,8 +58,8 @@ def get_smart_person_cluster_name_map(
 ) -> dict[int, str]:
     """Return ``{cluster_id: album_name}`` for every smart_person album.
 
-    P5b — the canonical replacement for the ~8 "load all smart_person
-    rows then parse rule_json" sites the audit flagged. Uses the v36
+    The canonical replacement for the former "load all smart_person
+    rows then parse rule_json" pattern. Uses the v36
     ``smart_person_cluster_id`` shadow column directly:
 
     * No JSON parse per row (the prior pattern called ``safe_json_loads``
@@ -146,8 +146,8 @@ def list_albums(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     result = []
     for r in rows:
         d = dict(r)
-        d["config"] = safe_json_loads(d["config_json"], context="album config")
-        d["rule"] = safe_json_loads(d["rule_json"], context="album rule")
+        d["config"] = safe_json_loads(d["config_json"], context="album config", expected_type=dict)
+        d["rule"] = safe_json_loads(d["rule_json"], context="album rule", expected_type=dict)
         del d["config_json"]
         del d["rule_json"]
         result.append(d)
@@ -174,8 +174,8 @@ def get_album(conn: sqlite3.Connection, album_id: int) -> dict[str, Any] | None:
     if row is None:
         return None
     d = dict(row)
-    d["config"] = safe_json_loads(d["config_json"], context="album config")
-    d["rule"] = safe_json_loads(d["rule_json"], context="album rule")
+    d["config"] = safe_json_loads(d["config_json"], context="album config", expected_type=dict)
+    d["rule"] = safe_json_loads(d["rule_json"], context="album rule", expected_type=dict)
     del d["config_json"]
     del d["rule_json"]
     return d

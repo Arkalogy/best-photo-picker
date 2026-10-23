@@ -144,11 +144,13 @@ dependencies = [
 
 [[package]]
 name = "bpp-desktop"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
+ "getrandom 0.2.17",
  "portpicker",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-shell",

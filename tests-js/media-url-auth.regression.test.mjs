@@ -5,7 +5,7 @@
 // between an unpaired LAN device and the raw photo bytes.
 //
 // Without this test, someone could revert one of the 13 module-file
-// changes from H1 and the file would still parse, lint, and pass every
+// auth changes and the file would still parse, lint, and pass every
 // other vitest — but the page would silently start leaking thumbs.
 
 import { describe, it, expect } from "vitest";

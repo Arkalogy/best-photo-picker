@@ -2,7 +2,8 @@
 /**
  * Regression gate: no module other than text-format.mjs may define a
  * local `escAttr` function. The XSS we shipped (and fixed) in `b83c0f2`
- * and the follow-up audit (modals-models.mjs + faces.mjs) had the same
+ * and the follow-up fixes (faces.mjs, and the since-removed legacy
+ * models list) had the same
  * shape — a local helper that forgot the `"` escape, used to interpolate
  * a server-controlled string into an HTML attribute.
  *

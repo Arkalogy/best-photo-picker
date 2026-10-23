@@ -14,7 +14,7 @@ These tests pin three invariants:
 3. Every registry entry has a sha256. Without one, downloads
    can't be integrity-checked.
 
-Plus a smoke test that `_reset_model_cache` is callable for
+Plus a smoke test that `reset_model_file` is callable for
 every registered name without raising.
 """
 
@@ -28,9 +28,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 def _populate_registry() -> None:
     """Force-import every scoring module that should register itself."""
-    from bpp.web.bp_models import _ensure_model_modules_imported
+    from bpp.scoring.model_lifecycle import ensure_builtin_model_files_registered
 
-    _ensure_model_modules_imported()
+    ensure_builtin_model_files_registered()
 
 
 def test_registry_has_expected_entries():
@@ -147,6 +147,7 @@ def test_redownload_model_expands_tilde_path(monkeypatch, tmp_path):
             url="https://example.invalid/fake.onnx",
             sha256="0" * 64,
             reset=lambda: None,
+            legal_id="openai_clip_vit_b32_onnx",
         ),
         replace=True,
     )
@@ -164,7 +165,7 @@ def test_redownload_model_expands_tilde_path(monkeypatch, tmp_path):
     try:
         bp_models._redownload_model("FAKE tilde model")
     finally:
-        ModelRegistry._entries.pop("FAKE tilde model", None)
+        ModelRegistry.unregister_for_tests("FAKE tilde model")
 
     assert "~" not in captured["dest"], f"literal ~ reached FS: {captured['dest']}"
     expected = tmp_path / "bpp_redl" / "fake.onnx"
@@ -191,11 +192,11 @@ def test_resolve_via_bp_core_helper():
         _model_path_url_sha("nonexistent model")
 
 
-def test_reset_model_cache_silently_ignores_unknown():
+def test_reset_model_file_silently_ignores_unknown():
     """The legacy if/elif chain silently no-op'd on unknown names
     (it just fell off the end). The registry path matches."""
     _populate_registry()
-    from bpp.web.bp_models import _reset_model_cache
+    from bpp.scoring.model_lifecycle import reset_model_file
 
     # Should not raise
-    _reset_model_cache("definitely not a model")
+    reset_model_file("definitely not a model")

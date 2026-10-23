@@ -23,18 +23,27 @@ Then write the `setup` callable:
 
 ```python
 # my_pkg/bpp_plugin.py
+from bpp.registry import register_entry
 from bpp.scoring.face_detector_registry import FaceDetector, register_detector
 
 def setup() -> None:
     """Called once at bpp startup. Register your extensions here."""
+    register_entry(MY_RETINAFACE_ENTRY)  # a bpp.registry.ModelEntry
     register_detector(FaceDetector(
         name="my_retinaface",
         detect=my_retinaface_callable,
+        registry_id=MY_RETINAFACE_ENTRY.id,
         toggle_key="model_my_retinaface",
-        license_id="MIT",
         description="Custom RetinaFace ONNX detector",
     ))
 ```
+
+Every model BPP runs has an entry in the model registry
+(`bpp.registry`), and that entry is the only place its license is
+written: source and terms URLs, license class, whether it needs a
+click-through acceptance. A detector or embedder names its entry by
+`registry_id`, and BPP reads the license from there.
+`bpp/plugins/example.py` shows a complete entry.
 
 Install the plugin (`pip install my-bpp-plugin`) into the same venv as
 bpp, then run with the opt-in:
@@ -44,7 +53,7 @@ BPP_ENABLE_PLUGINS=1 bpp serve --library ~/Pictures/BestPhotoPicker
 ```
 
 A debug log line confirms registration: `Registered face detector
-'my_retinaface' (license=MIT, …)`.
+'my_retinaface' (registry_id=…, …)`.
 
 ## Lifecycle hooks — `Plugin` protocol
 
@@ -65,9 +74,10 @@ class MyPlugin:
 
     def on_register(self, app):
         """Process startup, after setup() returns. `app` is the
-        Flask app instance (None in CLI / test contexts). Use for:
-        registering Flask blueprints, attaching CLI subcommands,
-        hooking the photo event bus."""
+        Flask app instance; the command line (`bpp analyze`, `bpp
+        select`, `bpp pick`, through `bpp.plugins.load_plugins_for_cli`)
+        passes None and fires `on_shutdown` when the command ends.
+        Use for: registering Flask blueprints, hooking the photo event bus."""
         if app is not None:
             from .blueprint import bp
             app.register_blueprint(bp)
@@ -86,6 +96,13 @@ class MyPlugin:
 
     def on_shutdown(self):
         """Process exit. Mirror of on_register. Also fires in LIFO order."""
+        ...
+
+    def on_db_restore(self, corrupted_sidecar_path):
+        """Once per process, after startup, when the library database
+        was restored from its backup at this start (the corrupted copy
+        is at the given path). Drop any side-cache keyed to the old
+        database here."""
         ...
 
 
@@ -134,9 +151,38 @@ intended call timing for `setup()`:
 - **Face detector / embedder / config field**: register at any time
   during `setup()`. Consumed lazily as scoring runs and as
   `Config.get(...)` is read.
+  - A **face detector** runs on every photo after the built-in
+    detectors; its boxes are merged with theirs (overlaps removed).
+    It is skipped while its `toggle_key` setting is off or its
+    registry entry's license isn't accepted, and a detector that
+    raises is logged once at WARNING and skipped. A `toggle_key` (a
+    detector's or a scorer's) is a real switch: `POST
+    /api/v1/models/toggle` accepts it, the analysis run reads it from
+    the library's settings, and the Settings → ML Models list shows
+    the switch on the plugin model's row when the model file's legal
+    entry is the one the detector names in `registry_id` (a scorer:
+    set `ScorerDef.registry_id`).
+  - A **face embedder** runs when the library's `face_embedding_method`
+    setting is set to its `name`: BPP detects faces as usual and calls
+    `embed(image, (x, y, w, h))` for each one. Embeddings from one
+    embedder are never mixed with another's; the stored rows are
+    tagged with its `registry_id`. `embedding_dim` must match the
+    vectors it returns.
 - **Smart album type**: register during `setup()`. Consumed lazily by
   `refresh_smart_albums()` (fires on import completion, face ops, hash
-  computation).
+  computation). Pass `icon=` (a key of the sidebar's icon set, e.g.
+  `"star"`), `tooltip=` and `order=` (built-ins run 0–16; 5 is the
+  middle) so the sidebar draws your type the way you want; they come
+  with every album from `GET /api/v1/albums`.
+- **Catalog loader**: a model whose weights don't come from a single
+  pinned URL (a ZIP, several files) gets the picker's Download → Use →
+  Uninstall lifecycle through
+  `bpp.web.catalog_loaders.register_catalog_loader(registry_id,
+  is_on_disk=…, ensure_weights=…, remove_weights=…)`.
+- **Clustering events**: `bpp.db.event_hooks.register_post_cluster_hook`
+  fires after face extraction, a manual face recluster (`"face"`), pet
+  clustering (`"pet"`) and near-duplicate clustering
+  (`"near_duplicate"`).
 - **Smart-album refresh domain**: when your plugin adds an album type
   that should refresh on a built-in mutation domain (face cluster,
   pet detect, dedup, edit, import), call
@@ -149,6 +195,13 @@ intended call timing for `setup()`:
   instantiated once per `WebAppState.__init__` from the registry, so a
   worker registered AFTER `WebAppState` is constructed won't run.
   Always register in `setup()`, not in a deferred callback.
+  A `BackgroundWorker`'s `_start_thread()` returns False if it's already
+  running, and raises `bpp.errors.ConflictError` (an HTTP 409 with the
+  reason) while an in-app package install runs, or after one until the
+  app restarts (pip may upgrade shared libraries too). Set the class
+  attribute `loads_installable_packages = False` if your worker loads none
+  of the installable packages (or anything they pull in), so installs don't
+  hold it up; left `None` (unknown) or `True`, every install does.
 
 ## Custom ML models
 
@@ -165,10 +218,21 @@ There are two layers:
    (load on first use, double-checked locking, atomic instance swap on
    redownload, optional `import_check`, bundled-fallback path).
 2. **`ModelRegistry`** — declarative metadata for the lifecycle UI
-   (path / url / sha256 / reset hook). The Settings → Advanced →
-   ML Models panel reads this registry to render Redownload /
-   Uninstall affordances; `bpp.utils.download.download_file` reads the
-   sha256 to verify after fetch.
+   (path / url / sha256 / reset hook / `legal_id`). Settings → Models
+   lists each plugin file under "Plugin model: <name>" with its on-disk
+   status and Redownload / Uninstall; the pre-analysis download prompt
+   lists it while it's missing. bpp downloads a plugin file only when
+   it has a `url`, a pinned `sha256` (no unverified installs) and a
+   `legal_id` naming a registered entry; otherwise it shows as "managed
+   by its plugin" with no Download button (Uninstall stays). While the
+   entry's license isn't accepted, Download waits for that too. Files
+   your plugin's own modules register (at import, in `setup()` or in a
+   later hook) are recorded as plugin files, and a plugin can't reuse a
+   built-in file name; `bpp.utils.download.download_file`
+   reads the sha256 to verify after fetch. The same holds for a
+   `ModelSingleton` with a `model_url`: without `model_sha256` nothing is
+   fetched — `ensure_model()` returns `None` and the analysis preflight
+   reports the model as unavailable.
 
 Most plugins want both. Pattern:
 
@@ -199,6 +263,10 @@ _singleton = ModelSingleton(
     model_url=_MODEL_URL,
     model_sha256=_MODEL_SHA256,
     create_fn=_create,
+    # Required: the bpp.registry entry for these weights (register it
+    # with register_entry() first). The model only loads once that
+    # entry's license is accepted, when it needs acceptance.
+    registry_id=MY_MODEL_ENTRY.id,
     # bundled_path=str(Path(__file__).parent / "weights" / "my_model.onnx"),
     # ↑ optional: ship a copy in your wheel; bpp uses it when offline.
 )
@@ -209,9 +277,9 @@ def get_model():
     return _singleton.get()
 
 
-# Register the lifecycle entry so Settings → Advanced → ML Models
-# shows your model with Redownload / Uninstall affordances and the
-# pending-download consent prompt before first analyze includes it.
+# Register the lifecycle entry so Settings → Models shows your model
+# with Redownload / Uninstall, and the pre-analysis download prompt
+# lists it while it isn't on disk.
 ModelRegistry.register(
     ModelEntry(
         name="MyPlugin custom model",  # must match ModelSingleton.name
@@ -219,6 +287,7 @@ ModelRegistry.register(
         url=_MODEL_URL,
         sha256=_MODEL_SHA256,
         reset=_singleton.reset,
+        legal_id=MY_MODEL_ENTRY.id,
     )
 )
 ```
@@ -236,15 +305,16 @@ triggers the actual download + load.
   never gets used.
 - 120s timeout enforced by `download_file()`; long-stalled downloads
   fail loud rather than blocking forever.
-- Redownload from Settings → Advanced calls your `reset` callback so
+- Redownload from Settings → Models calls your `reset` callback so
   the next `get()` rebuilds against the fresh bytes (atomic swap, no
   "ghost" inference against the old in-memory model).
 - Bundled-fallback path: if `bundled_path` is set and the network is
   unreachable, bpp uses the bundled copy and skips download.
-- Pending-download consent: bpp's first-analyze consent prompt
-  enumerates pending downloads — your model appears in that list with
-  its name, URL, and size, so users see exactly what's about to be
-  fetched.
+- Pending-download consent: bpp's pre-analysis prompt lists pending
+  downloads — your model appears with its name, host and size (from
+  your registry entry's `expected_download_size_bytes`; "size unknown"
+  when unset), and it's held back — and listed as such — until its
+  registry entry's license is accepted, like a built-in model.
 
 **Constraints:**
 
@@ -419,7 +489,9 @@ def setup_scorer() -> None:
 
 - `score_fn` runs once per photo during analyze, inside
   `run_optional_scorers()`. The image is already decoded and
-  resized; you don't pay decode costs.
+  resized; you don't pay decode costs. It's the same array the scorers
+  that run after yours get, so treat it as read-only: copy it before
+  drawing on or modifying it.
 - The dict you return is merged into the in-memory photo result.
   Any keys you list in `api_fields` flow through to the JSON API
   response (during the analyze run — see persistence note below).
@@ -443,11 +515,13 @@ def setup_scorer() -> None:
   immediately after analyze, the field is in the API response, but
   after a server restart (or any path that rebuilds the photo dict
   from DB), the field reverts to its `api_fields` default.
-- **No persistence beyond aggregate_score.** `aggregate_score` IS
-  persisted, so a weighted plugin scorer's effect on ranking
-  survives restart — but the individual `myplugin_saturation_score`
-  field does not. If you need persistence, write to your own DB
-  table from your plugin code.
+- **No persistence of the score, so no lasting effect on ranking.**
+  `aggregate_score` is stored, but it is recomputed from the stored
+  per-scorer columns whenever weights change or the app reloads, and
+  your `myplugin_saturation_score` is not stored — so a weighted
+  plugin scorer's effect on ranking does not survive a restart or a
+  recompute. If you need it to last, write the score to your own DB
+  table and contribute it back through a recompute hook.
 - **No automatic UI slider.** Plugin scorers run, but the Settings
   → Scoring panel doesn't render a slider for them yet. Document
   the YAML key in your plugin README so users know how to override
@@ -479,9 +553,9 @@ See `examples/plugin_example/bpp_example_plugin/plugin.py` —
 
 ## Custom export modes
 
-The built-in export pipeline ships three modes — `copy`, `hardlink`,
-`symlink` — selected by the user from the Export modal's "How to copy"
-dropdown. Plugins can add their own modes (S3 upload, encrypted ZIP,
+The built-in export pipeline ships four modes — `copy`, `hardlink`,
+`symlink` and `zip` — selected by the user from the Export modal's "How
+to copy" dropdown. Plugins can add their own modes (S3 upload, encrypted ZIP,
 SFTP push, "Export to iPhoto", anything per-photo) via
 `register_export_mode()`.
 
@@ -546,15 +620,14 @@ photo with `(src, dest)`.
   uploaded it instead), bpp's manifest.json + report.txt are still
   written with the file metadata your handler decided on.
 
+- **The Export modal lists your mode.** Its "How to copy" control is
+  filled from `GET /api/v1/export/modes` (every registered mode with
+  its description), so a plugin mode appears there with no UI work;
+  `POST /api/v1/export` with `mode="myplugin_s3"` reaches it directly
+  too.
+
 **What you DON'T get:**
 
-- **No automatic UI dropdown.** The Export modal's "How to copy"
-  control is hardcoded HTML today. Plugin modes are reachable via
-  the API (`POST /api/v1/export` with `mode="myplugin_s3"`), but
-  the dropdown won't list them until a contributor ports the
-  dropdown to render from `ExportModeRegistry.all()`. Document the
-  mode name in your plugin README so users can wire it up via API
-  or a custom UI.
 - **No image processing in plugin modes.** When the user picks
   `copy` mode with `fmt=jpeg` or a `max_size` cap, bpp processes
   the image with PIL BEFORE the handler is consulted. For other
@@ -609,7 +682,7 @@ def on_photo_change(conn, photo_ids, kind):
         my_index.drop(photo_ids)
 
 
-def setup(api):
+def setup():
     register_photo_deletion_hook(on_photo_change)
 ```
 
@@ -701,25 +774,26 @@ def setup_dedupe() -> None:
 
 **Activation:**
 
-The user adds one line to their bpp config:
+The user adds one line to the YAML config file they pass with
+`--config` (bpp does not auto-load a config file from a fixed location):
 
 ```yaml
-# ~/.config/bpp/config.yaml (or via Settings → Advanced once that
-# YAML editor lands)
+# my-bpp-config.yaml — start with: bpp serve --config my-bpp-config.yaml
 dedupe_strategy: myplugin_perceptual
 ```
 
 Or via the DB-backed settings table (`UPDATE settings SET
-value='myplugin_perceptual' WHERE key='dedupe_strategy'`). bpp
-reloads the config on the next recompute and picks up the override.
+value='myplugin_perceptual' WHERE key='dedupe_strategy'`). The DB
+layer takes precedence over the YAML file and is read live, so the next
+recompute picks up the override without a restart.
 
 **Lifecycle guarantees:**
 
 - `resolve_strategy()` is the dispatch helper. It is called inside
-  `recompute._do_recompute_internal()` BEFORE the auto-pick logic.
+  `bpp.web.recompute.recompute()` BEFORE the auto-pick logic.
   Plugin strategy → use it. Unknown name / `requires_clip_embeddings`
   but no embeddings loaded → log a warning and fall back to the
-  auto-pick. **Plugins never crash the recompute.**
+  auto-pick. **A bad strategy name never crashes the recompute.**
 - If your strategy raises, the exception propagates to the recompute
   caller. The recompute endpoint surfaces it as an HTTP 500 and logs
   with `exc_info`. Don't raise — return the input list unchanged for
@@ -815,7 +889,7 @@ What bpp commits to:
   Existing kwargs keep their meaning; new kwargs default to a value
   that preserves the pre-kwarg behaviour.
 - **Reserved (built-in) registry names don't move between majors.**
-  `hash` / `clip` / `none` (dedup), `copy` / `hardlink` / `symlink`
+  `hash` / `clip` / `none` (dedup), `copy` / `hardlink` / `symlink` / `zip`
   (export), `blur` / `exposure` / `face` / `composition` (scoring) —
   if any of these reserved names ever change, that's a major bump and
   shows up in CHANGELOG.md → "Breaking changes".
@@ -830,10 +904,10 @@ What plugins should commit to:
   exclusive upper bound on the next major (`>=0.4,<1.0`). This is the
   setuptools convention and what `__bpp_version_required__` will
   parse cleanly.
-- Treat the `**kwargs` catch-all in callbacks (scorer `score_fn`,
-  dedup `dedupe_fn`, export handler) as required — bpp may pass new
-  keyword arguments in future minor versions and a callable that
-  enumerates kwargs without `**kwargs` will break.
+- bpp passes only the documented arguments to callbacks (scorer
+  `score_fn`, dedup `dedupe_fn`, export handler) today; accepting
+  `**kwargs` as well keeps a callback working if a later minor version
+  adds one.
 - Pin the bpp dependency in your `pyproject.toml` to the same range
   you put in `__bpp_version_required__`. The runtime check is a
   belt-and-suspenders backstop; your wheel's pip resolver should
@@ -842,7 +916,7 @@ What plugins should commit to:
 ## Loader behaviour
 
 - **Idempotent**: the loader tracks loaded entry-points in a
-  process-global set, so the three startup paths (`bpp serve`,
+  process-global set, so the four startup paths (`bpp serve`, `bpp select`,
   `bpp analyze`, `bpp pick`) calling it in the same process don't
   double-invoke `setup()`.
 - **Best-effort**: a plugin whose import or `setup()` raises is
@@ -888,7 +962,7 @@ without restarting.
 ## Lifecycle hooks
 
 `setup()` is fired once at process startup. For per-library or
-per-request work, implement a plugin class with any subset of the four
+per-request work, implement a plugin class with any subset of the five
 lifecycle methods below and pass an instance to `register_plugin`:
 
 ```python
@@ -924,7 +998,7 @@ Firing semantics:
   (first-registered runs first).
 * `on_library_close` and `on_shutdown` fire in *reverse* registration
   order — symmetric with nested context managers (LIFO cleanup).
-* All four methods are optional; the host checks `hasattr` before
+* All five methods are optional; the host checks `hasattr` before
   calling. A plugin that needs only `on_library_open` defines just
   that method.
 * If your hook raises, the host logs a WARNING with `module.Class`
@@ -933,16 +1007,26 @@ Firing semantics:
 
 The reference implementation lives at `bpp/plugins/example.py`; the
 test suite drives every hook in
-`tests/test_p5_plugin_lifecycle_and_indexed_smart_person.py`.
+`tests/test_plugin_lifecycle_and_indexed_smart_person.py`.
 
 ## Smart-album mutation domains
+
+Callback contract: `refresh_fn(conn)` runs on every refresh of the
+type and must create or update the album row itself — call
+`bpp.db.smart_albums.ensure_smart_album(conn, name=..., album_type=...,
+rule=..., photo_ids=[...])`, which also honours a user's dismissal of
+that album; core never creates a plugin album's row.
+`get_ids_fn(conn, rule)` returns the photo ids for one album's rule. Types must start with
+`smart_` (the sidebar and album delete key on the prefix); `register()`
+refuses others.
 
 When you register a custom smart-album type via `SmartAlbumRegistry`,
 the album's `refresh_fn` is invoked from
 `bpp/db/smart_albums.py:refresh_smart_albums()`. But that helper takes
 a `kinds=` argument so callers can refresh only the album types
 affected by their mutation. Built-in mutation domains
-(`face_cluster`, `pet_detect`, `tag_assign`, …) map to specific album
+(`face_extract`, `face_cluster`, `face_tag`, `pet_detect`, `import`,
+`dedup`, `edit`, `sensitive` — see `bpp/db/smart_album_domains.py`) map to specific album
 types; a plugin's custom type doesn't show up in those tables unless
 you tell bpp about it:
 
@@ -964,7 +1048,7 @@ register_album_domain(
 Without the `register_album_domain` call, a face-cluster mutation
 won't trigger your refresh — the album will only update on a full
 unscoped refresh (which the UI does on a slower cadence). The example
-plugin demonstrates the pattern at `bpp/plugins/example.py:175-185`.
+plugin demonstrates the pattern at `bpp/plugins/example.py` (its `register_album_domain` call).
 
 ## Post-event hooks
 
@@ -986,7 +1070,7 @@ def _on_post_analyze(conn, results):
 
 def _on_post_cluster(conn, kind, n_clusters):
     """Fires after face / pet clustering writes cluster IDs. kind is
-    'face' / 'pet' (or a plugin-prefixed string)."""
+    'face' / 'pet' / 'near_duplicate' (or a plugin-prefixed string)."""
 
 def _on_post_import(conn, photo_ids, filepaths):
     """Fires after an import batch commits. photo_ids and filepaths

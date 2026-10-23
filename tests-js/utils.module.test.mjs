@@ -147,7 +147,7 @@ describe("doExport", () => {
       document.querySelector("#toast-container .toast.error")
     );
     expect(toast.textContent).toContain("1 photo failed");
-    // Per Bug #8 / activity-log + window-onerror pattern: the toast
+    // Per the activity-log + window-onerror pattern: the toast
     // must carry a 'View log' action so the user can find which
     // photo(s) failed without spelunking through Settings tabs.
     const actionBtn = /** @type {HTMLButtonElement | null} */ (toast.querySelector("button"));
@@ -411,5 +411,24 @@ describe("openBrowser / openExportBrowser", () => {
 describe("validateInput", () => {
   test("is a no-op", () => {
     expect(() => validateInput()).not.toThrow();
+  });
+});
+
+describe("doExport after a cancel", () => {
+  test("a stopped export is reported as a stop with its count, not as a failure", async () => {
+    /** @type {HTMLInputElement} */ (document.getElementById("export-dir")).value = "/out";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResp({ count: 12, failed: 0, outdir: "/out", cancelled: true }))
+    );
+    await doExport();
+    const status = document.getElementById("export-status");
+    expect(status?.innerHTML).toContain("Export stopped after 12 photos");
+    expect(status?.innerHTML).toContain("Open Folder");
+    expect(status?.classList.contains("error")).toBe(false);
+    expect(document.querySelector("#toast-container .toast.error")).toBeNull();
+    expect(document.querySelector("#toast-container .toast")?.textContent).toContain(
+      "Export stopped after 12 photos"
+    );
   });
 });

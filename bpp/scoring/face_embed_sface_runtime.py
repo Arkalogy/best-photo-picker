@@ -34,7 +34,8 @@ log = get_logger(__name__)
 
 # Scale factor applied to L2-normalized SFace embeddings so that
 # Euclidean distances fall in the same range as dlib's face_recognition:
-#   dlib:  same-person ~0.4,  different ~0.9,  default threshold 0.55
+#   dlib:  same-person ~0.4,  different ~0.9 (the default threshold is
+#          FACE_CLUSTER_THRESHOLD_FALLBACK in bpp.constants)
 #   SFace: same-person ~0.52, different ~0.88  (after scaling by 0.65)
 # This lets the existing clustering threshold slider (0.3-1.0) work unchanged.
 SFACE_DISTANCE_SCALE = 0.65
@@ -45,6 +46,12 @@ SFACE_DISTANCE_SCALE = 0.65
 _sface_tls = threading.local()  # per-thread recognizer instances
 _SFACE_AVAILABLE: bool | None = None
 _sface_lock = threading.Lock()
+#: Bumped by every reset: a thread whose recognizer predates it rebuilds
+#: (the same pattern as ``face_yunet._yunet_generation``).
+_sface_generation = 0
+#: The generation whose model file passed the gate and the hash check:
+#: workers arriving together wait on the lock and find it done.
+_sface_verified_generation = -1
 
 # Load-time license gate for SFace (``sface_yunet``). ``download_file``
 # already gates SFace at *download* time, but ``_ensure_sface_model``
@@ -63,7 +70,7 @@ _SFACE_MODEL_PATH = str(_sface_models_dir() / "face_recognition_sface_2021dec.on
 # ── Model: SFace face recognition (December 2021 release) ──────────
 # What:   converts a detected face crop (typically from YuNet) into a
 #         128-dim L2-normalized embedding. Two faces are "the same
-#         person" if cosine distance < ~0.55. Powers the per-cluster
+#         person" if cosine distance is under the cluster threshold. Powers the per-cluster
 #         person tab.
 # Where:  opencv_zoo, same source as YuNet.
 # Why this one: SFace is the OpenCV-recommended embedder, paired
@@ -71,7 +78,7 @@ _SFACE_MODEL_PATH = str(_sface_models_dir() / "face_recognition_sface_2021dec.on
 #         and faster than dlib's face_recognition while delivering
 #         comparable cluster purity on personal libraries (~5-50k
 #         photos).
-# License: Apache 2.0 (opencv_zoo).
+# License: see the bpp.registry entry ``sface_yunet``.
 # Pinned:  2021dec — long-term-stable tag, no newer dated release
 #         in opencv_zoo's main as of bpp's pin.
 # To bump: replace 2021dec with a newer tag; the 128-dim output
@@ -95,7 +102,7 @@ def _ensure_sface_model() -> bool:
     """
     from bpp.registry import ModelLoadBlockedError
     from bpp.scoring.model_base import ModelIntegrityError
-    from bpp.utils.download import download_file, verify_existing
+    from bpp.utils.download import announce, download_file, download_temp_path, verify_existing
 
     # Load-time license gate — MUST run before the cache-hit early return
     # below, which would otherwise bypass the download-time gate for
@@ -110,9 +117,10 @@ def _ensure_sface_model() -> bool:
     if os.path.exists(_SFACE_MODEL_PATH):
         verify_existing(_SFACE_MODEL_PATH, sha256=_SFACE_MODEL_SHA256)
         return True
+    tmp = download_temp_path(_SFACE_MODEL_PATH)
+    announce("Downloading SFace face recognition model…")
     try:
         os.makedirs(os.path.dirname(_SFACE_MODEL_PATH), exist_ok=True)
-        tmp = _SFACE_MODEL_PATH + ".tmp"
         download_file(
             _SFACE_MODEL_URL,
             tmp,
@@ -123,13 +131,11 @@ def _ensure_sface_model() -> bool:
         log.info("Downloaded SFace model to %s", _SFACE_MODEL_PATH)
         return True
     except ModelIntegrityError:
-        tmp = _SFACE_MODEL_PATH + ".tmp"
         if os.path.exists(tmp):
             os.remove(tmp)
         log.error("SFace model integrity failure", exc_info=True)
         raise
     except Exception as exc:
-        tmp = _SFACE_MODEL_PATH + ".tmp"
         if os.path.exists(tmp):
             os.remove(tmp)
         log.warning("SFace model unavailable: %s", exc)
@@ -137,12 +143,15 @@ def _ensure_sface_model() -> bool:
 
 
 def _sface_available() -> bool:
-    """Check if SFace model file exists or can be downloaded."""
-    global _SFACE_AVAILABLE
+    """Whether SFace can be used: not blocked by the license gate, and
+    the model file is present or fetchable (OpenCV has the class)."""
     if _SFACE_AVAILABLE is not None:
         return _SFACE_AVAILABLE
-    avail = os.path.exists(_SFACE_MODEL_PATH) or hasattr(cv2, "FaceRecognizerSF")
-    return avail
+    from bpp.registry.policy import is_load_blocked
+
+    if is_load_blocked("sface_yunet"):
+        return False
+    return os.path.exists(_SFACE_MODEL_PATH) or hasattr(cv2, "FaceRecognizerSF")
 
 
 def _get_sface_recognizer() -> cv2.FaceRecognizerSF | None:
@@ -150,27 +159,37 @@ def _get_sface_recognizer() -> cv2.FaceRecognizerSF | None:
 
     Each thread gets its own recognizer via thread-local storage
     so that ThreadPoolExecutor workers don't share mutable DNN state.
+    The model file is verified (hashed) once per process, by whichever
+    thread loads first; a reset re-arms that.
     """
-    global _SFACE_AVAILABLE
+    global _SFACE_AVAILABLE, _sface_verified_generation
     if _SFACE_AVAILABLE is False:
         return None
 
     # Check thread-local cache
+    generation = _sface_generation
     rec = getattr(_sface_tls, "recognizer", None)
-    if rec is not None:
+    if rec is not None and getattr(_sface_tls, "generation", -1) == generation:
         return rec
 
-    with _sface_lock:
-        if _SFACE_AVAILABLE is False:
-            return None
-        if not _ensure_sface_model():
-            _SFACE_AVAILABLE = False
-            return None
+    if _SFACE_AVAILABLE is not True:
+        with _sface_lock:
+            if _SFACE_AVAILABLE is False:
+                return None
+            if _sface_verified_generation != generation:
+                if not _ensure_sface_model():
+                    _SFACE_AVAILABLE = False
+                    return None
+                _sface_verified_generation = generation
     # Create per-thread recognizer outside the lock
     try:
         rec = cv2.FaceRecognizerSF.create(_SFACE_MODEL_PATH, "")
         _sface_tls.recognizer = rec
-        _SFACE_AVAILABLE = True
+        _sface_tls.generation = generation
+        with _sface_lock:
+            # A reset meanwhile re-armed the gate: leave its None alone.
+            if _sface_generation == generation:
+                _SFACE_AVAILABLE = True
         return rec
     except Exception as exc:
         log.warning("SFace recognizer creation failed: %s", exc)
@@ -180,8 +199,10 @@ def _get_sface_recognizer() -> cv2.FaceRecognizerSF | None:
 
 def ensure_sface_model() -> list[str]:
     """Pre-download SFace model. Returns list of warnings."""
+    from bpp.registry.policy import is_load_blocked
+
     warnings = []
-    if not _ensure_sface_model():
+    if not _ensure_sface_model() and not is_load_blocked("sface_yunet"):
         warnings.append("SFace model unavailable — face recognition will use dlib fallback")
     return warnings
 
@@ -343,8 +364,9 @@ def _reset_sface_cache() -> None:
     Also re-arms the license gate so a reset re-evaluates acceptance
     (e.g. after a revoke); otherwise a passed gate would let the next
     load skip the check."""
-    global _SFACE_AVAILABLE
+    global _SFACE_AVAILABLE, _sface_generation
     _SFACE_AVAILABLE = None
+    _sface_generation += 1  # every thread's recognizer is now stale
     _sface_gate.reset()
 
 
@@ -355,5 +377,6 @@ ModelRegistry.register(
         url=_SFACE_MODEL_URL,
         sha256=_SFACE_MODEL_SHA256,
         reset=_reset_sface_cache,
+        legal_id="sface_yunet",
     )
 )

@@ -8,6 +8,7 @@
  * data-oncontextmenu bridge keeps reaching them on window unchanged.
  */
 
+import { menuClosed, menuOpened } from "./menu-a11y.mjs";
 import { sensitiveCtxLabel } from "./sensitive.mjs";
 
 /**
@@ -31,11 +32,11 @@ export function showLbCtxMenu(e) {
   const inc = document.getElementById("lb-ctx-include");
   if (inc)
     inc.innerHTML =
-      (ov === "include" ? "Clear Override" : "Include") + ' <span class="ctx-shortcut">↑</span>';
+      ov === "include" ? "Clear Override" : "Include";
   const exc = document.getElementById("lb-ctx-exclude");
   if (exc)
     exc.innerHTML =
-      (ov === "exclude" ? "Clear Override" : "Exclude") + ' <span class="ctx-shortcut">↓</span>';
+      ov === "exclude" ? "Clear Override" : "Exclude";
   const fav = document.getElementById("lb-ctx-fav");
   if (fav)
     fav.innerHTML =
@@ -70,8 +71,11 @@ export function showLbCtxMenu(e) {
   if (top + h + PAD > vh) top = Math.max(PAD, vh - h - PAD);
   menu.style.left = left + "px";
   menu.style.top = top + "px";
+  menuOpened(menu, { trigger: e.target });
 }
 
 export function hideLbCtxMenu() {
-  document.getElementById("lb-ctx-menu")?.classList.add("hidden");
+  const menu = document.getElementById("lb-ctx-menu");
+  menu?.classList.add("hidden");
+  menuClosed(menu);
 }

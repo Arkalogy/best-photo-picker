@@ -25,9 +25,11 @@ hallucinated embedding that pollutes downstream clustering.
 
 from __future__ import annotations
 
+from typing import Any
+
 from flask import Blueprint, Response, jsonify, request
 
-from bpp.constants import FACE_CLUSTER_THRESHOLD_FALLBACK
+from bpp.config import cfg_get
 from bpp.db.face_cluster_ops import sync_face_count as _sync_face_count
 from bpp.db.photos import get_photo_id_by_path
 from bpp.db.smart_albums import get_affected_album_types, refresh_smart_albums
@@ -50,6 +52,7 @@ from bpp.web.face_create_helpers import (
 from bpp.web.face_create_helpers import (
     parse_create_inputs as _parse_create_inputs,
 )
+from bpp.web.face_create_helpers import require_hand_drawn_faces_supported
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx, with_face_lock
 
@@ -105,6 +108,7 @@ def api_faces_create() -> tuple[Response, int]:
         raise NotFoundError("Unknown image", path_hash=path_hash)
 
     conn = ctx.get_conn()
+    require_hand_drawn_faces_supported(conn)
     photo_id = get_photo_id_by_path(conn, filepath)
     if photo_id is None:
         raise NotFoundError("Photo not in database", filepath=filepath)
@@ -123,7 +127,7 @@ def api_faces_create() -> tuple[Response, int]:
             )
 
     # 2. Load image + extract embedding at the user's region.
-    max_long_side = ctx.config.get("max_long_side", 1024) if ctx.config else 1024
+    max_long_side = cfg_get(ctx.config, "max_long_side")
     image = load_and_downscale(filepath, max_long_side)
     if image is None:
         raise BppError(
@@ -139,7 +143,7 @@ def api_faces_create() -> tuple[Response, int]:
     new_quality = float(result["quality"])
 
     # 3. Duplicate guard.
-    emb_thresh = float(ctx.config.get("face_cluster_threshold", FACE_CLUSTER_THRESHOLD_FALLBACK))
+    emb_thresh = float(cfg_get(ctx.config, "face_cluster_threshold"))
     _detect_duplicate_face(conn, photo_id, new_bbox, new_emb, emb_thresh)
 
     # 4. Insert face row (+ optional smart_person album), commit.
@@ -157,12 +161,7 @@ def api_faces_create() -> tuple[Response, int]:
     _sync_face_count(conn, face_id)
     refresh_smart_albums(conn, kinds=get_affected_album_types("face_tag"))
 
-    # v36: indexed shadow column lookup.
-    name_row = conn.execute(
-        "SELECT name FROM albums WHERE album_type='smart_person' AND smart_person_cluster_id = ?",
-        (cluster_id,),
-    ).fetchone()
-    person_name = name_row["name"] if name_row else None
+    person_name = _person_name_for_cluster(conn, cluster_id)
 
     new_bbox_pct = {
         "x": round(new_bbox[0] / det_w * 100, 2),
@@ -188,6 +187,57 @@ def api_faces_create() -> tuple[Response, int]:
     )
 
 
+def _bbox_pct_from(data: dict[str, Any]) -> tuple[float, float, float, float]:
+    """The request's ``bbox_pct`` as ``(x, y, w, h)`` percentages, validated."""
+    bbox_pct = data.get("bbox_pct") or {}
+    try:
+        px = float(bbox_pct.get("x"))
+        py = float(bbox_pct.get("y"))
+        pw = float(bbox_pct.get("w"))
+        ph = float(bbox_pct.get("h"))
+    except (TypeError, ValueError) as e:
+        raise ValidationError(
+            "bbox_pct.{x,y,w,h} must be numbers",
+            field="bbox_pct",
+        ) from e
+    if pw <= 0 or ph <= 0 or px < 0 or py < 0 or px + pw > 100 or py + ph > 100:
+        raise ValidationError(
+            "bbox_pct out of [0,100] bounds",
+            field="bbox_pct",
+        )
+    return px, py, pw, ph
+
+
+def _invalidate_face_crop(ctx: Any, conn: Any, face_id: int, filepath: str) -> None:
+    """Drop the cached crops of this face so the UI re-renders from the
+    new bbox. Crops are named ``{hash}_{face_index}_{bbox}.jpg`` (see
+    face_crop.generate_face_crop), so every file of the face goes."""
+    try:
+        face_index_row = conn.execute(
+            "SELECT face_index FROM face_embeddings WHERE id=?", (face_id,)
+        ).fetchone()
+        path_hash = ctx.thumbs.get_hash(filepath) if ctx.thumbs else None
+        if face_index_row and path_hash and ctx.dirs.get("face_crops"):
+            import glob as _glob
+            import os as _os
+
+            pattern = _os.path.join(
+                ctx.dirs["face_crops"], f"{path_hash}_{face_index_row['face_index']}*.jpg"
+            )
+            for crop_path in _glob.glob(pattern):
+                _os.remove(crop_path)
+    except Exception:
+        log.debug("Failed to invalidate face crop cache", exc_info=True)
+
+
+def _person_name_for_cluster(conn: Any, cluster_id: int) -> str | None:
+    """The person's display name, if the cluster has a named album."""
+    from bpp.db.albums import find_smart_person_album_by_cluster
+
+    album = find_smart_person_album_by_cluster(conn, cluster_id)
+    return album["name"] if album else None
+
+
 @bp.post("/api/v1/faces/update-bbox")
 @requires_local_app
 @with_face_lock
@@ -209,26 +259,12 @@ def api_faces_update_bbox() -> tuple[Response, int]:
     ctx = get_ctx()
     data = request.get_json(silent=True) or {}
     face_id = data.get("face_id")
-    bbox_pct = data.get("bbox_pct") or {}
     if not isinstance(face_id, int):
         raise ValidationError("face_id (int) required", field="face_id")
-    try:
-        px = float(bbox_pct.get("x"))
-        py = float(bbox_pct.get("y"))
-        pw = float(bbox_pct.get("w"))
-        ph = float(bbox_pct.get("h"))
-    except (TypeError, ValueError) as e:
-        raise ValidationError(
-            "bbox_pct.{x,y,w,h} must be numbers",
-            field="bbox_pct",
-        ) from e
-    if pw <= 0 or ph <= 0 or px < 0 or py < 0 or px + pw > 100 or py + ph > 100:
-        raise ValidationError(
-            "bbox_pct out of [0,100] bounds",
-            field="bbox_pct",
-        )
+    px, py, pw, ph = _bbox_pct_from(data)
 
     conn = ctx.get_conn()
+    require_hand_drawn_faces_supported(conn)
     row = conn.execute(
         "SELECT fe.id, fe.photo_id, fe.cluster_id, p.filepath FROM face_embeddings fe "
         "JOIN photos p ON p.id = fe.photo_id WHERE fe.id=?",
@@ -239,7 +275,7 @@ def api_faces_update_bbox() -> tuple[Response, int]:
     filepath = row["filepath"]
     existing_cluster_id = int(row["cluster_id"])
 
-    max_long_side = ctx.config.get("max_long_side", 1024) if ctx.config else 1024
+    max_long_side = cfg_get(ctx.config, "max_long_side")
     image = load_and_downscale(filepath, max_long_side)
     if image is None:
         raise BppError(
@@ -293,38 +329,12 @@ def api_faces_update_bbox() -> tuple[Response, int]:
     )
     conn.commit()
 
-    # Invalidate cached face crop so the UI re-renders from the new bbox.
-    try:
-        face_index_row = conn.execute(
-            "SELECT face_index FROM face_embeddings WHERE id=?", (face_id,)
-        ).fetchone()
-        path_hash = ctx.thumbs.get_hash(filepath) if ctx.thumbs else None
-        if face_index_row and path_hash and ctx.dirs.get("face_crops"):
-            import os as _os
-
-            crop_path = _os.path.join(
-                ctx.dirs["face_crops"],
-                f"{path_hash}_{face_index_row['face_index']}.jpg",
-            )
-            if _os.path.exists(crop_path):
-                _os.remove(crop_path)
-    except Exception:
-        log.debug("Failed to invalidate face crop cache", exc_info=True)
-
+    _invalidate_face_crop(ctx, conn, face_id, filepath)
     _sync_face_count(conn, face_id)
     refresh_smart_albums(conn, kinds=get_affected_album_types("face_tag"))
 
     # Resolve person display name for the (preserved) cluster.
-    # v36: indexed shadow column lookup.
-    person_name = None
-    if matched:
-        name_row = conn.execute(
-            "SELECT name FROM albums WHERE album_type='smart_person' "
-            "AND smart_person_cluster_id = ?",
-            (new_cluster_id,),
-        ).fetchone()
-        if name_row:
-            person_name = name_row["name"]
+    person_name = _person_name_for_cluster(conn, new_cluster_id) if matched else None
 
     # Compute new bbox_pct from the (possibly adjusted) detection-space bbox.
     new_bbox_pct = {

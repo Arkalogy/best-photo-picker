@@ -1,4 +1,4 @@
-"""TDD tests for M-13: pet cluster preservation via IoU matching."""
+"""TDD tests for pet cluster preservation via IoU matching."""
 
 from __future__ import annotations
 

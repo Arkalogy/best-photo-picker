@@ -10,17 +10,14 @@ metadata, the update check, and `recheck-missing`.
 
 from __future__ import annotations
 
-import os
-import shutil
+import hmac
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
 from flask import Blueprint, Response, jsonify, make_response, render_template, request
 
-from bpp.config import DEFAULTS
-from bpp.constants import FACE_CLUSTER_THRESHOLD_FALLBACK
+from bpp.config import DEFAULTS, cfg_get
 from bpp.db.clip import (
     get_clip_embedding_count,
 )
@@ -34,15 +31,18 @@ from bpp.scoring.clip_embed import (
     is_available as clip_is_available,
 )
 from bpp.scoring.face_embed import is_available as face_recognition_available
+from bpp.scoring.nudity import is_active as nudenet_active
 from bpp.scoring.nudity import is_available as nudenet_available
 from bpp.scoring.pets import is_available as pets_available
 from bpp.utils.logging import get_logger
 from bpp.web.face_worker import has_face_data, needs_face_clustering
+from bpp.web.install_status import install_status_fields
 from bpp.web.share import (
     FP_COOKIE_MAX_AGE,
     FP_COOKIE_NAME,
     _device_name_from_ua,
     _sanitize_device_name,  # re-exported for tests/test_share_cookie.py
+    _token_equals,
     principal_is_local_app,
     requires_local_app,
 )
@@ -60,7 +60,7 @@ log = get_logger(__name__)
 
 
 def _bpp_posture_statement() -> str:
-    """Surface the Batch 9 / item 9 posture banner into the SPA.
+    """Surface the canonical posture banner into the SPA.
 
     Importing :mod:`bpp.registry` at module-import time would create a
     cycle (registry imports bpp.utils, which can pull in web bits in
@@ -82,17 +82,6 @@ _APP_CSS_PATH = Path(__file__).parent / "static" / "css" / "app.css"
 _JS_MODULES_PATH = Path(__file__).parent / "static" / "js"
 
 
-def _pip_available() -> bool:
-    """Return True if pip is callable from the current Python.
-
-    kept here as a thin local helper so api_status's
-    `face_installable` UI hint stays self-contained. The
-    full pip-install machinery lives in `bp_models`; this
-    predicate is too small to share-import for one bool.
-    """
-    return shutil.which(sys.executable) is not None
-
-
 def _asset_version() -> str:
     """Return a cache-buster string that changes whenever any JS or CSS
     static asset changes. WKWebView (Tauri) ignores Cache-Control headers
@@ -108,6 +97,36 @@ def _asset_version() -> str:
         return str(int(max(mtimes)))
     except OSError:
         return "0"
+
+
+def _presents_boot_secret(ctx: Any) -> bool:
+    """Whether this loopback request carries the boot secret as the
+    ``_boot`` query parameter. Never a cookie: browsers send cookies to
+    every port of 127.0.0.1, which would hand the key to any other
+    local listener. The page keeps the key in ``sessionStorage`` (scoped
+    to the origin, port included) and re-presents it on reload."""
+    secret = ctx.boot_secret
+    if not secret:
+        return True
+    return _token_equals(request.args.get("_boot") or "", secret)
+
+
+@bp.get("/boot-check")
+def api_boot_check() -> Response:
+    """The desktop shell asks the server to prove it was started with
+    the shell's boot key before navigating to it (another process could
+    hold the port): the shell sends a fresh ``nonce`` and checks
+    ``X-Boot-Proof`` = HMAC-SHA256(key, nonce). The key itself never
+    crosses the wire. Anonymous on purpose (outside ``/api``); without
+    a key configured (open loopback) the reply is a bare 204."""
+    ctx = get_ctx()
+    resp = Response(status=204)
+    nonce = request.args.get("nonce") or ""
+    if ctx.boot_secret and nonce:
+        resp.headers["X-Boot-Proof"] = hmac.new(
+            ctx.boot_secret.encode(), nonce.encode(), "sha256"
+        ).hexdigest()
+    return resp
 
 
 @bp.get("/")
@@ -157,30 +176,45 @@ def index() -> Response:
         # CSRF from cross-origin forms.
         import secrets
 
-        from bpp.web.share import is_device_trusted
+        from bpp.web.share import _token_equals, consume_pair_request_token
+        from bpp.web.share_devices import get_device_by_fingerprint
 
+        conn = ctx.get_conn()
         fp = request.cookies.get(FP_COOKIE_NAME)
-        if not fp:
+        known = get_device_by_fingerprint(conn, fp) if fp else None
+        if known is None:
+            # A device the owner has never seen joins the pending list only
+            # through the share link: the token in the QR / URL is the proof
+            # it was invited. Without that, any LAN host could queue itself
+            # for approval under a name of its choosing (the User-Agent) and
+            # collect the share token from a single approve click.
+            presented = request.args.get("_token") or request.headers.get("X-Auth-Token") or ""
+            if not _token_equals(presented, token):
+                return make_response(render_template("pair_needs_link.html"), 403)
+            if not consume_pair_request_token(remote):
+                return make_response(render_template("pair_needs_link.html", too_many=True), 429)
             fp = secrets.token_urlsafe(24)  # ~190 bits
-        # Always touch the device row (creates pending if new, bumps
-        # last_seen if existing). Owner-side UI uses this to surface
-        # pairing requests in real time.
-        find_or_create_pending_device(
-            ctx.get_conn(),
+        # Touch the device row (creates pending if new, bumps last_seen if
+        # existing). Owner-side UI uses this to surface pairing requests
+        # in real time.
+        row = find_or_create_pending_device(
+            conn,
             fingerprint=fp,
             name=_device_name_from_ua(request.headers.get("User-Agent", "")),
             ip=remote,
         )
+        trusted = row.get("trusted_at") is not None and row.get("revoked_at") is None
         # Phone is trusted → full SPA. Untrusted → pairing wait page.
         # Defense in depth: untrusted devices don't even get the SPA
         # bundle, so XSS in unrelated code can't leak the share token
         # to a phone the owner hasn't approved.
-        if is_device_trusted(ctx.get_conn(), fp):
+        if trusted:
             resp = make_response(
                 render_template(
                     "index.html",
                     serve_mode=ctx.serve_mode,
                     auth_token=token,
+                    library_id=ctx.library_id,
                     asset_version=_asset_version(),
                     bpp_posture_statement=_bpp_posture_statement(),
                 )
@@ -196,12 +230,23 @@ def index() -> Response:
             secure=request.scheme == "https",
         )
     else:
+        # Loopback: any local process can reach this port, and the page
+        # carries the owner token. With a boot secret configured, only a
+        # caller that presents it (the launcher's first navigation, or
+        # the page re-presenting it from sessionStorage) gets the token;
+        # others get a locked page.
+        booted = _presents_boot_secret(ctx)
+        if ctx.boot_secret and not booted:
+            resp = make_response(render_template("loopback_locked.html"), 403)
+            resp.headers["Referrer-Policy"] = "no-referrer"
+            return resp
         token = ctx.auth_token
         resp = make_response(
             render_template(
                 "index.html",
                 serve_mode=ctx.serve_mode,
                 auth_token=token,
+                library_id=ctx.library_id,
                 asset_version=_asset_version(),
                 bpp_posture_statement=_bpp_posture_statement(),
             )
@@ -221,7 +266,7 @@ def index() -> Response:
 # _clip_cap_status lives in bp_settings since the v0.1 split. Imported
 # at module load so api_status's snapshot pulls the same status dict
 # the override toggle endpoint returns.
-from bpp.web.bp_settings import _clip_cap_status  # noqa: E402
+from bpp.web.clip_cap import clip_cap_status  # noqa: E402
 
 
 @bp.get("/api/v1/status")
@@ -230,7 +275,7 @@ def api_status() -> Response:
 
     Reports first-run state, photo counts, worker activity (analyze,
     import, face, CLIP), feature availability flags (face/pets/CLIP/
-    HEIC/nudenet), CLIP embedding count, default config, and face
+    HEIC/NudeNet), CLIP embedding count, default config, and face
     cluster threshold. Cheap by design: a single COUNT() rather than
     a full analysis load."""
     ctx = get_ctx()
@@ -278,15 +323,17 @@ def api_status() -> Response:
         "serve_mode": ctx.serve_mode,
         "defaults": DEFAULTS,
         "face_recognition_available": face_recognition_available(),
-        "face_installable": not face_recognition_available() and _pip_available(),
+        **install_status_fields(owner=principal_is_local_app()),
+        # ``nudenet_available``: detection CAN be enabled (runtime
+        # present). ``nudenet_active``: it actually runs — accepted with
+        # the current license text AND weights on disk.
         "nudenet_available": nudenet_available(),
+        "nudenet_active": nudenet_active(),
         "pets_available": pets_available(),
         "face_extraction_done": has_face_data(conn) if conn else False,
         "face_needs_clustering": needs_face_clustering(conn) if conn else False,
         "face_extracting": ctx.face_worker.is_alive,
-        "face_cluster_threshold": ctx.config.get(
-            "face_cluster_threshold", FACE_CLUSTER_THRESHOLD_FALLBACK
-        ),
+        "face_cluster_threshold": cfg_get(ctx.config, "face_cluster_threshold"),
         "clip_available": clip_avail,
         "clip_installable": clip_installable,
         "clip_ready": clip_ready,
@@ -302,7 +349,7 @@ def api_status() -> Response:
         # peak_mb is the realistic ~3x footprint at current row count,
         # surfaced verbatim in the banner so users can size the
         # decision against their actual RAM.
-        **_clip_cap_status(conn, clip_count),
+        **clip_cap_status(conn, clip_count),
         "heic_available": heic_available(),
         "pet_detection_done": has_pet_data(conn) if conn else False,
         # Background perceptual-hash backfill (powers near-duplicate
@@ -328,53 +375,6 @@ def api_stats() -> tuple[Response, int]:
     conn = ctx.get_conn()
     stats = get_library_stats(conn)
     return jsonify(stats), 200
-
-
-@bp.post("/api/v1/photos/recheck-missing")
-@requires_local_app
-def api_recheck_missing() -> tuple[Response, int]:
-    """Re-scan all missing photos and restore those whose files reappeared.
-
-    Useful after NAS reconnect or external drive mount.
-    """
-    ctx = get_ctx()
-    conn = ctx.get_conn()
-    # Find photos currently marked missing
-    rows = conn.execute("SELECT id, filepath FROM photos WHERE missing=1").fetchall()
-    if not rows:
-        return jsonify({"restored": 0, "still_missing": 0}), 200
-
-    from bpp.utils.retry import retry_io
-
-    restored_ids: list[int] = []
-    still_missing = 0
-    for row in rows:
-        pid, fp = row["id"], row["filepath"]
-        try:
-            found = retry_io(os.path.isfile, fp, label="recheck_missing")
-        except OSError:
-            found = False
-        if found:
-            restored_ids.append(pid)
-        else:
-            still_missing += 1
-    # Single batched UPDATE instead of one round-trip per restored photo —
-    # 50k-photo library reduces from N statements to one with an IN clause.
-    if restored_ids:
-        placeholders = ",".join("?" * len(restored_ids))
-        conn.execute(
-            f"UPDATE photos SET missing=0 WHERE id IN ({placeholders})",
-            restored_ids,
-        )
-        conn.commit()
-    restored = len(restored_ids)
-
-    if restored:
-        # Reload analysis so the UI sees the restored photos
-        ctx.invalidate_analysis()
-        ctx.load_analysis_if_needed()
-
-    return jsonify({"restored": restored, "still_missing": still_missing}), 200
 
 
 @bp.post("/api/v1/pick")
@@ -464,7 +464,9 @@ def api_models_pending() -> tuple[Response, int]:
     confusing "blocked_needs_ack" toast instead of a clean route to
     the acceptance dialog. With the filter, the prompt shows only
     downloadable models, and the frontend can surface a hint pointing
-    the user to Settings → Models for the blocked ones.
+    the user to Settings → Models for the blocked ones. Attribution-
+    licensed models (Apache / BSD-style) not yet accepted come back as
+    ``attribution``: the dialog accepts them in one combined step.
 
     The eligibility rules live in :func:`bpp.web.model_filter.
     compute_pending_and_blocked` (pure, unit-tested); this endpoint is a
@@ -473,5 +475,19 @@ def api_models_pending() -> tuple[Response, int]:
     from bpp.web.model_filter import compute_pending_and_blocked
 
     items, blocked = compute_pending_and_blocked()
-    total_mb = sum(item["size_mb"] for item in items)
-    return jsonify({"models": items, "total_mb": total_mb, "blocked": blocked}), 200
+    free = [i for i in items if not i.get("needs_acceptance")]
+    attribution = [i for i in items if i.get("needs_acceptance")]
+    return (
+        jsonify(
+            {
+                "models": free,
+                "total_mb": sum(i["size_mb"] for i in free),
+                # Downloads that happen only if the user accepts the
+                # attribution licenses in the pre-analysis dialog.
+                "attribution": attribution,
+                "attribution_mb": sum(i["size_mb"] for i in attribution),
+                "blocked": blocked,
+            }
+        ),
+        200,
+    )

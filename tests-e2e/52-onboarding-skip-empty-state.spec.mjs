@@ -1,15 +1,15 @@
 // @ts-check
 /**
- * UAT Test 13 (M3): on first run, the onboarding modal appears, the
+ * On first run, the onboarding modal appears, the
  * 'Skip — I'll import later' button on step 3 dismisses onboarding,
  * and the welcome empty-state panel (#empty-state) becomes visible.
  *
- * Without the M3 fix this branch left the user on a blank grid with no
+ * Before the fix, this branch left the user on a blank grid with no
  * actionable text — looked broken. The fix in onboarding.mjs:242
  * calls win.showEmptyLibrary() on the skip path.
  *
  * Requires the server to be pointed at an EMPTY library (image_count
- * = 0, first_run = true). The UAT runner spins up a tmp lib before
+ * = 0, first_run = true). The test runner spins up a tmp lib before
  * dispatching this spec; the demo library is restored after.
  */
 import { expect, test } from "@playwright/test";
@@ -20,7 +20,7 @@ import { photoCount } from "./_helpers.mjs";
 // server at a brand-new empty library so onboarding fires on first_run.
 // Run via `npm run test:e2e:empty`. Against a populated library this whole
 // describe self-skips (see the photoCount guard in each test).
-test.describe("UAT 13 @empty — onboarding skip reveals empty-state", () => {
+test.describe("Onboarding @empty — onboarding skip reveals empty-state", () => {
   test("step 3 'Skip' hides onboarding and shows the welcome empty panel", async ({ page }) => {
     /** @type {string[]} */
     const errors = [];

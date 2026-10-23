@@ -20,12 +20,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CAP = 500
 
-# Baselines measured 2026-06-12 (the 7-agent review's scale gate).
+# Baselines measured 2026-06-12 (scale gate).
 # Shrink-only: lower a number when a split lands; never raise one.
 GRANDFATHERED: dict[str, int] = {
     "bpp/db/schema.py": 530,
-    "bpp/db/photos.py": 507,
-    "bpp/web/static/js/modules/albums-render.mjs": 505,
 }
 
 
@@ -34,10 +32,17 @@ def _loc(path: Path) -> int:
 
 
 def _source_files() -> list[Path]:
+    """Source and test files: the cap applies to ``tests/``, ``tests-js/``
+    and ``tests-e2e/`` the same as to ``bpp/`` (a 1,800-line test module
+    is as hard to navigate as a 1,800-line source module)."""
     files = [p for p in (ROOT / "bpp").rglob("*.py") if "__pycache__" not in p.parts]
     js_root = ROOT / "bpp" / "web" / "static" / "js"
     files += list(js_root.rglob("*.mjs"))
     files += list(js_root.rglob("*.js"))
+    files += [p for p in (ROOT / "tests").rglob("*.py") if "__pycache__" not in p.parts]
+    for test_dir in ("tests-js", "tests-e2e"):
+        for pattern in ("*.mjs", "*.js", "*.ts"):
+            files += [p for p in (ROOT / test_dir).rglob(pattern) if "node_modules" not in p.parts]
     return files
 
 

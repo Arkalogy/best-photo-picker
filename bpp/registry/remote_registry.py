@@ -1,6 +1,6 @@
 """Fetch the remote registry manifest at startup.
 
-Batch 8 / item 12 of the legal-posture rollout. Pairs with the
+Pairs with the
 signed-manifest verifier in :mod:`bpp.registry.signed_manifest` and
 the overlay merger in :mod:`bpp.registry.overlay`. This module is
 the small, conservative HTTPS client that fetches the manifest
@@ -45,7 +45,7 @@ What this module does NOT do
   startup; if the user is offline, the bundled baseline is what
   they get. A future hardening pass can add a signed-on-disk
   cache so the most recent good manifest survives offline
-  startup, but Batch 8 keeps the surface area small.
+  startup, but for now the surface area stays small.
 * Decode or apply the manifest. That is
   :func:`bpp.registry.signed_manifest.verify_manifest` plus
   :func:`bpp.registry.overlay.apply_overlay`.
@@ -66,7 +66,7 @@ _log = get_logger(__name__)
 
 
 #: The published GitHub Pages endpoint for the bppicker-registry repo
-#: (Q4 / item 12 + 23). New hosts land here only via a code review.
+#: New hosts land here only via a code review.
 DEFAULT_REMOTE_REGISTRY_URL = "https://arkalogy.github.io/bppicker-registry/registry.json"
 
 

@@ -1,6 +1,6 @@
 """Find and remove face_embeddings rows produced by a given model.
 
-Batch 7 / item 21 of the legal-posture rollout. Schema v41 added
+Schema v41 added
 ``face_embeddings.producing_model_id``; this module is the read /
 delete API the model-removal flow uses.
 
@@ -25,7 +25,7 @@ A face_embeddings row's ``cluster_id`` points at the cluster the
 face belongs to. Deleting embeddings does NOT delete clusters
 directly — a cluster is a logical grouping computed from the
 embeddings, not a stored entity (the ``face_clusters`` table that
-existed in earlier schemas was retired by P5b). The cluster-count
+existed in earlier schemas has been retired). The cluster-count
 in the confirmation modal is computed as the number of distinct
 ``cluster_id`` values represented by the soon-to-be-deleted rows;
 after the purge those clusters either lose members or vanish
@@ -111,7 +111,7 @@ def purge_derived_for_model(model_id: str, conn: sqlite3.Connection) -> int:
     n = cur.rowcount or 0
     if n:
         _log.info(
-            "Purged %d face_embeddings rows produced by %s (Batch 7 / item 21)",
+            "Purged %d face_embeddings rows produced by %s",
             n,
             model_id,
         )

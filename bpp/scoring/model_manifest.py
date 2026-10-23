@@ -39,22 +39,21 @@ class ModelEntry:
     sha256: str
     size_mb: float
     host: str
+    #: The ``bpp.registry`` entry for these weights — the only place
+    #: their license is written. ``/api/v1/models/pending`` reads the
+    #: license status from it so the dialog never offers a model the
+    #: load gate would refuse. Required: every download has an entry.
+    legal_entry_id: str
     bundled_path: str | None = None
-    #: Optional cross-reference into ``bpp.registry.model_registry``.
-    #: Set for entries that have a legal-registry counterpart so the
-    #: ``/api/v1/models/pending`` endpoint can check restriction +
-    #: acceptance status and filter out models the user can't actually
-    #: download (the runtime gate would refuse, surfacing a confusing
-    #: "blocked_needs_ack" toast). ``None`` for ancillary models with
-    #: no licensing concern.
-    legal_entry_id: str | None = None
+    #: Registered by a plugin (shown in the prompt whatever its kind).
+    from_plugin: bool = False
 
     def is_present(self) -> bool:
         """True when the model is already on disk (cached or bundled)
         and so won't trigger a download."""
-        if self.path.exists():
-            return True
-        return self.bundled_path is not None and Path(self.bundled_path).exists()
+        from bpp.scoring.model_lifecycle import file_present
+
+        return file_present(str(self.path), self.bundled_path)
 
 
 def _host_of(url: str) -> str:
@@ -69,18 +68,157 @@ def all_models() -> list[ModelEntry]:
 
     Importing the model modules below is cheap — the heavy ML library
     imports are deferred to ``ModelSingleton.create_fn`` which we don't
-    trigger here.
+    trigger here. URL / SHA / PATH constants live next to each model;
+    importing those modules just to read the strings is fine — model
+    libraries (mediapipe, onnxruntime, ai_edge_litert, dlib) are loaded
+    lazily via the ModelSingleton import_check + create_fn pattern.
     """
-    # URL / SHA / PATH constants live next to each model. Importing
-    # those modules just to read the strings is fine — model libraries
-    # (mediapipe, onnxruntime, ai_edge_litert, dlib) are loaded lazily
-    # via the ModelSingleton import_check + create_fn pattern.
+    return [*_face_models(), *_body_models(), *_pet_models(), *_clip_models()]
+
+
+def _face_models() -> list[ModelEntry]:
     from bpp.scoring import face as _face
     from bpp.scoring import face_blazeface_fr as _ffr
     from bpp.scoring import face_embed as _femb
     from bpp.scoring import face_expression as _fex
     from bpp.scoring import face_hand_filter as _fhf
     from bpp.scoring import face_scrfd as _fsc
+
+    return [
+        # Face detection
+        ModelEntry(
+            name="BlazeFace short-range face detection",
+            path=Path(_face._MODEL_PATH),
+            url=_face._MODEL_URL,
+            sha256=_face._MODEL_SHA256,
+            size_mb=0.2,
+            host=_host_of(_face._MODEL_URL),
+            bundled_path=str(Path(_face._BUNDLED_DIR) / "blaze_face_short_range.tflite"),
+            legal_entry_id="mediapipe_blazeface_short_range",
+        ),
+        ModelEntry(
+            name="BlazeFace full-range face detection",
+            path=Path(_ffr._FR_MODEL_PATH),
+            url=_ffr._FR_MODEL_URL,
+            sha256=_ffr._FR_MODEL_SHA256,
+            size_mb=0.6,
+            host=_host_of(_ffr._FR_MODEL_URL),
+            legal_entry_id="mediapipe_blazeface_full_range",
+        ),
+        ModelEntry(
+            name="YuNet face detection",
+            path=Path(_face._YUNET_MODEL_PATH),
+            url=_face._YUNET_MODEL_URL,
+            sha256=_face._YUNET_MODEL_SHA256,
+            size_mb=0.3,
+            host=_host_of(_face._YUNET_MODEL_URL),
+            # OpenCV Zoo, Apache-2.0 attribution — restricted. Without
+            # this link the pre-flight dialog would offer it as a free
+            # download (the loader's own gate still blocks it, but the
+            # dialog would lie). See registry/builtins.py YUNET_ENTRY.
+            legal_entry_id="opencv_yunet",
+        ),
+        ModelEntry(
+            name="SCRFD face detection",
+            path=Path(_fsc._SCRFD_MODEL_PATH),
+            url=_fsc._SCRFD_MODEL_URL,
+            sha256=_fsc._SCRFD_MODEL_SHA256,
+            # 3,291,737 bytes (registry expected_download_size_bytes).
+            size_mb=3.1,
+            host=_host_of(_fsc._SCRFD_MODEL_URL),
+            # Research-only weights (non-commercial), opt-in. Linked so
+            # the dialog reads its legal status from the registry and
+            # never offers it as a free download before acceptance.
+            legal_entry_id="insightface_scrfd_25g",
+        ),
+        # Face features
+        ModelEntry(
+            name="SFace face recognition",
+            path=Path(_femb._SFACE_MODEL_PATH),
+            url=_femb._SFACE_MODEL_URL,
+            sha256=_femb._SFACE_MODEL_SHA256,
+            size_mb=38,
+            host=_host_of(_femb._SFACE_MODEL_URL),
+            # SFace ONNX, restricted (attribution). MUST be linked or the
+            # pre-flight dialog offers it as a free download — the exact
+            # bug this fixes. See registry/builtins.py SFACE_ENTRY.
+            legal_entry_id="sface_yunet",
+        ),
+        ModelEntry(
+            name="Face landmarker (expressions)",
+            path=Path(_fex._LANDMARKER_PATH),
+            url=_fex._LANDMARKER_URL,
+            sha256=_fex._LANDMARKER_SHA256,
+            size_mb=4,
+            host=_host_of(_fex._LANDMARKER_URL),
+            legal_entry_id="mediapipe_face_landmarker",
+        ),
+        ModelEntry(
+            name="Hand landmarker (occlusion filter)",
+            path=Path(_fhf._HAND_MODEL_PATH),
+            url=_fhf._HAND_MODEL_URL,
+            sha256=_fhf._HAND_MODEL_SHA256,
+            size_mb=5,
+            host=_host_of(_fhf._HAND_MODEL_URL),
+            legal_entry_id="mediapipe_hand_landmarker",
+        ),
+    ]
+
+
+def _body_models() -> list[ModelEntry]:
+    from bpp.scoring.pose import _POSE_MODEL_PATH, _POSE_MODEL_SHA256, _POSE_MODEL_URL
+    from bpp.scoring.segmentation import (
+        _SEGMENTER_PATH,
+        _SEGMENTER_SHA256,
+        _SEGMENTER_URL,
+    )
+
+    return [
+        # Pose / composition
+        ModelEntry(
+            name="Pose landmarker",
+            path=Path(_POSE_MODEL_PATH),
+            url=_POSE_MODEL_URL,
+            sha256=_POSE_MODEL_SHA256,
+            size_mb=5,
+            host=_host_of(_POSE_MODEL_URL),
+            legal_entry_id="mediapipe_pose_landmarker_lite",
+        ),
+        ModelEntry(
+            name="Selfie segmenter",
+            path=Path(_SEGMENTER_PATH),
+            url=_SEGMENTER_URL,
+            sha256=_SEGMENTER_SHA256,
+            size_mb=0.3,
+            host=_host_of(_SEGMENTER_URL),
+            legal_entry_id="mediapipe_selfie_segmenter",
+        ),
+    ]
+
+
+def _pet_models() -> list[ModelEntry]:
+    from bpp.scoring.pets import _MODEL_FILENAME as _YOLO_FN
+    from bpp.scoring.pets import _MODEL_SHA256 as _YOLO_SHA
+    from bpp.scoring.pets import _MODEL_URL as _YOLO_URL
+    from bpp.utils.paths import models_dir
+
+    md = models_dir()
+    return [
+        ModelEntry(
+            name="YOLO11n pet detector",
+            path=md / _YOLO_FN,
+            url=_YOLO_URL,
+            sha256=_YOLO_SHA,
+            size_mb=11,
+            host=_host_of(_YOLO_URL),
+            # AGPL-3.0 — restricted; needs click-through before download.
+            legal_entry_id="ultralytics_yolov11n_pets",
+        ),
+    ]
+
+
+def _clip_models() -> list[ModelEntry]:
+    """CLIP (semantic search + smart dedup) — large, optional."""
     from bpp.scoring.clip_embed import (
         _MODEL_DIR as _CLIP_DIR,
     )
@@ -108,120 +246,8 @@ def all_models() -> list[ModelEntry]:
         _VOCAB_SHA256,
         _VOCAB_URL,
     )
-    from bpp.scoring.pets import _MODEL_FILENAME as _YOLO_FN
-    from bpp.scoring.pets import _MODEL_SHA256 as _YOLO_SHA
-    from bpp.scoring.pets import _MODEL_URL as _YOLO_URL
-    from bpp.scoring.pose import _POSE_MODEL_PATH, _POSE_MODEL_SHA256, _POSE_MODEL_URL
-    from bpp.scoring.segmentation import (
-        _SEGMENTER_PATH,
-        _SEGMENTER_SHA256,
-        _SEGMENTER_URL,
-    )
-    from bpp.utils.paths import models_dir
-
-    md = models_dir()
 
     return [
-        # Face detection
-        ModelEntry(
-            name="BlazeFace short-range face detection",
-            path=Path(_face._MODEL_PATH),
-            url=_face._MODEL_URL,
-            sha256=_face._MODEL_SHA256,
-            size_mb=0.2,
-            host=_host_of(_face._MODEL_URL),
-            bundled_path=str(Path(_face._BUNDLED_DIR) / "blaze_face_short_range.tflite"),
-        ),
-        ModelEntry(
-            name="BlazeFace full-range face detection",
-            path=Path(_ffr._FR_MODEL_PATH),
-            url=_ffr._FR_MODEL_URL,
-            sha256=_ffr._FR_MODEL_SHA256,
-            size_mb=0.6,
-            host=_host_of(_ffr._FR_MODEL_URL),
-        ),
-        ModelEntry(
-            name="YuNet face detection",
-            path=Path(_face._YUNET_MODEL_PATH),
-            url=_face._YUNET_MODEL_URL,
-            sha256=_face._YUNET_MODEL_SHA256,
-            size_mb=0.3,
-            host=_host_of(_face._YUNET_MODEL_URL),
-            # OpenCV Zoo, Apache-2.0 attribution — restricted. Without
-            # this link the pre-flight dialog would offer it as a free
-            # download (the loader's own gate still blocks it, but the
-            # dialog would lie). See registry/builtins.py YUNET_ENTRY.
-            legal_entry_id="opencv_yunet",
-        ),
-        ModelEntry(
-            name="SCRFD face detection",
-            path=Path(_fsc._SCRFD_MODEL_PATH),
-            url=_fsc._SCRFD_MODEL_URL,
-            sha256=_fsc._SCRFD_MODEL_SHA256,
-            size_mb=16,
-            host=_host_of(_fsc._SCRFD_MODEL_URL),
-            # MIT — permissive; linked for parity so the dialog reads
-            # its legal status from the registry rather than guessing.
-            legal_entry_id="insightface_scrfd_25g",
-        ),
-        # Face features
-        ModelEntry(
-            name="SFace face recognition",
-            path=Path(_femb._SFACE_MODEL_PATH),
-            url=_femb._SFACE_MODEL_URL,
-            sha256=_femb._SFACE_MODEL_SHA256,
-            size_mb=38,
-            host=_host_of(_femb._SFACE_MODEL_URL),
-            # SFace ONNX, restricted (attribution). MUST be linked or the
-            # pre-flight dialog offers it as a free download — the exact
-            # bug this fixes. See registry/builtins.py SFACE_ENTRY.
-            legal_entry_id="sface_yunet",
-        ),
-        ModelEntry(
-            name="Face landmarker (expressions)",
-            path=Path(_fex._LANDMARKER_PATH),
-            url=_fex._LANDMARKER_URL,
-            sha256=_fex._LANDMARKER_SHA256,
-            size_mb=4,
-            host=_host_of(_fex._LANDMARKER_URL),
-        ),
-        ModelEntry(
-            name="Hand landmarker (occlusion filter)",
-            path=Path(_fhf._HAND_MODEL_PATH),
-            url=_fhf._HAND_MODEL_URL,
-            sha256=_fhf._HAND_MODEL_SHA256,
-            size_mb=5,
-            host=_host_of(_fhf._HAND_MODEL_URL),
-        ),
-        # Pose / composition
-        ModelEntry(
-            name="Pose landmarker",
-            path=Path(_POSE_MODEL_PATH),
-            url=_POSE_MODEL_URL,
-            sha256=_POSE_MODEL_SHA256,
-            size_mb=5,
-            host=_host_of(_POSE_MODEL_URL),
-        ),
-        ModelEntry(
-            name="Selfie segmenter",
-            path=Path(_SEGMENTER_PATH),
-            url=_SEGMENTER_URL,
-            sha256=_SEGMENTER_SHA256,
-            size_mb=0.3,
-            host=_host_of(_SEGMENTER_URL),
-        ),
-        # Pets
-        ModelEntry(
-            name="YOLO11n pet detector",
-            path=md / _YOLO_FN,
-            url=_YOLO_URL,
-            sha256=_YOLO_SHA,
-            size_mb=11,
-            host=_host_of(_YOLO_URL),
-            # AGPL-3.0 — restricted; needs click-through before download.
-            legal_entry_id="ultralytics_yolov11n_pets",
-        ),
-        # CLIP (semantic search + smart dedup) — large, optional
         ModelEntry(
             name="CLIP visual encoder",
             path=_CLIP_DIR / _CLIP_VISUAL_FN,
@@ -229,6 +255,7 @@ def all_models() -> list[ModelEntry]:
             sha256=_CLIP_VISUAL_SHA,
             size_mb=336,
             host=_host_of(_CLIP_VISUAL_URL),
+            legal_entry_id="openai_clip_vit_b32_onnx",
         ),
         ModelEntry(
             name="CLIP text encoder",
@@ -237,6 +264,7 @@ def all_models() -> list[ModelEntry]:
             sha256=_CLIP_TEXT_SHA,
             size_mb=242,
             host=_host_of(_CLIP_TEXT_URL),
+            legal_entry_id="openai_clip_vit_b32_onnx",
         ),
         ModelEntry(
             name="CLIP BPE vocabulary",
@@ -245,11 +273,46 @@ def all_models() -> list[ModelEntry]:
             sha256=_VOCAB_SHA256,
             size_mb=1.3,
             host=_host_of(_VOCAB_URL),
+            legal_entry_id="openai_clip_vit_b32_onnx",
         ),
     ]
 
 
+def plugin_models() -> list[ModelEntry]:
+    """Model files registered by plugins that bpp can download
+    (:func:`bpp.scoring.model_lifecycle.fetchable_legal_id`). The size
+    comes from the legal entry's ``expected_download_size_bytes`` when it
+    declares one (else 0 = unknown)."""
+    from bpp.registry.model_registry import get_entry
+    from bpp.scoring.model_lifecycle import (
+        bundled_path_of,
+        fetchable_legal_id,
+        plugin_model_entries,
+    )
+
+    out: list[ModelEntry] = []
+    for e in plugin_model_entries():
+        legal_id = fetchable_legal_id(e)
+        if legal_id is None or e.url is None:
+            continue
+        size_bytes = getattr(get_entry(legal_id), "expected_download_size_bytes", 0) or 0
+        out.append(
+            ModelEntry(
+                name=e.name,
+                path=Path(e.path).expanduser(),
+                url=e.url,
+                sha256=e.sha256 or "",
+                size_mb=round(size_bytes / (1024 * 1024), 1),
+                host=_host_of(e.url),
+                legal_entry_id=legal_id,
+                bundled_path=bundled_path_of(e),
+                from_plugin=True,
+            )
+        )
+    return out
+
+
 def pending_downloads() -> list[ModelEntry]:
-    """Subset of :func:`all_models` that aren't on disk yet — i.e. the
+    """Built-in and plugin models that aren't on disk yet — i.e. the
     set of downloads the next analyze run would actually trigger."""
-    return [m for m in all_models() if not m.is_present()]
+    return [m for m in [*all_models(), *plugin_models()] if not m.is_present()]

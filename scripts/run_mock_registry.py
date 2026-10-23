@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Local mock remote-registry server for dev / pre-release verification.
 
-Walks the full chain — sign a manifest with the real Arkalogy keys,
+Walks the full chain — sign a manifest with a trusted signing key,
 serve it from localhost over plain http://, point bppicker at the
 mock URL, watch the overlay apply the new entry to the in-process
 registry.
 
-Usage:
+Usage (the key must be one listed in ``bpp/registry/trusted_keys.py``):
 
-    .venv/bin/python scripts/run_mock_registry.py
+    BPP_SIGNING_KEY_PATH=/path/to/<key-id>.private.key \\
+        .venv/bin/python scripts/run_mock_registry.py
 
 Then in another terminal:
 
@@ -27,7 +28,7 @@ Stop the mock with Ctrl-C.
 
 What this validates
 
-* The Batch 8 + Batch 10 fetch path works end-to-end against a real
+* The signed remote-registry fetch path works end-to-end against a real
   signed manifest (not just against unit-test fixtures).
 * The verifier accepts manifests signed with the production primary
   key and rejects manifests signed with anything else.
@@ -41,8 +42,7 @@ What this does NOT validate
 * The arkalogy.github.io URL resolution (we're overriding it).
 * Production-grade redirect handling on the real host.
 
-For the production check (after publishing the real Pages repo),
-run::
+To check the published registry, run::
 
     curl -fsSL https://arkalogy.github.io/bppicker-registry/registry.json \\
       | .venv/bin/bpp model registry verify /dev/stdin
@@ -54,6 +54,7 @@ import argparse
 import base64
 import http.server
 import json
+import os
 import socketserver
 import sys
 import tempfile
@@ -71,19 +72,22 @@ MOCK_PORT = 9088
 
 
 def _load_primary_key() -> tuple[str, Ed25519PrivateKey]:
-    """Load the Arkalogy primary signing key from
-    ``~/.config/bpp/signing-keys/``."""
-    key_path = (
-        Path.home() / ".config" / "bpp" / "signing-keys" / "arkalogy-primary-2026-06.private.key"
-    )
-    if not key_path.exists():
+    """Load the signing key named by ``BPP_SIGNING_KEY_PATH`` (a file
+    holding a base64 raw Ed25519 private key; its basename minus
+    ``.private.key`` is the key id)."""
+    env_path = os.environ.get("BPP_SIGNING_KEY_PATH")
+    if not env_path:
         sys.exit(
-            f"primary signing key not found at {key_path} — generate "
-            "one (see bpp/registry/trusted_keys.py) before running the mock"
+            "set BPP_SIGNING_KEY_PATH to a signing key file (see "
+            "bpp/registry/trusted_keys.py) before running the mock"
         )
+    key_path = Path(env_path).expanduser()
+    if not key_path.exists():
+        sys.exit(f"signing key not found at {key_path}")
     raw = key_path.read_text(encoding="ascii").strip()
     key_bytes = base64.b64decode(raw)
-    return "arkalogy-primary-2026-06", Ed25519PrivateKey.from_private_bytes(key_bytes)
+    key_id = key_path.name.removesuffix(".private.key")
+    return key_id, Ed25519PrivateKey.from_private_bytes(key_bytes)
 
 
 def _build_mock_manifest() -> dict:
@@ -92,6 +96,11 @@ def _build_mock_manifest() -> dict:
     applies."""
     return {
         "schema_version": 1,
+        # The app refuses a version below the highest it has applied
+        # from the same URL (bpp/registry/manifest_rollback.py). Raise
+        # this, or delete registry-overlay-state.json under the cache
+        # dir, when re-serving a changed mock at the same URL.
+        "manifest_version": 1,
         "generated_at": "2026-06-03T18:00:00+00:00",
         "entries": [
             {
@@ -104,7 +113,7 @@ def _build_mock_manifest() -> dict:
                 "terms_retrieved_at": "2026-06-03",
                 "license_summary": (
                     "Synthetic entry served by run_mock_registry.py for "
-                    "end-to-end verification of the Batch 8 + 10 fetch + "
+                    "end-to-end verification of the remote-registry fetch + "
                     "verify + apply chain. Not a real model."
                 ),
                 "requires_explicit_ack": False,

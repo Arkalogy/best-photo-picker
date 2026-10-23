@@ -13,6 +13,10 @@ from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
 
+#: After a refused full scan, the next scans are skipped for 1, 2, 4 …
+#: ticks of the 5-minute sampler, up to this many (an hour).
+SCAN_BACKOFF_MAX_TICKS = 12
+
 
 class HealthCheckHandle(NamedTuple):
     """Handle returned by start_health_checks for lifecycle management."""
@@ -28,10 +32,72 @@ class HealthCheckHandle(NamedTuple):
             t.join(timeout=per_thread)
 
 
+def periodic_sample_tick(
+    conn: sqlite3.Connection,
+    dirs: dict[str, str],
+    invalidate_fn: Callable[[], None],
+    on_scan_refused: Callable[[tuple[int, int] | None], None] | None,
+    backoff: dict[str, int] | None = None,
+) -> None:
+    """One periodic check: sample ~100 random photos; a missing one
+    triggers the full scan. A clean sample also retires an earlier
+    "scan refused" flag — with half the library gone the sample would
+    have hit a missing file — so a storage outage that ended doesn't
+    show as degraded until restart."""
+    from bpp.db.photos import relocate_missing, sample_random_photos
+    from bpp.db.photos_missing import file_present, scan_missing
+
+    sample = sample_random_photos(conn, count=100)
+    answers = [file_present(fp) for fp in sample]
+    missing_in_sample = [
+        fp for fp, present in zip(sample, answers, strict=True) if present is False
+    ]
+    if not missing_in_sample:
+        # Only a sample storage actually answered for (no None) says
+        # the library is back; a flapping mount must not clear the flag.
+        if on_scan_refused and all(present is True for present in answers):
+            on_scan_refused(None)
+        if backoff is not None:
+            backoff.clear()
+        return
+    if backoff is not None and backoff.get("skip", 0) > 0:
+        # The last full scan was refused (mass-missing guard) and
+        # nothing has changed: the sample still hits missing files.
+        # Every 5 minutes a 200k-stat walk of a NAS is not useful.
+        backoff["skip"] -= 1
+        log.info(
+            "Periodic check: %d/%d sampled files missing; full scan skipped (%d ticks left)",
+            len(missing_in_sample),
+            len(sample),
+            backoff["skip"],
+        )
+        return
+    log.warning(
+        "Periodic check: %d/%d sampled files missing, running full scan",
+        len(missing_in_sample),
+        len(sample),
+    )
+    scan = scan_missing(conn, photos_dir=dirs.get("photos") or None)
+    if on_scan_refused and scan.completed:
+        on_scan_refused(scan.refused)
+    if backoff is not None:
+        if scan.completed and scan.refused:
+            wait = min(max(backoff.get("wait", 0) * 2, 1), SCAN_BACKOFF_MAX_TICKS)
+            backoff.update(wait=wait, skip=wait)
+        else:
+            backoff.clear()
+    if scan.newly_missing:
+        photos_dir = dirs.get("photos", "")
+        if photos_dir and os.path.isdir(photos_dir):
+            relocate_missing(conn, photos_dir)
+        invalidate_fn()
+
+
 def start_health_checks(
     get_conn: Callable[[], sqlite3.Connection],
     dirs: dict[str, str],
     invalidate_fn: Callable[[], None],
+    on_scan_refused: Callable[[tuple[int, int] | None], None] | None = None,
 ) -> HealthCheckHandle:
     """Launch background threads for missing-file detection and periodic sampling.
 
@@ -39,17 +105,19 @@ def start_health_checks(
         get_conn: Callable that returns a DB connection.
         dirs: Library directory dict (needs "photos" key).
         invalidate_fn: Called when the analysis cache should be refreshed.
+        on_scan_refused: Told ``(missing, total)`` when a scan refused to
+            mark more than half the library missing, ``None`` when a scan
+            ran clean — /api/v1/health shows it.
 
     Returns:
         A ``HealthCheckHandle`` with stop_event and thread references.
     """
     from bpp.db.library import backfill_sha256
     from bpp.db.photos import (
-        check_missing,
         get_photo_count,
         relocate_missing,
-        sample_random_photos,
     )
+    from bpp.db.photos_missing import scan_missing
 
     stop_event = threading.Event()
     threads: list[threading.Thread] = []
@@ -62,7 +130,10 @@ def start_health_checks(
             conn = get_conn()
             if get_photo_count(conn) == 0:
                 return
-            newly_missing = check_missing(conn)
+            scan = scan_missing(conn, photos_dir=dirs.get("photos") or None)
+            if on_scan_refused and scan.completed:
+                on_scan_refused(scan.refused)
+            newly_missing = scan.newly_missing
             if newly_missing:
                 log.warning("Startup scan: %d files missing", len(newly_missing))
                 photos_dir = dirs.get("photos", "")
@@ -98,23 +169,10 @@ def start_health_checks(
 
     # Periodic sampling: check ~100 random photos every 5 minutes
     def _periodic_sample() -> None:
+        backoff: dict[str, int] = {}
         while not stop_event.wait(300):
             try:
-                conn = get_conn()
-                sample = sample_random_photos(conn, count=100)
-                missing_in_sample = [fp for fp in sample if not os.path.isfile(fp)]
-                if missing_in_sample:
-                    log.warning(
-                        "Periodic check: %d/%d sampled files missing, running full scan",
-                        len(missing_in_sample),
-                        len(sample),
-                    )
-                    newly_missing = check_missing(conn)
-                    if newly_missing:
-                        photos_dir = dirs.get("photos", "")
-                        if photos_dir and os.path.isdir(photos_dir):
-                            relocate_missing(conn, photos_dir)
-                        invalidate_fn()
+                periodic_sample_tick(get_conn(), dirs, invalidate_fn, on_scan_refused, backoff)
             except Exception:
                 log.warning("Periodic file check failed", exc_info=True)
             # Explicit GC pass to collect Python reference cycles. CPython's

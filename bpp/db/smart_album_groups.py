@@ -50,7 +50,7 @@ def _refresh_group_albums(conn: sqlite3.Connection) -> None:
     active_rules: set[str] = set()
 
     # Pre-load all person album names for O(1) lookup.
-    # P5b: indexed shadow-column lookup via the canonical helper.
+    # Indexed shadow-column lookup via the canonical helper.
     from bpp.db.albums import get_smart_person_cluster_name_map
 
     _person_names = get_smart_person_cluster_name_map(conn)

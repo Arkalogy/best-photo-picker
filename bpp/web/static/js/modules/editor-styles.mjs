@@ -214,6 +214,9 @@ export async function _autoSection(section) {
   try {
     const data = await apiFetch(`/api/v1/photos/enhance-preview?filepath=${encodeURIComponent(p.filepath)}`);
     if (!data?.params) return;
+    // The editor may show another photo by now: its edits are not ours.
+    const current = win.lightboxIdx >= 0 ? items[win.lightboxIdx] : null;
+    if (!current || current.filepath !== p.filepath) return;
     const e = _edits();
     for (const k of keys) {
       if (data.params[k] !== undefined) e[k] = data.params[k];

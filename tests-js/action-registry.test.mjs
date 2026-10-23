@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * P8 — action-registry.mjs tests.
+ * action-registry.mjs tests.
  *
  * The registry is the strict half of the dispatcher migration: handlers
  * register by name + signature, the click dispatcher consults the registry

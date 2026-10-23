@@ -1,41 +1,14 @@
-"""Schema + lifecycle + license + disclaimer + label tests for the
-model registry foundation (Batch 1 of the legal-posture rollout).
-
-These tests pin the contracts the rest of the plan depends on. If
-any of them fails, downstream batches (default safety, gate, dialog,
-acceptance log, BYOM, signed registry) are reading from a foundation
-that has drifted from the legal-review specification, and the legal
-posture is no longer the one we vetted.
-
-What's specifically pinned
-
-* :class:`ModelStatus` and :class:`LicenseClass` enums are exhaustive
-  in the UI-label tables — adding a new enum value without a label
-  fails CI (catches Q10 drift).
-* :func:`status_behavior` returns the exact policy matrix the
-  legal-posture rollout specified — adding a state without
-  defining its behaviour fails CI (catches item 20 silent-failure
-  hole).
-* :data:`CANONICAL_DISCLAIMER` paragraphs include the verbatim
-  legal-review phrasings — a routine edit that drops a key
-  paragraph fails CI (catches item 7 / item 17 wording drift).
-* :func:`ui_label_for_entry` is deterministic and omits sections
-  cleanly when their corresponding flag isn't set (catches the
-  picker showing stray punctuation or warranty-like phrasing).
-"""
+"""Schema + lifecycle + license + disclaimer + label tests for the — split header."""
 
 from __future__ import annotations
 
 import re
-
-import pytest
 
 from bpp.registry import (
     CANONICAL_DISCLAIMER,
     CANONICAL_DISCLAIMER_COMPRESSED,
     CANONICAL_DISCLAIMER_VERSION,
     LicenseClass,
-    ModelEntry,
     ModelStatus,
     StatusBehavior,
     canonical_disclaimer_sha256,
@@ -48,15 +21,11 @@ from bpp.registry import (
     ui_label_for_entry,
 )
 from bpp.registry.disclaimers import canonical_disclaimer_compressed_sha256
-from bpp.registry.model_registry import _reset_registry_for_tests
-
-
-@pytest.fixture(autouse=True)
-def _reset_state() -> None:
-    """Empty the global registry between tests so test order does not
-    leak entries into each other's assertions."""
-    _reset_registry_for_tests()
-
+from tests.registry._model_registry_shared import (
+    _PINNED_DISCLAIMER_HASHES,
+    _make_entry,
+    _reset_state,  # noqa: F401
+)
 
 # ── Enum exhaustiveness ──
 
@@ -88,18 +57,18 @@ class TestEnumExhaustiveness:
             assert label.strip() == label
 
     def test_every_model_status_has_behavior(self) -> None:
-        """Q9 / item 20: a status with no behaviour entry would let
+        """A status with no behaviour entry would let
         a takedown be silently ignored. Catch the omission at CI time."""
         for status in ModelStatus:
             behavior = status_behavior(status)
             assert isinstance(behavior, StatusBehavior)
 
 
-# ── Status policy matrix (item 20) ──
+# ── Status policy matrix ──
 
 
 class TestStatusBehaviorMatrix:
-    """The legal-posture rollout specified the exact behaviour
+    """The registry specifies the exact behaviour
     table for the four states. These tests pin each row so a future
     edit cannot quietly weaken (e.g. "let LEGALLY_BLOCKED keep
     serving existing local copies")."""
@@ -136,12 +105,12 @@ class TestStatusBehaviorMatrix:
         assert b.requires_rights_assertion_to_use
 
 
-# ── Canonical disclaimer (items 7 + 8 + 17) ──
+# ── Canonical disclaimer ──
 
 
 class TestCanonicalDisclaimer:
-    """The disclaimer contains specific sentences the legal-posture spec
-    asked to be preserved verbatim. A maintainer who rewrites a
+    """The disclaimer contains specific sentences that must be
+    preserved verbatim. A maintainer who rewrites a
     paragraph cannot silently drop these without the test failing."""
 
     def test_version_constant_is_set(self) -> None:
@@ -149,15 +118,18 @@ class TestCanonicalDisclaimer:
         assert "v" in CANONICAL_DISCLAIMER_VERSION
 
     def test_distribution_disclaimer_phrasing_is_preserved(self) -> None:
-        """Item 7 — Arkalogy distribution posture, verbatim wording."""
+        """Arkalogy distribution posture, verbatim wording."""
         assert (
             "Best Photo Picker does not redistribute or bundle this model" in CANONICAL_DISCLAIMER
         )
-        assert "downloaded by the user's local installation directly" in CANONICAL_DISCLAIMER
-        assert "from the upstream provider" in CANONICAL_DISCLAIMER
+        assert "downloaded by the user's local installation from a" in CANONICAL_DISCLAIMER
+        assert "third-party host (not from Arkalogy)" in CANONICAL_DISCLAIMER
+        # Not every download URL is the original publisher's (LaMa comes
+        # from a re-host), so the text must not claim a direct upstream fetch.
+        assert "directly from the upstream provider" not in CANONICAL_DISCLAIMER
 
     def test_arkalogy_monetization_framing_is_corrected(self) -> None:
-        """Item 17 — the corrected wording distinguishes Arkalogy's
+        """The corrected wording distinguishes Arkalogy's
         monetization stance from third-party MIT rights."""
         assert "Arkalogy will not monetize" in CANONICAL_DISCLAIMER
         assert "MIT-licensed" in CANONICAL_DISCLAIMER
@@ -166,7 +138,7 @@ class TestCanonicalDisclaimer:
         assert "BPP will never be commercialized" not in CANONICAL_DISCLAIMER
 
     def test_source_vs_models_distinction_present(self) -> None:
-        """Item 8 — replace any "MIT and free for commercial use"
+        """Replace any "MIT and free for commercial use"
         phrasing with the source-vs-models distinction."""
         assert "Best Photo Picker's source code is MIT-licensed" in CANONICAL_DISCLAIMER
         assert "Optional third-party models may have separate licenses" in CANONICAL_DISCLAIMER
@@ -174,7 +146,7 @@ class TestCanonicalDisclaimer:
         assert "MIT and free for commercial use" not in CANONICAL_DISCLAIMER
 
     def test_compressed_form_carries_same_substance(self) -> None:
-        """Q6 — the compressed form used in the click-through dialog
+        """The compressed form used in the click-through dialog
         must convey the same legal points as the full form (no
         meaning swap allowed)."""
         # Each substantive claim from the full disclaimer must appear,
@@ -198,33 +170,6 @@ class TestCanonicalDisclaimer:
         assert full_hash != compressed_hash
         # Stability: a second call returns the same value.
         assert canonical_disclaimer_sha256() == full_hash
-
-
-# ── Version-locked hash pin (item 19 — evidentiary chain) ──
-
-
-#: Hash-version map for the canonical and BYOM disclaimers. The whole
-#: evidentiary chain ("we can prove what wording user X agreed to on
-#: date Z") rests on each ``*_VERSION`` constant pinning ONE specific
-#: text. A typo fix that changes the bytes without bumping the
-#: version silently desyncs every historical acceptance row whose
-#: hash was snapshotted under the old text.
-#:
-#: When you intentionally update the wording:
-#:   1. Bump the ``_VERSION`` constant in disclaimers.py.
-#:   2. Run this file with -p no:cacheprovider once and copy the new
-#:      hash from the assertion failure into the table below.
-#:   3. Commit the constant + the table edit in the same change.
-_PINNED_DISCLAIMER_HASHES = {
-    "canonical-disclaimer-v2": {
-        "full": "a7346a755f33a9a4b1a6e4a08bcddce0dfca976b63baa15c2139254c1d00c5e5",
-        "compressed": "45886a7a76c11a2815480b2aa5ce708d245bbadc5934271c510a1de177afa0a6",
-    },
-    "byom-disclaimer-v2": {
-        "full": "61834c690bb43802b788a1ffd00937b8d5632b43ba01808f8a6995a85ec70793",
-        "compressed": "08a299518ebb9c34320c0e31477e7e8a5a2d635097de7b1e740a2c9135abd270",
-    },
-}
 
 
 class TestDisclaimerVersionLock:
@@ -255,7 +200,7 @@ class TestDisclaimerVersionLock:
             "      _PINNED_DISCLAIMER_HASHES in this file.\n"
             "Silent edits desync every historical acceptance row whose "
             "ack_text_sha256 was snapshotted under the old text — the "
-            "evidentiary chain breaks for those users."
+            "audit trail breaks for those users."
         )
 
     def test_canonical_compressed_disclaimer_hash_matches_pin(self) -> None:
@@ -308,44 +253,6 @@ class TestDisclaimerVersionLock:
         )
 
 
-# ── ModelEntry composition + label derivation (items 3 + 24 / Q10) ──
-
-
-def _make_entry(
-    *,
-    entry_id: str = "test_entry",
-    display_name: str = "Test Entry",
-    license_class: LicenseClass = LicenseClass.MIT,
-    commercial_use_restriction_known: bool = False,
-    bppicker_commercial_default_allowed: bool = True,
-    commercial_unlock_requires_rights_assertion: bool = False,
-    status: ModelStatus = ModelStatus.AVAILABLE,
-    requires_explicit_ack: bool = False,
-    default_for_kind: bool = False,
-) -> ModelEntry:
-    return ModelEntry(
-        id=entry_id,
-        display_name=display_name,
-        kind="face_embedder",
-        source_url="https://example.invalid/model.onnx",
-        terms_url="https://example.invalid/LICENSE",
-        terms_permalink_url=None,
-        terms_retrieved_at="2026-06-02",
-        license_summary="License summary used in tests",
-        requires_explicit_ack=requires_explicit_ack,
-        ack_text_version=CANONICAL_DISCLAIMER_VERSION,
-        ack_text_sha256=canonical_disclaimer_sha256(),
-        upstream_claimed_license_class=license_class,
-        commercial_use_restriction_known=commercial_use_restriction_known,
-        bppicker_commercial_default_allowed=bppicker_commercial_default_allowed,
-        commercial_unlock_requires_rights_assertion=commercial_unlock_requires_rights_assertion,
-        status=status,
-        training_data="LFW-derived",
-        weight_sha256="0" * 64,
-        default_for_kind=default_for_kind,
-    )
-
-
 class TestRegistryCRUD:
     def test_register_then_get_returns_the_entry(self) -> None:
         entry = _make_entry(entry_id="my_entry")
@@ -366,7 +273,7 @@ class TestRegistryCRUD:
         assert [e.id for e in list_entries()] == ["b", "a", "c"]
 
     def test_register_same_id_replaces(self) -> None:
-        """Batch 8 — signed remote registry overlays updates onto the
+        """The signed remote registry overlays updates onto the
         bundled baseline. Replacement on same id is intentional."""
         entry_v1 = _make_entry(entry_id="x", display_name="X v1")
         entry_v2 = _make_entry(entry_id="x", display_name="X v2")
@@ -378,7 +285,7 @@ class TestRegistryCRUD:
 
 
 class TestUiLabelDerivation:
-    """Q10 — registry uses precise non-warranty field names; UI
+    """The registry uses precise non-warranty field names; UI
     surfaces plain English. These tests pin the derivation so the
     UI cannot drift from the registry, and the registry stays free
     of legal-opinion-sounding language."""
@@ -454,7 +361,7 @@ class TestUiLabelDerivation:
 
 
 class TestFieldNamesAreNonWarranty:
-    """Item 24 — the rename's whole point was to remove
+    """The field rename's whole point was to remove
     legal-opinion-sounding language from the data model. These tests
     confirm the renamed fields are present and the warranty-like
     name is gone."""
@@ -472,15 +379,15 @@ class TestFieldNamesAreNonWarranty:
         test fails — and surfaces the rename intent in the diff."""
         entry = _make_entry()
         assert not hasattr(entry, "commercial_safe"), (
-            "The commercial_safe field was intentionally removed in "
-            "item 24 because 'safe' reads as a legal opinion. Use "
+            "The commercial_safe field was intentionally removed "
+            "because 'safe' reads as a legal opinion. Use "
             "commercial_use_restriction_known + "
             "bppicker_commercial_default_allowed instead."
         )
 
 
-class TestEvidentiaryFieldsPresentForAcceptanceLog:
-    """Item 19 — restricted-model entries must carry the fields the
+class TestAuditFieldsPresentForAcceptanceLog:
+    """Restricted-model entries must carry the fields the
     acceptance log will later snapshot, so we can later prove what
     wording the user agreed to and what model file they pointed at."""
 

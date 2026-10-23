@@ -15,12 +15,16 @@ can run them; LAN-paired phones don't get to mutate photos.
 from __future__ import annotations
 
 import os
+from typing import TYPE_CHECKING, Any
 
 from flask import Blueprint, Response, jsonify, request
 
 from bpp.utils.logging import get_logger
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx
+
+if TYPE_CHECKING:
+    from PIL import Image
 
 log = get_logger(__name__)
 
@@ -31,8 +35,60 @@ bp = Blueprint("inpaint", __name__)
 def api_inpaint_status() -> tuple[Response, int]:
     """Check if inpainting is available."""
     from bpp.ai.inpainting import is_available
+    from bpp.scoring.install_hold import held_keys
+    from bpp.web.bp_install import _pip_available
+    from bpp.web.pip_process import interrupted_installs
 
-    return jsonify({"available": is_available()}), 200
+    # restart_pending: LaMa was installed but loads only after a restart.
+    waiting = "inpaint" in held_keys()
+    # repair_needed: its install was stopped part way; installing it again
+    # (the Download button) repairs it, even if it looks importable. Both
+    # are the owner's to act on: a paired device can't install or restart.
+    from bpp.web.share import principal_is_local_app
+
+    owner = principal_is_local_app()
+    waiting = waiting and owner
+    repair = owner and "inpaint" in interrupted_installs()
+    return jsonify(
+        {
+            "available": is_available() and not repair,
+            "restart_pending": waiting,
+            "repair_needed": repair,
+            # Installing is the owner's, where pip exists (not in the desktop
+            # app): otherwise no Download button that can only fail.
+            "installable": owner and _pip_available(),
+        }
+    ), 200
+
+
+def _open_source(ctx: Any, filepath: str, photo_id: int) -> Image.Image:
+    """The photo as an RGB image in display orientation, the space the
+    editor's mask was drawn in. A camera RAW comes through its cached
+    full-size conversion (shared with the viewer and the crops); when
+    that can't be made the error names the reason and the fix."""
+    from bpp.errors import BppError
+    from bpp.utils.raw import CHECK_FILE_RECOVERY
+    from bpp.web import box_crop
+    from bpp.web.media_support import raw_full_jpeg_path, raw_preview_error
+
+    path_hash = ctx.thumbs.get_hash(filepath) if ctx.thumbs else ""
+    raw_full_jpeg = raw_full_jpeg_path(ctx, path_hash) if ctx.thumbs else None
+    try:
+        with box_crop.open_oriented(filepath, label="inpaint", raw_full_jpeg=raw_full_jpeg) as img:
+            return img.convert("RGB")
+    except box_crop.RawUnreadable:
+        raise raw_preview_error(path_hash, filepath, photo_id=photo_id) from None
+    except Exception as e:
+        # Anything PIL or the decoder throws (unreadable file, an image
+        # over the decompression limit, ...): one explained error, with
+        # the cause in the log.
+        raise BppError(
+            "Cannot read photo",
+            user_message="the photo couldn't be read",
+            diagnostic_message=f"open failed for photo {photo_id} ({filepath}): {e!r}",
+            photo_id=photo_id,
+            recovery=CHECK_FILE_RECOVERY,
+        ) from e
 
 
 @bp.post("/api/v1/photos/<int:photo_id>/inpaint")
@@ -47,13 +103,17 @@ def api_inpaint(photo_id: int) -> tuple[Response, int]:
 
     from bpp.ai.inpainting import is_available
 
-    # P7: use the BppError handler instead of ad-hoc jsonify-error.
+    # Use the BppError handler instead of ad-hoc jsonify-error.
     from bpp.errors import (
         FeatureUnavailableError,
         NotFoundError,
         ValidationError,
     )
+    from bpp.scoring.install_hold import refuse_if_held
 
+    # Installed from the app (or being installed): "restart" / "wait" (409),
+    # not "pip install it".
+    refuse_if_held("simple_lama_inpainting")
     if not is_available():
         raise FeatureUnavailableError(
             "Inpainting not available. Install with: pip install bppicker[inpaint]",
@@ -92,6 +152,7 @@ def api_inpaint(photo_id: int) -> tuple[Response, int]:
             photo_id=photo_id,
         )
 
+    image = _open_source(ctx, filepath, photo_id)
     try:
         from io import BytesIO
 
@@ -99,10 +160,8 @@ def api_inpaint(photo_id: int) -> tuple[Response, int]:
 
         from bpp.ai.inpainting import inpaint
 
-        # Context managers release the file / buffer handles before
+        # The context manager releases the buffer handle before
         # inpaint() runs (which holds the converted Image objects).
-        with Image.open(filepath) as img_in:
-            image = img_in.convert("RGB")
         with Image.open(BytesIO(mask_bytes)) as mask_in:
             mask = mask_in.convert("L")
         result = inpaint(image, mask)
@@ -126,7 +185,7 @@ def api_inpaint(photo_id: int) -> tuple[Response, int]:
         return jsonify({"image": result_b64, "photo_id": photo_id}), 200
 
     except ValueError as e:
-        # P7: raise into the handler so the response shape matches the
+        # Raise into the handler so the response shape matches the
         # other failure branches in this endpoint. diagnostic_message
         # carries the original ValueError text; user-facing stays clean.
         raise ValidationError(
@@ -139,7 +198,7 @@ def api_inpaint(photo_id: int) -> tuple[Response, int]:
         # as a generic 500 (BppError default). diagnostic_message
         # captures the actual exception for the log; user sees the
         # generic "Inpainting failed" message.
-        # RuntimeError used to be its own branch pre-P7 review; now
+        # RuntimeError used to be its own branch; now
         # collapsed into the catch-all since it's a subclass of
         # Exception and was treated the same way.
         from bpp.errors import BppError
@@ -176,11 +235,10 @@ def api_auto_straighten(photo_id: int) -> tuple[Response, int]:
     if not os.path.isfile(filepath):
         raise NotFoundError("File not found on disk", photo_id=photo_id)
 
+    img = _open_source(ctx, filepath, photo_id)
     try:
         from PIL import Image
 
-        with Image.open(filepath) as img_in:
-            img = img_in.convert("RGB")
         # Downscale for fast analysis (max 512px on long side)
         img.thumbnail((512, 512), Image.LANCZOS)
         arr = np.array(img)

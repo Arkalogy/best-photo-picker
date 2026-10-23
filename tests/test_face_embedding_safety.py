@@ -1,4 +1,4 @@
-"""Tests for Protection A — defense against corrupt face embedding BLOBs.
+"""Tests for the embedding-size check — defense against corrupt face embedding BLOBs.
 
 What this pins
 --------------
@@ -101,7 +101,7 @@ class TestDecodeEmbedding:
 
 
 class TestSkipWarningLogging:
-    """P-03: skip warnings carry the row_id on first occurrence per
+    """Skip warnings carry the row_id on first occurrence per
     (where, reason) pair, and are rate-limited so a library with
     thousands of bad rows doesn't drown the server log."""
 
@@ -216,7 +216,10 @@ class TestFilterToMajorityShapeDefenseInDepth:
         good = [np.random.RandomState(s).rand(128).astype(np.float32) for s in range(10)]
         bad = [np.full(256, 1e30, dtype=np.float32)]
         labels = cluster_faces(good + bad, threshold=0.6)
-        # Got SOME labels back instead of a crash, and len matches the
-        # majority shape's count (one bad row dropped).
+        # Got labels back instead of a crash, one per input: the bad row
+        # keeps its position as CLUSTER_UNASSIGNED so callers can zip.
+        from bpp.constants import CLUSTER_UNASSIGNED
+
         assert isinstance(labels, list)
-        assert len(labels) == len(good)
+        assert len(labels) == len(good) + len(bad)
+        assert labels[-1] == CLUSTER_UNASSIGNED

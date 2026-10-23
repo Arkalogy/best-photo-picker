@@ -9,14 +9,19 @@ re-exported from export.py for back-compat with plugins.
 
 from __future__ import annotations
 
+import contextlib
+import errno
 import os
 import shutil
+import stat
 import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
+from bpp.utils.fresh_file import open_fresh, replace_fresh
 from bpp.utils.logging import get_logger
+from bpp.utils.raw import RAW_EXTENSIONS
 from bpp.utils.retry import retry_io
 
 log = get_logger(__name__)
@@ -24,33 +29,109 @@ log = get_logger(__name__)
 _FMT_EXT = {"jpeg": ".jpg", "png": ".png"}
 
 
-def _process_image(src: str, dest: str, fmt: str, max_size: int | None, quality: int) -> str:
-    """Resize/convert an image, return the final dest path."""
-    from PIL import Image
+def _fresh_dest(dest: str) -> str:
+    """A sibling temp name to write into; the caller replaces it onto
+    ``dest``. Never open ``dest`` itself for writing: an earlier export in
+    hardlink mode may have made it a second name of the library original,
+    and truncating it would destroy the original's pixels."""
+    out_dir, base = os.path.split(dest)
+    return os.path.join(out_dir, f".{base}.part")
+
+
+def _save_fresh(img: Any, path: str, fmt: str | None, **save_kw: Any) -> None:
+    """Save ``img`` into a file created fresh at ``path`` (never into
+    whatever a link planted at that name points at)."""
+    with open_fresh(path) as fh:
+        img.save(fh, fmt, **save_kw)
+
+
+def _replace_into(tmp: str, dest: str) -> None:
+    """Move a finished temp file onto ``dest`` (atomic; the old directory
+    entry is replaced, whatever it linked to)."""
+    os.replace(tmp, dest)
+
+
+def _unlink_existing(dest: str) -> None:
+    """Drop an existing entry at ``dest`` before a link is created there.
+    Removing a hard link never touches the file it pointed at."""
+    with contextlib.suppress(FileNotFoundError):
+        os.unlink(dest)
+
+
+def _entry(path: str) -> str:
+    """The directory entry a path names: its folder resolved, the final
+    component as written (a symlink there is that entry, not its target)."""
+    return os.path.join(os.path.realpath(os.path.dirname(path)), os.path.basename(path))
+
+
+def _refuse_self_export(src: str, dest: str) -> None:
+    """A destination that is the source's own directory entry (the photo
+    already lives at the export path) is refused: unlinking or replacing
+    it would destroy the original. A second hard link or a symlink at
+    ``dest`` is a different entry and may be replaced."""
+    if _entry(dest) == _entry(src):
+        raise OSError(errno.EEXIST, "the export target is the photo itself", dest)
+
+
+def _process_image(
+    src: str, dest: str, fmt: str, max_size: int | None, quality: int, *, keep_exif: bool = False
+) -> str:
+    """Resize/convert an image, return the final dest path.
+
+    The EXIF orientation is applied to the pixels (a portrait phone
+    photo comes out upright, as the copy path does). With *keep_exif*
+    the remaining EXIF rides along; without it the output carries none.
+    """
+    _refuse_self_export(src, dest)
+    from PIL import Image, ImageOps
 
     # Context manager releases the source file handle when the block
     # exits. `img.convert(...)` returns a new Image instance independent
     # of the source file, so rebinding `img` inside the block is fine —
     # the original FD still closes correctly on exit.
-    with Image.open(src) as img:
-        # Resize if needed
-        if max_size and max(img.size) > max_size:
-            img.thumbnail((max_size, max_size), Image.LANCZOS)
+    tmp = None
+    try:
+        with Image.open(src) as raw:
+            try:
+                img = ImageOps.exif_transpose(raw)
+            except Exception as e:  # a malformed APP1 block raises SyntaxError
+                log.warning("Exporting %s without applying its EXIF (unreadable): %s", src, e)
+                img = raw.copy()
+            # Resize if needed
+            if max_size and max(img.size) > max_size:
+                img.thumbnail((max_size, max_size), Image.LANCZOS)
+            save_kw: dict = {}
+            if keep_exif:
+                try:
+                    exif = img.getexif()
+                    exif.pop(0x0112, None)  # orientation is applied, not re-declared
+                    if exif:
+                        save_kw["exif"] = exif.tobytes()
+                except Exception as e:  # a malformed APP1 block raises SyntaxError
+                    log.warning("Exporting %s without its EXIF (unreadable): %s", src, e)
 
-        # Determine output format and extension
-        if fmt == "jpeg":
-            if img.mode in ("RGBA", "P", "LA"):
-                img = img.convert("RGB")
-            dest = _swap_ext(dest, ".jpg")
-            img.save(dest, "JPEG", quality=quality)
-        elif fmt == "png":
-            dest = _swap_ext(dest, ".png")
-            img.save(dest, "PNG")
-        else:
-            # original format but resized
-            img.save(dest)
-
-    return dest
+            # Determine output format and extension. The pixels go to a
+            # sibling temp file first (see _fresh_dest), then onto dest.
+            if fmt == "jpeg":
+                if img.mode in ("RGBA", "P", "LA"):
+                    img = img.convert("RGB")
+                dest = _swap_ext(dest, ".jpg")
+                tmp = _fresh_dest(dest)
+                _save_fresh(img, tmp, "JPEG", quality=quality, **save_kw)
+            elif fmt == "png":
+                dest = _swap_ext(dest, ".png")
+                tmp = _fresh_dest(dest)
+                _save_fresh(img, tmp, "PNG", **save_kw)
+            else:
+                # original format but resized
+                tmp = _fresh_dest(dest)
+                _save_fresh(img, tmp, raw.format, **save_kw)
+        _replace_into(tmp, dest)
+        return dest
+    finally:
+        if tmp is not None:
+            with contextlib.suppress(OSError):
+                os.remove(tmp)
 
 
 def _swap_ext(path: str, new_ext: str) -> str:
@@ -64,37 +145,143 @@ def _needs_processing(mode: str, fmt: str, max_size: int | None) -> bool:
     return mode == "copy" and (fmt != "original" or max_size is not None)
 
 
-_METADATA_STRIP_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"}
+class MetadataNotStrippableError(OSError):
+    """The export was asked to remove metadata and this file would keep
+    it: the photo fails the export rather than shipping with it."""
 
 
-def _copy_image_without_metadata(src: str, dest: str, quality: int) -> None:
-    """Copy an image while dropping embedded metadata by re-encoding it."""
-    from PIL import Image, ImageOps, UnidentifiedImageError
+#: Image types the export strips by converting to JPEG (no metadata is
+#: carried over), when the decoder is installed.
+_CONVERT_TO_STRIP_EXTS = {".heic", ".heif"} | RAW_EXTENSIONS
 
+#: Every image type the export can strip (in place or by conversion).
+_METADATA_STRIP_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"} | _CONVERT_TO_STRIP_EXTS
+
+
+def _strip_and_save(src: str, dest: str, quality: int) -> str:
+    """Re-encode ``src`` without its embedded metadata. Returns the path
+    written: ``dest`` for a type PIL re-encodes in place, ``dest`` with a
+    ``.jpg`` extension for HEIC / camera RAW (converted). Raises
+    :class:`MetadataNotStrippableError` when the file's type can't be
+    re-encoded here (no decoder installed) and any OSError of the write."""
+    from PIL import Image, ImageOps
+
+    ext = os.path.splitext(src)[1].lower()
+    if ext in RAW_EXTENSIONS:
+        from bpp.utils.raw import RAWPY_AVAILABLE, convert_raw_to_jpeg
+
+        if not RAWPY_AVAILABLE:
+            raise metadata_not_strippable(src, "RAW support isn't installed")
+        out = os.path.splitext(dest)[0] + ".jpg"
+        if convert_raw_to_jpeg(src, out, quality=quality) is None:
+            raise metadata_not_strippable(src, "the file couldn't be decoded")
+        return out
+    if ext in (".heic", ".heif"):
+        try:
+            from pillow_heif import register_heif_opener
+        except ImportError:
+            raise metadata_not_strippable(src, "HEIC support isn't installed") from None
+        register_heif_opener()
+    with Image.open(src) as img:
+        fmt = img.format
+        img = ImageOps.exif_transpose(img)
+        save_kwargs: dict[str, Any] = {}
+        out = dest
+        # MPO is a multi-picture JPEG (phone portrait shots): the primary
+        # frame is saved as a plain JPEG at the chosen quality.
+        if fmt in ("JPEG", "MPO", "HEIF", "HEIC") or ext in (".heic", ".heif"):
+            if img.mode not in ("RGB", "L"):
+                img = img.convert("RGB")
+            save_kwargs["quality"] = quality
+            fmt = "JPEG"
+            if ext in (".heic", ".heif"):
+                out = os.path.splitext(dest)[0] + ".jpg"
+        _save_fresh(img, out, fmt, **save_kwargs)
+    return out
+
+
+def _copy_image_without_metadata(src: str, dest: str, quality: int) -> str:
+    """Copy an image while dropping embedded metadata by re-encoding it;
+    returns the path written. A failed re-encode is a failed export of
+    that photo, never a copy of the original bytes (they carry the
+    metadata the user asked to drop). A disk error keeps its errno so
+    the export loop can still tell a full disk from a bad photo."""
+    _refuse_self_export(src, dest)
+    import contextlib
+
+    # A sibling ".part" file, written with the process umask like any
+    # export (mkstemp would make it owner-only), replaced into place at
+    # the end so an earlier export's file at that name survives a failure.
+    tmp = _fresh_dest(dest)
     try:
-        with Image.open(src) as img:
-            fmt = img.format
-            img = ImageOps.exif_transpose(img)
-            save_kwargs: dict[str, Any] = {}
-            if fmt == "JPEG":
-                if img.mode not in ("RGB", "L"):
-                    img = img.convert("RGB")
-                save_kwargs["quality"] = quality
-            img.save(dest, format=fmt, **save_kwargs)
-    except (OSError, UnidentifiedImageError):
-        log.warning("Could not strip image metadata from %s; copying original bytes", src)
-        _export_copy(src, dest)
+        written = _strip_and_save(src, tmp, quality)
+        final = dest if written == tmp else os.path.splitext(dest)[0] + ".jpg"
+        os.replace(written, final)
+        return final
+    except MetadataNotStrippableError:
+        raise
+    except OSError as e:  # UnidentifiedImageError is an OSError too
+        if e.errno is not None:
+            raise  # a disk / permission error: the loop classifies it
+        name = os.path.basename(src)
+        raise MetadataNotStrippableError(
+            f"metadata couldn't be removed from {name} ({e}); the photo was not exported"
+        ) from e
+    finally:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+        with contextlib.suppress(OSError):
+            os.remove(os.path.splitext(tmp)[0] + ".jpg")
+
+
+def metadata_not_strippable(src: str, why: str) -> MetadataNotStrippableError:
+    ext = os.path.splitext(src)[1].lower() or "this type of"
+    return MetadataNotStrippableError(
+        f"metadata can't be removed from {ext} files ({os.path.basename(src)}): {why}; "
+        "the photo was not exported"
+    )
+
+
+def _copy_bytes(src: str, tmp: str) -> None:
+    """The source's bytes, mode, timestamps and extended attributes
+    into a file created fresh at ``tmp``: what ``shutil.copy2`` copies,
+    without ever opening the destination by name. The bytes take the
+    platform's fast copy, on a duplicate of the new file's descriptor."""
+    st = os.stat(src)
+    with open_fresh(tmp) as fdst:
+        fd = fdst.fileno()
+        shutil.copyfile(src, os.dup(fd))
+        with contextlib.suppress(OSError):
+            os.fchmod(fd, stat.S_IMODE(st.st_mode))
+        if hasattr(os, "listxattr"):
+            with contextlib.suppress(OSError):
+                for name in os.listxattr(src):
+                    with contextlib.suppress(OSError):
+                        os.setxattr(fd, name, os.getxattr(src, name))
+        times = (st.st_atime_ns, st.st_mtime_ns)
+        os.utime(fd if os.utime in os.supports_fd else tmp, ns=times)
 
 
 def _export_copy(src: str, dest: str) -> None:
-    retry_io(shutil.copy2, src, dest, label="export-copy")
+    _refuse_self_export(src, dest)
+    tmp = _fresh_dest(dest)
+    try:
+        retry_io(_copy_bytes, src, tmp, label="export-copy")
+        _replace_into(tmp, dest)
+    finally:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
 
 
 def _export_hardlink(src: str, dest: str) -> None:
+    _refuse_self_export(src, dest)
+    _unlink_existing(dest)
     retry_io(os.link, src, dest, label="export-link")
 
 
 def _export_symlink(src: str, dest: str) -> None:
+    _refuse_self_export(src, dest)
+    _unlink_existing(dest)
     retry_io(os.symlink, os.path.abspath(src), dest, label="export-symlink")
 
 
@@ -124,7 +311,10 @@ def bundle_selected_zip(selected_dir: str, archive_path: str, dest_names: list[s
     """
 
     def _write() -> None:
-        with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        with (
+            replace_fresh(archive_path) as fh,
+            zipfile.ZipFile(fh, "w", zipfile.ZIP_DEFLATED) as zf,
+        ):
             for name in dest_names:
                 src = os.path.join(selected_dir, name)
                 if os.path.isfile(src):

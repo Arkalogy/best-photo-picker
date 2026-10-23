@@ -1,4 +1,4 @@
-"""Streaming export worker tests (L-S3 release-audit followup).
+"""Streaming export worker tests.
 
 The synchronous /api/v1/export remains the back-compat path; the new
 /api/v1/export/start path spawns ExportWorker which streams per-photo
@@ -218,7 +218,7 @@ class TestExportApiStartEndpoint:
         assert r.status_code in {400, 404}
 
     def test_existing_outdir_accepted_and_merged(self, client, app, tmp_path):
-        """UAT: pointing /export/start at an existing folder must spawn
+        """Pointing /export/start at an existing folder must spawn
         the worker (202) and merge into it — the previous 409 + Overwrite
         affordance was discarded because 'Overwrite' meant rmtree, which
         destroyed user data when the destination was a shared folder
@@ -256,3 +256,103 @@ class TestExportApiStartEndpoint:
         # The check above pins the contract. The actual worker thread
         # races against test teardown; the existence-check pre-spawn is
         # what we care about (it used to raise 409 here).
+
+
+class TestExportCancellation:
+    """A cancel stops the loop between photos: what was written stays,
+    the sidecar files are skipped, and the worker says ``cancelled``."""
+
+    def test_an_export_stops_after_the_photo_in_flight_when_cancelled(self, tmp_path) -> None:
+        import threading
+
+        items = _selection(tmp_path, 3)
+        cancel = threading.Event()
+        out = tmp_path / "out"
+
+        def on_progress(i: int, _total: int, _name: str) -> None:
+            if i == 1:
+                cancel.set()  # arrives while the first photo is being written
+
+        result = export_selected(
+            items,
+            items,
+            str(out),
+            write_manifest=True,
+            on_progress=on_progress,
+            cancel_event=cancel,
+        )
+
+        assert result.cancelled is True
+        assert result.exported == 1
+        assert len([p for p in (out / "selected").iterdir() if not p.name.startswith(".")]) == 1
+        assert not (out / "manifest.json").exists(), "a cancelled export still wrote its sidecars"
+
+    def test_a_cancelled_zip_export_keeps_what_it_wrote_visible(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        import threading
+
+        from bpp.output import export as export_mod
+
+        items = _selection(tmp_path, 3)
+        out = tmp_path / "out"
+        cancel = threading.Event()
+        cancel.set()
+        result = export_selected(items, items, str(out), mode="zip", cancel_event=cancel)
+        assert result.cancelled and result.exported == 0
+        assert not [p for p in out.iterdir() if p.name.startswith(".bundle-")]
+        assert not (out / "best-photos.zip").exists()
+
+        # Cancelled after a photo: it stays, in a visible folder when the
+        # rename works and in the staging folder when it doesn't.
+        cancel.clear()
+        result = export_selected(
+            items,
+            items,
+            str(out),
+            mode="zip",
+            cancel_event=cancel,
+            on_progress=lambda i, _t, _n: cancel.set(),
+        )
+        assert result.exported == 1
+        (visible,) = [p for p in out.iterdir() if p.name.startswith("selected-")]
+        assert len(list(visible.iterdir())) == 1
+
+        # The rename itself fails: the staging folder stays rather than
+        # being removed with the photo in it.
+        monkeypatch.setattr(export_mod, "_keep_staging_visible", lambda _out, staging: staging)
+        cancel.clear()
+        result = export_selected(
+            items,
+            items,
+            str(tmp_path / "out2"),
+            mode="zip",
+            cancel_event=cancel,
+            on_progress=lambda i, _t, _n: cancel.set(),
+        )
+        assert result.exported == 1
+        (staging,) = [p for p in (tmp_path / "out2").iterdir() if p.name.startswith(".bundle-")]
+        assert len([p for p in staging.iterdir() if not p.name.startswith(".")]) == 1
+
+    def test_the_worker_reports_a_cancel_instead_of_done(self, tmp_path, monkeypatch) -> None:
+        from bpp.output import export as export_mod
+
+        worker = ExportWorker()
+        events: list[dict] = []
+        worker._emit = events.append  # type: ignore[method-assign]
+        real = export_mod._write_one
+
+        def write_then_cancel(*args, **kw):
+            worker._cancelled.set()
+            return real(*args, **kw)
+
+        monkeypatch.setattr(export_mod, "_write_one", write_then_cancel)
+        items = _selection(tmp_path, 3)
+        worker._run(
+            items, items, str(tmp_path / "out"), {}, "copy", False, "original", None, 85,
+            False, False, "", True,
+        )  # fmt: skip
+
+        types = [e["type"] for e in events]
+        assert types[-1] == "cancelled" and "done" not in types
+        assert events[-1]["count"] == 1 and events[-1]["outdir"] == str(tmp_path / "out")

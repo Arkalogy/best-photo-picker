@@ -12,7 +12,13 @@
  * 0 for those), exercise edge cases, and assert the final pixel
  * coordinates.
  */
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
+
+// The lightbox module graph is large: compile it once up front so the
+// first test's dynamic import is not charged against its own timeout.
+beforeAll(async () => {
+  await import("../bpp/web/static/js/modules/lightbox.mjs");
+}, 30000);
 
 beforeEach(() => {
   vi.useFakeTimers();

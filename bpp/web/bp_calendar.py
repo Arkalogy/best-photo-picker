@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 
 from flask import Blueprint, Response, jsonify, request
@@ -13,9 +12,11 @@ from bpp.db.calendar import (
     get_year_daily_counts,
     get_year_months,
 )
-from bpp.db.photos import get_photos_by_date_range
+from bpp.db.photos import count_photos_by_date_range, get_photos_by_date_range
 from bpp.errors import ValidationError
 from bpp.utils.logging import get_logger
+from bpp.web.paging import page_args, page_fields
+from bpp.web.photo_dict import build_photo_brief
 from bpp.web.state import get_ctx
 
 log = get_logger(__name__)
@@ -93,19 +94,22 @@ def api_calendar_photos() -> tuple[Response, int]:
 
     ctx = get_ctx()
     conn = ctx.get_conn()
-    photos = get_photos_by_date_range(conn, start_dt, end_dt)
-    result = [
-        {
-            "id": p["id"],
-            "filepath": p["filepath"],
-            "hash": ctx.thumbs.get_hash(p["filepath"]) if ctx.thumbs else "",
-            "date": p.get("date"),
-            "score": p.get("aggregate_score", 0),
-            "filename": os.path.basename(p["filepath"]) if p["filepath"] else "",
-        }
-        for p in photos
-    ]
-    return jsonify({"photos": result, "date": date_val, "start": start, "end": end}), 200
+    limit, offset = page_args()
+    photos = get_photos_by_date_range(conn, start_dt, end_dt, limit=limit, offset=offset)
+    result = [build_photo_brief(p, ctx.thumbs) for p in photos]
+    total = count_photos_by_date_range(conn, start_dt, end_dt) if limit is not None else len(result)
+    return (
+        jsonify(
+            {
+                "photos": result,
+                "date": date_val,
+                "start": start,
+                "end": end,
+                **page_fields(result, total, limit, offset),
+            }
+        ),
+        200,
+    )
 
 
 @bp.get("/api/v1/on-this-day")
@@ -124,19 +128,9 @@ def api_on_this_day() -> tuple[Response, int]:
 
     today = date.today()
 
-    # Enrich photos with thumb_hash from thumbnail system
-    if ctx.thumbs:
-        for yr in years:
-            for p in yr.get("photos", []):
-                fp = p.get("filepath", "")
-                if fp:
-                    p["hash"] = ctx.thumbs.get_hash(fp)
-            # Update hero_hash from first photo. Use .get() because the
-            # hash is only attached above when filepath is truthy — a
-            # row with empty filepath would have no "hash" key and a
-            # bare [0]["hash"] raises KeyError.
-            photos = yr.get("photos", [])
-            yr["hero_hash"] = photos[0].get("hash") if photos else None
+    for yr in years:
+        yr["photos"] = [build_photo_brief(p, ctx.thumbs) for p in yr.get("photos", [])]
+        yr["hero_hash"] = yr["photos"][0]["hash"] if yr["photos"] else None
 
     return jsonify(
         {

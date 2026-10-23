@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from bpp import APP_NAME
+from bpp.utils.fresh_file import replace_fresh
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -122,7 +123,7 @@ def write_xmp_sidecar(
 
     xmp_path = _swap_ext(photo_path, ".xmp")
     content = _XMP_TEMPLATE.format(rating=rating, label=label, description=description)
-    with open(xmp_path, "w", encoding="utf-8") as f:
+    with replace_fresh(xmp_path, "w", encoding="utf-8") as f:
         f.write(content)
     return xmp_path
 
@@ -200,8 +201,6 @@ def write_json_manifest(
         for src_entry, dest_entry in zip(photos_data, manifest["photos"], strict=True):
             dest_entry["original_path"] = src_entry["original_path"]
     manifest_path = os.path.join(outdir, "manifest.json")
-    tmp_path = manifest_path + ".tmp"
-    with open(tmp_path, "w") as f:
+    with replace_fresh(manifest_path, "w") as f:
         json.dump(manifest, f, indent=2)
-    os.replace(tmp_path, manifest_path)
     return manifest_path

@@ -1,6 +1,6 @@
-"""P4 finish — LibraryLifecycle facade + collaborator drain semantics.
+"""LibraryLifecycle facade + collaborator drain semantics.
 
-Two named tests from refactor-plan.md P4:
+Two named contract tests:
 
 * ``test_switch_library_drains_all_collaborators``
 * ``test_facade_property_delegates_log_deprecation_once``
@@ -79,7 +79,7 @@ class TestDeprecatedAttr:
     def test_first_access_logs_warning(self, caplog):
         class _Holder:
             @property
-            @deprecated_attr("new.path (P4)")
+            @deprecated_attr("new.path")
             def legacy_attr(self):
                 return 42
 
@@ -90,16 +90,16 @@ class TestDeprecatedAttr:
         assert warnings, "first access must produce a WARNING"
         msg = warnings[0].getMessage()
         assert "deprecated" in msg
-        assert "new.path (P4)" in msg
+        assert "new.path" in msg
 
     def test_facade_property_delegates_log_deprecation_once(self, caplog):
-        """The plan's named test. The bare-attribute access on a
+        """Named contract test. The bare-attribute access on a
         legacy property fires exactly ONE warning per process even
         across many accesses."""
 
         class _Holder:
             @property
-            @deprecated_attr("new.path (P4)")
+            @deprecated_attr("new.path")
             def legacy_attr(self):
                 return 42
 
@@ -155,7 +155,7 @@ class TestDeprecatedAttr:
 
 
 class TestSwitchLibraryDrainsAllCollaborators:
-    """The plan's named test:
+    """Named contract test:
     ``test_switch_library_drains_all_collaborators``.
 
     Validates the contract that switch_library:
@@ -222,7 +222,9 @@ class TestSwitchLibraryDrainsAllCollaborators:
             lambda path: {"data": "/new_wd", "thumbs": "/new_t"},
         )
         # Stub close_all_connections so we don't touch the real pool.
-        monkeypatch.setattr(_impl, "close_all_connections", lambda: events.append("close_pool"))
+        monkeypatch.setattr(
+            _impl, "close_all_connections", lambda **kw: events.append("close_pool")
+        )
         # No plugins registered → fire_on_library_close is a no-op.
 
         _impl.switch_library(ctx, "/new/path")
@@ -237,7 +239,7 @@ class TestSwitchLibraryDrainsAllCollaborators:
 
 
 class TestSwitchLibraryResetsPhase5HealthFlag:
-    """Three-review M-S2: an OLD library's Phase 5 daemon can outlive
+    """An OLD library's Phase 5 daemon can outlive
     the library switch. If it eventually fails (e.g. its captured
     connection is closed during the switch) it would .set(True) the
     ctx.phase5_failed flag AFTER the NEW library's daemon already
@@ -285,7 +287,7 @@ class TestSwitchLibraryResetsPhase5HealthFlag:
             "bpp.db.library.ensure_library_dirs",
             lambda path: {"data": "/new_wd", "thumbs": "/new_t"},
         )
-        monkeypatch.setattr(_impl, "close_all_connections", lambda: None)
+        monkeypatch.setattr(_impl, "close_all_connections", lambda **kw: None)
 
         _impl.switch_library(ctx, "/new/path")
 
@@ -299,11 +301,11 @@ class TestSwitchLibraryResetsPhase5HealthFlag:
         )
 
 
-# ── T1.3: switch_library serialization ──
+# ── switch_library serialization ──
 
 
 class TestSwitchLibrarySerialized:
-    """T1.3: ``switch_library`` does heavy work (plugin close hooks,
+    """``switch_library`` does heavy work (plugin close hooks,
     worker cancel-and-join, AnalysisStore drain, DB pool close) OUTSIDE
     of ``ctx.lock`` so the lock isn't held during the long drain. That
     leaves a window where two concurrent ``switch_library`` calls — say
@@ -385,7 +387,7 @@ class TestSwitchLibrarySerialized:
             "bpp.db.library.ensure_library_dirs",
             lambda path: {"data": "/new_wd", "thumbs": "/new_t"},
         )
-        monkeypatch.setattr(_impl, "close_all_connections", lambda: None)
+        monkeypatch.setattr(_impl, "close_all_connections", lambda **kw: None)
 
         errors: list[BaseException] = []
 
@@ -422,7 +424,7 @@ class TestSwitchLibrarySerialized:
             "bpp.db.library.ensure_library_dirs",
             lambda path: {"data": "/new_wd", "thumbs": "/new_t"},
         )
-        monkeypatch.setattr(_impl, "close_all_connections", lambda: None)
+        monkeypatch.setattr(_impl, "close_all_connections", lambda **kw: None)
 
         _impl.switch_library(ctx, "/new/path/1")
         # Second call should not deadlock — lock was released.

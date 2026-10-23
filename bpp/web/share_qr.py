@@ -41,7 +41,7 @@ def _render_bpp_glyph(size: int = 220) -> object:
         except OSError:
             continue
     if font is None:
-        # L2: PIL's bitmap default is small + jaggy at the QR center patch
+        # PIL's bitmap default is small + jaggy at the QR center patch
         # size — surfaces visibly worse than any TrueType. Log a warning
         # so headless / minimal Linux deploys can be diagnosed (vs. a
         # silent quality drop the operator never sees).
@@ -73,7 +73,7 @@ def render_qr_png(text: str, *, box_size: int = 12, border: int = 2) -> bytes:
     - A monochrome BPP glyph (black square, white text) embedded in the
       center — feels like part of the QR rather than a sticker
     - PNG output (PIL native; SVG support for embedded raster images
-      in `qrcode` is hacky, and phones decode PNG faster anyway)
+      in `qrcode` is limited, and phones decode PNG faster anyway)
     """
     import qrcode
     from qrcode.constants import ERROR_CORRECT_H

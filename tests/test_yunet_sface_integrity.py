@@ -1,4 +1,4 @@
-"""R4-H3: YuNet and SFace cached file integrity verification.
+"""YuNet and SFace cached file integrity verification.
 
 These two models predate the ModelSingleton migration and use
 custom `_ensure_*_model()` helpers. Before this fix, cached files
@@ -38,7 +38,7 @@ class TestYunetIntegrity:
         assert target.exists()
 
     def test_tampered_cache_raises_integrity_error(self, tmp_path, monkeypatch):
-        """The actual R4-H3 fix: a tampered cache file must NOT
+        """The actual fix: a tampered cache file must NOT
         silently load. ModelIntegrityError propagates."""
         from bpp.scoring import face_yunet as face_mod
         from bpp.scoring.model_base import ModelIntegrityError
@@ -153,7 +153,7 @@ class TestSfaceIntegrity:
 
 
 class TestClipIntegrityInAnalyzeWorker:
-    """R4-M1: the analyze worker's CLIP phase used to catch bare
+    """The analyze worker's CLIP phase used to catch bare
     Exception around `ensure_model()` and silently downgrade any
     failure to a "skip phase 3" warning. ModelIntegrityError must
     propagate as a fatal event — a tampered cached model or MITM'd
@@ -222,10 +222,10 @@ class TestClipIntegrityInAnalyzeWorker:
 
 
 class TestFaceWorkerIntegrityPropagation:
-    """R5-H3: face_worker._extract_one used to wrap the entire
+    """face_worker._extract_one used to wrap the entire
     embedding extraction path in a broad `except Exception`,
     swallowing ModelIntegrityError as "no faces in this photo."
-    R4-H3 made YuNet/SFace cached verification raise — but the
+    Cached YuNet/SFace verification raises — but the
     error stopped here. Net effect: every analyzed photo silently
     reported zero faces while the user saw a successful run."""
 
@@ -249,9 +249,9 @@ class TestFaceWorkerIntegrityPropagation:
 
 
 class TestPetsIntegrityPropagation:
-    """R5-H3: pets.detect_pets_from_file used to swallow integrity
+    """pets.detect_pets_from_file used to swallow integrity
     failures as "no pets detected." Plus pets.ensure_model() didn't
-    verify cached files (the R4-H3 fix touched YuNet/SFace but not
+    verify cached files (the integrity fix touched YuNet/SFace but not
     pets)."""
 
     def test_ensure_model_verifies_cached_pets_file(self, tmp_path, monkeypatch):

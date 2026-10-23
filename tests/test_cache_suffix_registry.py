@@ -4,12 +4,11 @@ Project rule: photo cache variants must add new suffixes to
 `PHOTO_CACHE_SUFFIXES` in `bpp/constants.py` — never hardcode
 suffix lists in cleanup code.
 
-Cleanup itself is glob-based (`{hash}*.jpg`, `{hash}*.png` in
-ThumbnailCache.remove_for_hash), so a missing entry doesn't
-silently leak files. The registry is maintained as documentation
-+ a single source of truth for create-site f-strings — adding a
-variant should be one tuple entry plus one named constant, not
-grep-and-edit across blueprints.
+Cleanup removes exactly the registered names (no directory
+listing: the cache folder holds a few files per photo and is swept
+on every edit save and delete), so a suffix missing from the
+registry WOULD leak files. These tests are what keeps the registry
+complete.
 
 These tests pin the registry's completeness against the literal
 suffix strings actually used in cache paths under bpp/web/.

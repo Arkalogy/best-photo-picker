@@ -4,11 +4,10 @@ Thanks for your interest in contributing! This guide will help you get started.
 
 ## Git workflow
 
-- **`develop`** is the integration branch. Feature work merges here.
-- **`main`** is the release branch. Only `develop` → `main` merges are allowed, and only when a release is being cut.
-- Feature branches: `feat/<topic>` or `fix/<topic>`, branched off `develop`, merged back to `develop`.
+- **`main`** is the only long-lived branch. Releases are tagged from it.
+- Feature branches: `feat/<topic>` or `fix/<topic>`, branched off `main`, merged back to `main` through a PR.
 - Never push directly to `main`. Always go through a PR.
-- **CI runs on PRs to `main`** (release gate). Day-to-day development on `develop` is verified locally with the gate commands below. Python 3.11 only — matches the Tauri sidecar pin.
+- **CI runs on every PR to `main`.** It is not a required status check, so run the local gates below before opening one. Python 3.11 only — matches the Tauri sidecar pin.
 
 ## Development Setup
 
@@ -30,7 +29,7 @@ pre-commit install
 npm install
 
 # Verify everything works
-pytest -v                       # ~3000 tests
+pytest -v                       # ~5,500 tests; never downloads models (tests about real weights skip when they aren't on disk)
 ruff check . && ruff format --check .
 npm run lint                    # ESLint + auto-generated globals
 npm run format:check            # Prettier (scoped to dev-tool JS)
@@ -40,7 +39,7 @@ npm run test:js                 # Vitest + jsdom
 
 ## Making Changes
 
-1. **Create a branch** from `develop` for your work
+1. **Create a branch** from `main` for your work
 2. **Write tests** for new functionality or bug fixes
 3. **Run the checks** before committing:
    ```bash
@@ -58,6 +57,10 @@ npm run test:js                 # Vitest + jsdom
 
 ```
 bpp/
+  ai/           # Optional AI editing (inpainting)
+  commands/     # CLI subcommands
+  registry/     # Model registry, license gates, acceptance log
+  plugins/      # Plugin loader + reference plugin
   scoring/      # Image analysis (blur, exposure, faces, composition)
   dedupe/       # Perceptual hash deduplication
   selection/    # Greedy selection with diversity constraints
@@ -87,7 +90,7 @@ tests/          # pytest test suite
 - **Tests**: Vitest + jsdom under `tests-js/`. Prefer module-style
   imports (see `bpp/web/static/js/modules/` POC) for new code.
 
-**Local gates** — run these before opening a PR; CI runs the same set on every PR to `main`:
+**Local gates** — run these before opening a PR. On PRs to `main`, CI runs the first five (the full Playwright suite runs when a version tag is pushed or when started manually, and CI builds the wheel but not the sdist):
 
 | Command | What it checks |
 |---|---|
@@ -95,8 +98,8 @@ tests/          # pytest test suite
 | `npm run format:check` | Prettier on dev-tool JS (`tests-js/`, `scripts/*.mjs`, configs). |
 | `npm run typecheck` | `tsc --noEmit` on files annotated with `// @ts-check`. JSDoc is honored. |
 | `npm run test:js` | Vitest + jsdom suite under `tests-js/`. |
-| `npm run test:e2e:list` | `playwright test --list` — parse-only check, no browser/server. CI runs this on every PR. |
-| `npm run test:e2e` | Full Playwright suite under `tests-e2e/`. Requires server on :5001 with a populated library; runs on demand in CI via the `E2E` workflow. |
+| `npm run test:e2e:list` | `playwright test --list` — parse-only check, no browser/server. CI runs this on every PR to `main`. |
+| `npm run test:e2e` | Full Playwright suite under `tests-e2e/`. Requires a server on :5001 with a populated library, started with `--open-loopback` (the specs open `/` in fresh browser contexts; `scripts/run_e2e.sh` sets `BPP_OPEN_LOOPBACK=1` itself); runs in CI via the `E2E` workflow on version tags or manual runs. |
 | `python -m build --sdist --wheel` | Build smoke — catches packaging breakage (missing `MANIFEST.in` entries, broken entry points) before `publish.yml` runs in CI. |
 
 At minimum, run `npm run lint && npm run typecheck && npm run test:js` before committing JS changes.
@@ -110,7 +113,7 @@ tests or lint, but a few rely on review. Apply them to every PR.
 
 - **DB connections**: always use `get_db()` from `bpp/db/connection.py`. Never call `sqlite3.connect()` directly. Never `conn.close()` a pool connection — `close_all_connections()` owns lifecycle via `_safe_run()`.
 - **DB queries in loops**: don't do `for x in items: conn.execute(... x ...)`. Batch with `IN` clauses, `executemany()`, or pre-load into a dict for O(1) lookup.
-- **JSON from external sources**: always `safe_json_loads()` (in `bpp/utils/json_safe.py`). Never raw `json.loads()` on DB blobs, network responses, or disk reads.
+- **JSON from external sources**: always `safe_json_loads()` (in `bpp/utils/json_utils.py`). Never raw `json.loads()` on DB blobs, network responses, or disk reads.
 - **File downloads**: always `download_file()` from `bpp/utils/download.py`. Enforces a 120-second timeout to prevent indefinite hangs. Never raw `urlretrieve`.
 
 ### Constants & sentinels
@@ -122,8 +125,8 @@ tests or lint, but a few rely on review. Apply them to every PR.
 
 These registries are test-enforced; adding a new entry should require touching only one file:
 
-- **Workers** — `_workers` dict in `bpp/web/state.py`
-- **Smart album types** — `_SMART_ALBUM_TYPES` in `bpp/db/smart_albums.py`
+- **Workers** — `WorkerPool` in `bpp/web/worker_pool.py`
+- **Smart album types** — `SmartAlbumRegistry` in `bpp/db/smart_albums.py` (`_SMART_ALBUM_TYPES` remains as a back-compat alias)
 - **Face detectors / embedders** — registries in `bpp/scoring/face_detector_registry.py` and `face_embedder_registry.py`
 
 A new worker / album type / detector that bypasses the registry is a review finding.
@@ -139,8 +142,8 @@ Any PR that touches the model registry, the download chokepoint, or anything und
 
 - No binary model weights in the repo. Weights live on the user's machine after first-use download.
 - No new model URLs without an upstream-license review attached to the PR.
-- No new restricted models without an issue first, plus code-owner approval on the PR.
-- No restriction-class relaxations in the bundled baseline without two code owners and a written rationale.
+- No new restricted models without an issue first, plus maintainer approval on the PR.
+- No restriction-class relaxations in the bundled baseline without a written rationale in an issue and maintainer approval.
 - All model downloads must route through `bpp.utils.download.download_file()`.
 - Acceptance text (`CANONICAL_DISCLAIMER` etc.) is versioned and append-only; edits bump the version constant.
 
@@ -220,8 +223,12 @@ already.
 ## Running the Web UI
 
 ```bash
-bpp serve --library /path/to/your/photos --no-browser
+bpp serve --library /path/to/your/photos --no-browser --open-loopback
 ```
+
+`--open-loopback` serves the page to any local process (the way earlier
+releases did); without it `bpp serve` prints a one-time `?_boot=` link and
+the bare address shows a locked page.
 
 The web UI binds to `127.0.0.1:5001` by default — don't change the port without coordinating with the Tauri sidecar, which hardcodes it. Always pass `--no-browser` when restarting during development to avoid opening a new browser tab on every reload.
 
@@ -244,16 +251,16 @@ The Code Style section above covers the minimum gates. A few more conventions ar
 
 Two test patterns coexist under `tests-js/`:
 
-1. **Harness style** (`loadScript` from `_harness.mjs`) — for the legacy non-module JS in `bpp/web/static/js/*.js`. Loads a file via `new Function(...)`. Doesn't produce v8 coverage.
+1. **Script style** — for the one legacy non-module file, `bpp/web/static/js/globals.js`. The test reads the file and runs it with `new Function("window", "document", source)` against jsdom (see `tests-js/dispatcher.test.mjs`). Doesn't produce v8 coverage.
 2. **Module style** (`import` directly) — for new ES modules under `bpp/web/static/js/modules/`. Does produce coverage.
 
-Prefer module style for new code. See `bpp/web/static/js/modules/text-format.mjs` and its test for the reference pattern. If a runtime file has a top-level IIFE that touches the DOM (the legacy `lightbox.js`'s context-menu init is the canonical example), call `stubMissingDomElements()` from `_harness.mjs` before `loadScript()`.
+Prefer module style for new code. See `bpp/web/static/js/modules/text-format.mjs` and its test for the reference pattern. `globals.js` has a top-level init block that touches the DOM, so load it once per file (in `beforeAll`), not once per test — re-running it stacks event listeners.
 
 ### Incremental type safety
 
 - Adding `// @ts-check` at the top of a `.mjs` or `.js` file turns on TypeScript checking for that file. JSDoc `@param` / `@returns` drive inference.
 - Cross-file globals needed by a `@ts-check`ed file go in `tests-js/types/globals.d.ts`. Grow opt-in.
-- Runtime `bpp/web/static/js/*.js` is not type-checked yet. New code should land as ES modules under `bpp/web/static/js/modules/` with `// @ts-check` enabled; existing non-module files are migrated opportunistically.
+- The one remaining non-module runtime file, `bpp/web/static/js/globals.js`, is not type-checked. New code should land as ES modules under `bpp/web/static/js/modules/` with `// @ts-check` enabled.
 
 ## Plugins
 

@@ -92,12 +92,13 @@
   <p id="pair-subtitle">Open Best Photo Picker on the host computer and approve this device.</p>
   <div class="pair-spinner"></div>
   <p class="pair-status" id="pair-status">Checking…</p>
-  <button class="pair-cta" id="pair-cta" data-action="_bppReload">Open library</button>
+  <button class="pair-cta" id="pair-cta">Open library</button>
   <button class="pair-request-btn" id="pair-request-btn">Request access again</button>
   <p class="pair-warn" id="pair-warn"></p>
 </div>
 <script nonce="{{ csp_nonce }}">
 (function(){
+  document.getElementById('pair-cta').addEventListener('click', function () { location.reload(); });
   // Strip the _token from the URL so the user doesn't accidentally
   // share it via screenshot (it's already in the cookie / referer-free).
   try {
@@ -131,11 +132,39 @@
     poll();
   }
 
+  var unreachable = false;
+  function hostUnreachable() {
+    unreachable = true;
+    status.textContent = "Can't reach the host — retrying…";
+    warn.textContent = "Make sure the host computer is awake and on the same network. This page will retry on its own.";
+    warn.style.display = "block";
+  }
+  function hostRefused(code) {
+    unreachable = true;
+    status.textContent = "The host refused this request (HTTP " + code + ").";
+    warn.textContent = "Open the share link (QR code) on the host again to ask for access.";
+    warn.style.display = "block";
+  }
+  function hostReachable() {
+    if (!unreachable) return;
+    unreachable = false;
+    warn.textContent = "";
+    warn.style.display = "";
+  }
+
   function poll() {
     if (stopped) return;
     fetch("/api/v1/share/pair/status", { credentials: "same-origin" })
-      .then(function(r){ return r.json(); })
+      .then(function(r){
+        if (!r.ok) {
+          var err = new Error("status " + r.status);
+          err.status = r.status;
+          throw err;
+        }
+        return r.json();
+      })
       .then(function(d){
+        hostReachable();
         if (d.state === "trusted") {
           setState("trusted");
           title.textContent = "Approved!";
@@ -144,6 +173,14 @@
           stopped = true;
           // Auto-reload after a beat — feels less like a manual step
           setTimeout(function(){ location.reload(); }, 600);
+          return;
+        }
+        if (d.state === "unknown") {
+          stopped = true;
+          setState("revoked");
+          title.textContent = "This device isn't known to the host";
+          document.getElementById("pair-subtitle").textContent =
+            "Open the share link (QR code) again to ask for access.";
           return;
         }
         if (d.state === "revoked") {
@@ -169,8 +206,11 @@
         }
         pollTimer = setTimeout(poll, 2000);
       })
-      .catch(function(){
-        if (!stopped) pollTimer = setTimeout(poll, 3000);
+      .catch(function(e){
+        if (stopped) return;
+        if (e && e.status && e.status < 500) hostRefused(e.status);
+        else hostUnreachable();
+        pollTimer = setTimeout(poll, 3000);
       });
   }
 

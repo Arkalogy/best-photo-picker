@@ -30,6 +30,7 @@
  */
 
 import { apiFetch, authedSrc } from "./api-client.mjs";
+import { restoreFocusFrom } from "./dialog-focus.mjs";
 import { toast, toastError } from "./toast.mjs";
 import { deletePhotos } from "./deleted.mjs";
 import { loadAlbumList } from "./albums.mjs";
@@ -410,7 +411,9 @@ export function closeLightbox(e) {
   // own listeners + the overlay; iterating over a copy because
   // each cleanup mutates `_lbActiveCleanups` via `.delete(self)`.
   for (const cleanup of [..._lbActiveCleanups]) cleanup();
-  document.getElementById("lightbox")?.classList.remove("visible");
+  const lb = document.getElementById("lightbox");
+  lb?.classList.remove("visible");
+  restoreFocusFrom(lb); // back to the card (or control) that opened it
   // Mobile bottom sheet starts collapsed on next open — clear any
   // expanded state from the closing photo.
   document.getElementById("lightbox-panel")?.classList.remove("expanded");

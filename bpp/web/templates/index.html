@@ -18,12 +18,17 @@
 <link rel="stylesheet" href="/static/css/app.css?v={{ asset_version }}">
 <script nonce="{{ csp_nonce }}">document.documentElement.setAttribute("data-theme",localStorage.getItem("bpp-theme")||"dark")</script>
 <script nonce="{{ csp_nonce }}">
-// Strip _token from the URL bar after first paint. The token is
-// already captured in the meta tag below; leaving it in the URL
-// just makes screenshots / screen recordings leak it. Idempotent.
+// Strip _token / _boot from the URL bar after first paint. The token
+// is already captured in the meta tag below; the boot key is kept in
+// sessionStorage (this tab, this origin) so a reload can re-present
+// it. Leaving them in the URL just makes screenshots / screen
+// recordings / copied links leak them. Idempotent.
 (function(){
   try {
-    if (window.location.search.indexOf("_token=") !== -1) {
+    var q = window.location.search;
+    var m = /[?&]_boot=([^&#]+)/.exec(q);
+    if (m) { try { sessionStorage.setItem("bpp_boot", decodeURIComponent(m[1])); } catch (e) {} }
+    if (q.indexOf("_token=") !== -1 || q.indexOf("_boot=") !== -1) {
       var clean = window.location.pathname + window.location.hash;
       window.history.replaceState({}, "", clean);
     }
@@ -80,7 +85,7 @@
     </div>
   </div>
 </aside>
-<div class="sidebar-overlay" id="sidebar-overlay" data-action="toggleSidebar"></div>
+<div class="sidebar-overlay" id="sidebar-overlay" data-action="toggleSidebar" aria-hidden="true"></div>
 
 <main class="main">
   <div class="update-banner hidden" id="update-banner">
@@ -100,9 +105,9 @@
     </div>
     <div class="toolbar-center">
       <div class="zoom-control" id="zoom-control">
-        <svg data-action="stepZoom" data-arg0="-10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" role="button" tabindex="0" aria-label="Zoom out"><rect x="1" y="1" width="14" height="14" rx="2"/><line x1="5" y1="8" x2="11" y2="8"/></svg>
+        <svg data-action="stepZoom" data-arg0="-10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" role="button" tabindex="0" data-key-activate="true" aria-label="Zoom out"><rect x="1" y="1" width="14" height="14" rx="2"/><line x1="5" y1="8" x2="11" y2="8"/></svg>
         <input type="range" id="zoom-slider" min="40" max="300" value="80" data-oninput="applyZoom" aria-label="Zoom level">
-        <svg data-action="stepZoom" data-arg0="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" role="button" tabindex="0" aria-label="Zoom in"><rect x="1" y="1" width="14" height="14" rx="2"/><line x1="5" y1="8" x2="11" y2="8"/><line x1="8" y1="5" x2="8" y2="11"/></svg>
+        <svg data-action="stepZoom" data-arg0="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" role="button" tabindex="0" data-key-activate="true" aria-label="Zoom in"><rect x="1" y="1" width="14" height="14" rx="2"/><line x1="5" y1="8" x2="11" y2="8"/><line x1="8" y1="5" x2="8" y2="11"/></svg>
         <span class="zoom-pct" id="zoom-pct">80%</span>
       </div>
     </div>
@@ -187,13 +192,13 @@
     <span id="tag-filter-chip" class="hidden"></span>
   </div>
 
-  <div class="confirm-overlay" id="confirm-overlay" role="alertdialog" aria-modal="true" data-action="_bppBackdropClose" data-backdrop-fn="resolveConfirm" data-backdrop-arg="false">
+  <div class="confirm-overlay" id="confirm-overlay" role="alertdialog" aria-modal="true" aria-labelledby="confirm-message" data-action="_bppBackdropClose" data-backdrop-fn="resolveConfirm" data-backdrop-arg="false">
     <div class="confirm-dialog"></div>
   </div>
 
   <div class="ctx-menu hidden" id="lb-ctx-menu">
-    <div class="ctx-menu-item" data-action="include" id="lb-ctx-include">Include <span class="ctx-shortcut">&uarr;</span></div>
-    <div class="ctx-menu-item" data-action="exclude" id="lb-ctx-exclude">Exclude <span class="ctx-shortcut">&darr;</span></div>
+    <div class="ctx-menu-item" data-action="include" id="lb-ctx-include">Include</div>
+    <div class="ctx-menu-item" data-action="exclude" id="lb-ctx-exclude">Exclude</div>
     <div class="ctx-menu-item" data-action="favorite" id="lb-ctx-fav">Favorite <span class="ctx-shortcut">F</span></div>
     <div class="ctx-menu-sep"></div>
     <div class="ctx-menu-item" data-action="edit">Edit <span class="ctx-shortcut">E</span></div>
@@ -297,7 +302,7 @@
   </div>
 </main>
 
-<div class="lightbox-overlay" id="lightbox" role="dialog" aria-modal="true" aria-label="Photo viewer" data-action="closeLightbox" data-arg0="event">
+<div class="lightbox-overlay" id="lightbox" role="dialog" aria-modal="true" aria-label="Photo viewer" tabindex="-1" data-action="closeLightbox" data-arg0="event">
   <button class="lightbox-close" data-action="closeLightbox" aria-label="Close">&times;</button>
   <button class="lightbox-nav prev" data-stop-propagation="true" data-action="lightboxNav" data-arg0="-1" aria-label="Previous photo">&#8249;</button>
   <button class="lightbox-nav next" data-stop-propagation="true" data-action="lightboxNav" data-arg0="1" aria-label="Next photo">&#8250;</button>
@@ -375,7 +380,7 @@
         </div>
         <div class="lb-exif hidden" id="lb-exif"></div>
         <div class="lb-exif hidden" id="lb-video-info"></div>
-        <!-- Map belongs to the Info section above it (panel-cleanup item 3):
+        <!-- Map belongs to the Info section above it:
              no LOCATION header of its own, just the Expand affordance. -->
         <!-- Expand wires via data-action (delegation): a direct listener
              dies whenever the editor rebuilds the panel's innerHTML. -->
@@ -473,7 +478,7 @@
 
 <div id="toast-container" role="status" aria-live="polite"></div>
 
-<div class="modal-overlay" id="modal-overlay" role="dialog" aria-modal="true" data-action="closeModal" data-pass-event="true">
+<div class="modal-overlay" id="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-title" data-action="closeModal" data-pass-event="true">
   <div class="modal">
     <div class="modal-icon" id="modal-icon"></div>
     <div class="modal-title" id="modal-title"></div>
@@ -545,7 +550,7 @@
 </div>
 
 <!-- Slideshow Overlay -->
-<div class="ss-overlay hidden" id="slideshow-overlay">
+<div class="ss-overlay hidden" id="slideshow-overlay" role="dialog" aria-modal="true" aria-label="Slideshow">
   <img class="ss-img ss-active" id="ss-img-a" alt="">
   <img class="ss-img" id="ss-img-b" alt="">
   <video class="ss-video hidden" id="ss-video" playsinline></video>
@@ -573,10 +578,10 @@
 </div>
 
 <!-- Library Picker Modal -->
-<div class="library-picker-overlay hidden" id="library-picker-overlay" data-action="_bppBackdropClose" data-backdrop-fn="hideLibraryPicker">
+<div class="library-picker-overlay hidden" id="library-picker-overlay" role="dialog" aria-modal="true" aria-labelledby="library-picker-title" data-action="_bppBackdropClose" data-backdrop-fn="hideLibraryPicker">
   <div class="library-picker-modal">
     <div class="library-picker-header">
-      <h2>Libraries</h2>
+      <h2 id="library-picker-title">Libraries</h2>
       <button class="library-picker-close" data-action="hideLibraryPicker">&times;</button>
     </div>
     <div class="library-picker-body" id="library-list"></div>
@@ -844,20 +849,20 @@
             <div class="slider-row">
               <label>Sensitivity</label>
               <span class="tip" data-tip="How similar two photos must be to count as duplicates. Lower = only near-identical, higher = catches more variations.">i</span>
-              <input type="range" min="0" max="30" step="1" value="10" data-param="hash_distance_threshold">
-              <span class="val">10</span>
+              <input type="range" min="0" max="30" step="1" value="20" data-param="hash_distance_threshold">
+              <span class="val">20</span>
             </div>
             <div class="slider-row">
               <label>Burst gap</label>
               <span class="tip" data-tip="Photos taken within this many seconds are grouped as a burst. Only the best from each burst is kept.">i</span>
-              <input type="range" min="0" max="120" step="1" value="15" data-param="time_window_seconds">
-              <span class="val">15</span>
+              <input type="range" min="0" max="120" step="1" value="30" data-param="time_window_seconds">
+              <span class="val">30</span>
             </div>
             <div class="slider-row">
               <label>Across dates</label>
               <span class="tip" data-tip="Also remove near-identical photos taken on different days (e.g. same pose, different occasion). 0 = same-day only.">i</span>
-              <input type="range" min="0" max="15" step="1" value="5" data-param="global_hash_distance_threshold">
-              <span class="val">5</span>
+              <input type="range" min="0" max="15" step="1" value="10" data-param="global_hash_distance_threshold">
+              <span class="val">10</span>
             </div>
           </div>
         </div>
@@ -881,7 +886,7 @@
         <div class="setting-item setting-item-grouped" id="settings-face-section" style="display:none">
           <div class="setting-item-header">
             <span class="setting-item-label">Face grouping <span class="setting-info" role="button" tabindex="0" data-action="_toggleSettingTip" data-onkeydown="_kbToggleTip">?</span></span>
-            <span class="setting-item-val" id="face-cluster-val">0.55</span>
+            <span class="setting-item-val" id="face-cluster-val">0.80</span>
           </div>
           <input type="range" id="face-cluster-slider" min="0.3" max="1.2" step="0.02" value="0.80"
             aria-label="Face grouping threshold" data-oninput="updateFaceThresholdLabel">
@@ -1112,6 +1117,7 @@
 </div>
 
 <meta name="auth-token" content="{{ auth_token }}">
+<meta name="library-id" content="{{ library_id }}">
 <script nonce="{{ csp_nonce }}">const serveMode = {{ 'true' if serve_mode else 'false' }};</script>
 
 <!-- ES modules bridge — re-exposes module exports as window globals so
@@ -1121,7 +1127,7 @@
      non-module file's classic copy for synchronous availability.
      See docs/js-modules-migration.md. -->
 <script type="module" nonce="{{ csp_nonce }}">
-  // T0.1: action registry must load FIRST so window.__bppActionRegistry
+  // Action registry must load FIRST so window.__bppActionRegistry
   // is set before any other module calls registerAction(). Import is
   // side-effect-only — the module exposes itself on window for the
   // click dispatcher in globals.js.
@@ -1132,6 +1138,7 @@
   import * as formatHelpers from "/static/js/modules/format-helpers.mjs";
   import * as scoreFormat from "/static/js/modules/score-format.mjs";
   import * as apiClient from "/static/js/modules/api-client.mjs";
+  import * as bootProof from "/static/js/modules/boot-proof.mjs";
   import * as viewGuard from "/static/js/modules/view-guard.mjs";
   import * as toastModule from "/static/js/modules/toast.mjs";
   import * as theme from "/static/js/modules/theme.mjs";
@@ -1179,8 +1186,6 @@
   import * as uiHelpersModule from "/static/js/modules/ui-helpers.mjs";
   import * as utilsModule from "/static/js/modules/utils.mjs";
   import * as coreModule from "/static/js/modules/core.mjs";
-  import * as modalsModelsListModule from "/static/js/modules/modals-models-list.mjs";
-  import * as modalsModelsModule from "/static/js/modules/modals-models.mjs";
   import * as modalsFaceEmbeddersModule from "/static/js/modules/modals-face-embedders.mjs";
   import * as modalsModule from "/static/js/modules/modals.mjs";
   import * as petsPickersModule from "/static/js/modules/pets-pickers.mjs";
@@ -1231,13 +1236,13 @@
   Object.assign(
     window,
     stateModule, dateFormat, textFormat, formatHelpers, scoreFormat,
-    apiClient, viewGuard, toastModule, theme, settingsClient, dialogs, modal,
+    apiClient, bootProof, viewGuard, toastModule, theme, settingsClient, dialogs, modal,
     updateChecker, nudges, timeline, presets, memories, onThisDay, wizard,
     importWorker, clipModule, activityLog, groupsModule, mapModule,
     libraryModule, batchRename, onboarding, tagsModule, tagsViewModule, editorRedeye,
     dupeReview, inspector, slideshow, tourModule, facesModule, toolbarModule,
     searchModule, deletedCtxMenuModule, deletedEnhanceModule, deletedModule, analysisInstallModule, analysisModule, analysisStatusModule, analysisRecomputeModule, calendarRenderModule, calendarSelectionModule, calendarModule, compareSiblingModule, compareModule,
-    navigationModule, uiHelpersModule, utilsModule, coreModule, modalsModelsListModule, modalsModelsModule, modalsFaceEmbeddersModule, modalsModule,
+    navigationModule, uiHelpersModule, utilsModule, coreModule, modalsFaceEmbeddersModule, modalsModule,
     petsPickersModule, petsModule, editorCropModule, editorInpaintModule, photosSelectModule, photosHoverModule, photosVgridModule, photosBatchModule, photosCardModule, photosModule,
     albumsModule, editorConstantsModule, editorStylesModule, editorPreviewModule, editorRenderingModule, editorToolsModule, editorModule, lightboxInfoModule, lightboxFaceEditModule,
     lightboxFacePickerModule, lightboxFaceAssignModule, lightboxFaceOverlaysModule,
@@ -1255,11 +1260,10 @@
 </script>
 
 <script src="/static/js/globals.js?v={{ asset_version }}"></script>
-<div id="server-down-overlay" class="modal-overlay" style="z-index:99999">
+<div id="server-down-overlay" class="modal-overlay" role="alert" aria-live="assertive" aria-labelledby="server-down-title" style="z-index:99999">
   <div class="server-down-inner" style="text-align:center;color:var(--text-primary);font-family:var(--font)">
-    <h2 style="margin:0 0 8px">Reconnecting&hellip;</h2>
+    <h2 id="server-down-title" style="margin:0 0 8px">Reconnecting&hellip;</h2>
     <p style="color:var(--text-secondary);margin:0 0 16px">Waiting for the server to come back.</p>
-    <button class="btn btn-primary" data-action="_bppReload" style="display:none">Retry</button>
   </div>
 </div>
 </body>

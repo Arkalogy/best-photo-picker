@@ -1,6 +1,6 @@
 """Background export worker — streams per-photo progress over SSE.
 
-L-S3 release-audit followup. Before, the /api/v1/export endpoint ran
+Before this worker existed, the /api/v1/export endpoint ran
 the full export loop synchronously inside the Flask request, holding
 the HTTP connection open for the entire job. A parent exporting 100
 best photos to JPEG at "high" quality saw no UI feedback for 30-60s
@@ -33,6 +33,9 @@ class ExportWorker(BackgroundWorker):
     category without having to plumb them through the SSE message
     payload (the message carries them too for the streaming case).
     """
+
+    # Copies and renders files (Pillow, OpenCV): nothing an install changes.
+    loads_installable_packages = False
 
     _worker_name = "Export"
 
@@ -88,7 +91,7 @@ class ExportWorker(BackgroundWorker):
         library_path: str,
         strip_metadata: bool,
     ) -> None:
-        # Bookend logs — same pattern as M10 / M11 / Phase 5.
+        # Bookend logs — same pattern as the face worker / Phase 5.
         import time as _time
 
         from bpp.output.export import export_selected
@@ -129,6 +132,7 @@ class ExportWorker(BackgroundWorker):
                 library_path=library_path,
                 strip_metadata=strip_metadata,
                 on_progress=_on_progress,
+                cancel_event=self._cancelled,
             )
         finally:
             log.info(
@@ -138,6 +142,16 @@ class ExportWorker(BackgroundWorker):
             )
 
         self.last_result = result
+        if result.cancelled:
+            self._emit(
+                {
+                    "type": "cancelled",
+                    "message": "Export cancelled",
+                    "outdir": outdir,
+                    "count": result.exported,
+                }
+            )
+            return
         self._emit(
             {
                 "type": "done",
@@ -145,5 +159,6 @@ class ExportWorker(BackgroundWorker):
                 "count": result.exported,
                 "failed": result.failed,
                 "disk_error": result.disk_error,
+                "metadata_kept": result.metadata_kept,
             }
         )

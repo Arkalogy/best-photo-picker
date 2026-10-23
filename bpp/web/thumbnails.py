@@ -81,6 +81,14 @@ class ThumbnailCache:
         """Build hash-to-filepath and filepath-to-hash mappings from paths."""
         self._hash_to_path = {}
         self._path_to_hash: dict[str, str] = {}
+        self._add_paths(filepaths)
+
+    def add_to_map(self, analysis: list[dict[str, Any]]) -> None:
+        """Add these items' paths to the mappings, keeping what is there
+        (a page of a listing, not the whole library)."""
+        self._add_paths([item["filepath"] for item in analysis])
+
+    def _add_paths(self, filepaths: list[str]) -> None:
         for fp in filepaths:
             h = self._path_hash(fp)
             self._hash_to_path[h] = fp
@@ -114,11 +122,9 @@ class ThumbnailCache:
     ) -> int:
         """Remove thumbnail + variants + face/pet crops for a path hash.
 
-        Glob-based cleanup of the main cache dir (`{hash}*.jpg`,
-        `{hash}*.png`) so any current or future suffix variant is
-        caught automatically. The `PHOTO_CACHE_SUFFIXES` registry in
-        bpp.constants stays as documentation but isn't load-bearing
-        for cleanup correctness.
+        The main cache is swept by the names in `PHOTO_CACHE_SUFFIXES`
+        (no directory listing). The crop folders embed a face index and
+        bbox tag the caller can't know, so they stay a prefix glob.
 
         Called during permanent delete to clean up orphaned cache files.
 
@@ -129,16 +135,21 @@ class ThumbnailCache:
         """
         import glob as _glob
 
+        from bpp.web.photo_cache import cached_variant_paths
+
         removed = 0
         hashes = {path_hash}
         if content_hash:
             hashes.add(content_hash)
-        for h in hashes:
-            for ext in (".jpg", ".png"):
-                for variant in _glob.glob(os.path.join(self.cache_dir, f"{h}*{ext}")):
-                    if os.path.isfile(variant):
-                        os.remove(variant)
-                        removed += 1
+        for variant in cached_variant_paths(self.cache_dir, hashes):
+            try:
+                os.remove(variant)
+            except FileNotFoundError:
+                continue
+            except OSError as e:
+                log.warning("Couldn't remove cached variant %s: %s", variant, e)
+                continue
+            removed += 1
         self._verified.discard(path_hash)
         self._hash_to_path.pop(path_hash, None)
         # Face crops: {path_hash}_{face_index}_{bbox_tag}.jpg
@@ -151,6 +162,39 @@ class ThumbnailCache:
             for f in _glob.glob(os.path.join(pet_crop_dir, f"pet_{path_hash}_*")):
                 os.remove(f)
                 removed += 1
+        return removed
+
+    @staticmethod
+    def remove_crops_for_hashes(
+        face_crop_dir: str | None, pet_crop_dir: str | None, path_hashes: set[str]
+    ) -> int:
+        """Delete the face / pet crops of many photos with one listing per
+        folder (``remove_for_hash`` globs per photo: fine for one delete,
+        two scans per photo for a purge of thousands)."""
+        removed = 0
+        width = len(next(iter(path_hashes))) if path_hashes else 0
+        for folder, prefix in ((face_crop_dir, ""), (pet_crop_dir, "pet_")):
+            if not folder or not width or not os.path.isdir(folder):
+                continue
+            try:
+                names = os.listdir(folder)
+            except OSError as e:
+                log.warning("Couldn't list crop folder %s: %s", folder, e)
+                continue
+            for name in names:
+                if not name.startswith(prefix):
+                    continue
+                if name[len(prefix) : len(prefix) + width] not in path_hashes:
+                    continue
+                if name[len(prefix) + width : len(prefix) + width + 1] != "_":
+                    continue
+                try:
+                    os.remove(os.path.join(folder, name))
+                    removed += 1
+                except FileNotFoundError:
+                    continue
+                except OSError as e:
+                    log.warning("Couldn't remove crop %s: %s", name, e)
         return removed
 
     def clear(self) -> int:
@@ -222,10 +266,12 @@ class ThumbnailCache:
         to drain warming work before swapping the underlying DB.
         """
         generated = 0
-        for path_hash, filepath in self._hash_to_path.items():
+        # A snapshot: a permanent delete on a request thread pops from
+        # this dict while the warmer runs.
+        for path_hash, filepath in list(self._hash_to_path.items()):
             if cancel_event is not None and cancel_event.is_set():
                 break
-            if path_hash in self._verified:
+            if path_hash in self._verified or path_hash not in self._hash_to_path:
                 continue
             thumb_path = os.path.join(self.cache_dir, f"{path_hash}.jpg")
             if os.path.exists(thumb_path):

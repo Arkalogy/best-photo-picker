@@ -1,6 +1,6 @@
 """Serialize a DB photo row into an API-friendly dict.
 
-P6 adds :class:`PhotoDict` as the typed contract for the canonical
+Defines :class:`PhotoDict` as the typed contract for the canonical
 photo response shape. Endpoint handlers that build per-photo dicts
 by hand can switch to :class:`PhotoDict` for static type-checking
 without changing the wire format — every field is the same string
@@ -115,7 +115,7 @@ def build_photo_dict(
     ctx.build_photo_dict wrapper injects the configured value), no shared
     state.
 
-    P6: return type is :class:`PhotoDict` for static type-checking.
+    Return type is :class:`PhotoDict` for static type-checking.
     Wire-shape is unchanged.
     """
     fp = item["filepath"]
@@ -181,7 +181,7 @@ def build_photo_dict(
     elif "_exif_parsed" in item:
         photo["exif"] = item["_exif_parsed"]
     else:
-        parsed = safe_json_loads(exif_raw, context="exif")
+        parsed = safe_json_loads(exif_raw, context="exif", expected_type=dict)
         # Stash the parsed result for next time. Not part of the
         # response shape — keys with leading underscore are
         # filtered out by build_photo_dict callers if needed
@@ -194,21 +194,47 @@ def build_photo_dict(
         photo["tags"] = item["tags"]
     if "similar_photos" in item:
         photo["similar_photos"] = [
-            {
-                "filepath": s["filepath"],
-                "thumb_hash": thumbs.get_hash(s["filepath"]) if thumbs else "",
-                "similarity": s["similarity"],
-                "aggregate_score": s.get("aggregate_score", 0),
-                "blur_score": s.get("blur_score", 0),
-                "exposure_score": s.get("exposure_score", 0),
-                "face_score": s.get("face_score", 0),
-                "composition_score": s.get("composition_score", 0),
-                "date_day": s.get("date_day", ""),
-                "filename": s.get("filename") or os.path.basename(s["filepath"]),
-            }
+            build_similar_entry(s, thumbs, similarity=s["similarity"])
             for s in item["similar_photos"]
         ]
     return photo
+
+
+def build_similar_entry(item: dict[str, Any], thumbs: Any, *, similarity: float | None) -> dict:
+    """One sibling of a photo (a CLIP match, a near-duplicate cluster
+    member, a review-group member): the scores the compare overlay shows
+    and the thumbnail hash. ``similarity`` is None for an unscored match."""
+    fp = item["filepath"]
+    return {
+        "filepath": fp,
+        "thumb_hash": thumbs.get_hash(fp) if thumbs else "",
+        "similarity": similarity,
+        "aggregate_score": item.get("aggregate_score") or 0,
+        "blur_score": item.get("blur_score") or 0,
+        "exposure_score": item.get("exposure_score") or 0,
+        "face_score": item.get("face_score") or 0,
+        "composition_score": item.get("composition_score") or 0,
+        "date_day": item.get("date_day") or "",
+        "filename": item.get("original_filename") or item.get("filename") or os.path.basename(fp),
+    }
+
+
+def build_photo_brief(item: dict[str, Any], thumbs: Any) -> dict[str, Any]:
+    """The small projection the calendar, On This Day and Memories send:
+    enough for a grid card and the lightbox lookup. ``hash`` is the
+    thumbnail hash, as everywhere a thumbnail is fetched."""
+    fp = item["filepath"]
+    score = item.get("aggregate_score")
+    if score is None:
+        score = item.get("score")
+    return {
+        "id": item.get("id"),
+        "filepath": fp,
+        "filename": item.get("original_filename") or item.get("filename") or os.path.basename(fp),
+        "hash": thumbs.get_hash(fp) if thumbs else "",
+        "date": item.get("date"),
+        "score": score or 0,
+    }
 
 
 def build_photo_dict_map(

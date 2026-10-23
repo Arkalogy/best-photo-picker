@@ -1,6 +1,6 @@
-"""P1.5 — recovery handlers refuse to fire after a library switch.
+"""Recovery handlers refuse to fire after a library switch.
 
-The audit identified a data-corruption window: ``WebAppState`` is mutated
+This guards a data-corruption window: ``WebAppState`` is mutated
 in place by ``switch_library``; recovery handlers that close over ``ctx``
 would happily fire with the new library's resolved paths even though the
 pending journal entry described work for the old library.
@@ -143,7 +143,7 @@ class TestRealHandlersGetWrapped:
 
     def test_permanent_delete_wraps_when_library_path_given(self):
         from bpp.db.journal import _RECOVERY_HANDLERS, _reset_handlers_for_tests
-        from bpp.web.bp_photos_lifecycle import register_permanent_delete_recovery
+        from bpp.web.permanent_delete import register_permanent_delete_recovery
 
         _reset_handlers_for_tests()
         ctx = object()  # opaque — wrapper only reads .paths.library_path

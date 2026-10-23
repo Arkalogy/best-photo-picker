@@ -16,6 +16,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from bpp.scoring.install_hold import requires
 from bpp.scoring.model_base import ModelSingleton
 from bpp.utils.logging import get_logger
 from bpp.utils.paths import models_dir as _models_dir
@@ -33,7 +34,7 @@ _MODEL_DIR = str(_models_dir())
 # Why this one: Float16-quantised short-range model is the smallest
 #         BlazeFace variant Google ships; balances accuracy vs the
 #         per-photo CPU budget when paired with YuNet.
-# License: Apache 2.0 (MediaPipe).
+# License: see the bpp.registry entry ``mediapipe_blazeface_short_range``.
 # Pinned:  via /float16/latest/ — Google guarantees this URL
 #         resolves to whatever the current "latest" build is. SHA
 #         pin still detects when Google rotates the artifact.
@@ -68,8 +69,8 @@ _mp_blazeface = ModelSingleton(
     model_url=_MODEL_URL,
     model_sha256=_MODEL_SHA256,
     create_fn=_create_mediapipe_detector,
-    registry_id=None,  # ancillary mediapipe BlazeFace, no licensing concern
-    import_check=lambda: __import__("mediapipe"),
+    registry_id="mediapipe_blazeface_short_range",
+    import_check=requires("mediapipe.tasks"),  # what create imports
     bundled_path=os.path.join(_BUNDLED_DIR, "blaze_face_short_range.tflite"),
 )
 # Inference lock: MediaPipe detectors are NOT thread-safe — serialize .detect() calls.
@@ -84,7 +85,7 @@ def ensure_mediapipe_models() -> list[str]:
     """Pre-download BlazeFace models. Returns list of warnings for unavailable models."""
     warnings = []
     path = _mp_blazeface.ensure_model()
-    if path is None:
+    if path is None and not _mp_blazeface.license_blocked():
         warnings.append("BlazeFace short-range model unavailable — face detection degraded")
     return warnings
 
@@ -94,11 +95,11 @@ def _mediapipe_detect(
     min_confidence: float = 0.2,
 ) -> list[tuple[int, int, int, int, float]]:
     """Detect faces using MediaPipe BlazeFace. Returns (x, y, w, h, confidence)."""
-    import mediapipe as mp
-
     detector = _get_mediapipe_detector()
     if detector is None:
-        return []
+        return []  # mediapipe not installed (no ``faces`` extra) or model off
+    import mediapipe as mp
+
     # MediaPipe expects 3-channel RGB
     if len(image.shape) == 2:
         rgb = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)

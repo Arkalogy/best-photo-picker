@@ -9,18 +9,25 @@ LAN device must never be able to trigger it.
 
 from __future__ import annotations
 
-import json
+import contextlib
 import shutil
-import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
+from typing import Any
 
 from flask import Blueprint, Response, jsonify
 
 from bpp.errors import ConflictError, ValidationError
+from bpp.scoring.install_hold import held_keys
 from bpp.utils.logging import get_logger
-from bpp.web.share import requires_local_app
+from bpp.web import pip_process
+from bpp.web.install_busy import busy_workers as _busy_workers
+from bpp.web.install_specs import INSTALLABLE_PACKAGES as _INSTALLABLE_PACKAGES
+from bpp.web.install_status import install_state
+from bpp.web.share import principal_is_local_app, requires_local_app
 
 log = get_logger(__name__)
 
@@ -29,34 +36,150 @@ bp = Blueprint("install", __name__)
 
 # --- Runtime dependency install ---
 
-_install_lock = threading.Lock()
-_install_running = False
 
-# Whitelist of pip packages that can be installed at runtime.
-# Maps short key → list of pip install specs. Using direct package names
-# (instead of `bppicker[extra]`) so this works for users running from a
-# local editable install (`pip install -e .`) — extras only resolve when
-# bppicker is itself reachable on PyPI, which it isn't yet.
-_INSTALLABLE_PACKAGES: dict[str, list[str]] = {
-    "faces": ["face_recognition>=1.3", "scipy>=1.10", "mediapipe>=0.10"],
-    # Match the [nudity] extra in pyproject.toml — pinned tight so
-    # the SHA-256 verifier in bpp/scoring/nudity.py stays accurate.
-    "nudity": ["nudenet>=3.3,<4"],
-    "onnxruntime": ["onnxruntime"],
-    # Pin to 0.1.0 (matches the pyproject extra). 0.1.1 pins
-    # pillow<11; 0.1.2 pins pillow<10 (breaks HEIC). 0.1.0 has no
-    # upper bound so pip resolves cleanly against our existing
-    # Pillow >= 10 install. With this pin, --no-deps is no longer
-    # required, so the runtime installer can pull torch /
-    # torchvision / numpy on a base venv that doesn't already
-    # have them via [faces] / [clip].
-    "inpaint": ["simple-lama-inpainting==0.1.0"],
-}
+@dataclass
+class _Claim:
+    """The install POST /install claimed (one at a time)."""
+
+    key: str
+    #: Its identity: a stream only acts on the claim it took.
+    token: int
+    #: When it was claimed (monotonic seconds); None once its progress
+    #: stream has started (the stream then always releases it).
+    claimed_at: float | None
+    #: A progress stream has taken it (a second would run a second pip).
+    stream_taken: bool = False
+
+
+_install_lock = threading.Lock()
+#: The running install, if any (read and replaced under _install_lock).
+_claim: _Claim | None = None
+_last_token = 0
+#: A claim whose stream hasn't started by then is released (tab closed
+#: between the POST and the GET), so it can't block work forever.
+_CLAIM_TTL_S = 30.0
+#: Long work under way that an install mustn't start during (a library
+#: switch: opening a library starts recovery work that loads packages).
+#: What it is, for the "wait for …" message.
+_long_work: list[str] = []
+
+
+def _release_stale_claim_locked() -> None:
+    """Call with _install_lock held."""
+    global _claim
+    claimed = _claim.claimed_at if _claim is not None else None
+    if claimed is not None and time.monotonic() - claimed > _CLAIM_TTL_S:
+        log.warning("An install was started but its progress never connected; releasing it")
+        _claim = None
+
+
+def _clear_claim_locked(token: int) -> None:
+    """Release the install claim *token* (call with _install_lock held) —
+    only if it's still that claim, not a newer install's."""
+    global _claim
+    if _claim is not None and _claim.token == token:
+        _claim = None
+
+
+def installable_specs(key: str) -> list[str] | None:
+    """The pip specs install *key* runs (None: not installable)."""
+    return _INSTALLABLE_PACKAGES.get(key)
+
+
+def claim_for_stream(key: str) -> int:
+    """The claim a progress stream for *key* may run (its token), or
+    ConflictError: none claimed for *key* (POST first), or another stream
+    already runs it."""
+    with _install_lock:
+        _release_stale_claim_locked()
+        claim = _claim
+        if claim is None or claim.key != key:
+            raise ConflictError(
+                "No install in progress; POST /install/<key> first", hint="post_first"
+            )
+        if claim.stream_taken:
+            # Another tab (or a retried connection) already runs this
+            # install's pip; a second would run alongside it.
+            raise ConflictError("This install is already running", hint="already_streaming")
+        return claim.token
+
+
+def take_stream(token: int) -> str:
+    """A stream starts for claim *token*: "ok" (it runs pip now), "taken"
+    (another stream started first), or "gone" (released as stale)."""
+    with _install_lock:
+        claim = _claim
+        if claim is None or claim.token != token:
+            return "gone"
+        if claim.stream_taken:
+            return "taken"
+        claim.stream_taken = True
+        claim.claimed_at = None  # the stream owns it now: it always releases it
+        return "ok"
+
+
+def finish_claim(token: int, settle: Callable[[], None]) -> None:
+    """The stream for claim *token* is over: *settle* (the hold) and release
+    the claim, together under the lock — no request sees the claim gone
+    but the hold not yet settled."""
+    with _install_lock:
+        try:
+            settle()
+        finally:
+            _clear_claim_locked(token)
 
 
 def _pip_available() -> bool:
     """Return True if pip is callable from the current Python."""
+    if getattr(sys, "frozen", False):
+        return False  # frozen desktop app: sys.executable is the server, not Python
     return shutil.which(sys.executable) is not None
+
+
+def install_refusal(*, left_running: bool | None = None) -> ConflictError | None:
+    """Why an install would be refused right now (None: it can start) —
+    the same checks POST /install makes, for the page to ask first.
+    *left_running*: pip_left_running(), when the caller has it already."""
+    left = _left_running_refusal(left_running)
+    if left is not None:
+        return left
+    with _install_lock:
+        _release_stale_claim_locked()  # a closed tab's claim doesn't count
+        return _refusal_locked()
+
+
+def _left_running_refusal(left_running: bool | None = None) -> ConflictError | None:
+    # Asked outside the lock: it may list processes (slow).
+    if left_running if left_running is not None else pip_process.pip_left_running():
+        return ConflictError(
+            "An install from before the app last stopped is still running — "
+            "wait a few minutes, then restart Best Photo Picker",
+            reason="busy",
+        )
+    return None
+
+
+def _refusal_locked() -> ConflictError | None:
+    """Call with _install_lock held: work running, another install, or one
+    waiting for a restart."""
+    if _claim is not None:
+        return ConflictError("Install already in progress", reason="busy")
+    if held_keys():
+        # One install per restart: what the last one wrote isn't loaded
+        # yet, so the next waits until it is.
+        return ConflictError(
+            "Restart Best Photo Picker to finish the last install first",
+            reason="restart_pending",
+        )
+    if _long_work:
+        return ConflictError(f"Wait for {_long_work[-1]} to finish, then install", reason="busy")
+    busy = _busy_workers()
+    if busy:
+        return ConflictError(
+            f"Wait for {' and '.join(busy)} to finish (or stop it), then install",
+            reason="busy",
+        )
+    return None
 
 
 @bp.post("/api/v1/install/faces")
@@ -105,7 +228,7 @@ def api_install_progress(key: str) -> Response:
 
 
 def _api_install_package(key: str) -> tuple[Response, int]:
-    global _install_running
+    global _claim, _last_token
     specs = _INSTALLABLE_PACKAGES.get(key)
     if not specs:
         raise ValidationError(f"Unknown package: {key}", key=key)
@@ -114,11 +237,93 @@ def _api_install_package(key: str) -> tuple[Response, int]:
             "Cannot install: pip not available",
             reason="pip_missing",
         )
+    left = _left_running_refusal()
+    if left is not None:
+        raise left
+    # One lock covers "is work running?" + "claim the install" here and
+    # "is an install running?" + "start the work" in _worker_start_guard()
+    # (every background worker's start), so the two never start together.
     with _install_lock:
-        if _install_running:
-            raise ConflictError("Install already in progress")
-        _install_running = True
+        _release_stale_claim_locked()
+        refusal = _refusal_locked()
+        if refusal is not None:
+            raise refusal
+        _last_token += 1
+        _claim = _Claim(key=key, token=_last_token, claimed_at=time.monotonic())
     return jsonify({"status": "started", "packages": specs}), 202
+
+
+def _register_start_guard() -> None:
+    from bpp.web.base_worker import set_start_guard
+
+    set_start_guard(_worker_start_guard)
+
+
+def _raise_if_claimed_locked() -> None:
+    """Call with _install_lock held: refuse while this server installs."""
+    _release_stale_claim_locked()
+    if _claim is not None:
+        raise ConflictError(
+            "A package is being installed — wait for it to finish", blocker="install"
+        )
+
+
+def _raise_if_pip_left_running() -> None:
+    left = _left_running_refusal()
+    if left is not None:
+        raise left
+
+
+@contextlib.contextmanager
+def _worker_start_guard(worker: Any) -> Iterator[None]:
+    """Background work that loads installable packages doesn't start during
+    any install, nor after one until the restart: pip swaps files — shared
+    libraries too (numpy, Pillow…), which the processes this work starts
+    would load fresh from disk, unlike the app — and the installed feature's
+    models would silently be missing from the results. Work says whether
+    it loads any of that (``loads_installable_packages``; None: unknown, so
+    it does)."""
+    if getattr(worker, "loads_installable_packages", None) is False:
+        yield  # loads nothing an install writes
+        return
+    # A pip an earlier server left running still writes packages too.
+    # (Asked outside the lock: it may list processes.)
+    _raise_if_pip_left_running()
+    with _install_lock:
+        # Both under the lock: an install settles its hold before it
+        # releases its claim, so no start sees neither.
+        _raise_if_claimed_locked()
+        if held_keys():
+            raise ConflictError(
+                "Restart Best Photo Picker to finish installing, then try again",
+                reason="restart_pending",
+            )
+        yield  # held while it starts: no install can begin in between
+
+
+@contextlib.contextmanager
+def no_install_during(what: str) -> Iterator[None]:
+    """Like the worker start guard, for long work (a library switch):
+    instead of holding the lock throughout — blocking install requests,
+    or deadlocking on a nested check — it's marked busy, so an install
+    can't start until it ends."""
+    _raise_if_pip_left_running()
+    with _install_lock:
+        _raise_if_claimed_locked()
+        _long_work.append(what)
+    try:
+        yield
+    finally:
+        with _install_lock:
+            _long_work.remove(what)
+
+
+@bp.get("/api/v1/install/state")
+def api_install_state() -> tuple[Response, int]:
+    """Polled by every page (paired devices too, so no owner-only gate: a
+    403 makes the page reload) so a pending restart shows even when the
+    install finished out of view. Package names are for the owner only."""
+    return jsonify(install_state(owner=principal_is_local_app())), 200
 
 
 @bp.get("/api/v1/install/<key>/info")
@@ -133,112 +338,9 @@ def api_install_info(key: str) -> tuple[Response, int]:
 
 
 def _api_install_progress(key: str) -> Response:
-    specs = _INSTALLABLE_PACKAGES.get(key)
-    if not specs:
-        raise ValidationError(f"Unknown package: {key}", key=key)
+    from bpp.web.install_stream import install_progress
 
-    global _install_running
-    # Refuse unless POST /install/<key> was just called (it sets
-    # _install_running=True). Without this gate, the GET handler
-    # itself would launch pip — the @requires_local_app decorator
-    # plus this start-gate make the contract: install is a two-step
-    # POST-then-GET dance, never a one-shot GET.
-    with _install_lock:
-        if not _install_running:
-            raise ConflictError(
-                "No install in progress; POST /install/<key> first",
-                hint="post_first",
-            )
+    return install_progress(key)
 
-    # Outside-cap on the whole pip invocation. Slow PyPI mirrors,
-    # network stalls, or a hung pip resolver can otherwise block the
-    # SSE stream — and the worker thread holding _install_running —
-    # indefinitely.
-    _PIP_HARD_TIMEOUT_S = 600  # 10 minutes
-    # Grace period for pip to exit after we close its stdout (or after
-    # the client disconnects mid-stream and we terminate the process).
-    _PIP_TERM_GRACE_S = 5
 
-    def generate():
-        proc: subprocess.Popen[str] | None = None
-        try:
-            log.info("pip install %s starting", " ".join(specs))
-            yield f"data: {json.dumps({'type': 'start'})}\n\n"
-            proc = subprocess.Popen(
-                [sys.executable, "-m", "pip", "install", *specs],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-            )
-            assert proc.stdout is not None  # guaranteed by stdout=PIPE
-            start = time.monotonic()
-            # Keep the last few non-empty log lines so we can surface them
-            # in the error message. "pip exited with code 1" alone tells
-            # the user nothing.
-            recent_lines: list[str] = []
-            for line in proc.stdout:
-                if time.monotonic() - start > _PIP_HARD_TIMEOUT_S:
-                    raise TimeoutError(f"pip install exceeded {_PIP_HARD_TIMEOUT_S}s; aborting")
-                line = line.rstrip()
-                if line:
-                    recent_lines.append(line)
-                    if len(recent_lines) > 6:
-                        recent_lines.pop(0)
-                    yield f"data: {json.dumps({'type': 'log', 'message': line})}\n\n"
-            # stdout closed → pip should be exiting. Bound the wait so a
-            # post-close hang can't lock the worker thread.
-            proc.wait(timeout=_PIP_TERM_GRACE_S)
-            if proc.returncode == 0:
-                log.info("pip install %s completed", " ".join(specs))
-                yield f"data: {json.dumps({'type': 'done'})}\n\n"
-            else:
-                # Find the most informative line from the tail. Prefer
-                # ones that start with ERROR: which pip uses for its
-                # actual diagnostic; fall back to the very last line.
-                hint = next(
-                    (line_ for line_ in reversed(recent_lines) if line_.startswith("ERROR:")),
-                    recent_lines[-1] if recent_lines else "",
-                )
-                msg = f"pip exited with code {proc.returncode}"
-                if hint:
-                    msg += f" — {hint}"
-                log.error("pip install %s failed: %s", " ".join(specs), msg)
-                yield f"data: {json.dumps({'type': 'error', 'message': msg})}\n\n"
-        except GeneratorExit:
-            # Client disconnected mid-stream. Don't yield (the connection
-            # is gone), but DO clean the subprocess in `finally` so it
-            # can't orphan with an open pipe.
-            raise
-        except Exception as e:
-            log.error("Dependency install failed: %s", e, exc_info=True)
-            msg = "Installation failed. Check server logs for details."
-            yield f"data: {json.dumps({'type': 'error', 'message': msg})}\n\n"
-        finally:
-            # Subprocess teardown: close stdout, then terminate→kill if
-            # still running. This runs on normal completion AND on
-            # GeneratorExit (client disconnect) AND on exception, so
-            # there's no path that leaks an orphan pip process.
-            if proc is not None:
-                if proc.stdout is not None and not proc.stdout.closed:
-                    import contextlib
-
-                    with contextlib.suppress(OSError):
-                        proc.stdout.close()
-                if proc.poll() is None:
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=_PIP_TERM_GRACE_S)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                        try:
-                            proc.wait(timeout=_PIP_TERM_GRACE_S)
-                        except subprocess.TimeoutExpired:
-                            log.error(
-                                "pip install (%s) refused SIGKILL — leaked process",
-                                " ".join(specs),
-                            )
-            global _install_running
-            with _install_lock:
-                _install_running = False
-
-    return Response(generate(), mimetype="text/event-stream")
+_register_start_guard()

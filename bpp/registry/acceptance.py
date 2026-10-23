@@ -1,14 +1,13 @@
 """Click-through acceptance flow: build the dialog payload, verify
-the user's response, write the evidentiary row.
+the user's response, write the audit row.
 
-Batch 4 / item 5 of the legal-posture rollout. The HTML/JS dialog
-(and the CLI text prompt) call into this module — neither side
-re-implements the four-checkbox + commercial-use-definition +
-biometric-note + rights-assertion gate. One implementation here
-keeps all surfaces in lock-step (item 9 / Q6 warning-parity
-guarantee).
+The HTML/JS dialog (and the CLI text prompt) call into this module —
+neither side re-implements the four-checkbox +
+commercial-use-definition + biometric-note + rights-assertion gate.
+One implementation here keeps all surfaces in lock-step, so every
+surface shows the same warnings.
 
-Three entry points:
+Entry points:
 
 * :func:`prepare_acceptance` — given a :class:`ModelEntry` and the
   user's declared :class:`UseContext`, build a structured
@@ -17,12 +16,11 @@ Three entry points:
 * :func:`confirm_acceptance` — verify the user's response matches
   the draft (all required boxes checked, the optional
   source-of-rights field is a string, and so on), write the
-  evidentiary row to the acceptance log, return the row.
-* :func:`is_acceptance_valid_for` — Batch 5 hard-block gate
-  consults this before letting a restricted model load. ``True``
-  when an acceptance row exists for the entry's current
-  ``ack_text_sha256`` (i.e., the user accepted the wording
-  matching what BPP currently shows).
+  audit row to the acceptance log, return the row.
+* :func:`acceptance_state` — the one judgement of an acceptance (current /
+  needs re-accept / withdrawn) that every reader uses
+* :func:`is_acceptance_valid_for` — ``acceptance_state(entry).current``:
+  what the model-load hard-block gate (:mod:`bpp.registry.policy`) asks.
 """
 
 from __future__ import annotations
@@ -75,23 +73,25 @@ class AcceptanceDraft:
 
     Frozen — the dialog must not be able to mutate the strings
     between rendering and confirmation; that would defeat the
-    snapshot-hash evidentiary trail.
+    snapshot-hash audit trail.
 
     Fields:
 
     * ``entry`` — the :class:`ModelEntry` the user is being asked
       to accept.
     * ``compressed_disclaimer`` — short two-sentence summary for
-      the dialog header (Q6).
+      the dialog header.
     * ``full_disclaimer`` — full canonical disclaimer text
       surfaced behind a "Read full terms" link.
-    * ``commercial_use_definition`` — verbatim trap-T5 text.
-    * ``biometric_responsibility_text`` — item 13 text.
+    * ``commercial_use_definition`` — the in-dialog definition of
+      "commercial use".
+    * ``biometric_responsibility_text`` — the biometric-data
+      responsibility note.
     * ``required_checkboxes`` — ordered tuple of
       ``(checkbox_id, user-visible-text)`` pairs. All must be
       checked for the acceptance to confirm.
     * ``separate_rights_assertion`` — model-specific assertion
-      rendered with the entry's display name (trap T6).
+      rendered with the entry's display name.
     * ``ack_text_version`` + ``ack_text_sha256`` — pointers to the
       canonical disclaimer wording so the dialog and the
       acceptance-log row reference the same exact bytes.
@@ -116,7 +116,7 @@ class AcceptanceDraft:
 #: Single required checkbox shown on the BYOM dialog. Used in place of
 #: :data:`REQUIRED_ACK_CHECKBOXES` for entries whose ``ack_text_kind``
 #: is ``"byom"``. The user-responsibility paragraph carries the rights
-#: chain (item 11); the checkbox is the affirmative acknowledgment.
+#: chain; the checkbox is the affirmative acknowledgment.
 BYOM_REQUIRED_CHECKBOXES: tuple[tuple[str, str], ...] = (
     (
         "byom_user_takes_responsibility",
@@ -146,8 +146,8 @@ def prepare_acceptance(
       required checkboxes + commercial-use definition + biometric
       responsibility text + per-model rights assertion.
 
-    * ``"byom"`` — user-supplied Bring-Your-Own-Model file (Batch
-      6 / item 11). Dialog renders the shorter BYOM disclaimer +
+    * ``"byom"`` — user-supplied Bring-Your-Own-Model file.
+      Dialog renders the shorter BYOM disclaimer +
       single user-responsibility checkbox. The commercial-use
       definition and biometric text are still shown (face
       embeddings are biometric regardless of source) but the
@@ -155,10 +155,10 @@ def prepare_acceptance(
       no upstream license for Arkalogy to gate against.
 
     Caller responsibility: pass the user's declared
-    :class:`UseContext` from the commercial-use gate (Batch 5 /
-    item 15). When that gate hasn't shipped yet,
-    ``UseContext.UNSPECIFIED`` is a valid input — the dialog will
-    label the use context as "not specified."
+    :class:`UseContext` from the commercial-use gate. When the user
+    hasn't declared one yet, ``UseContext.UNSPECIFIED`` is a valid
+    input — the dialog will label the use context as "not
+    specified."
     """
     if entry.ack_text_kind == "byom":
         # BYOM dialog: shorter disclaimer, single checkbox, no
@@ -238,8 +238,8 @@ def confirm_acceptance(
     missing or unchecked, or if ``accepted_at`` is empty.
     ``separate_rights_asserted`` and ``source_of_rights_note`` are
     persisted verbatim — neither is validated against the
-    declared use context because the legal-posture spec wanted Batch 5
-    to enforce that policy (so the same call shape works for both
+    declared use context because the model-load policy gate
+    (:mod:`bpp.registry.policy`) enforces that (so the same call shape works for both
     commercial-mode-blocked overrides and non-commercial-mode
     voluntary attestations).
 
@@ -252,7 +252,7 @@ def confirm_acceptance(
             "confirm_acceptance: accepted_at is empty. The caller must "
             "stamp an ISO-8601 timestamp in UTC."
         )
-    # Item 19 — evidentiary chain. Restricted third-party entries
+    # Audit trail: restricted third-party entries
     # MUST carry a permalink so the acceptance row records a URL that
     # resolves to the exact wording the user saw, years later. A
     # missing or empty permalink would record the floating
@@ -271,7 +271,7 @@ def confirm_acceptance(
             f"{entry.id!r} has no terms_permalink_url. The acceptance "
             "row would record a floating ``terms_url`` that may rot "
             "when the upstream rewrites their README, breaking the "
-            "evidentiary chain. Register the entry with a permalink "
+            "audit trail. Register the entry with a permalink "
             "pinned to a specific upstream commit."
         )
     # Required ids come from the draft, not the global canonical list:
@@ -286,6 +286,16 @@ def confirm_acceptance(
             "checkbox even when the user did not check it (use "
             "value=false rather than omitting)."
         )
+    # Only a real True counts — "false" (a non-empty string) must never
+    # read as a checked box or a rights assertion.
+    not_bool = sorted(
+        cb_id for cb_id in required_ids if type(checkbox_responses[cb_id]) is not bool
+    )
+    if not_bool or type(separate_rights_asserted) is not bool:
+        raise AcceptanceError(
+            "confirm_acceptance: checkbox responses and separate_rights_asserted "
+            f"must be true or false (got non-boolean: {not_bool or ['separate_rights_asserted']})."
+        )
     unchecked = [cb_id for cb_id in required_ids if not checkbox_responses[cb_id]]
     if unchecked:
         raise AcceptanceError(
@@ -293,12 +303,12 @@ def confirm_acceptance(
             f"Unchecked: {sorted(unchecked)}."
         )
 
-    # Item 5 evidentiary chain (schema v2): the per-checkbox map is
+    # Per-checkbox audit trail (schema v2): the per-checkbox map is
     # the artifact, not the values. Filter to required ids only —
     # the dialog can post extra ids the user clicked but we don't
     # care about; we record exactly the set the registry says is
     # required for this entry's ack_text_kind.
-    persisted_checkboxes = {cb_id: bool(checkbox_responses[cb_id]) for cb_id in required_ids}
+    persisted_checkboxes = {cb_id: checkbox_responses[cb_id] for cb_id in required_ids}
     row = AcceptanceRow(
         model_id=draft.entry.id,
         model_sha256=draft.entry.weight_sha256,
@@ -319,35 +329,85 @@ def confirm_acceptance(
     return row
 
 
+@dataclass(frozen=True)
+class AcceptanceState:
+    """One model's license acceptance, as every reader sees it — the load
+    gate, the acceptance list and the picker all decide from this, so a
+    change to the rule is made once.
+
+    * ``latest`` — the row judged (the model's latest, or the one given).
+    * ``accepted`` — that row is an acceptance, not a withdrawal.
+    * ``current`` — it may load: accepted under the entry's CURRENT
+      acknowledgment text (a registry update that changes the wording —
+      a :data:`CANONICAL_DISCLAIMER_VERSION` bump, a new model-specific
+      rationale — invalidates older acceptances and re-prompts the user;
+      that is the desired behaviour). An entry needing no click-through
+      is current without the log being read at all (the gate's own
+      short-circuit); a row given for one is current only if it is an
+      acceptance.
+    * ``needs_reaccept`` — accepted, but under an older text.
+    * ``separate_rights_asserted`` — the commercial-use rights assertion
+      on that row (rule 4 of the load policy).
+    """
+
+    latest: AcceptanceRow | None
+    accepted: bool
+    current: bool
+    needs_reaccept: bool
+    separate_rights_asserted: bool
+
+
+def acceptance_state(
+    entry: ModelEntry | None,
+    *,
+    row: AcceptanceRow | None = None,
+    log_path: Path | None = None,
+) -> AcceptanceState:
+    """Judge ``entry``'s acceptance: its latest log row (one read), or
+    ``row`` when given (the acceptance list judges every row). ``entry``
+    is None for a row whose model the registry no longer knows — never
+    current, but still an acceptance that would need re-accepting."""
+    if row is None and entry is not None and not entry.requires_explicit_ack:
+        # No click-through needed: it may load, and the log isn't read
+        # (a stray withdrawal row for it changes nothing).
+        return AcceptanceState(
+            latest=None,
+            accepted=False,
+            current=True,
+            needs_reaccept=False,
+            separate_rights_asserted=False,
+        )
+    if row is None and entry is not None:
+        row = find_latest_for_model(entry.id, path=log_path)
+    # A withdrawal (a revocation as the latest row) re-gates the model —
+    # the load policy blocks it until the user re-accepts.
+    accepted = row is not None and row.event == "accept"
+    if entry is None:
+        current = False
+    elif not entry.requires_explicit_ack:
+        # (A given row for a no-click-through entry: an acceptance is
+        # current; a withdrawal isn't one.)
+        current = accepted
+    else:
+        current = accepted and row is not None and row.ack_text_sha256 == entry.ack_text_sha256
+    return AcceptanceState(
+        latest=row,
+        accepted=accepted,
+        current=current,
+        needs_reaccept=accepted and not current,
+        separate_rights_asserted=row is not None and bool(row.separate_rights_asserted),
+    )
+
+
 def is_acceptance_valid_for(
     entry: ModelEntry,
     *,
     log_path: Path | None = None,
 ) -> bool:
-    """Return ``True`` when an acceptance row exists for ``entry``
-    whose acknowledgment-text hash matches the entry's current
-    ``ack_text_sha256``.
-
-    Batch 5's hard-block gate calls this before letting a restricted
-    model load. A registry update that changes the ack wording for
-    a model (incrementing :data:`CANONICAL_DISCLAIMER_VERSION` or
-    changing the model-specific rationale) invalidates older
-    acceptances and re-prompts the user — that is the desired
-    behaviour, not a bug.
-    """
-    if not entry.requires_explicit_ack:
-        # Permissive models do not require a click-through. Treat
-        # any call here as trivially valid so callers can use this
-        # function uniformly.
-        return True
-    latest = find_latest_for_model(entry.id, path=log_path)
-    if latest is None:
-        return False
-    # A withdrawal (the latest row is a revocation) re-gates the model —
-    # the server load-policy will block it until the user re-accepts.
-    if latest.event == "revoke":
-        return False
-    return latest.ack_text_sha256 == entry.ack_text_sha256
+    """Whether ``entry`` may load as far as its license goes — see
+    :class:`AcceptanceState.current`. The model-load hard-block gate
+    calls this before letting a restricted model load."""
+    return acceptance_state(entry, log_path=log_path).current
 
 
 def utc_now_iso() -> str:

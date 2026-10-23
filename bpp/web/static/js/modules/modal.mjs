@@ -14,6 +14,8 @@
  * backdrop attribute.
  */
 
+import { focusInto, restoreFocusFrom } from "./dialog-focus.mjs";
+
 /** @type {((value: any) => void) | null} */
 let _modalResolve = null;
 /** @type {((e: KeyboardEvent) => void) | null} */
@@ -57,6 +59,7 @@ export function showModal(icon, title, body, opts) {
   }
 
   overlayEl.classList.add("visible");
+  focusInto(overlayEl);
 
   // Esc dismissal — capture-phase + stopImmediatePropagation so an
   // open showModal sitting over the lightbox doesn't also pass Esc
@@ -85,6 +88,7 @@ export function showModal(icon, title, body, opts) {
 export function resolveModal(value) {
   const overlay = document.getElementById("modal-overlay");
   overlay?.classList.remove("visible");
+  restoreFocusFrom(overlay);
   if (_modalKeyHandler) {
     document.removeEventListener("keydown", _modalKeyHandler, true);
     _modalKeyHandler = null;

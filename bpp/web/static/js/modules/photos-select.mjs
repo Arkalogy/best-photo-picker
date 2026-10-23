@@ -7,6 +7,8 @@
  *   * handleCardClick(event, idx) — click dispatcher
  *   * updateMultiSelectUI()       — repaint the action bar / counter
  *   * clearMultiSelect()          — drop selection, refresh
+ *   * focusCard / _bppCardKeydown — keyboard: one focusable card at a
+ *     time (roving tabindex), arrows move it, Home / End jump
  *
  * Re-exported from photos.mjs.
  */
@@ -20,6 +22,9 @@ export function handleCardClick(event, idx) {
   if (idx === undefined) idx = +this.dataset.arg0;
   /** @type {any} */
   const win = window;
+  // A click (mouse, or Enter — the key handler re-marks it) ends keyboard
+  // navigation: a re-render won't chase focus for a mouse user.
+  if (win.vgrid) win.vgrid._keyNav = false;
   const items = /** @type {any[]} */ (win.currentGridItems || []);
   const multiSelected = /** @type {Set<string>} */ (win.multiSelected || new Set());
 
@@ -126,4 +131,114 @@ export function clearMultiSelect() {
   multiSelected.clear();
   win.lastMultiClickIdx = -1;
   updateMultiSelectUI();
+}
+
+/**
+ * Where an arrow / Home / End key moves the grid's focus from ``idx``,
+ * or null for a key that isn't navigation or a move off the grid.
+ * @param {string} key
+ * @param {number} idx
+ * @param {number} cols
+ * @param {number} count
+ * @returns {number | null}
+ */
+export function nextCardIndex(key, idx, cols, count) {
+  if (count <= 0) return null;
+  const last = count - 1;
+  switch (key) {
+    case "ArrowRight":
+      return idx < last ? idx + 1 : null;
+    case "ArrowLeft":
+      return idx > 0 ? idx - 1 : null;
+    case "ArrowDown": {
+      if (idx + cols <= last) return idx + cols;
+      // A short last row below: land on its last card. Already on the
+      // last row: stay (no sideways jump).
+      const rowBelowExists = Math.floor(idx / cols) < Math.floor(last / cols);
+      return rowBelowExists ? last : null;
+    }
+    case "ArrowUp":
+      return idx - cols >= 0 ? idx - cols : null;
+    case "Home":
+      return idx > 0 ? 0 : null;
+    case "End":
+      return idx < last ? last : null;
+    default:
+      return null;
+  }
+}
+
+/** Whether a dialog over the grid (lightbox, compare, slideshow) is open. */
+function _viewerOpen() {
+  const slideshow = document.getElementById("slideshow-overlay");
+  return !!(
+    document.getElementById("lightbox")?.classList.contains("visible") ||
+    document.getElementById("compare-overlay")?.classList.contains("visible") ||
+    (slideshow && !slideshow.classList.contains("hidden"))
+  );
+}
+
+/**
+ * Move the grid's one focusable card to ``idx`` and focus it: the row is
+ * scrolled into view first so the virtual grid has rendered the card.
+ * @param {number} idx
+ */
+export function focusCard(idx) {
+  /** @type {any} */
+  const win = window;
+  const vg = win.vgrid;
+  const grid = document.getElementById("photo-grid");
+  if (!vg || !grid || idx < 0 || idx >= vg.items.length) return;
+  vg._keyNav = true; // a keyboard move: the grid may restore focus after a re-render
+  vg._movingFocus = true; // the scroll render below must not adopt / restore the old card
+  const scrollEl = /** @type {HTMLElement | null} */ (document.querySelector(".content"));
+  if (scrollEl && vg.rowHeight && vg.cols) {
+    // The grid sits below other bars in the scroll area: measure from its top.
+    const gridTop =
+      grid.getBoundingClientRect().top - scrollEl.getBoundingClientRect().top + scrollEl.scrollTop;
+    const top = gridTop + Math.floor(idx / vg.cols) * vg.rowHeight;
+    const bottom = top + vg.rowHeight;
+    if (top < scrollEl.scrollTop) scrollEl.scrollTop = top;
+    else if (bottom > scrollEl.scrollTop + scrollEl.clientHeight) {
+      scrollEl.scrollTop = bottom - scrollEl.clientHeight;
+    }
+    vg.render?.(false);
+  }
+  vg._movingFocus = false;
+  vg.focusIdx = idx;
+  for (const c of grid.querySelectorAll('.card[tabindex="0"]')) {
+    /** @type {HTMLElement} */ (c).tabIndex = -1;
+  }
+  const card = /** @type {HTMLElement | null} */ (grid.querySelector(`.card[data-idx="${idx}"]`));
+  if (card) {
+    card.tabIndex = 0;
+    card.focus({ preventScroll: true });
+    card.scrollIntoView?.({ block: "nearest" });
+  }
+}
+
+/**
+ * ``data-onkeydown`` of a photo card (``this`` is the card).
+ * @this {HTMLElement}
+ * @param {KeyboardEvent} e
+ */
+export function _bppCardKeydown(e) {
+  if (e.altKey || e.ctrlKey || e.metaKey) return;
+  if (_viewerOpen()) return; // the viewer's own keys apply
+  /** @type {any} */
+  const vg = /** @type {any} */ (window).vgrid;
+  if (!vg) return;
+  if (e.key === "Enter" || e.key === " ") {
+    // Open it like a click (the generic activation in globals.js leaves
+    // elements with their own keydown handler alone).
+    e.preventDefault();
+    this.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    vg._keyNav = true;
+    return;
+  }
+  const idx = +(this.dataset.idx || 0);
+  const next = nextCardIndex(e.key, idx, vg.cols || 1, vg.items.length);
+  if (next === null) return;
+  e.preventDefault();
+  focusCard(next);
 }

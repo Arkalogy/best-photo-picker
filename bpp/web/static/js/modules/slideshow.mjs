@@ -12,6 +12,7 @@
 import { authedSrc } from "./api-client.mjs";
 import { esc } from "./text-format.mjs";
 import { state } from "./state.mjs";
+import { focusInto, restoreFocusFrom } from "./dialog-focus.mjs";
 import { toast } from "./toast.mjs";
 
 let slideshowActive = false;
@@ -68,7 +69,10 @@ export function startSlideshow(startIdx) {
   slideshowPlaying = true;
 
   const overlay = document.getElementById("slideshow-overlay");
-  if (overlay) overlay.classList.remove("hidden");
+  if (overlay) {
+    overlay.classList.remove("hidden");
+    focusInto(overlay);
+  }
   try {
     document.documentElement.requestFullscreen?.();
   } catch {
@@ -86,7 +90,10 @@ export function stopSlideshow() {
   slideshowTimer = null;
 
   const overlay = document.getElementById("slideshow-overlay");
-  if (overlay) overlay.classList.add("hidden");
+  if (overlay) {
+    overlay.classList.add("hidden");
+    restoreFocusFrom(overlay);
+  }
 
   const imgA = document.getElementById("ss-img-a");
   const imgB = document.getElementById("ss-img-b");

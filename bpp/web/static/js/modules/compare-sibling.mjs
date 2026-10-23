@@ -23,6 +23,9 @@ import {
 } from "./compare.mjs";
 
 let _compareSiblingMode = false;
+/** Bumped whenever a strip opens or closes: an Undo for another strip's
+ * photo must not slot it into this one. */
+let _compareStripId = 0;
 /** @type {any[]} */
 let _compareSiblings = [];
 let _compareSiblingIdx = -1;
@@ -46,6 +49,7 @@ export function getSiblingParent() {
   return _compareSiblingParent;
 }
 export function resetSiblingState() {
+  _compareStripId += 1;
   _compareSiblingMode = false;
   _compareSiblings = [];
   _compareSiblingIdx = -1;
@@ -62,6 +66,7 @@ export function openCompareWithSibling(parentPhoto, siblings, siblingIdx) {
   /** @type {any} */
   const win = window;
   if (!parentPhoto || !siblings || !siblings.length) return;
+  _compareStripId += 1;
   _compareSiblingMode = true;
   _compareSiblings = siblings;
   _compareSiblingIdx = siblingIdx;
@@ -221,24 +226,37 @@ export async function _siblingDelete() {
   // Live-update the grid (count badge / stack vanish) by flagging deleted.
   _setPhotoDeletedInMemory(sibling.filepath, true);
 
-  // Drop from the compare strip.
-  _compareSiblings.splice(idx, 1);
-  const closedAfter = _compareSiblings.length === 0;
-  if (closedAfter) {
-    closeCompare();
-  } else {
-    if (_compareSiblingIdx >= _compareSiblings.length) _compareSiblingIdx = 0;
-    _renderCompareSide("right", _compareSiblings[_compareSiblingIdx]);
-    _renderSiblingLabels();
-    _renderSiblingStrip();
-    _renderSiblingToolbar();
+  // Drop from the compare strip — the one this delete came from. The
+  // comparison may have been closed or replaced while the request ran:
+  // then the list is another group's and is left alone (by identity,
+  // not by the stale index).
+  const stillHere = _compareSiblings.findIndex((s) => s && s.filepath === sibling.filepath);
+  let closedAfter = false;
+  if (stillHere !== -1) {
+    _compareSiblings.splice(stillHere, 1);
+    closedAfter = _compareSiblings.length === 0;
+    if (closedAfter) {
+      closeCompare();
+    } else {
+      if (_compareSiblingIdx >= _compareSiblings.length) _compareSiblingIdx = 0;
+      _renderCompareSide("right", _compareSiblings[_compareSiblingIdx]);
+      _renderSiblingLabels();
+      _renderSiblingStrip();
+      _renderSiblingToolbar();
+    }
   }
 
   // 20s recoverable Undo (congruent with the Moments prune spec).
+  const stripId = _compareStripId;
   const name = sibling.filename || sibling.filepath.split("/").pop();
   toast(`Moved "${name}" to trash`, undefined, {
     duration: 20000,
-    action: { label: "Undo", fn: () => _undoSiblingDelete(sibling, idx, closedAfter) },
+    // A strip that was replaced meanwhile is another burst's: restore
+    // the photo without touching it (as if the compare had closed).
+    action: {
+      label: "Undo",
+      fn: () => _undoSiblingDelete(sibling, idx, stillHere === -1 || closedAfter, stripId),
+    },
   });
 }
 
@@ -249,8 +267,9 @@ export async function _siblingDelete() {
  * @param {any} sibling
  * @param {number} idx  original index in the strip
  * @param {boolean} wasClosed  compare had auto-closed (last sibling) — restore silently, don't reopen
+ * @param {number} stripId  the strip the photo left; another strip is left alone
  */
-async function _undoSiblingDelete(sibling, idx, wasClosed) {
+async function _undoSiblingDelete(sibling, idx, wasClosed, stripId) {
   try {
     await apiFetch("/api/v1/photos/restore", {
       method: "POST",
@@ -262,7 +281,7 @@ async function _undoSiblingDelete(sibling, idx, wasClosed) {
     return;
   }
   _setPhotoDeletedInMemory(sibling.filepath, false);
-  if (_compareSiblingMode && !wasClosed) {
+  if (_compareSiblingMode && !wasClosed && stripId === _compareStripId) {
     _compareSiblings.splice(Math.min(idx, _compareSiblings.length), 0, sibling);
     _compareSiblingIdx = idx;
     _renderCompareSide("right", _compareSiblings[_compareSiblingIdx]);

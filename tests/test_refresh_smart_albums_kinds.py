@@ -1,4 +1,4 @@
-"""Tests for the L5 ``kinds=`` parameter on refresh_smart_albums.
+"""Tests for the ``kinds=`` parameter on refresh_smart_albums.
 
 Pins the contract that lets HTTP handlers + worker callers refresh
 only the album types affected by a specific mutation, instead of

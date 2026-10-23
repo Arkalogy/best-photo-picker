@@ -31,6 +31,7 @@ def _extract_sface(
     min_confidence: float,
     embedding_confidence: float = DEFAULT_EMBEDDING_CONFIDENCE,
     min_quality: float = MIN_EMBEDDING_QUALITY,
+    model_toggles: dict[str, bool] | None = None,
 ) -> list[dict] | None:
     """Extract face embeddings using YuNet + SFace pipeline.
 
@@ -54,7 +55,9 @@ def _extract_sface(
     # alone missed most faces in group photos; detect_face_rows runs the
     # pipeline and recovers a real YuNet landmark row per face for SFace
     # alignment. See face_embed_detect for the recall-favoring rationale.
-    all_raw = detect_face_rows(image, min_confidence, embedding_confidence)
+    all_raw = detect_face_rows(
+        image, min_confidence, embedding_confidence, model_toggles=model_toggles
+    )
 
     if not all_raw:
         return None  # no faces found — let caller try dlib fallback

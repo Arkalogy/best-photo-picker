@@ -10,6 +10,7 @@
  */
 
 import { apiFetch } from "./api-client.mjs";
+import { fetchAllPages } from "./paging.mjs";
 import { getParams } from "./analysis.mjs";
 import { renderGridFromItems } from "./memories.mjs";
 import { toast, toastError } from "./toast.mjs";
@@ -113,9 +114,8 @@ export async function calendarOpenRange() {
   const win = window;
   if (!_calSelStart || !_calSelEnd) return;
   try {
-    const data = await apiFetch(
-      `/api/v1/calendar/photos?start=${_calSelStart}&end=${_calSelEnd}`
-    );
+    const range = `/api/v1/calendar/photos?start=${_calSelStart}&end=${_calSelEnd}`;
+    const data = await apiFetch(`${range}&limit=1000&offset=0`);
     if (!data.photos || data.photos.length === 0) {
       toast("No photos in this date range");
       return;
@@ -137,6 +137,22 @@ export async function calendarOpenRange() {
     win.currentGridItems = rangePhotos;
     win.currentView = "calendar_day";
     win.currentViewId = _calSelStart;
+    if (data.has_more) {
+      const startId = _calSelStart;
+      fetchAllPages(range, {
+        pageSize: 1000,
+        startOffset: rangePhotos.length,
+        stillWanted: () => win.currentView === "calendar_day" && win.currentViewId === startId,
+        onPage: (page) => {
+          const more = page.map((p) => photoMap.get(p.filepath) || {
+            id: p.id, filepath: p.filepath, thumb_hash: p.hash, date: p.date,
+            aggregate_score: p.score || 0, filename: p.filename,
+          });
+          rangePhotos.push(...more);
+          win.vgrid?.appendItems?.(more);
+        },
+      }).catch((e) => toastError("load the rest of that date range", e));
+    }
     win.hide?.("calendar-view");
     win.show?.("photo-grid");
     const d1 = new Date(_calSelStart + "T00:00:00");
@@ -145,7 +161,8 @@ export async function calendarOpenRange() {
       d1.toLocaleDateString(undefined, { month: "long", day: "numeric" }) +
       " – " +
       d2.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" });
-    win.updateToolbarTitle?.(title, `${rangePhotos.length} photos`);
+    const total = typeof data.total === "number" ? data.total : rangePhotos.length;
+    win.updateToolbarTitle?.(title, `${total} photos`);
     win.updateBreadcrumbs?.(title, "Calendar", "navigateToCalendar()");
     win.updateToolbarForView?.();
     renderGridFromItems(rangePhotos);
@@ -163,7 +180,7 @@ export async function calendarPickBestFromRange() {
   _calPickBestPending = true;
   try {
     /** @type {Record<string, any>} */
-    const params = getParams() || { k: 50, seed: 42 };
+    const params = getParams() || { k: 50 };
     params.start_date = _calSelStart;
     params.end_date = _calSelEnd;
     const data = await apiFetch("/api/v1/recompute", {

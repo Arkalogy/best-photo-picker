@@ -14,7 +14,7 @@
  * `updateLightboxFaces` similarly.
  */
 
-import { apiFetch, authedSrc } from "./api-client.mjs";
+import { apiFetch, faceCropUrl } from "./api-client.mjs";
 import { appPrompt } from "./dialogs.mjs";
 import { esc, escapeAttr } from "./text-format.mjs";
 import { toast, toastError } from "./toast.mjs";
@@ -26,11 +26,17 @@ import { toast, toastError } from "./toast.mjs";
  *
  * @param {string} thumbHash
  */
+// See _lbFacesTicket in lightbox-face-overlays.mjs: a late response for a
+// photo the inspector has moved on from must not render its chips.
+let _iphFacesTicket = 0;
+
 export async function _iphLoadFaces(thumbHash) {
   /** @type {any} */
   const win = window;
+  const ticket = ++_iphFacesTicket;
   try {
     const data = await apiFetch(`/api/v1/faces/photo/${thumbHash}`);
+    if (ticket !== _iphFacesTicket) return;
     const container = document.getElementById("iph-face-chips");
     if (!container) return;
 
@@ -39,7 +45,7 @@ export async function _iphLoadFaces(thumbHash) {
 
     if (data.faces && data.faces.length > 0) {
       for (const f of data.faces) {
-        const cropUrl = authedSrc(`/api/v1/faces/crop/${thumbHash}/${f.face_index}`);
+        const cropUrl = faceCropUrl(thumbHash, f.face_index);
         const label = f.name || `Face ${f.face_index + 1}`;
         const small = f.bbox_w != null && f.bbox_w < 40;
         const clickable = f.cluster_id != null;
@@ -58,7 +64,7 @@ export async function _iphLoadFaces(thumbHash) {
         const cluster = faceClusters.find((c) => c.cluster_id === pt.cluster_id);
         const rep = cluster && cluster.representative;
         const avatarUrl = rep
-          ? authedSrc(`/api/v1/faces/crop/${esc(rep.thumb_hash)}/${rep.face_index}`)
+          ? faceCropUrl(rep.thumb_hash, rep.face_index)
           : "";
         html += `<div class="iph-face-chip iph-face-tagged" title="${escapeAttr(label + " (tagged)")}">`;
         if (avatarUrl) {
@@ -79,6 +85,7 @@ export async function _iphLoadFaces(thumbHash) {
     }
     container.innerHTML = html || '<span class="iph-meta-val">No faces detected</span>';
   } catch {
+    if (ticket !== _iphFacesTicket) return;
     const container = document.getElementById("iph-face-chips");
     if (container) {
       container.innerHTML = '<span class="iph-meta-val">Failed to load faces</span>';
@@ -163,7 +170,7 @@ export function _iphShowTagPicker(e, thumbHash) {
       const rep = c.representative;
       const avatarUrl =
         rep && rep.thumb_hash
-          ? authedSrc(`/api/v1/faces/crop/${rep.thumb_hash}/${rep.face_index}`)
+          ? faceCropUrl(rep.thumb_hash, rep.face_index)
           : "";
       item.innerHTML =
         (avatarUrl ? `<img class="iph-tag-avatar" src="${avatarUrl}" alt="">` : "") +
@@ -234,7 +241,7 @@ export async function _iphTagPerson(thumbHash, clusterId) {
     });
     // No toast: _iphLoadFaces + updateLightboxFaces re-render the panel and
     // overlay with the assigned name, so the result is visible on the same
-    // surface. (Toast-noise audit item 13.)
+    // surface.
     _iphLoadFaces(thumbHash);
     const idx = /** @type {number} */ (win.lightboxIdx);
     const items = /** @type {any[]} */ (win.currentGridItems || []);

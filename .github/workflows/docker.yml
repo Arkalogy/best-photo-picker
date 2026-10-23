@@ -1,13 +1,18 @@
 name: Publish Docker image
 
-# Manual-only for v0.1.0 — a published Docker image is on the roadmap,
-# not part of the documented install path yet (users install via pip or
-# the macOS DMG). The release trigger is intentionally omitted so the
-# go-live doesn't attempt a Docker Hub push. Re-add:
+# Manual-only — a published Docker image is on the roadmap, not part of
+# the documented install path yet (users install via pip or the macOS
+# DMG). This workflow has never been run, so the image has never been
+# built in CI and nothing has been pushed to Docker Hub. The release
+# trigger is intentionally omitted so a release doesn't attempt a
+# Docker Hub push. Re-add:
 #     release:
 #       types: [published]
 # once Docker Hub publishing goes live (DOCKERHUB_TOKEN + DOCKERHUB_USERNAME
 # var + the arkalogy/bppicker repo). Until then it runs on demand only.
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
     inputs:
@@ -45,21 +50,24 @@ jobs:
       do_push: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true') }}
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # No token left in .git/config for later steps to read.
+          persist-credentials: false
 
-      # QEMU lets the runner cross-compile arm64 from an x86_64 host.
+      # QEMU lets the x86_64 runner build the arm64 image under emulation.
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
 
       # buildx is the multi-platform builder.
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       # Login is conditional so a workflow_dispatch smoke test
       # (publish=false) doesn't even need DOCKERHUB_TOKEN to be set.
       - name: Login to Docker Hub
         if: env.do_push == 'true'
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -69,21 +77,26 @@ jobs:
       # major/minor" pattern that's standard for OSS Docker repos.
       - name: Extract image metadata
         id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           # Image path: `<dockerhub-user>/bppicker`. If the user var
           # isn't configured, the metadata action emits an empty path
           # and the build/push step below fails loudly — better than
           # silently pushing nowhere.
           images: ${{ vars.DOCKERHUB_USERNAME }}/bppicker
+          # `type=sha` guarantees at least one tag on a manual run from a
+          # branch: the tag/semver rules only fire on tag refs and
+          # `latest` only when pushing, so without it a build-only smoke
+          # test from a branch emits zero tags and the check below fails.
           tags: |
             type=ref,event=tag
+            type=sha
             type=raw,value=latest,enable=${{ env.do_push == 'true' }}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
 
       - name: Build and (optionally) push
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           # linux/amd64 covers the bulk of cloud + Intel-Mac users;
@@ -94,9 +107,9 @@ jobs:
           push: ${{ env.do_push == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # GHA cache keeps repeat builds fast — first build of a new
-          # release is ~12 min for both arches, subsequent rebuilds
-          # land in 2-3 min from cache.
+          # GHA layer cache so repeat builds skip unchanged layers (the
+          # dlib compile is the slow one). Build times are unmeasured —
+          # this workflow has not been run yet.
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

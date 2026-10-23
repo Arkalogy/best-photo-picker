@@ -1,7 +1,7 @@
 """Direct unit tests for face_cluster_ops.py pure-DB helpers.
 
 These functions were extracted from bp_faces_manage.py in commit 3d9b877
-(M11.b refactor). Tests for the blueprint exercise them indirectly via
+(a refactor). Tests for the blueprint exercise them indirectly via
 HTTP, but the direct unit coverage was thin. This file backfills it.
 
 Each helper is pure DB (no Flask), so the tests just need a seeded SQLite

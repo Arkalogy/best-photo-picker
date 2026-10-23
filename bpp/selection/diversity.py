@@ -7,7 +7,15 @@ from typing import Any
 
 import numpy as np
 
-from bpp.dedupe.phash import dual_hash_distance, hamming_distance
+#: Popcount of each byte value, for a vectorized Hamming distance.
+_POPCOUNT8 = np.array([bin(i).count("1") for i in range(256)], dtype=np.uint8)
+_NO_HASH = np.uint64(0)
+
+
+def _hamming_many(value: int, others: np.ndarray) -> np.ndarray:
+    """Hamming distance from one 64-bit hash to an array of them."""
+    x = np.bitwise_xor(others, np.uint64(value & 0xFFFFFFFFFFFFFFFF))
+    return _POPCOUNT8[x.view(np.uint8)].reshape(len(others), 8).sum(axis=1)
 
 
 class DiversityTracker:
@@ -19,8 +27,10 @@ class DiversityTracker:
       3. Visual (hash fallback): reject if hash distance <= threshold to any accepted photo
     """
 
-    # Hash distance used when CLIP embeddings are unavailable.
-    # Looser than dedup (10/8) — catches "same scene, different take".
+    # Hash distance used when CLIP embeddings are unavailable — catches
+    # "same scene, different take" among the picks (dedup's own thresholds
+    # are the `hash_distance_threshold` / `global_hash_distance_threshold`
+    # config keys).
     HASH_FALLBACK_DISTANCE = 16
 
     def __init__(
@@ -39,9 +49,18 @@ class DiversityTracker:
         self.day_counts: Counter[str] = Counter()
         self.month_counts: Counter[str] = Counter()
         self.all_months: set[str] = set()
-        # Accepted items for similarity comparison
-        self._accepted_clip: list[np.ndarray] = []
-        self._accepted_hashes: list[tuple[int | None, int | None]] = []
+        # Accepted items for similarity comparison: one matrix for the
+        # CLIP vectors (grown in steps; one matrix-vector product per
+        # candidate) and uint64 arrays for the hashes (a vectorized
+        # Hamming distance). A pure-Python loop over every accepted
+        # photo per candidate cost minutes per recompute at k=10k.
+        self._clip_rows: np.ndarray | None = None
+        self._n_clip = 0
+        self._phash = np.empty(0, dtype=np.uint64)
+        self._phash_valid = np.empty(0, dtype=bool)
+        self._ahash = np.empty(0, dtype=np.uint64)
+        self._ahash_valid = np.empty(0, dtype=bool)
+        self._n_hash = 0
 
     def set_available_months(self, months: set[str]) -> None:
         self.all_months = months
@@ -55,41 +74,69 @@ class DiversityTracker:
         if self.similarity_threshold <= 0:
             return False
 
-        # CLIP check (semantic similarity)
+        # CLIP check (semantic similarity): one product against every
+        # accepted vector.
         photo_id = item.get("id")
         emb = self.clip_embeddings.get(photo_id) if photo_id is not None else None
-        if emb is not None and self._accepted_clip:
-            for accepted_emb in self._accepted_clip:
-                sim = float(np.dot(emb, accepted_emb))
-                if sim >= self.similarity_threshold:
-                    return True
+        if emb is not None and self._n_clip and self._clip_rows is not None:
+            sims = self._clip_rows[: self._n_clip] @ np.asarray(emb, dtype=np.float32)
+            if float(sims.max()) >= self.similarity_threshold:
+                return True
 
         # Hash check (perceptual similarity) — catches near-identical framing
-        # that CLIP may consider semantically distinct
+        # that CLIP may consider semantically distinct. dual distance (the
+        # smaller of the two) when both sides have both hashes, else phash.
         phash = item.get("phash")
-        if phash is not None and self._accepted_hashes:
-            ahash = item.get("ahash")
-            for acc_ph, acc_ah in self._accepted_hashes:
-                if acc_ph is None:
-                    continue
-                if acc_ah is not None and ahash is not None:
-                    dist = dual_hash_distance(phash, ahash, acc_ph, acc_ah)
-                else:
-                    dist = hamming_distance(phash, acc_ph)
-                if dist <= self.HASH_FALLBACK_DISTANCE:
+        if phash is not None and self._n_hash:
+            n = self._n_hash
+            valid = self._phash_valid[:n]
+            if valid.any():
+                acc_ph = self._phash[:n][valid]
+                dist = _hamming_many(phash, acc_ph)
+                ahash = item.get("ahash")
+                if ahash is not None:
+                    both = self._ahash_valid[:n][valid]
+                    if both.any():
+                        d_a = _hamming_many(ahash, self._ahash[:n][valid][both])
+                        dist = dist.astype(np.int64)
+                        dist[both] = np.minimum(dist[both], d_a)
+                if int(dist.min()) <= self.HASH_FALLBACK_DISTANCE:
                     return True
 
         return False
 
-    def can_accept(self, item: dict[str, Any]) -> tuple[bool, str]:
+    def _grow(self, emb_dim: int | None) -> None:
+        """Make room for one more accepted photo in every array."""
+        if self._n_hash >= len(self._phash):
+            new = max(256, len(self._phash) * 2)
+            for name in ("_phash", "_ahash"):
+                arr = np.empty(new, dtype=np.uint64)
+                arr[: self._n_hash] = getattr(self, name)[: self._n_hash]
+                setattr(self, name, arr)
+            for name in ("_phash_valid", "_ahash_valid"):
+                arr = np.zeros(new, dtype=bool)
+                arr[: self._n_hash] = getattr(self, name)[: self._n_hash]
+                setattr(self, name, arr)
+        if emb_dim is not None and (
+            self._clip_rows is None or self._n_clip >= len(self._clip_rows)
+        ):
+            new = max(256, (0 if self._clip_rows is None else len(self._clip_rows)) * 2)
+            rows = np.empty((new, emb_dim), dtype=np.float32)
+            if self._clip_rows is not None:
+                rows[: self._n_clip] = self._clip_rows[: self._n_clip]
+            self._clip_rows = rows
+
+    def can_accept(self, item: dict[str, Any], *, relax_day: bool = False) -> tuple[bool, str]:
         """Check if item can be accepted under diversity constraints.
 
-        Returns (accepted, reason).
+        Returns (accepted, reason). With ``relax_day`` the per-day cap
+        is waived (the fill pass, when the count can't be reached under
+        it); the month cap and the similarity check always hold.
         """
         day = item.get("date_day", "unknown")
         month = item.get("date_month", "unknown")
 
-        if self.day_counts[day] >= self.max_per_day:
+        if not relax_day and self.day_counts[day] >= self.max_per_day:
             return False, f"day {day} already has {self.max_per_day} photos"
 
         if self.max_per_month > 0 and self.month_counts[month] >= self.max_per_month:
@@ -111,9 +158,17 @@ class DiversityTracker:
         # Track for similarity checks
         photo_id = item.get("id")
         emb = self.clip_embeddings.get(photo_id) if photo_id is not None else None
-        if emb is not None:
-            self._accepted_clip.append(emb)
-        self._accepted_hashes.append((item.get("phash"), item.get("ahash")))
+        self._grow(None if emb is None else int(np.asarray(emb).shape[0]))
+        if emb is not None and self._clip_rows is not None:
+            self._clip_rows[self._n_clip] = np.asarray(emb, dtype=np.float32)
+            self._n_clip += 1
+        i = self._n_hash
+        phash, ahash = item.get("phash"), item.get("ahash")
+        self._phash[i] = np.uint64(phash & 0xFFFFFFFFFFFFFFFF) if phash is not None else _NO_HASH
+        self._phash_valid[i] = phash is not None
+        self._ahash[i] = np.uint64(ahash & 0xFFFFFFFFFFFFFFFF) if ahash is not None else _NO_HASH
+        self._ahash_valid[i] = ahash is not None
+        self._n_hash += 1
 
         reasons = []
         if self.month_counts[month] == 1:

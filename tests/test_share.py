@@ -109,7 +109,7 @@ class TestRenderQrPng:
 
 
 class TestQrGlyphFontFallback:
-    """L2: when no TrueType font is found, the bitmap fallback ships a
+    """When no TrueType font is found, the bitmap fallback ships a
     visibly worse glyph. We log a warning so headless / minimal Linux
     deploys can be diagnosed instead of silently shipping a degraded QR."""
 

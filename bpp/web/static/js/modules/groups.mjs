@@ -10,7 +10,7 @@
  * dispatcher).
  */
 
-import { apiFetch, authedSrc } from "./api-client.mjs";
+import { apiFetch, faceCropUrl } from "./api-client.mjs";
 import { esc, escapeAttr } from "./text-format.mjs";
 import { toastError } from "./toast.mjs";
 
@@ -44,7 +44,7 @@ export function _setFaceGroups(g) {
 /**
  * Refresh `faceGroups` from /api/v1/groups.
  *
- * Protection B: routed through wrapSectionLoader so a /api/v1/groups
+ * Routed through wrapSectionLoader so a /api/v1/groups
  * failure surfaces as a retry pill in the Groups sidebar section
  * instead of silently leaving the list empty.
  */
@@ -183,7 +183,7 @@ export function groupAvatarsHTML(group) {
   const avatars = shown
     .map((m, i) => {
       const src = m.thumb_hash
-        ? authedSrc(`/api/v1/faces/crop/${esc(m.thumb_hash)}/${m.face_index}`)
+        ? faceCropUrl(m.thumb_hash, m.face_index)
         : "";
       return src
         ? `<img class="group-stack-img" src="${escapeAttr(src)}" loading="lazy" style="z-index:${10 - i}" title="${escapeAttr(m.name)}">`
@@ -239,6 +239,7 @@ export function showGroupsView() {
       // unnamed placeholder — style it like names on the Faces page.
       const nameCls = "person-name";
       return `<div class="person-card group-card" data-group-idx="${idx}"
+      tabindex="0" role="button" data-key-activate
       data-action="navigateToGroupAlbum" data-arg0="${idx}">
       <div class="group-avatar-area">
         ${groupAvatarsHTML(g)}

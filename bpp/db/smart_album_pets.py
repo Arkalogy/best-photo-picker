@@ -13,13 +13,14 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from bpp.constants import ACTIVE_PHOTO_SQL, PET_DISPLAY_CONFIDENCE
+from bpp.constants import ACTIVE_PHOTO_SQL, PET_DISPLAY_CONFIDENCE, active_photo_sql
 from bpp.utils.json_utils import safe_json_loads
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
 
 _ACTIVE = ACTIVE_PHOTO_SQL
+_P_ACTIVE = active_photo_sql("p")
 
 
 def _pet_default_name(pet_class: str, cluster_id: int) -> str:
@@ -75,7 +76,7 @@ def _refresh_pet_albums(conn: sqlite3.Connection) -> None:
         for r in conn.execute(
             "SELECT pd.cluster_id, p.id FROM photos p "
             "JOIN pet_detections pd ON pd.photo_id = p.id "
-            f"WHERE pd.cluster_id IN ({ph}) AND p.{_ACTIVE} "
+            f"WHERE pd.cluster_id IN ({ph}) AND {_P_ACTIVE} "
             f"AND pd.confidence >= {PET_DISPLAY_CONFIDENCE}",
             list(active_cids),
         ).fetchall():
@@ -100,7 +101,9 @@ def _refresh_pet_albums(conn: sqlite3.Connection) -> None:
     orphan_ids = [
         album_id
         for album_id, rule_json in existing
-        if safe_json_loads(rule_json, {}, context="smart_pet album rule").get("cluster_id")
+        if safe_json_loads(rule_json, {}, context="smart_pet album rule", expected_type=dict).get(
+            "cluster_id"
+        )
         not in active_cids
     ]
     if orphan_ids:

@@ -1,4 +1,4 @@
-"""M4 regression: GPS map endpoint must paginate at the DB layer.
+"""Regression: GPS map endpoint must paginate at the DB layer.
 
 Before the fix, /api/v1/photos/map fetched ALL GPS photos into memory then
 sliced in Python. On a 100k-photo library this materialised the full result

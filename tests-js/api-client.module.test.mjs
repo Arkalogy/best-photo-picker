@@ -148,3 +148,11 @@ describe("authEventSource", () => {
     expect(ESMock).toHaveBeenCalledWith("/api/v1/sse?album=1&_token=");
   });
 });
+
+describe("faceCropUrl", () => {
+  test("is the one place a face crop URL is built, with the token when set", async () => {
+    const api = await import("../bpp/web/static/js/modules/api-client.mjs");
+    expect(api.faceCropUrl("abc123", 2)).toMatch(/^\/api\/v1\/faces\/crop\/abc123\/2/);
+    expect(api.faceCropUrl("a b", "7")).toContain("/faces/crop/a%20b/7");
+  });
+});

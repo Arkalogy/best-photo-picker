@@ -9,9 +9,10 @@
  */
 
 import { apiFetch } from "./api-client.mjs";
+import { focusInto, restoreFocusFrom } from "./dialog-focus.mjs";
 import { appConfirm, appPrompt } from "./dialogs.mjs";
 import { formatDate } from "./date-format.mjs";
-import { esc, escapeAttr, escapeJsAttr } from "./text-format.mjs";
+import { esc, escapeAttr } from "./text-format.mjs";
 import { toast, toastError } from "./toast.mjs";
 
 let libraryPickerOpen = false;
@@ -25,6 +26,7 @@ export function showLibraryPicker() {
   if (!overlay) return;
   overlay.classList.remove("hidden");
   libraryPickerOpen = true;
+  focusInto(overlay);
   loadLibraryList();
 }
 
@@ -33,6 +35,7 @@ export function hideLibraryPicker() {
   if (!overlay) return;
   overlay.classList.add("hidden");
   libraryPickerOpen = false;
+  restoreFocusFrom(overlay);
 }
 
 /** @param {string} iso */
@@ -84,7 +87,7 @@ export function renderLibraryList(libraries, activePath) {
       ? '<span class="library-badge library-badge-missing">Missing</span>'
       : "";
     const lastOpened = lib.last_opened ? formatLibDate(lib.last_opened) : "";
-    const clickAction = missing ? "" : `data-action="switchLibrary" data-arg0="${escapeJsAttr(lib.path)}"`;
+    const clickAction = missing ? "" : `data-action="switchLibrary" data-arg0="${escapeAttr(lib.path)}"`;
     html += `
       <div class="library-item ${activeClass} ${missingClass}" data-path="${escapeAttr(lib.path)}">
         <div class="library-item-main" ${clickAction}>
@@ -99,14 +102,14 @@ export function renderLibraryList(libraries, activePath) {
         <div class="library-item-actions">
           ${
             !missing
-              ? `<button class="library-item-btn" data-stop-propagation="true" data-action="renameLibraryPrompt" data-arg0="${escapeJsAttr(lib.path)}" data-arg1="${escapeJsAttr(lib.name)}" title="Rename">
+              ? `<button class="library-item-btn" data-stop-propagation="true" data-action="renameLibraryPrompt" data-arg0="${escapeAttr(lib.path)}" data-arg1="${escapeAttr(lib.name)}" title="Rename">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11.5 2.5l2 2M2 11l7-7 2 2-7 7H2v-2z"/></svg>
           </button>`
               : ""
           }
           ${
             !isActive
-              ? `<button class="library-item-btn library-item-btn-danger" data-stop-propagation="true" data-action="removeLibraryPrompt" data-arg0="${escapeJsAttr(lib.path)}" data-arg1="${escapeJsAttr(lib.name)}" title="Remove from list">
+              ? `<button class="library-item-btn library-item-btn-danger" data-stop-propagation="true" data-action="removeLibraryPrompt" data-arg0="${escapeAttr(lib.path)}" data-arg1="${escapeAttr(lib.name)}" title="Remove from list">
             ${missing ? "Remove" : '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="4" y1="4" x2="12" y2="12"/><line x1="12" y1="4" x2="4" y2="12"/></svg>'}
           </button>`
               : ""

@@ -7,18 +7,17 @@ the Recently Deleted / Hidden listing views in the UI.
 Sub-clusters:
 * Soft delete + restore: api_photos_delete, api_photos_restore
 * Permanent delete (with crash-safe journal): api_photos_delete_permanent,
-  register_permanent_delete_recovery, _apply_permanent_delete_disk
+  (register_permanent_delete_recovery and _apply_permanent_delete_disk
+  now live in bpp/web/permanent_delete.py)
 * Hide / unhide: api_photos_hide, api_photos_unhide
 * Listings (paginated): api_photos_deleted, api_photos_hidden
 
 Helpers used here that still live in bp_photos_manage:
-  _get_sha256_map (imported from there for the journaled
+  get_sha256_map (bpp.db.photos_sha, for the journaled
   permanent-delete payload).
 """
 
 from __future__ import annotations
-
-import os
 
 from flask import Blueprint, Response, jsonify, request
 
@@ -28,6 +27,7 @@ from bpp.db.photos import (
     count_hidden_photos,
     get_deleted_photos,
     get_hidden_photos,
+    get_photo_id_map_by_paths,
     get_photo_ids_by_paths,
     hide_photos,
     permanent_delete_photos,
@@ -91,15 +91,16 @@ def api_photos_restore(filepaths: list[str]) -> tuple[Response, int]:
 @bp.post("/api/v1/photos/delete-permanent")
 @requires_local_app
 def api_photos_delete_permanent() -> tuple[Response, int]:
-    """Permanently delete photos from DB and disk.
+    """Permanently delete recycle-bin photos from the DB and disk.
 
-    Journals the operation before the DB delete: if we crash between
-    DB delete and disk cleanup, startup recovery (in
-    bpp/db/journal.py) re-runs the disk cleanup so files don't
-    orphan. The DB delete itself is one transaction (atomic via
-    SQLite); the at-risk window is the disk-side loop.
+    Journaled and claim-first: each selected file is renamed to a hidden
+    sibling, then the rows go, then the claimed files are unlinked (see
+    bpp/web/permanent_delete.py). A crash at any
+    point is replayed at the next start: files whose rows survived go
+    back, the rest are removed. Files the OS refuses are retried and
+    listed under ``files_failed``.
     """
-    from bpp.db.journal import journal_complete, journal_start
+    from bpp.web.permanent_delete import run_permanent_delete
 
     ctx = get_ctx()
     data = request.get_json(silent=True) or {}
@@ -112,13 +113,17 @@ def api_photos_delete_permanent() -> tuple[Response, int]:
     if not filepaths:
         raise ValidationError("filepaths required", field="filepaths")
     conn = ctx.get_conn()
-    photo_ids = get_photo_ids_by_paths(conn, filepaths)
+    # Rows of this library that are in the recycle bin: the DB half only
+    # ever deletes those, and the journal (replayed on disk after a
+    # crash) must name no more than the DB half can delete — a photo
+    # restored in another tab keeps its file.
+    path_to_id = get_photo_id_map_by_paths(conn, filepaths, binned=True)
     # Grab sha256 before deletion (needed for content-addressed inpaint cache).
     # Helper lives in bp_photos_manage — lazy import avoids any
     # ordering-sensitivity from blueprint registration.
-    from bpp.web.bp_photos_manage import _get_sha256_map
+    from bpp.db.photos_sha import get_sha256_map
 
-    sha256_map = _get_sha256_map(conn, filepaths)
+    sha256_map = get_sha256_map(conn, list(path_to_id))
 
     # Build set of allowed parent directories for disk deletion. Done
     # before the journal write so the recovery handler has the same
@@ -131,110 +136,30 @@ def api_photos_delete_permanent() -> tuple[Response, int]:
         workdir=ctx.state.get("workdir"),
     )
 
-    # Open journal entry BEFORE the DB delete. If we crash anywhere
-    # below before journal_complete, startup recovery sees this entry
-    # and re-runs the disk-cleanup half on the same paths.
-    journal_id = journal_start(
+    # Journaled, quarantined, then deleted: see bpp/web/permanent_delete.py
+    # for the order and why a crash anywhere in it loses nothing.
+    result = run_permanent_delete(
+        ctx,
         conn,
-        "permanent_delete",
-        {
-            "filepaths": list(filepaths),
-            "sha256_map": dict(sha256_map),
-            "allowed_dirs": allowed,
-        },
+        path_to_id,
+        sha256_map,
+        allowed,
+        delete_rows=lambda ids: permanent_delete_photos(conn, ids),
     )
-
-    deleted_paths = permanent_delete_photos(conn, photo_ids)
-    removed = _apply_permanent_delete_disk(ctx, deleted_paths, sha256_map, allowed)
-    journal_complete(conn, journal_id)
-    log.info("Permanently deleted %d photos, %d files removed from disk", len(photo_ids), removed)
+    log.info(
+        "Permanently deleted %d photos, %d files removed from disk",
+        result.rows_deleted,
+        result.removed,
+    )
     ctx.invalidate_analysis()
-    return jsonify({"status": "ok", "count": len(photo_ids), "files_removed": removed}), 200
-
-
-def register_permanent_delete_recovery(ctx: object, library_path: str | None = None) -> None:
-    """Bind a recovery handler for the 'permanent_delete' journal kind.
-
-    Called once during WebAppState.startup() with the live ctx so the
-    handler can reach `ctx.thumbs`, `ctx.dirs`, etc. Idempotent
-    registration (the journal module itself rejects different handlers
-    for the same kind, so re-running this with the same ctx is safe;
-    re-running with a different ctx during library switch picks up
-    the new ctx via closure).
-
-    P1 — ``library_path`` (optional, but passed by the state lifecycle):
-    when provided, the handler is wrapped with
-    :func:`bpp.db.journal.library_bound_recovery` so a switch_library
-    between registration and recovery refuses to delete files in the
-    wrong library. Without this, the disk-deletion branch would resolve
-    paths against the new library's allowlist and ``ctx.thumbs``, which
-    could remove files that share names across libraries.
-    """
-    from bpp.db.journal import library_bound_recovery, register_recovery_handler
-
-    def _recover(_conn: object, payload: dict) -> bool:
-        filepaths = payload.get("filepaths") or []
-        sha256_map = payload.get("sha256_map") or {}
-        allowed = payload.get("allowed_dirs") or []
-        if not filepaths:
-            return True  # nothing to do — entry can be deleted
-        log.info("Recovering interrupted permanent_delete for %d files", len(filepaths))
-        _apply_permanent_delete_disk(ctx, filepaths, sha256_map, allowed)
-        return True
-
-    if library_path is not None:
-
-        def _live_library_path() -> str | None:
-            paths = getattr(ctx, "paths", None)
-            return getattr(paths, "library_path", None) if paths is not None else None
-
-        handler = library_bound_recovery(
-            library_path, _recover, library_path_getter=_live_library_path
-        )
-    else:
-        handler = _recover
-    register_recovery_handler("permanent_delete", handler, replace=True)
-
-
-def _apply_permanent_delete_disk(
-    ctx: object,
-    filepaths: list[str],
-    sha256_map: dict,
-    allowed_dirs: list[str],
-) -> int:
-    """Disk-cleanup half of permanent_delete.
-
-    Extracted so the journal recovery handler can call it on its own
-    with the journaled payload. Idempotent: missing files / already-
-    pruned cache hashes are no-ops.
-    """
-    # shared allowlist check (matches the open-folder /
-    # reveal / export branches).
-    from bpp.utils.path_validation import is_path_under_any
-
-    removed = 0
-    for fp in filepaths:
-        if not is_path_under_any(fp, allowed_dirs):
-            log.warning("Skipping file outside library/workdir: %s", fp)
-            continue
-        try:
-            if os.path.isfile(fp):
-                os.remove(fp)
-                removed += 1
-        except OSError as e:
-            log.warning("Failed to remove file %s: %s", fp, e)
-        # Clean up orphaned cache files (thumbnails, face/pet crops).
-        # Recovery may run with ctx.thumbs == None (early startup); skip in that case.
-        thumbs = getattr(ctx, "thumbs", None)
-        if thumbs is not None:
-            path_hash = thumbs.get_hash(fp)
-            thumbs.remove_for_hash(
-                path_hash,
-                face_crop_dir=ctx.dirs.get("face_crops") if hasattr(ctx, "dirs") else None,
-                pet_crop_dir=ctx.dirs.get("pet_crops") if hasattr(ctx, "dirs") else None,
-                content_hash=sha256_map.get(fp) if isinstance(sha256_map, dict) else None,
-            )
-    return removed
+    return jsonify(
+        {
+            "status": "partial" if result.failed else "ok",
+            "count": result.rows_deleted,
+            "files_removed": result.removed,
+            "files_failed": result.failed,
+        }
+    ), 200
 
 
 @bp.get("/api/v1/photos/deleted")

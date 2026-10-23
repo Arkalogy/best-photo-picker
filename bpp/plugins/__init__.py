@@ -229,6 +229,28 @@ def _iter_entry_points(group: str) -> Iterable[Any]:
     return ()
 
 
+_CLI_REGISTERED = False
+
+
+def load_plugins_for_cli() -> int:
+    """What a command-line command does before it reads any registry:
+    load the plugin entry points and tell the plugins they are running
+    (``on_register(None)``: no Flask app), once per process."""
+    global _CLI_REGISTERED
+    n = load_plugin_entry_points()
+    if not _CLI_REGISTERED:
+        _CLI_REGISTERED = True
+        from bpp.plugin_protocol import fire_on_register
+
+        fire_on_register(None)
+    return n
+
+
+def _reset_cli_lifecycle_for_tests() -> None:
+    global _CLI_REGISTERED
+    _CLI_REGISTERED = False
+
+
 def load_plugin_entry_points() -> int:
     """Load every entry-point in ``bpp.plugins``.
 
@@ -343,3 +365,32 @@ def _reset_for_tests() -> None:
     with _loaded_lock:
         _loaded.clear()
         _disabled_log_emitted = False
+
+
+_loaded_once = False
+_ensure_lock = threading.Lock()
+# Set while this thread runs the loader: a plugin's setup() that calls
+# back into ensure_loaded_once returns at once instead of deadlocking.
+_loading = threading.local()
+
+
+def ensure_loaded_once() -> None:
+    """Load plugin entry points in this process, once.
+
+    Analysis runs in spawned child processes (scoring, face extraction,
+    their process pools), which never ran the server's plugin load — so
+    plugin detectors and embedders were unknown there. Cheap after the
+    first call; a no-op unless plugins are enabled.
+    """
+    global _loaded_once
+    if _loaded_once or getattr(_loading, "active", False):
+        return  # done, or re-entered from a plugin's setup() on this thread
+    with _ensure_lock:
+        if _loaded_once:
+            return
+        _loading.active = True
+        try:
+            load_plugin_entry_points()
+        finally:
+            _loading.active = False
+        _loaded_once = True

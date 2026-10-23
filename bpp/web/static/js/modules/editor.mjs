@@ -74,8 +74,15 @@ export async function openEditor(tab = "adjust") {
   if (win.lightboxIdx < 0) return;
   const p = items[win.lightboxIdx];
 
+  const ticket = ++_openTicket;
   const data = await apiFetch(`/api/v1/photos/edits?filepath=${encodeURIComponent(p.filepath)}`);
+  // The lightbox may have moved on (or closed) while the edits loaded:
+  // opening now would put this photo's edits on another photo, and
+  // Save would write them there.
+  const now = (win.currentGridItems || [])[win.lightboxIdx];
+  if (ticket !== _openTicket || win.lightboxIdx < 0 || now?.filepath !== p.filepath) return;
   const existing = data.edits || {};
+  win._editorPhoto = p;
 
   win.editorEdits = { ...EDITOR_DEFAULTS, ...existing };
   win.editorOriginalEdits = { ...win.editorEdits };
@@ -221,8 +228,15 @@ export async function _editorRevertToOriginal() {
     p._enhanced = false;
 
     const cacheBust = "?t=" + Date.now();
+    // Only the lightbox still showing this photo gets its new image;
+    // the grid card and thumbnail are updated either way.
+    const shown = (/** @type {any} */ (window).currentGridItems || [])[
+      /** @type {any} */ (window).lightboxIdx
+    ];
     const img = /** @type {HTMLImageElement | null} */ (document.getElementById("lb-img"));
-    if (img) img.src = authedSrc("/photo/" + p.thumb_hash + cacheBust);
+    if (img && shown && shown.filepath === p.filepath) {
+      img.src = authedSrc("/photo/" + p.thumb_hash + cacheBust);
+    }
     _bustGridThumb(p.thumb_hash, cacheBust);
     updateCardInPlace(p.filepath);
     // Remove pencil badge from grid card — updateCardInPlace doesn't touch it.
@@ -274,8 +288,11 @@ export function closeEditor(save) {
   win._removeInpaintOverlay?.();
   _clearLivePreview();
 
+  // Save to the photo the editor was opened on, not whatever the
+  // lightbox shows now.
   const items = /** @type {any[]} */ (win.currentGridItems || []);
-  const p = items[win.lightboxIdx];
+  const p = win._editorPhoto || items[win.lightboxIdx];
+  win._editorPhoto = null;
   if (save) {
     _saveEdits(p)
       .then(() => {
@@ -327,8 +344,15 @@ async function _saveEdits(p) {
     }
 
     const cacheBust = "?t=" + Date.now();
+    // Only the lightbox still showing this photo gets its new image;
+    // the grid card and thumbnail are updated either way.
+    const shown = (/** @type {any} */ (window).currentGridItems || [])[
+      /** @type {any} */ (window).lightboxIdx
+    ];
     const img = /** @type {HTMLImageElement | null} */ (document.getElementById("lb-img"));
-    if (img) img.src = authedSrc("/photo/" + p.thumb_hash + cacheBust);
+    if (img && shown && shown.filepath === p.filepath) {
+      img.src = authedSrc("/photo/" + p.thumb_hash + cacheBust);
+    }
     _bustGridThumb(p.thumb_hash, cacheBust);
     updateCardInPlace(p.filepath);
   } catch (err) {
@@ -429,6 +453,7 @@ export {
 };
 
 import {
+
   _editorAutoEnhance,
   _editorDateChanged,
   _editorDateValue,
@@ -441,6 +466,9 @@ import {
   _updateAllSliders,
   _updateSliders,
 } from "./editor-tools.mjs";
+
+/** Bumped per openEditor call; a stale edits response is ignored. */
+let _openTicket = 0;
 export {
   _editorAutoEnhance,
   _editorDateChanged,

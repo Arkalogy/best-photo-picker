@@ -1,4 +1,4 @@
-"""TDD tests for H-2: api_faces_extract and api_set_avatar must use @with_face_lock."""
+"""TDD tests: api_faces_extract and api_set_avatar must use @with_face_lock."""
 
 from __future__ import annotations
 

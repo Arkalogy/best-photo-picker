@@ -1,7 +1,7 @@
 """Unit tests for the cancellation contract — ``bpp.utils.cancel``.
 
 Subprocess-fire integration tests live in
-``tests/test_cancel_propagation.py`` (P1.6 — real spawn children, real
+``tests/test_cancel_propagation.py`` (real spawn children, real
 SIGKILL). This file is the in-process unit layer.
 """
 
@@ -96,7 +96,7 @@ class TestProcessCancellation:
         an actual subprocess.
 
         This is the regression gate for the silent cross-process
-        cancellation-gap failure mode the audit found in
+        cancellation-gap failure mode previously present in
         ``run_face_extraction_subprocess``.
         """
         ctx = multiprocessing.get_context("spawn")
@@ -107,7 +107,9 @@ class TestProcessCancellation:
         proc.start()
         time.sleep(0.1)  # let the child reach .wait()
         tok.set()
-        proc.join(timeout=10)
+        # A spawn child re-imports this module (and bpp) before it can
+        # answer; on a saturated machine that alone has taken over 10 s.
+        proc.join(timeout=30)
         assert proc.exitcode == 0, f"child exited abnormally: {proc.exitcode}"
         tag, fired = result_q.get(timeout=1)
         assert tag == "ok"
@@ -148,7 +150,7 @@ class TestMirrorTokenToProcessEvent:
         assert not bridge.is_alive(), "bridge thread leaked after target was set externally"
 
     def test_bridge_exits_when_stop_event_set(self):
-        """T1.2: a successful subprocess run leaves the target UNSET
+        """A successful subprocess run leaves the target UNSET
         (cancel signal never fires). Without an external stop signal,
         the bridge thread polls forever — every BoundedSubprocessRunner
         call leaks a thread in the long-lived Flask parent.
@@ -169,7 +171,7 @@ class TestMirrorTokenToProcessEvent:
         bridge.join(timeout=1)
         assert not bridge.is_alive(), (
             "bridge thread must exit when stop_event is set after "
-            "natural subprocess completion (T1.2 — fixes per-run "
+            "natural subprocess completion (fixes per-run "
             "polling-thread leak)"
         )
         # And cancel did NOT propagate (the target was never touched).
@@ -179,7 +181,7 @@ class TestMirrorTokenToProcessEvent:
         )
 
     def test_stop_event_does_not_block_cancel_propagation(self):
-        """T1.2: if the source fires BEFORE stop_event is set, the
+        """If the source fires BEFORE stop_event is set, the
         cancel still reaches the target. The stop_event is a hint, not
         a kill switch — it only takes effect when no cancel has
         happened yet."""

@@ -8,7 +8,6 @@ blueprint in app.py. Export progress state lives on the app context
 
 from __future__ import annotations
 
-import json
 import os
 
 from flask import Blueprint, Response, jsonify, request
@@ -18,6 +17,7 @@ from bpp.errors import BppError, ConflictError, NotFoundError, ValidationError
 from bpp.output.export import export_selected
 from bpp.utils.logging import get_logger
 from bpp.web.share import requires_local_app
+from bpp.web.sse import captured_device_fingerprint, stream_worker_progress
 from bpp.web.state import get_ctx
 
 log = get_logger(__name__)
@@ -53,86 +53,8 @@ def api_export() -> tuple[Response, int]:
     workdir, or user home; mode/fmt/quality/max_size are validated.
     Returns ``{count, failed}`` from the underlying export pipeline."""
     ctx = get_ctx()
-    analysis = ctx.load_analysis_if_needed()
-    if analysis is None:
-        raise NotFoundError("No analysis data")
-
     params = request.get_json(silent=True) or {}
-    outdir = params.get("outdir")
-    if not outdir:
-        raise ValidationError("outdir is required", field="outdir")
-
-    outdir = os.path.abspath(outdir)
-
-    # shared allowlist helper instead of an open-coded
-    # realpath + is_relative_to loop. Same allow-list as before:
-    # library, workdir, or anywhere under the user's home.
-    from bpp.utils.path_validation import build_library_allowlist, is_path_under_any
-
-    allowed = build_library_allowlist(
-        library_path=ctx.state.get("library_path"),
-        workdir=ctx.state.get("workdir"),
-        include_home=True,
-    )
-    if not is_path_under_any(outdir, allowed):
-        # ValidationError (400) rather than ForbiddenError (403) to
-        # preserve the historical 400 status — pre-T2 callers and
-        # tests pin this as a 'bad input' check, not an 'auth
-        # denied' one.
-        raise ValidationError(
-            "Output directory is outside allowed paths",
-            field="outdir",
-            outdir=outdir,
-        )
-
-    selected_paths = set(params.get("selected_paths", []))
-
-    if not selected_paths:
-        raise ValidationError("No photos selected", field="selected_paths")
-
-    selected = [item for item in analysis if item["filepath"] in selected_paths]
-
-    fmt = params.get("fmt", "original")
-    if fmt not in ("original", "jpeg", "png"):
-        raise ValidationError(
-            "Invalid format",
-            field="fmt",
-            value=fmt,
-            allowed=["original", "jpeg", "png"],
-        )
-
-    max_size = params.get("max_size")
-    if max_size is not None:
-        try:
-            max_size = int(max_size)
-        except (TypeError, ValueError) as e:
-            raise ValidationError(
-                "max_size must be a number",
-                field="max_size",
-            ) from e
-        if max_size < 100:
-            raise ValidationError(
-                "max_size must be >= 100",
-                field="max_size",
-                value=max_size,
-                min=100,
-            )
-
-    try:
-        quality = int(params.get("quality", 85))
-    except (TypeError, ValueError) as e:
-        raise ValidationError(
-            "quality must be a number",
-            field="quality",
-        ) from e
-    if not 1 <= quality <= 100:
-        raise ValidationError(
-            "quality must be 1-100",
-            field="quality",
-            value=quality,
-            min=1,
-            max=100,
-        )
+    selected, analysis, outdir, fmt, max_size, quality = _validate_export_params(ctx, params)
 
     log.info(
         "Export starting: %d photo(s) -> %s (mode=%s, fmt=%s)",
@@ -181,13 +103,14 @@ def api_export() -> tuple[Response, int]:
             "count": result.exported,
             "failed": result.failed,
             "disk_error": result.disk_error,
+            "metadata_kept": result.metadata_kept,
         }
     ), 200
 
 
 def _validate_export_params(ctx, params):
     """Validation shared between /api/v1/export (sync) and
-    /api/v1/export/start (streaming worker, L-S3). Returns the tuple
+    /api/v1/export/start (streaming worker). Returns the tuple
     ``(selected, outdir, fmt, max_size, quality)`` or raises
     ValidationError. Pulled out so both endpoints stay in sync and a
     later schema change lands in one place.
@@ -268,7 +191,7 @@ def _validate_export_params(ctx, params):
 @bp.post("/api/v1/export/start")
 @requires_local_app
 def api_export_start() -> tuple[Response, int]:
-    """L-S3: spawn the streaming export worker, return 202 immediately.
+    """Spawn the streaming export worker, return 202 immediately.
 
     Same param schema as /api/v1/export. The browser then opens
     /api/v1/export/progress (SSE) to receive per-photo events and the
@@ -314,44 +237,27 @@ def api_export_start() -> tuple[Response, int]:
 
 
 @bp.get("/api/v1/export/progress")
+@requires_local_app
 def api_export_progress() -> Response:
     """SSE stream of export progress. Each event carries one of:
     ``start`` / ``export_progress`` / ``done`` / ``error`` / ``cancelled``.
     Open by the frontend right after /api/v1/export/start returns 202.
     """
-    import queue
-    import time
-
     ctx = get_ctx()
-
-    def generate():
-        worker = ctx.export_worker
-        # Idle-timeout so a dead consumer doesn't pin the worker queue
-        # forever. Mirrors the import/analyze stream cadence.
-        last_event = time.time()
-        while True:
-            try:
-                msg = worker.progress_queue.get(timeout=1.0)
-            except queue.Empty:
-                if not worker.is_alive and time.time() - last_event > 2.0:
-                    break
-                # Heartbeat keeps proxies + browsers from closing the
-                # connection during quiet periods (e.g., large image
-                # conversion taking >30s without per-photo events).
-                yield ": heartbeat\n\n"
-                continue
-            last_event = time.time()
-            yield f"data: {json.dumps(msg)}\n\n"
-            if msg.get("type") in {"done", "error", "cancelled"}:
-                break
-
-    return Response(generate(), mimetype="text/event-stream")
+    return Response(
+        stream_worker_progress(
+            ctx.export_worker,
+            ctx=ctx,
+            device_fp=captured_device_fingerprint(),
+        ),
+        mimetype="text/event-stream",
+    )
 
 
 @bp.post("/api/v1/export/cancel")
 @requires_local_app
 def api_export_cancel() -> tuple[Response, int]:
-    """L-S3: signal the streaming export worker to stop after its
+    """Signal the streaming export worker to stop after its
     current photo. The progress stream then emits a ``cancelled``
     event and closes."""
     ctx = get_ctx()

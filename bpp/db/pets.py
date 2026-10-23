@@ -289,15 +289,23 @@ def assign_pet_clusters(conn: sqlite3.Connection) -> None:
     Only assigns detections that are unassigned (cluster_id = -1),
     preserving any manual splits/renames.
     """
-    conn.execute(
+    cats = conn.execute(
         "UPDATE pet_detections SET cluster_id=0 WHERE class='cat' AND cluster_id=?",
         (CLUSTER_UNASSIGNED,),
     )
-    conn.execute(
+    dogs = conn.execute(
         "UPDATE pet_detections SET cluster_id=1 WHERE class='dog' AND cluster_id=?",
         (CLUSTER_UNASSIGNED,),
     )
     conn.commit()
+    assigned = (cats.rowcount or 0) + (dogs.rowcount or 0)
+    if assigned > 0:
+        from bpp.db.event_hooks import dispatch_post_cluster
+
+        n_clusters = conn.execute(
+            "SELECT COUNT(DISTINCT cluster_id) FROM pet_detections WHERE cluster_id >= 0"
+        ).fetchone()[0]
+        dispatch_post_cluster(conn, "pet", int(n_clusters))
 
 
 def _next_cluster_id(conn: sqlite3.Connection) -> int:

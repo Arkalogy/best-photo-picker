@@ -38,6 +38,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import ClassVar
 
+from bpp.config import cfg_get
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -187,7 +188,7 @@ def _clip_strategy(
             "Dedup strategy 'clip' requires clip_embeddings; "
             "fall back to 'hash' or load embeddings first."
         )
-    threshold = config.get("clip_similarity_threshold", 0.92)
+    threshold = cfg_get(config, "clip_similarity_threshold")
     return semantic_deduplicate(items, clip_embeddings, threshold=threshold, config=config)
 
 

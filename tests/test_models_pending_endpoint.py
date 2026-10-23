@@ -16,6 +16,13 @@ from unittest.mock import patch
 
 import pytest
 
+from bpp.registry.acceptance import AcceptanceState
+
+#: "Never accepted" — the one judgement every license reader uses.
+_NOT_ACCEPTED = AcceptanceState(
+    latest=None, accepted=False, current=False, needs_reaccept=False, separate_rights_asserted=False
+)
+
 
 @pytest.fixture
 def app(tmp_path):
@@ -55,6 +62,7 @@ class TestModelsPendingEndpoint:
                 sha256="0" * 64,
                 size_mb=1.0,
                 host="example.com",
+                legal_entry_id="openai_clip_vit_b32_onnx",
             ),
             ModelEntry(
                 name="Needs download",
@@ -63,6 +71,7 @@ class TestModelsPendingEndpoint:
                 sha256="0" * 64,
                 size_mb=42,
                 host="example.com",
+                legal_entry_id="openai_clip_vit_b32_onnx",
             ),
         ]
         with patch("bpp.scoring.model_manifest.all_models", return_value=fake):
@@ -92,6 +101,7 @@ class TestModelsPendingEndpoint:
                 sha256="0" * 64,
                 size_mb=1.0,
                 host="example.com",
+                legal_entry_id="openai_clip_vit_b32_onnx",
             ),
         ]
         with patch("bpp.scoring.model_manifest.all_models", return_value=fake):
@@ -119,6 +129,7 @@ class TestModelsPendingEndpoint:
                 sha256="0" * 64,
                 size_mb=0.2,
                 host="example.com",
+                legal_entry_id="openai_clip_vit_b32_onnx",
                 bundled_path=str(bundled_path),
             ),
         ]
@@ -131,28 +142,31 @@ class TestModelsPendingEndpoint:
     def test_requires_auth(self, app):
         """Endpoint is under /api/, so the auth gate applies."""
         r = _get(app, "/api/v1/models/pending")
-        # No token → 403 (loopback regression case from H1)
+        # No token → 403 (loopback regression case)
         assert r.status_code == 403
 
-    def test_restricted_alt_for_covered_capability_not_blocked(self, app):
-        """A restricted face detector (YuNet, Apache-2.0 attribution)
-        must NOT be surfaced as a blocked 'Optional feature' when the
-        capability is already covered by a permissive default (SCRFD,
-        MIT). Otherwise the pre-flight dialog contradicts Settings →
-        Models, which shows face detection already running. Regression
-        for the YuNet-vs-SCRFD 'needs license' contradiction."""
+    def test_face_detectors_surface_when_no_permissive_detector(self, app):
+        """No face detector is usable without a click-through, so the
+        face_detector kind is not "covered". YuNet (attribution) is
+        offered in the combined acceptance step; research-only SCRFD is
+        surfaced in the Settings → Models hint instead of being dropped."""
         ctx = app.extensions["bpp"]
-        r = _get(app, "/api/v1/models/pending", token=ctx.auth_token)
+        with (
+            patch("bpp.registry.acceptance.acceptance_state", return_value=_NOT_ACCEPTED),
+        ):
+            r = _get(app, "/api/v1/models/pending", token=ctx.auth_token)
         assert r.status_code == 200
-        blocked = r.get_json()["blocked"]
-        blocked_ids = {b["legal_entry_id"] for b in blocked}
-        assert "opencv_yunet" not in blocked_ids, (
-            "restricted YuNet detector should be suppressed — face "
-            f"detection is covered by permissive SCRFD; blocked={blocked_ids}"
-        )
-        assert not any(b["kind"] == "face_detector" for b in blocked), (
-            f"no face_detector kind should be blocked; blocked={blocked}"
-        )
+        from bpp.web.model_filter import _covered_kinds
+
+        assert "face_detector" not in _covered_kinds()
+        body = r.get_json()
+        blocked_ids = {b["legal_entry_id"] for b in body["blocked"]}
+        attribution_ids = {a["legal_entry_id"] for a in body["attribution"]}
+        assert "insightface_scrfd_25g" in blocked_ids, blocked_ids
+        assert "opencv_yunet" not in blocked_ids, blocked_ids
+        assert "opencv_yunet" in attribution_ids or not any(
+            m["name"] == "YuNet face detection" for m in body["models"]
+        ), body
 
     def test_restricted_uncovered_capability_still_blocked(self, app):
         """Control for the suppression above: a restricted entry whose
@@ -169,13 +183,12 @@ class TestModelsPendingEndpoint:
         )
 
     def test_restricted_model_never_offered_as_free_download(self, app, tmp_path):
-        """THE legal-protection regression: a restricted model that is
-        pending and unaccepted must land in `blocked` (needs_license),
-        never in the free `models` list. Pre-fix, SFace's manifest entry
-        had no legal_entry_id, so it leaked into the downloadable list and
-        the user would only hit the gate as a confusing error mid-analyze.
-        Its kind (face_embedder) has no permissive sibling, so it is NOT
-        suppressed — it correctly shows as a license-gated feature."""
+        """THE legal-protection regression: a click-through model that is
+        pending and unaccepted must never be in the free `models` list.
+        Pre-fix, SFace's manifest entry had no legal_entry_id, so it
+        leaked into the downloadable list. An attribution model like SFace
+        is listed under `attribution`: it downloads only once the user
+        accepts it in the pre-analysis dialog."""
         from bpp.scoring.model_manifest import ModelEntry
 
         fake = [
@@ -191,49 +204,56 @@ class TestModelsPendingEndpoint:
         ]
         with (
             patch("bpp.scoring.model_manifest.all_models", return_value=fake),
-            patch("bpp.registry.acceptance_log.has_accepted", return_value=False),
+            patch("bpp.registry.acceptance.acceptance_state", return_value=_NOT_ACCEPTED),
         ):
             ctx = app.extensions["bpp"]
             r = _get(app, "/api/v1/models/pending", token=ctx.auth_token)
         assert r.status_code == 200
         body = r.get_json()
         assert all(m["name"] != "SFace face recognition" for m in body["models"]), (
-            f"restricted SFace must not be a free download; models={body['models']}"
+            f"SFace must not be a free download; models={body['models']}"
         )
-        assert any(b["legal_entry_id"] == "sface_yunet" for b in body["blocked"]), (
-            f"restricted SFace must be surfaced as blocked; blocked={body['blocked']}"
+        assert all(b["legal_entry_id"] != "sface_yunet" for b in body["blocked"]), (
+            f"SFace is accepted in the pre-analysis step; blocked={body['blocked']}"
         )
+        (item,) = body["attribution"]
+        assert item["legal_entry_id"] == "sface_yunet"
+        assert item["needs_acceptance"] is True
+        assert body["attribution_mb"] == 38
+        assert body["total_mb"] == 0
 
     def test_restricted_covered_alternate_dropped_from_both_lists(self, app, tmp_path):
         """A pending, unaccepted, restricted alternate for a covered
-        capability (YuNet vs the permissive SCRFD default) is dropped
-        from BOTH lists — not offered as a free download, not nagged for
-        a license. Exercises the first-pass suppression path."""
+        capability is dropped from BOTH lists — not offered as a free
+        download, not nagged for a license. Exercises the first-pass
+        suppression path; the face_detector kind is marked covered here
+        to simulate a permissive default detector."""
         from bpp.scoring.model_manifest import ModelEntry
 
         fake = [
             ModelEntry(
-                name="YuNet face detection",
-                path=tmp_path / "yunet.onnx",  # missing → pending
-                url="https://example.com/yunet.onnx",
+                name="SCRFD face detection",
+                path=tmp_path / "scrfd.onnx",  # missing → pending
+                url="https://example.com/scrfd.onnx",
                 sha256="0" * 64,
                 size_mb=0.3,
                 host="example.com",
-                legal_entry_id="opencv_yunet",
+                legal_entry_id="insightface_scrfd_25g",
             ),
         ]
         with (
             patch("bpp.scoring.model_manifest.all_models", return_value=fake),
-            patch("bpp.registry.acceptance_log.has_accepted", return_value=False),
+            patch("bpp.registry.acceptance.acceptance_state", return_value=_NOT_ACCEPTED),
+            patch("bpp.web.model_filter._covered_kinds", return_value={"face_detector"}),
         ):
             ctx = app.extensions["bpp"]
             r = _get(app, "/api/v1/models/pending", token=ctx.auth_token)
         assert r.status_code == 200
         body = r.get_json()
-        assert all(m["name"] != "YuNet face detection" for m in body["models"]), (
+        assert all(m["name"] != "SCRFD face detection" for m in body["models"]), (
             f"covered restricted alternate must not be a free download; models={body['models']}"
         )
-        assert all(b["legal_entry_id"] != "opencv_yunet" for b in body["blocked"]), (
+        assert all(b["legal_entry_id"] != "insightface_scrfd_25g" for b in body["blocked"]), (
             f"covered restricted alternate must not be nagged; blocked={body['blocked']}"
         )
 
@@ -255,6 +275,24 @@ def test_restricted_manifest_entries_are_linked():
     assert by_name["SFace face recognition"].legal_entry_id == "sface_yunet"
     assert by_name["YuNet face detection"].legal_entry_id == "opencv_yunet"
     assert by_name["SCRFD face detection"].legal_entry_id == "insightface_scrfd_25g"
+
+
+def test_every_manifest_entry_is_linked_to_its_registry_entry():
+    """Every download links to a registry entry — the only place its
+    license is written — and agrees with what its scoring module
+    declares for the same file."""
+    import pathlib
+
+    from bpp.registry import get_entry
+    from bpp.scoring.model_base import ModelRegistry
+    from bpp.scoring.model_lifecycle import declared_legal_id
+    from bpp.scoring.model_manifest import all_models
+
+    by_path = {pathlib.Path(e.path): declared_legal_id(e) for e in ModelRegistry.all()}
+    for m in all_models():
+        assert m.legal_entry_id and get_entry(m.legal_entry_id), m.name
+        if m.path in by_path:
+            assert by_path[m.path] == m.legal_entry_id, m.name
 
 
 class TestModelsUninstallEndpoint:
@@ -393,8 +431,10 @@ def test_compute_pending_and_blocked_runs_without_http(tmp_path):
     ]
     with (
         patch("bpp.scoring.model_manifest.all_models", return_value=fake),
-        patch("bpp.registry.acceptance_log.has_accepted", return_value=False),
+        patch("bpp.registry.acceptance.acceptance_state", return_value=_NOT_ACCEPTED),
     ):
         items, blocked = compute_pending_and_blocked()
-    assert all(i["name"] != "SFace face recognition" for i in items)
-    assert any(b["legal_entry_id"] == "sface_yunet" for b in blocked)
+    (item,) = items
+    assert item["legal_entry_id"] == "sface_yunet"
+    assert item["needs_acceptance"] is True
+    assert all(b["legal_entry_id"] != "sface_yunet" for b in blocked)

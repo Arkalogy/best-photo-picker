@@ -26,7 +26,7 @@
  * window.
  */
 
-import { apiFetch, authedSrc } from "./api-client.mjs";
+import { apiFetch, faceCropUrl } from "./api-client.mjs";
 import { state } from "./state.mjs";
 import { appConfirm, appPrompt } from "./dialogs.mjs";
 import { esc, escapeAttr, escapeJsAttr } from "./text-format.mjs";
@@ -111,7 +111,7 @@ export async function _paRename(albumId, currentName) {
       updatePersonAlbumBar(album);
     }
     // No toast: updateToolbarTitle + updatePersonAlbumBar update the name in
-    // place, so the rename is visible. (Toast-noise audit item 14.)
+    // place, so the rename is visible.
   } catch (e) {
     toastError("rename the person", e);
   }
@@ -337,7 +337,7 @@ export async function _paMoveTo() {
     card.className = "merge-picker-card";
     const name = personDisplayName(c.cluster_id) || `Person ${c.cluster_id + 1}`;
     const rep = c.representative;
-    const src = rep ? authedSrc(`/api/v1/faces/crop/${esc(rep.thumb_hash)}/${rep.face_index}`) : "";
+    const src = rep ? faceCropUrl(rep.thumb_hash, rep.face_index) : "";
     card.innerHTML = `<img src="${escapeAttr(src)}" loading="lazy"><span>${esc(name)}</span>`;
     card.onclick = async () => {
       overlay.remove();

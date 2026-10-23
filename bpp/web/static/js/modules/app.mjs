@@ -38,6 +38,7 @@ import {
 import { getSetting, loadSettings } from "./settings-client.mjs";
 import { initActivityLog } from "./activity-log.mjs";
 import { monitorPhashBackfill } from "./phash-status.mjs";
+import { monitorBootHealth } from "./boot-health.mjs";
 import { beaconClientError } from "./client-error-beacon.mjs";
 import { initToolbarIcons } from "./toolbar.mjs";
 import { initSliders, initTooltips, updateContentFilterLabel } from "./ui-helpers.mjs";
@@ -56,6 +57,7 @@ import {
 import { maybeAutoStartTour } from "./tour.mjs";
 import { navigateToCalendar } from "./calendar.mjs";
 import { navigateToDeleted, navigateToHidden } from "./deleted.mjs";
+import { applyInstallState } from "./install-done.mjs";
 import { show } from "./utils.mjs";
 import { showOnboarding } from "./onboarding.mjs";
 import { toast, toastError } from "./toast.mjs";
@@ -174,49 +176,7 @@ async function _bootstrap() {
     const st = await apiFetch("/api/v1/status");
     win.state_workdir = st.workdir || null;
 
-    if (st.defaults) {
-      // Cached for re-renders: renderAlbumNav rebuilds the sidebar (and
-      // its boost slider) and needs the saved values to restore from.
-      win.state_defaults = st.defaults;
-      document.querySelectorAll("[data-param]").forEach((el) => {
-        const elH = /** @type {HTMLElement} */ (el);
-        const key = elH.dataset.param;
-        if (key && st.defaults[key] !== undefined) {
-          /** @type {HTMLInputElement} */ (el).value = st.defaults[key];
-          const sib = /** @type {HTMLElement | null} */ (el.nextElementSibling);
-          if (sib) sib.textContent = formatVal(key, st.defaults[key]);
-        }
-      });
-      // Sensitive-photo policy rides its own 2-way control, not the
-      // [data-param] float bus — hydrate it explicitly.
-      if (st.defaults.sensitive_in_picks !== undefined) {
-        setSensitiveMode(st.defaults.sensitive_in_picks);
-      }
-    }
-
-    win.faceRecognitionAvailable = !!st.face_recognition_available;
-    win.faceInstallable = !!st.face_installable;
-    win.nudenetAvailable = !!st.nudenet_available;
-    win.petsAvailable = !!st.pets_available;
-    updateContentFilterLabel();
-    updateClipStatusFromAppStatus(st);
-    // Surface the background phash/dedup backfill in the status bar
-    // (fire-and-forget; self-stops when the backfill finishes or if none
-    // is running). It was a silent machine-pegging op before.
-    monitorPhashBackfill();
-    if (st.face_extraction_done && win.faceRecognitionAvailable) {
-      const section = /** @type {HTMLElement | null} */ (
-        document.getElementById("settings-face-section")
-      );
-      if (section) section.style.display = "block";
-      if (st.face_cluster_threshold) {
-        const slider = /** @type {HTMLInputElement | null} */ (
-          document.getElementById("face-cluster-slider")
-        );
-        if (slider) slider.value = String(st.face_cluster_threshold);
-        updateFaceThresholdLabel(st.face_cluster_threshold);
-      }
-    }
+    _applyStatus(st);
 
     if (st.has_analysis) {
       // @anchor:bootstrap:tuning-start
@@ -244,104 +204,10 @@ async function _bootstrap() {
         win.renderAlbumNav?.();
       }
 
-      /** @type {string | null} */
-      let _deferredNav = null;
-
-      const photosReady = (async () => {
-        let needsBackgroundRecompute = true;
-        if (savedNav && savedNav.view) {
-          if (savedNav.view === "album" && savedNav.albumId) {
-            const allAlbum = albums.find((a) => a.album_type === "all");
-            if (allAlbum && savedNav.albumId === allAlbum.id) {
-              await loadPhotosAndRecompute();
-              needsBackgroundRecompute = false;
-            } else if (win.switchAlbum && albums.some((a) => a.id === savedNav.albumId)) {
-              await win.switchAlbum(savedNav.albumId);
-            } else {
-              await loadPhotosAndRecompute();
-              needsBackgroundRecompute = false;
-            }
-          } else if (
-            savedNav.view === "people" ||
-            savedNav.view === "pets" ||
-            savedNav.view === "groups"
-          ) {
-            _deferredNav = savedNav.view;
-          } else if (savedNav.view === "picks") {
-            await loadPhotosAndRecompute();
-            needsBackgroundRecompute = false;
-            const filterEl = /** @type {HTMLInputElement | null} */ (
-              document.getElementById("filter-by")
-            );
-            if (filterEl) filterEl.value = "selected";
-            win.renderGrid?.();
-            updateBreadcrumbs("BPP Picks", "Library", "switchToLibrary()");
-            win.currentView = "picks";
-          } else if (savedNav.view === "favorites") {
-            navigateToFavorites();
-          } else if (savedNav.view === "deleted") {
-            await navigateToDeleted();
-          } else if (savedNav.view === "hidden") {
-            await navigateToHidden();
-          } else if (savedNav.view === "memory" && savedNav.viewId) {
-            await openMemory(/** @type {any} */ (savedNav.viewId));
-          } else if (savedNav.view === "calendar") {
-            navigateToCalendar();
-          } else if (savedNav.view === "map") {
-            await loadPhotosAndRecompute();
-            needsBackgroundRecompute = false;
-            win.navigateToMap?.();
-          } else {
-            await loadPhotosAndRecompute();
-            needsBackgroundRecompute = false;
-          }
-          // Restore active filter (e.g. "enhanced", "favorites") if it was saved.
-          if (savedNav.filter && savedNav.filter !== "all") {
-            const filterEl = /** @type {HTMLInputElement | null} */ (
-              document.getElementById("filter-by")
-            );
-            if (filterEl) { filterEl.value = savedNav.filter; win.renderGrid?.(); }
-          }
-          const items = /** @type {any[]} */ (win.currentGridItems || []);
-          if (savedNav.lightboxPath && items.length > 0) {
-            const lbIdx = items.findIndex((p) => p.filepath === savedNav.lightboxPath);
-            if (lbIdx >= 0) win.openLightbox?.(lbIdx);
-          }
-        } else {
-          await loadPhotosAndRecompute();
-          needsBackgroundRecompute = false;
-        }
-        if (needsBackgroundRecompute) {
-          const allAlbum = albums.find((a) => a.album_type === "all");
-          if (allAlbum) {
-            doRecompute({ delta: true })
-              .then(() => {
-                win.renderAlbumNav?.();
-              })
-              .catch((e) => console.warn("Background recompute failed:", e));
-          }
-        }
-      })();
-
-      const sidebarReady = (async () => {
-        if (st.pet_detection_done && win.loadPetClusters) await win.loadPetClusters();
-        loadOnThisDay();
-        loadMemories();
-        win.loadTagsList?.().then(() => win.renderAlbumNav?.());
-        if (st.face_extraction_done) {
-          await loadFaceClusters();
-          if (win.loadGroups) await win.loadGroups();
-          await refreshSmartAlbums();
-        } else if (win.faceRecognitionAvailable && !st.face_extracting) {
-          startFaceExtraction();
-        } else if (st.face_extracting) {
-          listenFaceProgress();
-        } else {
-          updateFaceStatus();
-        }
-      })();
-
-      await Promise.all([photosReady, sidebarReady]);
+      const [_deferredNav] = await Promise.all([
+        _restorePhotosView(savedNav, albums),
+        _loadSidebar(st),
+      ]);
 
       if (_deferredNav === "people") navigateToPeople();
       else if (_deferredNav === "pets") win.navigateToPets?.();
@@ -363,6 +229,185 @@ async function _bootstrap() {
   } catch (e) {
     console.error("Startup failed:", e);
     toastError("start the app", e);
+  }
+}
+
+/**
+ * Hydrate the settings sliders and the capability flags from /api/v1/status.
+ * @param {any} st
+ */
+function _applyStatus(st) {
+  /** @type {any} */
+  const win = window;
+  if (st.defaults) {
+    // Cached for re-renders: renderAlbumNav rebuilds the sidebar (and
+    // its boost slider) and needs the saved values to restore from.
+    win.state_defaults = st.defaults;
+    document.querySelectorAll("[data-param]").forEach((el) => {
+      const elH = /** @type {HTMLElement} */ (el);
+      const key = elH.dataset.param;
+      if (key && st.defaults[key] !== undefined) {
+        /** @type {HTMLInputElement} */ (el).value = st.defaults[key];
+        const sib = /** @type {HTMLElement | null} */ (el.nextElementSibling);
+        if (sib) sib.textContent = formatVal(key, st.defaults[key]);
+      }
+    });
+    // Sensitive-photo policy rides its own 2-way control, not the
+    // [data-param] float bus — hydrate it explicitly.
+    if (st.defaults.sensitive_in_picks !== undefined) {
+      setSensitiveMode(st.defaults.sensitive_in_picks);
+    }
+  }
+
+  win.faceRecognitionAvailable = !!st.face_recognition_available;
+  // The install state (restart banner, an interrupted install's repair)
+  // right away, not at the first 30-second check.
+  applyInstallState({
+    restart_pending: st.install_restart_pending,
+    face_installable: st.face_installable,
+    face_license_needed: st.face_license_needed,
+    install_blocked: st.install_blocked,
+    interrupted: st.install_interrupted,
+    interrupted_keys: st.install_interrupted_keys,
+  });
+  win.nudenetAvailable = !!st.nudenet_available;
+  win.nudenetActive = !!st.nudenet_active;
+  win.petsAvailable = !!st.pets_available;
+  updateContentFilterLabel();
+  updateClipStatusFromAppStatus(st);
+  // Surface the background phash/dedup backfill in the status bar
+  // (fire-and-forget; self-stops when the backfill finishes or if none
+  // is running). It was a silent machine-pegging op before.
+  monitorPhashBackfill();
+  // A face extraction resuming after a restart (every face edit waits on
+  // it), a failed resume, a refused missing-file scan: shown, not silent.
+  monitorBootHealth();
+  if (st.face_extraction_done && win.faceRecognitionAvailable) {
+    const section = /** @type {HTMLElement | null} */ (
+      document.getElementById("settings-face-section")
+    );
+    if (section) section.style.display = "block";
+    if (st.face_cluster_threshold) {
+      const slider = /** @type {HTMLInputElement | null} */ (
+        document.getElementById("face-cluster-slider")
+      );
+      if (slider) slider.value = String(st.face_cluster_threshold);
+      updateFaceThresholdLabel(st.face_cluster_threshold);
+    }
+  }
+}
+
+/**
+ * Restore the photos surface the user left (album, picks, favorites, …),
+ * else the Library. Returns the sidebar view (people / pets / groups) to
+ * open once the sidebar is loaded, if that is where they were.
+ * @param {any} savedNav
+ * @param {any[]} albums
+ * @returns {Promise<string | null>}
+ */
+async function _restorePhotosView(savedNav, albums) {
+  /** @type {any} */
+  const win = window;
+  /** @type {string | null} */
+  let _deferredNav = null;
+  let needsBackgroundRecompute = true;
+  if (savedNav && savedNav.view) {
+    if (savedNav.view === "album" && savedNav.albumId) {
+      const allAlbum = albums.find((a) => a.album_type === "all");
+      if (allAlbum && savedNav.albumId === allAlbum.id) {
+        await loadPhotosAndRecompute();
+        needsBackgroundRecompute = false;
+      } else if (win.switchAlbum && albums.some((a) => a.id === savedNav.albumId)) {
+        await win.switchAlbum(savedNav.albumId);
+      } else {
+        await loadPhotosAndRecompute();
+        needsBackgroundRecompute = false;
+      }
+    } else if (
+      savedNav.view === "people" ||
+      savedNav.view === "pets" ||
+      savedNav.view === "groups"
+    ) {
+      _deferredNav = savedNav.view;
+    } else if (savedNav.view === "picks") {
+      await loadPhotosAndRecompute();
+      needsBackgroundRecompute = false;
+      const filterEl = /** @type {HTMLInputElement | null} */ (
+        document.getElementById("filter-by")
+      );
+      if (filterEl) filterEl.value = "selected";
+      win.renderGrid?.();
+      updateBreadcrumbs("BPP Picks", "Library", "switchToLibrary()");
+      win.currentView = "picks";
+    } else if (savedNav.view === "favorites") {
+      navigateToFavorites();
+    } else if (savedNav.view === "deleted") {
+      await navigateToDeleted();
+    } else if (savedNav.view === "hidden") {
+      await navigateToHidden();
+    } else if (savedNav.view === "memory" && savedNav.viewId) {
+      await openMemory(/** @type {any} */ (savedNav.viewId));
+    } else if (savedNav.view === "calendar") {
+      navigateToCalendar();
+    } else if (savedNav.view === "map") {
+      await loadPhotosAndRecompute();
+      needsBackgroundRecompute = false;
+      win.navigateToMap?.();
+    } else {
+      await loadPhotosAndRecompute();
+      needsBackgroundRecompute = false;
+    }
+    // Restore active filter (e.g. "enhanced", "favorites") if it was saved.
+    if (savedNav.filter && savedNav.filter !== "all") {
+      const filterEl = /** @type {HTMLInputElement | null} */ (
+        document.getElementById("filter-by")
+      );
+      if (filterEl) { filterEl.value = savedNav.filter; win.renderGrid?.(); }
+    }
+    const items = /** @type {any[]} */ (win.currentGridItems || []);
+    if (savedNav.lightboxPath && items.length > 0) {
+      const lbIdx = items.findIndex((p) => p.filepath === savedNav.lightboxPath);
+      if (lbIdx >= 0) win.openLightbox?.(lbIdx);
+    }
+  } else {
+    await loadPhotosAndRecompute();
+    needsBackgroundRecompute = false;
+  }
+  if (needsBackgroundRecompute) {
+    const allAlbum = albums.find((a) => a.album_type === "all");
+    if (allAlbum) {
+      doRecompute({ delta: true })
+        .then(() => {
+          win.renderAlbumNav?.();
+        })
+        .catch((e) => console.warn("Background recompute failed:", e));
+    }
+  }
+  return _deferredNav;
+}
+
+/**
+ * Load what the sidebar shows: pets, memories, tags, faces (or start / follow
+ * face extraction).
+ * @param {any} st
+ */
+async function _loadSidebar(st) {
+  /** @type {any} */
+  const win = window;
+  if (st.pet_detection_done && win.loadPetClusters) await win.loadPetClusters();
+  loadOnThisDay();
+  loadMemories();
+  win.loadTagsList?.().then(() => win.renderAlbumNav?.());
+  if (st.face_extraction_done) {
+    await loadFaceClusters();
+    if (win.loadGroups) await win.loadGroups();
+    await refreshSmartAlbums();
+  } else if (win.faceRecognitionAvailable && !st.face_extracting) {
+    startFaceExtraction();
+  } else if (st.face_extracting) {
+    listenFaceProgress();
+  } else {
+    updateFaceStatus();
   }
 }
 

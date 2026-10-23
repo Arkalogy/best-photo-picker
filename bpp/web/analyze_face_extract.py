@@ -17,7 +17,7 @@ HandLandmarker. Two execution architectures are supported:
 
 Imported from ``analyze_worker.py``; not part of the public API.
 
-P2: queue / sentinel / drain / join machinery moved to
+Queue / sentinel / drain / join machinery moved to
 :class:`bpp.utils.subprocess_runner.BoundedSubprocessRunner`. This
 module keeps the face-extraction-specific bits:
 
@@ -33,6 +33,7 @@ import multiprocessing
 import traceback
 from typing import Any
 
+from bpp.config import cfg_get
 from bpp.utils.logging import get_logger
 from bpp.utils.subprocess_runner import (
     SENTINEL,
@@ -60,6 +61,19 @@ _FACE_EXTRACTION_CHUNK_SIZE = 250
 _FACE_MESSAGE_TIMEOUT_S = 600.0
 
 
+def fatal_error_payload(e: BaseException) -> dict[str, Any]:
+    """The message a crashed child sends its parent. A BppError's
+    ``user_message`` rides along so the parent can show those words;
+    anything else only gets the generic line (the raw text may carry
+    paths) and the traceback for the log."""
+    return {
+        "type": "fatal_error",
+        "user_message": getattr(e, "user_message", None),
+        "error": getattr(e, "user_message", None) or str(e),
+        "traceback": traceback.format_exc(),
+    }
+
+
 def _face_extraction_worker(
     with_faces: list[dict[str, Any]],
     config: dict[str, Any],
@@ -80,15 +94,18 @@ def _face_extraction_worker(
     try:
         from bpp.db.connection import init_db
         from bpp.db.photos import get_photo_id_map_by_paths
+        from bpp.web.analyze_model_preflight import apply_run_download_skips
         from bpp.web.face_worker import extract_and_cluster_faces
+
+        apply_run_download_skips(config)
 
         conn = init_db(db_path)
         photo_map = get_photo_id_map_by_paths(
             conn,
             [item["filepath"] for item in with_faces],
         )
-        max_long_side = config.get("max_long_side", 1024)
-        face_conf = float(config.get("face_detection_confidence", 0.3))
+        max_long_side = cfg_get(config, "max_long_side")
+        face_conf = float(cfg_get(config, "face_detection_confidence"))
 
         def _progress(msg: dict) -> None:
             result_queue.put(msg)
@@ -115,13 +132,7 @@ def _face_extraction_worker(
         # close_all_connections(). This child process exits after the
         # queue.put() above, so the pool dies with it (project rule).
     except Exception as e:
-        result_queue.put(
-            {
-                "type": "fatal_error",
-                "error": str(e),
-                "traceback": traceback.format_exc(),
-            }
-        )
+        result_queue.put(fatal_error_payload(e))
     finally:
         result_queue.put(SENTINEL)
 
@@ -335,7 +346,7 @@ def run_face_extraction_subprocess(
     before the crash are kept (incremental commit pattern), so
     retrying picks up where it stopped.
 
-    Cancellation (P1): ``cancel_event`` accepts the unified token
+    Cancellation: ``cancel_event`` accepts the unified token
     contract. The chunk loop polls between chunks so a cancel signal
     halts at the next chunk boundary (≤ one chunk of work). The child
     also gets a picklable mp.Event so its inner detect/embed loop and
@@ -350,7 +361,7 @@ def run_face_extraction_subprocess(
     # See _snapshot_config docstring for the mappingproxy gotcha.
     config_snapshot = _snapshot_config(config)
 
-    # P1 cancel token — kept here in the orchestrator (not delegated to
+    # Cancel token — kept here in the orchestrator (not delegated to
     # the runner) because the between-chunk poll needs the parent-side
     # token, not the picklable mp.Event the runner would build.
     # ``parent_token`` is what we poll between chunks; the runner re-
@@ -383,13 +394,29 @@ def run_face_extraction_subprocess(
     # Architecture #1: chunked subprocesses (memory-safe for the
     # workers=1 / thread-pool path that's vulnerable to allocator
     # accumulation across the full library).
+    return _run_chunked(
+        with_faces, config_snapshot, db_path, progress_callback, cancel_event, parent_token
+    )
+
+
+def _run_chunked(
+    with_faces: list[dict[str, Any]],
+    config_snapshot: dict[str, Any],
+    db_path: str,
+    progress_callback: Any | None,
+    cancel_event: Any,
+    parent_token: Any,
+) -> tuple[int, int, int | None]:
+    """One fresh subprocess per chunk of photos (see
+    :func:`run_face_extraction_subprocess`, architecture #1)."""
+    total = len(with_faces)
     chunk_size = max(1, _FACE_EXTRACTION_CHUNK_SIZE)
     total_faces = 0
     last_clusters = 0
     last_pid: int | None = None
 
     for start in range(0, total, chunk_size):
-        # Between-chunk cancel check (P1). Without this, a 5,000-photo
+        # Between-chunk cancel check. Without this, a 5,000-photo
         # run would have to grind through every remaining chunk before
         # the parent could stop it. Bound is ≤ one chunk of work.
         if parent_token is not None and parent_token.is_set():

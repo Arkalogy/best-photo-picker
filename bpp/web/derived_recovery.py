@@ -13,16 +13,20 @@ its historical name + re-export from state_init because it's the
 canonical trigger every caller (analyze worker, startup, the
 compute-hashes endpoint) already uses; it now runs the WHOLE pipeline,
 with a re-entrancy guard that queues one re-run instead of racing.
+
+``_run_recovery`` is the thread body; each step after it is one
+function, in pipeline order.
 """
 
 from __future__ import annotations
 
 import os
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any
 
 from bpp.db.connection import get_db
-from bpp.db.photos import update_hashes as db_update_hashes
+from bpp.db.photos import update_hashes_many as db_update_hashes_many
 from bpp.dedupe.phash import compute_hashes_from_file
 from bpp.utils.logging import get_logger
 
@@ -32,6 +36,10 @@ if TYPE_CHECKING:
 log = get_logger(__name__)
 
 _PHASH_BACKFILL_WORKERS = min(2, os.cpu_count() or 1)
+#: Photos submitted to the pool, and hashes written, per batch. Bounds the
+#: futures in flight (one per photo of the library before) and turns a
+#: commit per row into one per batch.
+_PHASH_WRITE_BATCH = 256
 
 
 def precompute_phashes(ctx: WebAppState, data: list[dict[str, Any]]) -> None:
@@ -49,7 +57,11 @@ def precompute_phashes(ctx: WebAppState, data: list[dict[str, Any]]) -> None:
     t = ctx.analysis_store.compute_thread
     if t is not None and t.is_alive() and t is not threading.current_thread():
         log.info("Derived recovery already running — queueing a re-run")
-        ctx.analysis_store.recovery_rerun = data
+        # Two batches finishing during one run both get hashed: merged
+        # by path, the later item winning.
+        queued = {item.get("filepath"): item for item in ctx.analysis_store.recovery_rerun or []}
+        queued.update({item.get("filepath"): item for item in data})
+        ctx.analysis_store.recovery_rerun = list(queued.values())
         return
 
     missing_fps = [
@@ -57,56 +69,174 @@ def precompute_phashes(ctx: WebAppState, data: list[dict[str, Any]]) -> None:
     ]
     if not missing_fps:
         ctx.analysis_store.phash_ready.set()
+        ctx.analysis_store.recovery_failed = False  # nothing to recover: nothing failed
         return
 
     ctx.analysis_store.phash_ready.clear()
-    # capture generation + Event identity at spawn time.
-    # If `switch_library` increments the generation (and replaces
-    # `ctx.analysis_store.phash_ready` with a fresh Event) while this thread is
-    # still running, the closure will hold the OLD identifiers
-    # and refuse to write into the new library's state.
+    # capture generation + Event identity at spawn time and pass them
+    # to _run_recovery as arguments. If `switch_library` increments the
+    # generation (and replaces `ctx.analysis_store.phash_ready` with a
+    # fresh Event) while this thread is still running, the thread keeps
+    # the OLD identifiers and refuses to write into the new library's
+    # state.
     spawn_generation = ctx.analysis_store.phash_generation
     spawn_event = ctx.analysis_store.phash_ready
+    spawn_cancel = ctx.analysis_store.phash_cancel
+    ctx.analysis_store.recovery_failed = False
 
-    def _compute():
-        log.info("Pre-computing hashes for %d images...", len(missing_fps))
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+    ctx.analysis_store.compute_thread = threading.Thread(
+        target=_run_recovery,
+        args=(ctx, missing_fps, spawn_generation, spawn_event, spawn_cancel),
+        daemon=True,
+    )
+    ctx.analysis_store.compute_thread.start()
 
-        db_path = ctx.state.get("workdir", "")
-        if db_path:
-            db_path = os.path.join(db_path, "photopicker.db")
-        # Use the pool — get_db already applies WAL + 30s busy_timeout
-        # and is thread-local, so this thread gets its own connection.
-        conn = get_db(db_path)
 
-        # Parallel hash computation across a SMALL pool. Each worker
-        # decodes a full-resolution image (decode releases the GIL, so
-        # this is genuinely parallel CPU + holds N decoded images in RAM).
-        # The pool is capped (see _PHASH_BACKFILL_WORKERS) so this stays a
-        # gentle background pass; it also reports progress + honours
-        # cancel so it isn't the silent machine-pegging op it once was.
-        computed: dict[str, tuple[int | None, int | None]] = {}
-        errors = 0
-        done = 0
-        total = len(missing_fps)
-        store = ctx.analysis_store
-        store.phash_total = total
-        store.phash_done = 0
-        store.phash_running = True
+def _run_recovery(
+    ctx: WebAppState,
+    missing_fps: list[str],
+    spawn_generation: int,
+    spawn_event: threading.Event,
+    spawn_cancel: threading.Event | None = None,
+) -> None:
+    """The pipeline, in order, on the compute thread.
 
-        with ThreadPoolExecutor(max_workers=_PHASH_BACKFILL_WORKERS) as pool:
-            futures = {pool.submit(compute_hashes_from_file, fp): fp for fp in missing_fps}
+    A daemon thread's own exception goes only to ``threading.excepthook``;
+    this logs it (Nothing Silent) and clears the running flag so the
+    status endpoint doesn't show a backfill that is no longer there.
+    """
+    store = ctx.analysis_store
+    store.recovery_running = True
+    failed = False
+    try:
+        _recover(ctx, missing_fps, spawn_generation, spawn_event, spawn_cancel)
+    except Exception:
+        log.warning("Derived recovery failed; hashes may be incomplete", exc_info=True)
+        store.recovery_failed = True  # /api/v1/health shows it
+        store.phash_running = False
+        failed = True
+    finally:
+        store.recovery_running = False
+    # Only once this thread's flag is down: the re-run is a new thread
+    # that raises the flag for itself. (An analyze that finished during
+    # a failed run still wants its rows hashed.)
+    _start_queued_rerun(ctx, spawn_generation, "after a failed run" if failed else "")
+
+
+def _start_queued_rerun(ctx: WebAppState, spawn_generation: int, why: str) -> None:
+    """Run the re-run an analyze queued while this recovery ran (see
+    :func:`precompute_phashes`), unless the library has changed since:
+    then the queued rows belong to the old library and are dropped."""
+    store = ctx.analysis_store
+    rerun, store.recovery_rerun = store.recovery_rerun, None
+    if rerun is None:
+        return
+    if store.phash_generation != spawn_generation:
+        log.info("Derived recovery: dropping the queued re-run (library switched)")
+        return
+    log.info("Derived recovery: queued re-run starting %s (%d items)", why, len(rerun))
+    precompute_phashes(ctx, rerun)
+
+
+def _recover(
+    ctx: WebAppState,
+    missing_fps: list[str],
+    spawn_generation: int,
+    spawn_event: threading.Event,
+    spawn_cancel: threading.Event | None = None,
+) -> None:
+    log.info("Pre-computing hashes for %d images...", len(missing_fps))
+    db_path = ctx.state.get("workdir", "")
+    if db_path:
+        db_path = os.path.join(db_path, "photopicker.db")
+    # Use the pool — get_db already applies WAL + 30s busy_timeout
+    # and is thread-local, so this thread gets its own connection.
+    conn = get_db(db_path)
+
+    backfilled = _backfill_hashes(ctx, conn, missing_fps, spawn_cancel)
+    if backfilled is None:
+        # Cancelled (shutdown or library switch): whatever was queued
+        # for after this run is for a library we no longer serve.
+        ctx.analysis_store.recovery_rerun = None
+        return
+    computed, errors = backfilled
+    # bail before touching shared state if the library
+    # was switched out from under us. `switch_library` joins
+    # this thread with a finite timeout — if the join times
+    # out, this thread is still running but `ctx.analysis_store.phash_ready`
+    # has already been replaced with the new library's Event.
+    # Setting that Event here would falsely flag the new
+    # library's hashes as ready and break dedupe on the very
+    # next recompute. Compare against the captured generation
+    # / Event identity; if either drifted, log and exit.
+    if ctx.analysis_store.phash_generation != spawn_generation:
+        log.warning(
+            "phash compute completed for stale generation %d "
+            "(current=%d) — discarding result to avoid "
+            "polluting the new library's state",
+            spawn_generation,
+            ctx.analysis_store.phash_generation,
+        )
+        return
+    if not _apply_hashes_to_analysis(ctx, computed, spawn_generation):
+        return
+    spawn_event.set()
+    log.info("Hash pre-computation done: %d computed, %d errors.", len(computed), errors)
+
+    if computed:
+        _tag_live_photo_sidecars(conn, ctx.analysis_store)
+        _cluster_derived_state(conn, ctx.analysis_store)
+        _refresh_smart_albums(conn, ctx.analysis_store)
+    # Don't close — get_db() pool manages lifecycle via
+    # close_all_connections() at shutdown. A queued re-run (an analyze
+    # that finished meanwhile) starts from _run_recovery.
+
+
+def _backfill_hashes(
+    ctx: WebAppState, conn: Any, missing_fps: list[str], cancel: threading.Event | None = None
+) -> tuple[dict[str, tuple[int | None, int | None]], int] | None:
+    """Compute + store the missing perceptual hashes. Returns what was
+    computed and the error count, or None when cancelled.
+
+    Parallel hash computation across a SMALL pool. Each worker decodes
+    a full-resolution image (decode releases the GIL, so this is
+    genuinely parallel CPU + holds N decoded images in RAM). The pool
+    is capped (see _PHASH_BACKFILL_WORKERS) so this stays a gentle
+    background pass; it also reports progress + honours cancel so it
+    isn't the silent machine-pegging op it once was. Work goes to the
+    pool a batch at a time (_PHASH_WRITE_BATCH) and each batch's hashes
+    are written in one transaction.
+    """
+    computed: dict[str, tuple[int | None, int | None]] = {}
+    errors = 0
+    done = 0
+    total = len(missing_fps)
+    store = ctx.analysis_store
+    # The token this run was spawned with: a switch replaces the store's
+    # token right after setting this one, and a run that outlived the
+    # join must still see the cancel.
+    cancel = cancel if cancel is not None else store.phash_cancel
+    store.phash_total = total
+    store.phash_done = 0
+    store.phash_running = True
+
+    with ThreadPoolExecutor(max_workers=_PHASH_BACKFILL_WORKERS) as pool:
+        for start in range(0, total, _PHASH_WRITE_BATCH):
+            batch_fps = missing_fps[start : start + _PHASH_WRITE_BATCH]
+            futures = {pool.submit(compute_hashes_from_file, fp): fp for fp in batch_fps}
+            batch_rows: list[tuple[str, int | None, int | None]] = []
             for future in as_completed(futures):
-                if store.phash_cancel.is_set():
+                if cancel.is_set():
                     log.info("Hash backfill cancelled at %d/%d", done, total)
                     pool.shutdown(wait=False, cancel_futures=True)
+                    db_update_hashes_many(conn, batch_rows)
                     store.phash_running = False
-                    return
+                    return None
                 fp = futures[future]
                 try:
                     dhash, ahash = future.result()
                     computed[fp] = (dhash, ahash)
-                    db_update_hashes(conn, fp, dhash, ahash)
+                    batch_rows.append((fp, dhash, ahash))
                 except Exception as exc:
                     errors += 1
                     if errors <= 5:
@@ -133,123 +263,105 @@ def precompute_phashes(ctx: WebAppState, data: list[dict[str, Any]]) -> None:
                 store.phash_done = done
                 if done % 500 == 0:
                     log.info("Hash progress: %d/%d", done, total)
-        store.phash_running = False
-        # bail before touching shared state if the library
-        # was switched out from under us. `switch_library` joins
-        # this thread with a finite timeout — if the join times
-        # out, this thread is still running but `ctx.analysis_store.phash_ready`
-        # has already been replaced with the new library's Event.
-        # Setting that Event here would falsely flag the new
-        # library's hashes as ready and break dedupe on the very
-        # next recompute. Compare against the captured generation
-        # / Event identity; if either drifted, log and exit.
+            db_update_hashes_many(conn, batch_rows)
+    store.phash_running = False
+    return computed, errors
+
+
+def _apply_hashes_to_analysis(
+    ctx: WebAppState, computed: dict[str, tuple[int | None, int | None]], spawn_generation: int
+) -> bool:
+    """Batch-apply the hashes to the in-memory analysis items under the
+    lock. False when the library was switched meanwhile."""
+    with ctx.lock:
+        # Re-check inside the lock — switch_library() takes
+        # `ctx.lock` to swap the analysis/dirs/etc atomically
+        # so this is the right gate for the write.
         if ctx.analysis_store.phash_generation != spawn_generation:
-            log.warning(
-                "phash compute completed for stale generation %d "
-                "(current=%d) — discarding result to avoid "
-                "polluting the new library's state",
-                spawn_generation,
-                ctx.analysis_store.phash_generation,
+            return False
+        analysis = ctx.state["analysis"]
+        if analysis is not None:
+            for item in analysis:
+                hashes = computed.get(item["filepath"])
+                if hashes:
+                    item["phash"] = hashes[0]
+                    item["ahash"] = hashes[1]
+    return True
+
+
+def _tag_live_photo_sidecars(conn: Any, store: Any) -> None:
+    """Now that every photo has a perceptual hash, tag Live Photo
+    sidecars with phash confirmation.
+
+    The analyze-from-folder path imports through bulk_upsert (phash NULL
+    at write time) and the startup backfill is skipped when a library
+    starts empty and is then populated via analyze — so this is the one
+    place that runs AFTER hashes exist for an analyze-built library.
+    require_phash_match ensures a '_N' file is only hidden when it's
+    provably the same frame as its parent, never a genuinely distinct
+    photo that merely shares the naming convention. Idempotent + cheap
+    (touches only untagged rows).
+    """
+    try:
+        from bpp.db.live_photo import detect_and_link_live_photo_sidecars
+
+        n_sidecars = detect_and_link_live_photo_sidecars(conn, require_phash_match=True)
+        if n_sidecars:
+            # Sidecars were tagged after the analyze worker's
+            # sync_all_photos_album ran; re-sync so the Library count
+            # and smart albums reflect real photos only.
+            from bpp.db.albums import sync_all_photos_album
+
+            sync_all_photos_album(conn)
+            log.info(
+                "Tagged %d phash-confirmed Live Photo sidecar(s) after hashing",
+                n_sidecars,
             )
-            return
-        # Batch-apply to analysis items under lock
-        with ctx.lock:
-            # Re-check inside the lock — switch_library() takes
-            # `ctx.lock` to swap the analysis/dirs/etc atomically
-            # so this is the right gate for the write.
-            if ctx.analysis_store.phash_generation != spawn_generation:
-                return
-            analysis = ctx.state["analysis"]
-            if analysis is not None:
-                for item in analysis:
-                    hashes = computed.get(item["filepath"])
-                    if hashes:
-                        item["phash"] = hashes[0]
-                        item["ahash"] = hashes[1]
-        spawn_event.set()
-        log.info(
-            "Hash pre-computation done: %d computed, %d errors.",
-            len(computed),
-            errors,
+    except Exception:
+        store.recovery_failed = True
+        log.warning(
+            "Live Photo sidecar tagging failed after hashing",
+            exc_info=True,
         )
-        # Now that every photo has a perceptual hash, tag Live Photo
-        # sidecars with phash confirmation. The analyze-from-folder path
-        # imports through bulk_upsert (phash NULL at write time) and the
-        # startup backfill is skipped when a library starts empty and is
-        # then populated via analyze — so this is the one place that runs
-        # AFTER hashes exist for an analyze-built library. require_phash_match
-        # ensures a '_N' file is only hidden when it's provably the same
-        # frame as its parent, never a genuinely distinct photo that merely
-        # shares the naming convention. Idempotent + cheap (touches only
-        # untagged rows).
-        if computed:
-            try:
-                from bpp.db.live_photo import detect_and_link_live_photo_sidecars
 
-                n_sidecars = detect_and_link_live_photo_sidecars(conn, require_phash_match=True)
-                if n_sidecars:
-                    # Sidecars were tagged after the analyze worker's
-                    # sync_all_photos_album ran; re-sync so the Library count
-                    # and smart albums reflect real photos only.
-                    from bpp.db.albums import sync_all_photos_album
 
-                    sync_all_photos_album(conn)
-                    log.info(
-                        "Tagged %d phash-confirmed Live Photo sidecar(s) after hashing",
-                        n_sidecars,
-                    )
-            except Exception:
-                log.warning(
-                    "Live Photo sidecar tagging failed after hashing",
-                    exc_info=True,
-                )
+def _cluster_derived_state(conn: Any, store: Any) -> None:
+    """Ordered derived-state recovery (the wipe-incident fix, S4
+    2026-06-12): the cluster columns MUST rebuild after hashes +
+    sidecar tags exist and BEFORE the smart-album refresh reads
+    them. Previously clustering ran as independent racing
+    triggers — it could fire against NULL hashes, "recover" to
+    garbage, and never re-run."""
+    try:
+        from bpp.db.dedupe import assign_near_duplicate_clusters
 
-        # Ordered derived-state recovery (the wipe-incident fix, S4
-        # 2026-06-12): the cluster columns MUST rebuild after hashes +
-        # sidecar tags exist and BEFORE the smart-album refresh reads
-        # them. Previously clustering ran as independent racing
-        # triggers — it could fire against NULL hashes, "recover" to
-        # garbage, and never re-run.
-        if computed:
-            try:
-                from bpp.db.dedupe import assign_near_duplicate_clusters
+        log.info("Derived recovery: clustering near-duplicates...")
+        n_dup = assign_near_duplicate_clusters(conn)
+        log.info("Derived recovery: %d photos in dup clusters", n_dup)
+    except Exception:
+        store.recovery_failed = True
+        log.warning("Near-duplicate clustering failed after hashing", exc_info=True)
+    try:
+        from bpp.db.moments import assign_moment_clusters
 
-                log.info("Derived recovery: clustering near-duplicates...")
-                n_dup = assign_near_duplicate_clusters(conn)
-                log.info("Derived recovery: %d photos in dup clusters", n_dup)
-            except Exception:
-                log.warning("Near-duplicate clustering failed after hashing", exc_info=True)
-            try:
-                from bpp.db.moments import assign_moment_clusters
+        log.info("Derived recovery: clustering Moments...")
+        n_mom = assign_moment_clusters(conn)
+        log.info("Derived recovery: %d photos in Moments", n_mom)
+    except Exception:
+        store.recovery_failed = True
+        log.warning("Moment clustering failed after hashing", exc_info=True)
 
-                log.info("Derived recovery: clustering Moments...")
-                n_mom = assign_moment_clusters(conn)
-                log.info("Derived recovery: %d photos in Moments", n_mom)
-            except Exception:
-                log.warning("Moment clustering failed after hashing", exc_info=True)
 
-        # Refresh smart albums so Duplicates album appears
-        if computed:
-            try:
-                from bpp.db.smart_albums import refresh_smart_albums
+def _refresh_smart_albums(conn: Any, store: Any) -> None:
+    """Refresh smart albums so the Duplicates album appears."""
+    try:
+        from bpp.db.smart_albums import refresh_smart_albums
 
-                refresh_smart_albums(conn)
-                log.info("Smart albums refreshed after hash computation")
-            except Exception:
-                log.warning(
-                    "Smart album refresh failed after hashing",
-                    exc_info=True,
-                )
-        # Don't close — get_db() pool manages lifecycle via
-        # close_all_connections() at shutdown.
-
-        # Re-entrancy: an analyze that finished while this recovery ran
-        # queued its data instead of racing a second thread — run it now.
-        rerun = ctx.analysis_store.recovery_rerun
-        ctx.analysis_store.recovery_rerun = None
-        if rerun is not None and ctx.analysis_store.phash_generation == spawn_generation:
-            log.info("Derived recovery: queued re-run starting (%d items)", len(rerun))
-            precompute_phashes(ctx, rerun)
-
-    ctx.analysis_store.compute_thread = threading.Thread(target=_compute, daemon=True)
-    ctx.analysis_store.compute_thread.start()
+        refresh_smart_albums(conn)
+        log.info("Smart albums refreshed after hash computation")
+    except Exception:
+        store.recovery_failed = True
+        log.warning(
+            "Smart album refresh failed after hashing",
+            exc_info=True,
+        )

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from flask import Blueprint, Response, jsonify, request
 
+from bpp.config import cfg_get
 from bpp.db.albums import (
     ensure_all_photos_album,
     get_album_overrides_and_favorites,
@@ -19,9 +20,6 @@ from bpp.db.albums import (
 )
 from bpp.db.albums import (
     toggle_favorite as db_toggle_favorite,
-)
-from bpp.db.photos import (
-    get_all_photos as db_get_all_photos,
 )
 from bpp.db.photos import (
     get_date_distribution,
@@ -184,7 +182,7 @@ def api_photos_map() -> tuple[Response, int]:
 def api_photo_detail(photo_id: int) -> tuple[Response, int]:
     """Return full photo dict for a single photo by ID.
 
-    P6/P7: uses the BppError handler for the 404 (consistent error
+    Uses the BppError handler for the 404 (consistent error
     envelope) and the PhotoDict-typed builder for the success body.
     Migration template — copy this shape for other endpoints as you
     touch them.
@@ -197,23 +195,48 @@ def api_photo_detail(photo_id: int) -> tuple[Response, int]:
     return jsonify(ctx.build_photo_dict(row)), 200
 
 
+#: The preview is a first look, not the library view: one page at a time.
+PREVIEW_PAGE_MAX = 500
+
+
 @bp.get("/api/v1/photos/preview")
 def api_photos_preview() -> tuple[Response, int]:
-    """Return photos from DB for preview before analysis is complete."""
+    """Return photos from DB for preview before analysis is complete.
+
+    Paged: ``?limit=`` (default and at most ``PREVIEW_PAGE_MAX``) and
+    ``?offset=``; ``total`` is the full row count, ``count`` the slice.
+    """
+    from bpp.db.photos import get_photo_count, get_photos_page
+
     ctx = get_ctx()
     conn = ctx.get_conn()
-    data = db_get_all_photos(conn)
-    if not data:
-        return jsonify({"photos": [], "count": 0}), 200
+    try:
+        limit = min(int(request.args.get("limit", PREVIEW_PAGE_MAX)), PREVIEW_PAGE_MAX)
+        offset = max(int(request.args.get("offset", 0)), 0)
+    except ValueError:
+        limit, offset = PREVIEW_PAGE_MAX, 0
+    # One page read and mapped per request: the client walks the pages,
+    # so reading the whole table each time was N/500 full scans.
+    total = get_photo_count(conn)
+    page = get_photos_page(conn, max(limit, 0), offset) if total else []
     if ctx.thumbs is None:
         ctx.thumbs = ThumbnailCache(ctx.dirs["thumbs"])
-    ctx.thumbs.build_map(data)
+    if page:
+        ctx.thumbs.add_to_map(page)
     photos_out = []
-    for item in data:
+    for item in page:
         d = ctx.build_photo_dict(item)
         d["analyzed"] = item.get("aggregate_score") is not None
         photos_out.append(d)
-    return jsonify({"photos": photos_out, "count": len(photos_out)}), 200
+    return jsonify(
+        {
+            "photos": photos_out,
+            "count": len(photos_out),
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+    ), 200
 
 
 @bp.post("/api/v1/override")
@@ -299,12 +322,11 @@ def api_set_sensitive_override() -> tuple[Response, int]:
                     break
 
     # Membership of the Sensitive album follows the override immediately.
-    from bpp.db.smart_albums import refresh_smart_albums
+    from bpp.db.smart_albums import get_affected_album_types, refresh_smart_albums
 
-    refresh_smart_albums(conn, kinds={"smart_sensitive"})
-    from bpp.constants import SENSITIVE_NUDITY_THRESHOLD
+    refresh_smart_albums(conn, kinds=get_affected_album_types("sensitive"))
 
-    threshold = ctx.config.get("sensitive_nudity_threshold", SENSITIVE_NUDITY_THRESHOLD)
+    threshold = cfg_get(ctx.config, "sensitive_nudity_threshold")
     return jsonify({"status": "ok", "is_sensitive": is_sensitive_item(new_item, threshold)}), 200
 
 

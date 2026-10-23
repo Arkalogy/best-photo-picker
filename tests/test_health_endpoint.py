@@ -63,7 +63,7 @@ class TestShape:
         )
 
     def test_collaborators_surface_analysis_store_and_caches(self, client):
-        """T4: the new ``collaborators`` block must expose the P4
+        """The ``collaborators`` block must expose the
         AnalysisStore + ModelCache state so on-call can tell whether
         the phash compute thread is alive, whether CLIP / face-cluster
         caches are populated, and the analysis-store generation
@@ -113,7 +113,7 @@ class TestDbCheck:
         assert data["checks"]["db"]["path"].endswith(".db")
 
     def test_db_connection_failure_does_not_leak_path(self, app, client, monkeypatch):
-        """R6-M2: when ctx.get_conn() raises, the response must NOT
+        """When ctx.get_conn() raises, the response must NOT
         echo the exception text — OSError / sqlite3.Error strings
         often include the absolute DB path, the owner's username,
         mount labels, or SQLite-internal hints. The endpoint reports
@@ -224,7 +224,7 @@ class TestJournalsCheck:
 class TestAggregateStatus:
     def test_status_ok_on_clean_ctx(self, client):
         data = client.get("/api/v1/health").get_json()
-        assert data["status"] == "ok"
+        assert data["status"] == "ok", data["checks"]
 
     def test_status_degraded_when_journal_pending(self, app, client):
         from bpp.db.journal import journal_start
@@ -309,7 +309,7 @@ class TestE2EFixtureSentinel:
         rate-limit bypass in app.py gates on. A real library (no sentinel)
         keeps the limiter; a fixture bypasses it so the Playwright suite
         isn't throttled mid-run."""
-        from bpp.web.bp_health import _e2e_fixture_cache, is_e2e_fixture_library
+        from bpp.web.e2e_fixture import _e2e_fixture_cache, is_e2e_fixture_library
 
         _e2e_fixture_cache.clear()
         app_no, _ = self._make_app_obj(tmp_path, with_sentinel=False)
@@ -325,7 +325,7 @@ class TestE2EFixtureSentinel:
         """The result is cached by library root so the gate doesn't stat
         the filesystem on every destructive request. Deleting the sentinel
         after the first lookup must NOT flip the cached value."""
-        from bpp.web.bp_health import _e2e_fixture_cache, is_e2e_fixture_library
+        from bpp.web.e2e_fixture import _e2e_fixture_cache, is_e2e_fixture_library
 
         _e2e_fixture_cache.clear()
         app_yes, lib = self._make_app_obj(tmp_path, with_sentinel=True)
@@ -340,7 +340,7 @@ class TestE2EFixtureSentinel:
             )
 
 
-# ── Phase 5 background-backfill health surface (M8 followup) ─────────
+# ── Phase 5 background-backfill health surface ─────────
 
 
 class TestPhase5HealthCheck:
@@ -403,3 +403,46 @@ class TestPhase5HealthCheck:
         finally:
             # Restore default so we don't pollute other tests.
             ctx.smart_album_backfill_done.set()
+
+
+class TestDerivedRecoveryHealthCheck:
+    """The derived-recovery thread (hash backfill, dup clusters, smart
+    albums) sets analysis_store.recovery_failed when it dies; the health
+    report shows it and degrades, like a failed Phase 5."""
+
+    def test_default_state_reports_no_failure(self, client, app):
+        data = client.get("/api/v1/health").get_json()
+        assert data["checks"]["derived_recovery"]["failed"] is False
+
+    def test_a_failed_recovery_degrades_the_report(self, client, app):
+        from bpp.web.state import get_ctx
+
+        with app.app_context():
+            get_ctx().analysis_store.recovery_failed = True
+        data = client.get("/api/v1/health").get_json()
+        assert data["status"] == "degraded"
+        assert data["checks"]["derived_recovery"]["failed"] is True
+
+    def test_a_step_that_fails_quietly_still_flags_the_run(self, app):
+        """Clustering and smart-album steps log and carry on; the run is
+        still reported as failed, and a library switch clears it."""
+        from bpp.web.derived_recovery import _cluster_derived_state
+        from bpp.web.state import get_ctx
+
+        class _Store:
+            recovery_failed = False
+
+        store = _Store()
+        with app.app_context():
+            ctx = get_ctx()
+
+            # A connection that fails the clustering SQL.
+            class _BadConn:
+                def execute(self, *a, **k):
+                    raise RuntimeError("database is locked")
+
+            _cluster_derived_state(_BadConn(), store)
+            assert store.recovery_failed is True
+            ctx.analysis_store.recovery_failed = True
+            ctx.analysis_store.bump_generation_and_reset_phash()
+            assert ctx.analysis_store.recovery_failed is False

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from typing import Any
 
-from bpp.constants import CLIP_MODEL_NAME, MODEL_TOGGLE_KEYS
+from bpp.constants import CLIP_MODEL_NAME, FACE_CLUSTER_THRESHOLD_FALLBACK, MODEL_TOGGLE_KEYS
 from bpp.scoring.registry import get_weight_defaults
 
 DEFAULTS: dict[str, Any] = {
@@ -16,7 +17,6 @@ DEFAULTS: dict[str, Any] = {
     "thumbnail_size": 64,  # px, grid thumbnail size
     # Selection
     "default_selection_k": 50,  # number of photos to select (1-10000)
-    "default_selection_seed": 42,  # RNG seed for reproducibility
     # Dedup — perceptual hash distance (0=exact, higher=more lenient)
     "hash_distance_threshold": 20,  # within time window (0-64)
     "time_window_seconds": 30,  # seconds between shots for near-dedup
@@ -31,7 +31,8 @@ DEFAULTS: dict[str, Any] = {
     "face_embedding_confidence": 0.65,  # min quality for embedding (0.0-1.0)
     "min_face_area_pct": 0.20,  # min face area as % of image (0.05-1.0)
     "min_embedding_quality": 0.25,  # min quality score for embedding (0.1-0.5)
-    "face_cluster_threshold": 0.80,  # clustering distance (0.3-1.2, lower=stricter)
+    # clustering distance (0.3-1.2, lower=stricter); the value lives in constants
+    "face_cluster_threshold": FACE_CLUSTER_THRESHOLD_FALLBACK,
     "face_selection_boost": 0.15,  # score boost for selected faces (0.0-1.0)
     # Groups (people who appear together)
     "group_min_photos": 3,  # photos two people must share to form a group (1-10)
@@ -71,6 +72,19 @@ DEFAULTS: dict[str, Any] = {
     # Model toggles (all enabled by default)
     **{k: True for k in MODEL_TOGGLE_KEYS},
 }
+
+
+def cfg_get(config: Mapping[str, Any] | None, key: str) -> Any:
+    """``config[key]``, or ``DEFAULTS[key]`` when the mapping lacks it (or
+    there is no mapping yet). The one way to read a setting with a
+    fallback: a second copy of the default at the call site drifts, as
+    the dedup thresholds, the selection similarity threshold and the
+    face-cluster constant once did. A key DEFAULTS doesn't know is a
+    typo, not a setting: ``KeyError``."""
+    default = DEFAULTS[key]
+    if config is None:
+        return default
+    return config.get(key, default)
 
 
 def parse_scan_extensions(value: str | list[str] | None) -> list[str]:

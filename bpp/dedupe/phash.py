@@ -12,6 +12,8 @@ try:
 except ImportError:
     pass
 
+from bpp.media_types import MediaKind, media_kind_from_path
+from bpp.utils import raw as raw_support
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -72,8 +74,9 @@ _VIDEO_EXTS = {
 def _load_image(filepath: str) -> np.ndarray:
     """Load image as grayscale with EXIF rotation.
 
-    Routes HEIC files directly to PIL (cv2 doesn't support them).
-    Skips video files entirely.
+    Routes HEIC files directly to PIL (cv2 doesn't support them) and
+    camera RAW files through the RAW decoder (a half-size decode: an
+    8x8 hash doesn't need the full one). Skips video files entirely.
     Retries on transient I/O errors (NAS flakes).
     """
     import os
@@ -84,6 +87,10 @@ def _load_image(filepath: str) -> np.ndarray:
     ext = os.path.splitext(filepath)[1].lower()
     if ext in _VIDEO_EXTS:
         raise ValueError(f"Cannot hash video file: {filepath}")
+    if media_kind_from_path(filepath) is MediaKind.RAW:
+        with raw_support.decode_slot():  # same limit as the viewer's decodes
+            rgb = raw_support.decode_raw_rgb(filepath, half_size=True)
+        return cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
 
     # HEIC: go straight to PIL (cv2 has no HEIC support)
     use_pil = ext in _HEIC_EXTS
@@ -122,6 +129,8 @@ def compute_hashes_from_file(filepath: str) -> tuple[int | None, int | None]:
     try:
         img = _load_image(filepath)
         return compute_dhash(img), compute_ahash(img)
+    except raw_support.RawSupportMissing:
+        return None, None  # warned once by the decoder
     except Exception as e:
         log.warning("Failed to compute hashes for %s: %s", filepath, e)
         return None, None
@@ -131,14 +140,21 @@ def compute_dhash_from_file(filepath: str) -> int | None:
     """Load image, apply EXIF rotation, compute dHash."""
     try:
         return compute_dhash(_load_image(filepath))
+    except raw_support.RawSupportMissing:
+        return None  # warned once by the decoder
     except Exception as e:
         log.warning("Failed to compute hash for %s: %s", filepath, e)
         return None
 
 
+#: Hashes are 64-bit patterns; SQLite hands them back as signed ints.
+_HASH_MASK = (1 << 64) - 1
+
+
 def hamming_distance(hash1: int, hash2: int) -> int:
-    """Compute Hamming distance between two hashes."""
-    xor = hash1 ^ hash2
+    """Compute Hamming distance between two hashes (as 64-bit patterns,
+    whatever sign the storage gave them)."""
+    xor = (hash1 & _HASH_MASK) ^ (hash2 & _HASH_MASK)
     return bin(xor).count("1")
 
 

@@ -54,29 +54,34 @@ def _add_photo_file(library_path: str, name: str) -> str:
 
 class TestPermanentDeleteRecovery:
     def test_pending_journal_replays_disk_cleanup(self, app, tmp_path):
-        """Simulate a crash AFTER the DB delete, BEFORE the disk loop:
-        a journal entry still in 'started' state with the filepaths.
-        recover_pending must invoke the registered handler, the handler
-        re-runs the disk cleanup, and the orphaned files disappear."""
+        """Simulate a crash AFTER the DB delete, BEFORE the disk loop: the
+        files sit in the trash folder, the entry still names them.
+        recover_pending must invoke the registered handler, which removes
+        the quarantined files and consumes the entry."""
         from bpp.db.journal import journal_start, pending_journals
-        from bpp.web.bp_photos_manage import register_permanent_delete_recovery
+        from bpp.web.permanent_delete import (
+            claim,
+            claim_name,
+            plan_delete,
+            register_permanent_delete_recovery,
+        )
 
         ctx = app.extensions["bpp"]
         lib = ctx.state["library_path"]
+        wd = ctx.state["workdir"]
 
         # Two real files in the library — DB rows would have been deleted
-        # by a (now-crashed) permanent_delete request. Files orphaned.
+        # by a (now-crashed) permanent_delete request, after step 2 moved
+        # the files aside.
         f1 = _add_photo_file(lib, "orphan_a.jpg")
         f2 = _add_photo_file(lib, "orphan_b.jpg")
-        assert os.path.exists(f1)
-        assert os.path.exists(f2)
+        token = "deadbeefcafef00d"
+        files = plan_delete({f1: 1, f2: 2}, token, [lib, wd])
+        assert claim(files, token) == []
+        assert not os.path.exists(f1) and os.path.exists(claim_name(f1, token))
 
-        # Build the same journal entry the live request would have written.
         with app.app_context():
-            allowed = [os.path.realpath(lib)]
-            wd = ctx.state.get("workdir")
-            if wd:
-                allowed.append(os.path.realpath(wd))
+            allowed = [os.path.realpath(lib), os.path.realpath(wd)]
             journal_start(
                 ctx.get_conn(),
                 "permanent_delete",
@@ -84,6 +89,8 @@ class TestPermanentDeleteRecovery:
                     "filepaths": [f1, f2],
                     "sha256_map": {},
                     "allowed_dirs": allowed,
+                    "token": token,
+                    "files": files,
                 },
             )
 
@@ -95,8 +102,8 @@ class TestPermanentDeleteRecovery:
             result = recover_pending(ctx.get_conn())
 
         assert result.get("permanent_delete") == 1
-        assert not os.path.exists(f1)
-        assert not os.path.exists(f2)
+        for fp in (f1, f2):
+            assert not os.path.exists(fp) and not os.path.exists(claim_name(fp, token))
         # Journal entry consumed
         with app.app_context():
             assert pending_journals(ctx.get_conn()) == []
@@ -108,7 +115,7 @@ class TestPermanentDeleteRecovery:
         upstream — if a future bug ever wrote one, recovery shouldn't
         amplify it)."""
         from bpp.db.journal import journal_start, recover_pending
-        from bpp.web.bp_photos_manage import register_permanent_delete_recovery
+        from bpp.web.permanent_delete import register_permanent_delete_recovery
 
         ctx = app.extensions["bpp"]
         lib = ctx.state["library_path"]
@@ -139,9 +146,9 @@ class TestPermanentDeleteRecovery:
     def test_recovery_idempotent_on_already_deleted_files(self, app, tmp_path):
         """Recovery must tolerate filepaths that are already gone — they
         were deleted by the original request before the crash, so the
-        recovery's os.path.isfile check skips them. No exceptions."""
+        recovery finds nothing to claim. No exceptions."""
         from bpp.db.journal import journal_start, recover_pending
-        from bpp.web.bp_photos_manage import register_permanent_delete_recovery
+        from bpp.web.permanent_delete import register_permanent_delete_recovery
 
         ctx = app.extensions["bpp"]
         lib = ctx.state["library_path"]

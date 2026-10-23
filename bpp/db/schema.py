@@ -169,11 +169,11 @@ CREATE TABLE IF NOT EXISTS face_embeddings (
     user_confirmed INTEGER DEFAULT 0,
     -- v40: detector input size at extraction time. Lets the read path
     -- reconstruct the exact detector dimensions regardless of current
-    -- settings, closing the Bug #9 class of failures. NULL on pre-v40
+    -- settings, closing the stale-coordinate class of failures. NULL on pre-v40
     -- rows; the read path falls back to the current config.
     extraction_max_long_side INTEGER,
     -- v41: id of the registered model that produced this row. Lets
-    -- the Batch-7 derived-data-purge flow find every embedding
+    -- the derived-data-purge flow find every embedding
     -- produced by a specific model at removal time. NULL on
     -- pre-v41 rows; the purge skips NULL rows so the migration
     -- doesn't accidentally wipe historical data on first run.
@@ -363,7 +363,7 @@ CREATE TABLE IF NOT EXISTS face_extraction_journal (
     snapshot_json TEXT,
     started_at INTEGER NOT NULL,
     completed_at INTEGER,
-    -- v39 (T0.4): bounded recovery retries. Recovery handler increments
+    -- v39: bounded recovery retries. Recovery handler increments
     -- before each attempt; if it exceeds MAX_RECOVERY_RETRIES the row
     -- is force-completed with `completed_at = -1` (sentinel for "gave
     -- up"). Without this, a deterministic phase-7 failure would loop
@@ -403,7 +403,7 @@ CREATE INDEX IF NOT EXISTS idx_face_embeddings_photo ON face_embeddings(photo_id
 CREATE INDEX IF NOT EXISTS idx_face_embeddings_cluster ON face_embeddings(cluster_id);
 CREATE INDEX IF NOT EXISTS idx_face_embeddings_cluster_photo
     ON face_embeddings(cluster_id, photo_id);
--- v41: covering index for the Batch-7 derived-data-purge filter.
+-- v41: covering index for the derived-data-purge filter.
 CREATE INDEX IF NOT EXISTS idx_face_embeddings_producing_model
     ON face_embeddings(producing_model_id);
 CREATE INDEX IF NOT EXISTS idx_clip_embeddings_photo ON clip_embeddings(photo_id);

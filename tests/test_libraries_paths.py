@@ -1,4 +1,4 @@
-"""R8-M10: WebAppState path extraction.
+"""WebAppState path extraction.
 
 Lock the new contract:
   - `ctx.paths` is a `LibraryPaths` dataclass holding library_path,
@@ -8,9 +8,8 @@ Lock the new contract:
     AND keep the legacy `ctx.state["..."]` dict in sync.
   - `switch_library` updates both forms atomically.
 
-This is half of the audit's M10 ask. Subsequent sessions can
-extract WorkerManager / CacheManager / HealthChecker on the
-same property-shim pattern; this commit demonstrates the
+Other collaborators can be extracted on the same
+property-shim pattern; this change demonstrates the
 template and migrates the 15 path-read callsites across six
 blueprints.
 """
@@ -106,7 +105,7 @@ def test_switch_library_updates_paths_and_state(tmp_path):
 
 
 def test_paths_dirs_are_immutable(tmp_path):
-    """R10-M2: ``frozen=True`` only blocks REASSIGNING fields. The
+    """``frozen=True`` only blocks REASSIGNING fields. The
     pre-fix ``dirs: dict[str, str]`` could still be mutated per-key
     (``ctx.paths.dirs["thumbs"] = "/elsewhere"``), bypassing the
     invariant the freeze was meant to enforce. Wrap dirs in
@@ -161,7 +160,7 @@ def test_switch_library_replaces_dirs_immutably(tmp_path):
 
 
 def test_library_paths_is_frozen(tmp_path):
-    """R9-reliability-M3: ``LibraryPaths`` must be frozen so a caller
+    """``LibraryPaths`` must be frozen so a caller
     that does ``ctx.paths.library_path = X`` directly hits a
     FrozenInstanceError instead of silently desyncing
     ``ctx.state["library_path"]``. The only sanctioned writes go

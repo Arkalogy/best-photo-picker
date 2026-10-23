@@ -2,15 +2,21 @@
 
 A walkthrough of what BPP actually looks like in use. If you want to evaluate the product without running `pip install` first, this page is the next-best thing — it covers the core flow from import through pick and export, plus the side surfaces (faces, calendar, map, duplicates) that make a large library navigable.
 
-For a 30-second hands-on trial with no setup, run:
+For a hands-on trial with no photos of your own (a few minutes; the
+first analysis offers to download the on-device models), with Python
+3.11 installed, run:
 
 ```bash
-pip install "bppicker[web]" && bpp demo
+pipx install --python python3.11 "bppicker[web]" && bpp demo
 ```
 
-That generates a synthetic library and launches the full UI locally. Nothing leaves your machine.
+That generates a synthetic library and launches the full UI locally. Your photos are never uploaded; the few network calls bpp does make (model registry check, model downloads, update check, map tiles) are listed in the README's [Privacy](../README.md#privacy) section.
 
 ---
+
+*The screenshots show a sample library built from stock photos of models
+([Pexels](https://www.pexels.com/license/)) plus generated test images
+(`scripts/generate_demo_library.py`), not the author's family.*
 
 ## 1. Library grid
 
@@ -40,19 +46,19 @@ Non-destructive editing on top of the original file — crop, straighten, redeye
 
 ![Faces](screenshots/tauri/03-faces.png)
 
-BPP detects faces during analysis (SCRFD + BlazeFace + dlib fallback) and clusters them automatically. Each cluster becomes a smart album. Name a cluster ("Kai") and every photo with that face is one click away. Merge, dismiss, reassign, or manually draw a missed face via the lightbox's face picker. The Picks recompute can be biased toward specific named people — "pick the 50 best photos of Kai" is literally one slider away.
+BPP detects faces during analysis (YuNet + BlazeFace, with dlib as a fallback and the research-only SCRFD detector if you accept its license) and clusters them automatically. Each cluster becomes a smart album. Name a cluster ("Kai") and every photo with that face is one click away. Merge, dismiss, reassign, or manually draw a missed face via the lightbox's face picker. The Picks recompute can be biased toward specific named people — "pick the 50 best photos of Kai" is literally one slider away.
 
 ## 6. Calendar view
 
 ![Calendar](screenshots/tauri/06-calendar.png)
 
-For navigating by "I know it was around July." Photos grouped by month with thumbnail previews; click a day to filter the grid to that day. The temporal-diversity logic in Picks uses the same calendar data — every selected month has at least one representative photo.
+For navigating by "I know it was around July." Photos grouped by month with thumbnail previews; click a day to filter the grid to that day. The temporal-diversity logic in Picks uses the same calendar data — it tries to include at least one photo from every month.
 
 ## 7. Map view
 
 ![Map](screenshots/tauri/05-map.png)
 
-GPS-tagged photos plotted on OpenStreetMap tiles. Pan and zoom to filter the grid by location. The map only fires tile fetches when you actually open the view — no background tile loading. (Map tiles are the one external network call BPP makes during normal browsing; everything else is local.)
+GPS-tagged photos plotted on OpenStreetMap tiles. Pan and zoom to filter the grid by location. Tiles are fetched only while a map is on screen — this view, or the small location map when you open a geotagged photo in the lightbox — and each tile request tells OpenStreetMap roughly where that photo was taken. The other network calls BPP makes are listed in the README's [Privacy](../README.md#privacy) section.
 
 ## 8. Near-duplicate review
 
@@ -70,13 +76,13 @@ YOLOv11n detects cats and dogs in analyzed photos and clusters them by visual si
 
 ![Settings](screenshots/tauri/09-settings.png)
 
-App-level settings (theme, update check, product tour) and library-level settings (extensions, scoring weights, dedup thresholds, ML model status) live here. Each ML model is opt-in — install via the Settings → Advanced → ML Models tab, with full per-model consent on the bytes that will be downloaded.
+App-level settings (theme, update check, product tour) and library-level settings (extensions, scoring weights, dedup thresholds, ML model status) live here. Before the first analysis, the app lists every model it needs to download — name, size and host — and waits for your OK. Restricted-license models (for example the research-only face embedders) are switched on individually in Settings → Models after a license click-through.
 
 ---
 
 ## Next steps
 
-- **Try the demo** — `pip install "bppicker[web]" && bpp demo` boots a synthetic library and the full UI. No photos of yours, no setup, no install of optional ML extras required. The first run downloads the on-device models once (up to ~650 MB); after that it starts in seconds and runs offline.
-- **Install for real** — `pip install "bppicker[web,faces]"` then `bpp serve --library ~/Pictures/MyLibrary`. See the [README](../README.md) for details on optional extras (HEIC, NSFW filter, RAW, AI inpainting).
+- **Try the demo** — `pip install "bppicker[web]" && bpp demo` boots a synthetic library and the full UI. No photos of yours, no setup, no install of optional ML extras required. The first analysis asks before downloading the on-device models (up to ~660 MB); they're cached after that. bpp still checks its signed model registry and (unless you turn it off) GitHub for updates when the app opens — see the README's [Privacy](../README.md#privacy) section.
+- **Install for real** — `pip install "bppicker[web,faces]"` then `bpp serve --library ~/Pictures/MyLibrary`. See the [README](../README.md) for details on optional extras (HEIC, RAW, AI inpainting). The on-device nudity filter needs no extra — accept the NudeNet model in Settings → Models to turn it on.
 - **Read the architecture** — `docs/adr/` captures the load-bearing decisions; `docs/API.md` covers the HTTP surface for anyone integrating against the local server.
 - **Contribute** — `CONTRIBUTING.md` for the workflow, `docs/plugins.md` for the registered extension points.

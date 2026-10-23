@@ -213,7 +213,7 @@ describe("pattern-lint: HTML attribute escaping", () => {
 // ACTION, the REASON, and a RECOVERY hint. `toastError(action, err)`
 // formats all three; a hand-rolled `toast("Failed to X: " + e.message)`
 // (or `toast(\`X failed: ${err}\`)`) names no recovery and drifts in
-// style. The 2026-06-12 review found ~35 of these across 12 files —
+// style. A sweep once found ~35 of these across 12 files —
 // this rule keeps the count at zero.
 
 describe("pattern-lint: error-toast policy", () => {
@@ -293,8 +293,8 @@ describe("pattern-lint: native dialogs", () => {
 // call but never calls toastError lets an HTTP failure fall through to the
 // global boundary's nameless "Something went wrong" toast.
 //
-// The 2026-06-12 audit found ~50 such handlers; the 2026-06-16 ratchet was
-// added to stop the count regrowing; the 2026-06-17 sweep converted 48 of
+// A sweep once found ~50 such handlers; this ratchet was
+// added to stop the count regrowing, and a follow-up converted 48 of
 // them. This is a RATCHET: any NEW violation fails, and a
 // baseline entry that's been fixed must be removed (the list can only
 // shrink). The two entries left are NOT debt — they're intentional service
@@ -353,7 +353,9 @@ describe("pattern-lint: error-toast on mutating apiFetch handlers", () => {
       // every handler). Comment removal still drops docstring mentions.
       const src = m.src.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
       for (const fn of namedFunctionBodies(src)) {
-        if (mutating.test(fn.body) && !/toastError\s*\(/.test(fn.body)) {
+        // toastInstallError (install-done.mjs) calls toastError for every
+        // error except "restart first", which it shows as a warning.
+        if (mutating.test(fn.body) && !/toast(?:Install)?Error\s*\(/.test(fn.body)) {
           found.add(`${file}:${fn.name}`);
         }
       }

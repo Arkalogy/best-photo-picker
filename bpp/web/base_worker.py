@@ -7,6 +7,7 @@ import errno
 import queue
 import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
 from bpp.constants import WORKER_JOIN_TIMEOUT_S
@@ -38,10 +39,49 @@ _PROGRESS_QUEUE_MAX = 1000
 _DROP_LOG_INTERVAL_S = 60.0
 
 
+#: Wraps every worker start (set by the in-app installer): raises while
+#: an install runs, and keeps one from starting until this start is done
+#: — pip swaps package files, and a worker loads packages as it goes.
+def _no_guard(_worker: Any) -> contextlib.AbstractContextManager[Any]:
+    return contextlib.nullcontext()
+
+
+_start_guard: Callable[[Any], contextlib.AbstractContextManager[Any]] = _no_guard
+
+
+def start_guard(worker: Any) -> contextlib.AbstractContextManager[Any]:
+    """The installer's guard for starting *worker* (None: work that may use
+    any installable package)."""
+    return _start_guard(worker)
+
+
+def raise_if_blocked(worker: Any) -> None:
+    """Raise ConflictError if *worker* couldn't start now (an install runs
+    or waits for a restart): asked before slow or irreversible preparation
+    (a model download, wiping data) rather than after it."""
+    with _start_guard(worker):
+        pass
+
+
+def set_start_guard(guard: Callable[[Any], contextlib.AbstractContextManager[Any]]) -> None:
+    global _start_guard
+    _start_guard = guard
+
+
 class BackgroundWorker:
     """Common boilerplate for background workers: thread lifecycle, queue, cancellation."""
 
     _worker_name: str = "Worker"
+    #: Whether this work may import packages an in-app install writes, or
+    #: libraries it upgrades (models, face/scipy code, numpy in the processes
+    #: it starts): if so it doesn't start while an install runs, or after one
+    #: before the restart. None (plugins' workers): unknown, so yes.
+    loads_installable_packages: bool | None = None
+
+    #: The app state that owns this worker (set by ``WebAppState`` when it
+    #: builds the pool). Worker threads have no Flask context, so this is
+    #: how an in-worker finalize reaches the caches it must refresh.
+    ctx: Any = None
 
     def __init__(self) -> None:
         self.progress_queue: queue.Queue[dict[str, Any]] = queue.Queue(
@@ -50,6 +90,18 @@ class BackgroundWorker:
         self._thread: threading.Thread | None = None
         self.running = False
         self._cancelled = threading.Event()
+        # The run's event log: every progress message of the current run,
+        # for the SSE streams. Each reader keeps its own position, so two
+        # tabs (or a tab that reloads) each see every message; the queue
+        # above stays for in-process consumers. Bounded like the queue.
+        self._events: list[dict[str, Any]] = []
+        self._events_base = 0  # sequence number of _events[0]
+        self._events_cond = threading.Condition()
+        self.run_id = 0
+        self._finalized_run: int | None = None
+        #: The previous run's log, kept so a reader still on it gets the
+        #: run's end (done / cancelled) before it moves to the new run.
+        self._prev_events: tuple[int, int, list[dict[str, Any]]] | None = None
         # Drop-warning rate limiter: (last_log_time, drops_since_last_log)
         self._drop_log_state: tuple[float, int] = (0.0, 0)
         self._drop_log_lock = threading.Lock()
@@ -69,20 +121,35 @@ class BackgroundWorker:
 
         Subclasses should expose a typed ``start()`` that validates arguments
         and delegates to ``_start_thread(*args)``.  Returns False if the
-        worker is already running.
+        worker is already running; raises ConflictError while an in-app
+        install it may load runs, or after one until a restart (see
+        ``loads_installable_packages``).
         """
+        if self.is_alive:
+            return False  # already running: that, not an install, is the answer
+        with _start_guard(self):
+            return self._start_thread_unguarded(*args)
+
+    def _start_thread_unguarded(self, *args: Any) -> bool:
         if self.is_alive:
             return False
 
         self.running = True
         self._cancelled.clear()
 
-        # Drain any stale progress messages
+        # Drain any stale progress messages; a new run starts a new log.
         while not self.progress_queue.empty():
             try:
                 self.progress_queue.get_nowait()
             except queue.Empty:
                 break
+        with self._events_cond:
+            if self._events:
+                self._prev_events = (self.run_id, self._events_base, self._events)
+            self._events = []
+            self._events_base = 0
+            self.run_id += 1
+            self._events_cond.notify_all()
 
         self._thread = threading.Thread(
             target=self._safe_run,
@@ -136,6 +203,13 @@ class BackgroundWorker:
         # queue. The intent is "the worker is doing work right now,"
         # not "an SSE consumer received an event."
         self._last_activity = time.time()
+        with self._events_cond:
+            self._events.append(msg)
+            if len(self._events) > _PROGRESS_QUEUE_MAX:
+                drop = len(self._events) - _PROGRESS_QUEUE_MAX
+                del self._events[:drop]
+                self._events_base += drop
+            self._events_cond.notify_all()
         try:
             self.progress_queue.put_nowait(msg)
             return
@@ -154,9 +228,9 @@ class BackgroundWorker:
             last_t, drops = self._drop_log_state
             drops += 1
             if now - last_t >= _DROP_LOG_INTERVAL_S:
-                log.warning(
+                log.debug(
                     "%s: progress queue full — dropped %d event(s) in the last %.0fs "
-                    "(SSE consumer disconnected or slow?)",
+                    "(no in-process consumer; the SSE streams read the event log)",
                     self._worker_name,
                     drops,
                     now - last_t if last_t > 0 else _DROP_LOG_INTERVAL_S,
@@ -164,6 +238,41 @@ class BackgroundWorker:
                 self._drop_log_state = (now, 0)
             else:
                 self._drop_log_state = (last_t, drops)
+
+    def claim_finalize(self, run_id: int) -> bool:
+        """True for the first caller per run: the SSE readers all see the
+        ``done`` message, but the finalizer behind it runs once."""
+        with self._events_cond:
+            if self._finalized_run == run_id:
+                return False
+            self._finalized_run = run_id
+            return True
+
+    def events_since(
+        self, run_id: int, seq: int, *, timeout: float | None = None
+    ) -> tuple[int, int, list[dict[str, Any]]]:
+        """The run's messages from position ``seq`` on, waiting up to
+        ``timeout`` for new ones. Returns ``(run_id, next_seq, messages)``;
+        a reader whose run is over (a newer run started) is moved to the
+        start of the new run. Messages evicted from the bounded log are
+        skipped."""
+        with self._events_cond:
+            if run_id != self.run_id:
+                prev = self._prev_events
+                if prev is not None and prev[0] == run_id:
+                    _rid, base, events = prev
+                    end = base + len(events)
+                    if seq < end:  # the old run's tail first
+                        return run_id, end, list(events[max(seq, base) - base :])
+                run_id, seq = self.run_id, 0
+            end = self._events_base + len(self._events)
+            if seq >= end and timeout:
+                self._events_cond.wait(timeout)
+                if run_id != self.run_id:
+                    run_id, seq = self.run_id, 0
+                end = self._events_base + len(self._events)
+            start = max(seq, self._events_base)
+            return run_id, end, list(self._events[start - self._events_base :])
 
     # ------------------------------------------------------------------
     # Internal
@@ -200,9 +309,13 @@ class BackgroundWorker:
             else:
                 msg = f"{self._worker_name} encountered a filesystem error. Check server logs."
             self._emit({"type": "error", "message": msg})
-        except Exception:
-            log.error("%s failed", self._worker_name, exc_info=True)
-            msg = f"{self._worker_name} failed. Check server logs for details."
+        except Exception as e:
+            msg = _install_wait_message(self._worker_name, e)
+            if msg is not None:  # expected (installed, restart pending): no crash
+                log.info("%s waits for a restart: %s", self._worker_name, e)
+            else:
+                log.error("%s failed", self._worker_name, exc_info=True)
+                msg = f"{self._worker_name} failed. Check server logs for details."
             self._emit({"type": "error", "message": msg})
         finally:
             self.running = False
@@ -222,3 +335,20 @@ class BackgroundWorker:
 
     def _run(self, *args: Any) -> None:
         raise NotImplementedError
+
+
+def _install_wait_message(worker: str, exc: BaseException) -> str | None:
+    """A plain message when *exc* means "installed from the app, loads after
+    a restart" (not a failure to dig into the logs for)."""
+    from bpp.scoring.install_hold import HeldForRestart, still_installing
+
+    # No package name: paired devices follow the same progress stream, and
+    # what was installed is for the owner only.
+    if isinstance(exc, HeldForRestart) and still_installing(exc):
+        return f"{worker} stopped: a package is being installed — wait for it, then try again."
+    if isinstance(exc, HeldForRestart):
+        return (
+            f"{worker} stopped: a package was just installed — restart Best Photo "
+            "Picker, then try again."
+        )
+    return None

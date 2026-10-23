@@ -11,7 +11,7 @@ import sqlite3
 from typing import TYPE_CHECKING, Any
 
 from bpp.constants import FACE_CLUSTER_THRESHOLD_FALLBACK
-from bpp.db.face_embedding_safety import decode_embedding
+from bpp.db.face_embedding_safety import active_embedding_dim, decode_embedding
 
 if TYPE_CHECKING:
     import numpy as np
@@ -267,7 +267,8 @@ def should_suggest_recluster(
 # ── Ambiguous pair finder (for /api/faces/review-pairs) ──
 
 # Absolute ceiling for "worth reviewing" cluster-centroid distance.
-# Anchored to face-embedding empirics: same person is usually < 0.55,
+# Anchored to face-embedding empirics: same person is usually well under the
+# cluster threshold (FACE_CLUSTER_THRESHOLD_FALLBACK),
 # clearly different is > 0.85. 0.75 is the "probably worth a human glance"
 # upper bound. Anchored to an absolute value — not to the adaptive
 # threshold — because the adaptive threshold can drift toward 1.0 once
@@ -302,11 +303,12 @@ def find_ambiguous_pairs(
         return []
 
     cluster_embs: dict[int, list[np.ndarray]] = {}
+    dim = active_embedding_dim(conn)
     for r in rows:
         cid = r[0] if isinstance(r, tuple) else r["cluster_id"]
         emb_blob = r[1] if isinstance(r, tuple) else r["embedding"]
-        # Protection A: skip corrupt BLOBs before np.mean down-stream.
-        emb = decode_embedding(emb_blob, where="face_feedback.cluster_centroids")
+        # Skip corrupt BLOBs before np.mean down-stream.
+        emb = decode_embedding(emb_blob, where="face_feedback.cluster_centroids", dim=dim)
         if emb is None:
             continue
         cluster_embs.setdefault(int(cid), []).append(emb)

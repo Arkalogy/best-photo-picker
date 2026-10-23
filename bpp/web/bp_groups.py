@@ -14,7 +14,7 @@ import json
 
 from flask import Blueprint, Response, jsonify, request
 
-from bpp.constants import ACTIVE_PHOTO_SQL
+from bpp.constants import ACTIVE_PHOTO_SQL, active_photo_sql
 from bpp.utils.logging import get_logger
 from bpp.web.state import get_ctx
 
@@ -23,6 +23,7 @@ log = get_logger(__name__)
 bp = Blueprint("groups", __name__)
 
 _ACTIVE = ACTIVE_PHOTO_SQL
+_P_ACTIVE = active_photo_sql("p")
 
 
 @bp.get("/api/v1/groups")
@@ -38,25 +39,24 @@ def api_groups() -> tuple[Response, int]:
     groups = detect_groups(conn, min_photos=min_photos)
 
     # Pre-load person album names: cluster_id -> name.
-    # P5b: indexed lookup via the v36 shadow column.
+    # Indexed lookup via the v36 shadow column.
     from bpp.db.albums import get_smart_person_cluster_name_map
 
     person_name_map = get_smart_person_cluster_name_map(conn)
 
-    # Batch-fetch all face embeddings for all group members (1 query instead of N)
+    # One query for every member's faces (face index, path, quality — the
+    # avatar pick needs no embedding, so none is fetched).
     all_cids = list({cid for g in groups for cid in g["members"]})
     cluster_faces_map: dict[int, list] = {cid: [] for cid in all_cids}
     if all_cids:
-        from bpp.constants import SQL_BATCH_SIZE
+        from bpp.db.sql_batches import in_batches
 
-        for i in range(0, len(all_cids), SQL_BATCH_SIZE):
-            batch = all_cids[i : i + SQL_BATCH_SIZE]
-            ph = ",".join("?" * len(batch))
+        for ph, batch in in_batches(all_cids):
             rows = conn.execute(
-                "SELECT fe.cluster_id, fe.face_index, p.filepath, fe.embedding, fe.quality "
+                "SELECT fe.cluster_id, fe.face_index, p.filepath, fe.quality "
                 "FROM face_embeddings fe "
                 "JOIN photos p ON p.id = fe.photo_id "
-                f"WHERE fe.cluster_id IN ({ph}) AND p.{_ACTIVE}",
+                f"WHERE fe.cluster_id IN ({ph}) AND {_P_ACTIVE}",
                 batch,
             ).fetchall()
             for r in rows:
@@ -83,8 +83,8 @@ def api_groups() -> tuple[Response, int]:
             if reps:
                 # Best-QUALITY crop for the avatar, not the centroid-closest
                 # one: the centroid pick surfaced junk crops (hands / blurry
-                # profiles / food misdetected as faces). fe.quality is r[4].
-                rep = max(reps, key=lambda r: r[4] if r[4] is not None else 0.0)
+                # profiles / food misdetected as faces). fe.quality is r[3].
+                rep = max(reps, key=lambda r: r[3] if r[3] is not None else 0.0)
                 face_index = rep[1]
                 if ctx.thumbs:
                     thumb_hash = ctx.thumbs.get_hash(rep[2]) or ""

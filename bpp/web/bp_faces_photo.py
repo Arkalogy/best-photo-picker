@@ -20,10 +20,15 @@ import os
 
 from flask import Blueprint, Response, jsonify, send_file
 
+from bpp.config import cfg_get
 from bpp.db.photos import get_photo_id_by_path
-from bpp.errors import BppError, NotFoundError
+from bpp.errors import NotFoundError
+from bpp.media_types import MediaKind, media_kind_from_path
+from bpp.utils import raw as raw_support
 from bpp.utils.logging import get_logger
+from bpp.web.box_crop import RawUnreadable
 from bpp.web.face_worker import generate_face_crop
+from bpp.web.media_support import crop_failure_error, raw_full_jpeg_path, raw_preview_error
 from bpp.web.state import get_ctx
 
 log = get_logger(__name__)
@@ -41,9 +46,22 @@ def _oriented_dims(filepath: str) -> tuple[int, int]:
     (slow on HEIC). Neither PIL nor pillow_heif applies orientation to
     ``.size``, so for the 90deg/270deg orientations (5-8) the transposed dims
     are simply the raw dims swapped — matching ``exif_transpose().size``
-    (parity pinned in tests/test_faces_photo_bbox_dims.py). Returns (0, 0)
-    when the file can't be read.
+    (parity pinned in tests/test_faces_photo_bbox_dims.py). A camera RAW
+    photo's dims come from its header, with the camera's flip applied
+    the way the RAW decoder applies it. Returns (0, 0) when the file
+    can't be read.
     """
+    if media_kind_from_path(filepath) is MediaKind.RAW:
+        try:
+            return raw_support.raw_dimensions(filepath)
+        except raw_support.RawSupportMissing:
+            return 0, 0  # warned once by the decoder
+        except Exception as e:
+            # Debug, not warning: the viewer's conversion of the same
+            # file already reports a damaged RAW once; this runs on
+            # every open.
+            log.debug("Could not read RAW header for bbox percentages: %s — %s", filepath, e)
+            return 0, 0
     try:
         from PIL import Image
 
@@ -112,14 +130,14 @@ def api_faces_for_photo(path_hash: str) -> tuple[Response, int]:
 
     # Compute detection image dimensions for percentage-based bbox.
     # Each face row records the detector input size it was extracted at
-    # (v40 / Bug #9 hardening). The bbox values are in that coordinate
+    # (v40 coordinate-space hardening). The bbox values are in that coordinate
     # space, so we reconstruct dimensions per row using the row's own
     # extraction_max_long_side, NOT the live config — a config change
     # mid-library would otherwise silently shift every stored overlay.
     # Pre-v40 rows have extraction_max_long_side=NULL; we fall back to
     # the current config and log once per request so the user knows
     # to re-extract for correctness.
-    current_max_long = ctx.config.get("max_long_side", 1024) if ctx.config else 1024
+    current_max_long = cfg_get(ctx.config, "max_long_side")
     orig_w, orig_h = _oriented_dims(filepath)
 
     def _detector_dims(row_max_long: int | None) -> tuple[int, int]:
@@ -216,25 +234,32 @@ def api_face_crop(path_hash: str, face_index: int) -> Response | tuple[Response,
 
     crop_dir = ctx.dirs["face_crops"]
     os.makedirs(crop_dir, exist_ok=True)
-    # Use the detector size the row was extracted at (v40 / Bug #9).
+    # Use the detector size the row was extracted at (v40).
     # Pre-v40 rows have NULL → fall back to current config.
     max_long_side = row["extraction_max_long_side"]
     if max_long_side is None:
-        max_long_side = ctx.config.get("max_long_side", 1024)
+        max_long_side = cfg_get(ctx.config, "max_long_side")
 
     # Extract just the bbox columns — generate_face_crop expects a 4-tuple.
     # The full row also carries extraction_max_long_side (added in v40),
     # which would crash the (bx, by, bw, bh) unpack inside the helper.
     bbox = (row["bbox_x"], row["bbox_y"], row["bbox_w"], row["bbox_h"])
-    crop_path = generate_face_crop(filepath, bbox, crop_dir, path_hash, face_index, max_long_side)
+    try:
+        crop_path = generate_face_crop(
+            filepath,
+            bbox,
+            crop_dir,
+            path_hash,
+            face_index,
+            max_long_side,
+            raw_full_jpeg=raw_full_jpeg_path(ctx, path_hash),
+        )
+    except RawUnreadable:
+        raise raw_preview_error(path_hash, filepath, face_index=face_index) from None
     if crop_path is None:
-        raise BppError(
-            "Failed to generate crop",
-            user_message="Failed to generate crop",
-            diagnostic_message=(
-                f"generate_face_crop returned None for {filepath} face_index={face_index}"
-            ),
-            path_hash=path_hash,
+        raise crop_failure_error(
+            path_hash,
+            f"generate_face_crop returned None for {filepath} face_index={face_index}",
             face_index=face_index,
         )
 

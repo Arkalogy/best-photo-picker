@@ -68,6 +68,7 @@ window.selectedFaceIds = new Set();
 window.faceRecognitionAvailable = false;
 window.faceInstallable = false;
 window.nudenetAvailable = false;
+window.nudenetActive = false;
 window.petsAvailable = false;
 window.currentAlbumId = null;
 window.albumList = [];
@@ -183,19 +184,34 @@ function _startAutoReconnect() {
 }
 
 async function _pollUntilServerBack() {
-  // Poll "/" (auth-exempt) because after server restart the auth token
-  // changes — /api/status would return 403 with the stale token.
-  // A successful fetch of "/" means the server is alive; reload gets
-  // the fresh token from the re-rendered index page.
+  // Poll /boot-check (answers without a token; the index page is 403
+  // on a locked server, so it would never read as "back"). Any answer
+  // means something listens; the reload goes through only once that
+  // listener proves it is our server (boot-proof.mjs).
   while (_serverDownPolling) {
     await new Promise(r => setTimeout(r, 2000));
     try {
-      const r = await fetch("/", {signal: AbortSignal.timeout(3000)});
-      if (r.ok) {
-        _serverDownPolling = false;
-        _healthFailures = 0;
-        location.reload();
-        return;
+      const alive =
+        typeof window.somethingListens === "function"
+          ? await window.somethingListens()
+          : (await fetch("/boot-check", {signal: AbortSignal.timeout(3000)})) !== null;
+      if (alive) {
+        // Something answers again. The reload carries the boot key only
+        // if the listener proves it is our server (boot-proof.mjs,
+        // bridged onto window); otherwise the key is forgotten first.
+        if (typeof window.reloadSafely !== "function") {
+          _serverDownPolling = false;
+          _healthFailures = 0;
+          location.reload();
+          return;
+        }
+        if (await window.reloadSafely()) {
+          _serverDownPolling = false;
+          _healthFailures = 0;
+          return;
+        }
+        // Something else answers on the port: keep waiting for our
+        // server (the message comes from the bpp:foreign-listener event).
       }
     } catch {}
   }
@@ -204,7 +220,26 @@ async function _pollUntilServerBack() {
 // ── Cmd+R / Ctrl+R / F5 reload (Tauri webview doesn't handle natively) ──
 document.addEventListener("keydown", (e) => {
   if (((e.metaKey || e.ctrlKey) && e.key === "r") || e.key === "F5") {
-    e.preventDefault(); location.reload();
+    e.preventDefault();
+    if (typeof window.reloadSafely === "function") window.reloadSafely();
+    else location.reload();
+  }
+});
+
+// A listener on the port that is not our server: say so instead of
+// loading its page (boot-proof.mjs refuses the navigation).
+let _foreignListenerToldAt = 0;
+window.addEventListener("bpp:foreign-listener", () => {
+  const port = location.port || "5001";
+  const msg =
+    `Something else is answering on port ${port}. Waiting for Best Photo Picker; ` +
+    "if you restarted the server yourself, open the new link it printed.";
+  const inner = document.querySelector("#server-down-overlay .server-down-inner p");
+  if (inner) inner.textContent = msg;
+  // The poll asks every two seconds; the toast once a minute.
+  if (Date.now() - _foreignListenerToldAt > 60000 && typeof toast === "function") {
+    _foreignListenerToldAt = Date.now();
+    toast(msg, "warning");
   }
 });
 
@@ -250,7 +285,7 @@ document.addEventListener("click", function _bppDispatch(e) { if (!e || !e.targe
   if ("preventDefault" in el.dataset) e.preventDefault();
   var name = el.dataset.action;
   if (!name) return;
-  // P8: consult the typed action registry FIRST. Fall back to window[name]
+  // Consult the typed action registry FIRST. Fall back to window[name]
   // during the deprecation window so the ~245 unmigrated handlers still
   // resolve. Once a handler is in the registry, its window.X = X bridge
   // can be deleted. ``?? undefined`` instead of ``|| undefined`` so a
@@ -278,6 +313,16 @@ document.addEventListener("change", function _bppChangeDispatch(e) { if (!e || !
   fn.call(el, el.value, e);
 });
 document.addEventListener("keydown", function _bppKeydownDispatch(e) { if (!e || !e.target) return; var _t = typeof e.target.closest === "function" ? e.target : (e.target.parentElement || null); if (!_t) return;
+  // An element acting as a button (photo cards, sidebar rows, the zoom
+  // icons: data-key-activate + data-action) activates on Enter / Space
+  // like a real one. Only when the key lands on that element itself — a
+  // button inside it keeps its own — and not when it has its own keydown
+  // handler. A dispatched click, not .click(): SVG elements have none.
+  if ((e.key === "Enter" || e.key === " ") && _t.matches("[data-key-activate][data-action]") && !_t.hasAttribute("data-onkeydown")) {
+    e.preventDefault();
+    _t.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    return;
+  }
   var el = _t.closest("[data-onkeydown]");
   if (!el) return;
   var fn = window[el.dataset.onkeydown];
@@ -324,7 +369,6 @@ document.addEventListener("touchend", function _bppTouchendDispatch(e) { if (!e 
 window._toggleSettingTip = function() {
   this.closest(".setting-item").classList.toggle("tip-open");
 };
-window._bppReload = function() { location.reload(); };
 window._bppThisSelect = function() { this.select(); };
 window._openShareTab = function() { switchSettingsTab("share"); _renderShareTab(); };
 window._openActivityTab = function() { switchSettingsTab("activity"); _renderActivityTab(); };

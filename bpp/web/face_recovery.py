@@ -28,14 +28,19 @@ tests still import them via ``bpp.web.face_worker``).
 from __future__ import annotations
 
 import sqlite3
+from typing import Any
 
+from bpp.config import cfg_get
+from bpp.errors import BppError
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
 
 
-def recover_pending_face_extractions(conn: sqlite3.Connection) -> int:
-    """P3.5 — replay every pending row in face_extraction_journal.
+def recover_pending_face_extractions(
+    conn: sqlite3.Connection, *, ctx: Any = None, cancel_event: Any = None
+) -> int:
+    """Replay every pending row in face_extraction_journal.
 
     Called from ``state_lifecycle.startup`` after the operation_journal
     recovery has run. Each pending row's run_id is passed back into
@@ -50,7 +55,7 @@ def recover_pending_face_extractions(conn: sqlite3.Connection) -> int:
     left in place and recovery re-fires on the next startup. A
     persistent failure (corrupted journal, unloadable analysis) gets
     a WARNING log; the row stays pending until the user manually
-    completes face extraction via Settings → Faces → Retry.
+    re-runs face extraction (analyze menu → Re-extract faces).
     """
     from bpp.web import face_extraction_journal as journal
     from bpp.web.face_worker import extract_and_cluster_faces
@@ -60,10 +65,19 @@ def recover_pending_face_extractions(conn: sqlite3.Connection) -> int:
     if not pending:
         return 0
 
+    from bpp.scoring.install_hold import held_keys
+
+    if held_keys():
+        # Installed from the app, waiting for the restart (a library switch
+        # before it): face code isn't loaded until then. Resume after the
+        # restart, without spending any run's retries.
+        log.info("Recovery: %d face extraction run(s) wait for the restart", len(pending))
+        return 0
+
     resumed = 0
     for entry in pending:
         run_id = entry["run_id"]
-        # T0.4: bound retry attempts so a deterministic failure
+        # Bound retry attempts so a deterministic failure
         # (corrupt snapshot, unrecoverable phase-7 crash) doesn't loop
         # on every server restart forever. Pre-check before incrementing
         # so the count reflects "attempts so far," not "this attempt."
@@ -72,7 +86,7 @@ def recover_pending_face_extractions(conn: sqlite3.Connection) -> int:
             log.warning(
                 "Recovery: run %s exceeded MAX_RECOVERY_RETRIES (%d). "
                 "Force-completing with GAVE_UP_SENTINEL so future startups "
-                "skip it. User can re-run via Settings → Faces → Retry.",
+                "skip it. User can re-run it from the analyze menu → Re-extract faces.",
                 run_id,
                 journal.MAX_RECOVERY_RETRIES,
             )
@@ -80,7 +94,7 @@ def recover_pending_face_extractions(conn: sqlite3.Connection) -> int:
             continue
 
         try:
-            ctx = get_ctx_or_none()
+            ctx = ctx or get_ctx_or_none()  # the recovery thread passes it in
             if ctx is None:
                 log.warning(
                     "Recovery: no live ctx; leaving face_extraction_journal "
@@ -106,23 +120,51 @@ def recover_pending_face_extractions(conn: sqlite3.Connection) -> int:
             from bpp.db.photos import get_photo_id_map_by_paths
 
             photo_map = get_photo_id_map_by_paths(conn, [a["filepath"] for a in with_faces])
-            max_long_side = ctx.config.get("max_long_side", 1024)
-            face_conf = float(ctx.config.get("face_detection_confidence", 0.3))
+            max_long_side = cfg_get(ctx.config, "max_long_side")
+            face_conf = float(cfg_get(ctx.config, "face_detection_confidence"))
             # Increment BEFORE the attempt so a crash mid-attempt still
             # counts. The next startup sees the incremented count and
             # gets one fewer retry.
+            if cancel_event is not None and cancel_event.is_set():
+                log.info("Recovery: stopping before run %s (shutdown or library switch)", run_id)
+                break
             journal.increment_retry_count(conn, run_id)
-            extract_and_cluster_faces(
-                conn,
-                with_faces,
-                photo_map,
-                max_long_side,
-                face_conf,
-                dict(ctx.config),
-                resume_run_id=run_id,
-            )
+            try:
+                extract_and_cluster_faces(
+                    conn,
+                    with_faces,
+                    photo_map,
+                    max_long_side,
+                    face_conf,
+                    dict(ctx.config),
+                    cancel_event=cancel_event,
+                    resume_run_id=run_id,
+                )
+            finally:
+                # Clusters may have changed off a request thread, even
+                # on a cancel or crash after the early phases committed:
+                # the grid and pick paths must not keep the old map.
+                if ctx is not None:
+                    ctx.invalidate_face_cluster_map()
+            if (
+                cancel_event is not None
+                and cancel_event.is_set()
+                and any(r["run_id"] == run_id for r in journal.pending_runs(conn))
+            ):
+                log.info(
+                    "Recovery: run %s stopped before completion (shutdown or library switch); "
+                    "it stays pending",
+                    run_id,
+                )
+                # Not a failed attempt: the stop was ours.
+                journal.decrement_retry_count(conn, run_id)
+                break
             resumed += 1
             log.info("Recovery: resumed face extraction run %s to completion", run_id)
+        except BppError as e:
+            # A deliberate stop (model changed or unavailable), not a crash.
+            log.warning("Recovery: face extraction run %s stopped: %s", run_id, e.user_message)
+            _mark_resume_failed(ctx)
         except Exception:
             log.warning(
                 "Recovery: face extraction run %s failed mid-resume "
@@ -132,7 +174,24 @@ def recover_pending_face_extractions(conn: sqlite3.Connection) -> int:
                 journal.MAX_RECOVERY_RETRIES,
                 exc_info=True,
             )
+            _mark_resume_failed(ctx)
     return resumed
+
+
+def _mark_resume_failed(ctx: Any) -> None:
+    """A run that didn't resume is a failed resume as far as
+    /api/v1/health is concerned (the row stays pending; retries count).
+    Only the thread the store still owns may say so: a resume that
+    outlived a library switch must not flag the next library."""
+    import threading
+
+    store = getattr(ctx, "analysis_store", None)
+    if store is None:
+        return
+    owner = getattr(store, "face_recovery_thread", None)
+    if owner is not None and owner is not threading.current_thread():
+        return
+    store.face_recovery_failed = True
 
 
 def register_face_clustering_recovery() -> None:
@@ -153,22 +212,28 @@ def register_face_clustering_recovery() -> None:
         log.info(
             "Recovering interrupted face clustering — re-running identity + smart-album refresh"
         )
+        ok = True
         try:
             _reconstruct_identities(conn)
         except Exception:
             log.warning("_reconstruct_identities during recovery failed", exc_info=True)
+            ok = False
         try:
             from bpp.db.smart_albums import get_affected_album_types, refresh_smart_albums
 
-            # L5: same scope as the post-clustering refresh in
+            # Same scope as the post-clustering refresh in
             # _extract_faces — only cluster-state-derived kinds.
             refresh_smart_albums(
                 conn,
                 kinds=get_affected_album_types("face_cluster"),
             )
         except Exception:
+            # The albums refresh again on the next refresh pass; the
+            # identity work above is what the journal row guards.
             log.warning("refresh_smart_albums during recovery failed", exc_info=True)
-        return True
+        # False keeps the journal row pending for the next startup
+        # instead of logging "Recovered" over a failed reconstruction.
+        return ok
 
     register_recovery_handler("face_clustering", _recover, replace=True)
 
@@ -196,7 +261,7 @@ def register_face_extraction_retry_recovery(library_path: str | None = None) -> 
     right answer there because deleting the breadcrumb would silently
     lose the "face data is in a half-state" signal.
 
-    P1 — ``library_path`` (optional, but passed by the state lifecycle):
+    ``library_path`` (optional, but passed by the state lifecycle):
     when provided, the handler is wrapped with
     :func:`bpp.db.journal.library_bound_recovery` so a switch_library
     between registration and recovery refuses to fire the wrong
@@ -231,7 +296,13 @@ def register_face_extraction_retry_recovery(library_path: str | None = None) -> 
             # gets cleared by the worker's own success path.
             log.info("Recovery: face worker already running; skipping re-fire")
             return True
-        started = ctx.face_worker.start(analysis, ctx.db_path(), ctx.config)
+        from bpp.errors import ConflictError
+
+        try:
+            started = ctx.face_worker.start(analysis, ctx.db_path(), ctx.config)
+        except ConflictError as e:  # an install runs, or waits for a restart
+            log.info("Recovery: %s; leaving entry for later", e)
+            return False
         if not started:
             log.warning("Recovery: face_worker.start returned False; leaving entry")
             return False

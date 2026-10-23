@@ -14,7 +14,9 @@ from bpp.db.connection import init_db
 from bpp.scoring.clip_embed import (
     compute_clip_embedding_from_file,
     ensure_model,
+    visual_model_problem,
 )
+from bpp.scoring.install_hold import refuse_if_held
 from bpp.utils.logging import get_logger
 from bpp.web.base_worker import BackgroundWorker
 
@@ -134,6 +136,9 @@ def register_clip_extraction_recovery() -> None:
 class ClipWorker(BackgroundWorker):
     """Computes CLIP embeddings in a background thread."""
 
+    # The CLIP model runs on onnxruntime.
+    loads_installable_packages = True
+
     _worker_name = "CLIP extraction"
 
     def start(
@@ -164,6 +169,15 @@ class ClipWorker(BackgroundWorker):
                     "message": "CLIP model download failed. Check server logs for details.",
                 }
             )
+            return
+        # Loaded once here, not found missing photo by photo (every
+        # embedding would silently come back empty: "done, 0 computed").
+        problem = visual_model_problem()
+        if problem is not None:
+            # Its runtime was just installed: "restart", not "failed".
+            refuse_if_held("onnxruntime")
+            log.error("CLIP model unavailable: %s", problem)
+            self._emit({"type": "error", "message": f"Smart search indexing stopped: {problem}."})
             return
 
         conn = init_db(db_path)

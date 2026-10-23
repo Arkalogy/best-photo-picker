@@ -1,4 +1,4 @@
-"""R8-H12d: public face detector + embedder registries.
+"""Public face detector + embedder registries.
 
 The face detection pipeline used to expose only a private
 ``_DETECTORS`` dict — plugin authors couldn't introspect the
@@ -23,7 +23,8 @@ class TestFaceDetectorRegistry:
         assert d is not None
         assert d.name == "yunet"
         assert d.toggle_key == "model_yunet"
-        assert d.license_id
+        assert d.registry_id == "opencv_yunet"
+        assert d.license_label == "Apache 2.0"
 
     def test_scrfd_registered(self):
         import bpp.scoring.face  # noqa: F401
@@ -66,7 +67,7 @@ class TestFaceDetectorRegistry:
                 name="__test_dup__",
                 detect=_stub_detect,
                 toggle_key=None,
-                license_id="MIT",
+                registry_id="opencv_yunet",
             )
         )
         first = get_detector("__test_dup__")
@@ -75,12 +76,12 @@ class TestFaceDetectorRegistry:
                 name="__test_dup__",
                 detect=_stub_detect,
                 toggle_key=None,
-                license_id="Apache-2.0",
+                registry_id="insightface_scrfd_25g",
             )
         )
         second = get_detector("__test_dup__")
         assert second is not first
-        assert second.license_id == "Apache-2.0"
+        assert second.registry_id == "insightface_scrfd_25g"
 
     def test_run_optional_detector_invokes_registered(self):
         from bpp.scoring.face_detector_registry import (
@@ -100,7 +101,7 @@ class TestFaceDetectorRegistry:
                 name="__test_spy__",
                 detect=_spy,
                 toggle_key=None,
-                license_id="MIT",
+                registry_id="opencv_yunet",
             )
         )
 
@@ -132,7 +133,7 @@ class TestFaceEmbedderRegistry:
         sface = get_embedder("sface")
         assert sface is not None
         assert sface.embedding_dim == 128
-        assert sface.license_id
+        assert sface.registry_id == "sface_yunet"
 
     def test_dlib_registered(self):
         import bpp.scoring.face_embed  # noqa: F401
@@ -161,7 +162,7 @@ class TestFaceEmbedderRegistry:
         assert result is None
 
 
-# ─── R9-extensibility-M3: registration emits a debug-log breadcrumb ──
+# ─── Registration emits a debug-log breadcrumb ──
 
 
 class TestRegistrationLogs:
@@ -181,14 +182,14 @@ class TestRegistrationLogs:
                 FaceDetector(
                     name="__r9_log_test_detector__",
                     detect=lambda img, conf: [],
-                    license_id="MIT",
+                    registry_id="opencv_yunet",
                     description="test",
                 )
             )
 
         msg = " ".join(rec.message for rec in caplog.records)
         assert "__r9_log_test_detector__" in msg
-        assert "MIT" in msg
+        assert "opencv_yunet" in msg
 
     def test_register_embedder_emits_debug(self, caplog):
         import numpy as np
@@ -207,7 +208,7 @@ class TestRegistrationLogs:
                     name="__r9_log_test_embedder__",
                     embed=_embed,
                     embedding_dim=128,
-                    license_id="Apache-2.0",
+                    registry_id="sface_yunet",
                 )
             )
 

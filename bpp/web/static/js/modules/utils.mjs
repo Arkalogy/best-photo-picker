@@ -11,13 +11,13 @@
  * looked up on `window`.
  */
 
-import { _authToken, apiFetch, authEventSource } from "./api-client.mjs";
+import { apiFetch, authEventSource } from "./api-client.mjs";
 import { appConfirm } from "./dialogs.mjs";
 import { reviewSensitiveBeforeExport } from "./sensitive.mjs";
 import { esc, escapeJsAttr } from "./text-format.mjs";
 import { toast, toastError } from "./toast.mjs";
 
-// L-S3: large exports (100+ photos with format conversion) used to run
+// Large exports (100+ photos with format conversion) used to run
 // synchronously inside the Flask request — the UI showed nothing for
 // 30-60s and looked frozen. Above this threshold the export modal now
 // switches to the streaming worker path (/api/v1/export/start +
@@ -36,7 +36,7 @@ const _EXPORT_STREAM_THRESHOLD = 25;
  *
  * @param {Record<string, any>} body
  * @param {HTMLElement | null} statusEl
- * @returns {Promise<{count: number, failed: number, outdir: string, disk_error: any}>}
+ * @returns {Promise<{count: number, failed: number, outdir: string, disk_error: any, metadata_kept: number, cancelled?: boolean}>}
  */
 async function _streamExport(body, statusEl) {
   // 1) Kick off the worker; 202 means streaming has begun.
@@ -71,8 +71,20 @@ async function _streamExport(body, statusEl) {
           failed: msg.failed,
           outdir: msg.outdir,
           disk_error: msg.disk_error,
+          metadata_kept: msg.metadata_kept || 0,
         });
-      } else if (msg.type === "error" || msg.type === "cancelled") {
+      } else if (msg.type === "cancelled") {
+        // A stop, not a failure: the photos written so far are kept.
+        es.close();
+        resolve({
+          count: msg.count || 0,
+          failed: 0,
+          outdir: msg.outdir,
+          disk_error: null,
+          metadata_kept: 0,
+          cancelled: true,
+        });
+      } else if (msg.type === "error") {
         es.close();
         reject(new Error(msg.message || msg.type));
       }
@@ -147,7 +159,7 @@ export async function doExport() {
     return;
   }
 
-  // Sensitive-photo review gate (P0): runs BEFORE the busy state flips
+  // Sensitive-photo review gate: runs BEFORE the busy state flips
   // on, so a cancel leaves the export modal exactly as it was. A
   // selection with no flagged photos passes through with no dialog.
   const _allPaths = win.getExportPaths ? [...win.getExportPaths()] : [];
@@ -197,7 +209,7 @@ export async function doExport() {
   };
   if (maxSizeVal) body.max_size = parseInt(maxSizeVal, 10);
 
-  // L-S3: stream large exports so the user sees per-photo progress
+  // Stream large exports so the user sees per-photo progress
   // instead of a 30-60s blank pause. Small batches keep the
   // synchronous path — same return shape, no UI flicker.
   const useStreaming = exportPaths.length >= _EXPORT_STREAM_THRESHOLD;
@@ -237,8 +249,14 @@ export async function doExport() {
   if (cancelBtn) cancelBtn.textContent = "Done";
   _armPostSuccessRevert();
 
-  let msg = `Exported ${data.count} photo${data.count !== 1 ? "s" : ""}`;
+  let msg = data.cancelled
+    ? `Export stopped after ${data.count} photo${data.count !== 1 ? "s" : ""}`
+    : `Exported ${data.count} photo${data.count !== 1 ? "s" : ""}`;
   if (data.failed > 0) msg += ` (${data.failed} failed)`;
+  // Videos (never re-encoded) and linked files keep their metadata: say
+  // so rather than let a "metadata removed" export quietly ship some.
+  const kept = data.metadata_kept || 0;
+  if (kept > 0) msg += ` — ${kept} file${kept !== 1 ? "s" : ""} kept metadata`;
   if (statusEl) {
     statusEl.innerHTML =
       `<span class="export-result-msg">${esc(msg)}</span>` +
@@ -265,7 +283,7 @@ export async function doExport() {
     // conversion error) — surface a 'View log' shortcut. The per-photo
     // details are in Settings → Activity; without this affordance the
     // user has nowhere to go from a 'N failed' toast. Matches the
-    // pattern Bug #8 (activity-log warning toast) and the window
+    // pattern the activity-log warning toast and the window
     // onerror handler in app.mjs use.
     toast(`${data.failed} photo${data.failed !== 1 ? "s" : ""} failed to export`, "error", { /* toast-ok: summary, not an error pattern */
       action: {
@@ -342,16 +360,11 @@ export async function clearLibrary() {
     btn.classList.remove("enabled");
   }
   try {
-    const resp = await fetch("/api/v1/library", {
+    const data = await apiFetch("/api/v1/library", {
       method: "DELETE",
-      headers: { "Content-Type": "application/json", "X-Auth-Token": _authToken },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ confirmation: "delete" }),
     });
-    const data = await resp.json();
-    if (!resp.ok) {
-      toast(data.error || "Failed to clear", true);
-      return;
-    }
     win.hideSettings?.();
     toast(`Cleared: ${data.photos_deleted} photos removed`);
     inp.value = "";

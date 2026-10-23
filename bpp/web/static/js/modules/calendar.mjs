@@ -12,8 +12,10 @@
  * `updateBreadcrumbs`, `saveNavState`, `renderGrid`).
  */
 
+import { anyDialogOpen } from "./dialog-focus.mjs";
 import { apiFetch } from "./api-client.mjs";
 import { viewFetch } from "./view-guard.mjs";
+import { fetchAllPages } from "./paging.mjs";
 import { MONTHS_FULL } from "./date-format.mjs";
 import { renderGridFromItems } from "./memories.mjs";
 import { toast, toastError } from "./toast.mjs";
@@ -255,8 +257,13 @@ export function calendarKeyHandler(e) {
   /** @type {any} */
   const win = window;
   if (win.currentView !== "calendar") return;
+  if (_calKeysBelongElsewhere(e, win)) return;
 
   if (e.key === "Escape") {
+    // Only when there is a day focus or selection to clear; otherwise
+    // the key is left to whoever is listening after the calendar.
+    const focused = _calFocusDay !== null || document.querySelector(".cal-cell.cal-focused");
+    if (!focused && !getCalSelStart()) return;
     // Sibling bubble handlers (slideshow, compare) don't get to also
     // process this ESC. Dialog (capture phase) runs first.
     e.stopImmediatePropagation();
@@ -300,6 +307,21 @@ export function calendarKeyHandler(e) {
 }
 
 /**
+ * The calendar's keys are for its grid: not while typing in a field, not
+ * while the lightbox (opened from a day) or a dialog is over it.
+ * @param {KeyboardEvent} e
+ * @param {any} win
+ */
+function _calKeysBelongElsewhere(e, win) {
+  const t = /** @type {HTMLElement | null} */ (e.target);
+  if (t && (t.matches?.("input, textarea, select, [contenteditable]") || t.isContentEditable)) {
+    return true;
+  }
+  if (typeof win.lightboxIdx === "number" && win.lightboxIdx >= 0) return true;
+  return anyDialogOpen();
+}
+
+/**
  * @param {number} day
  */
 function _calHighlight(day) {
@@ -324,7 +346,7 @@ export async function calendarOpenDay(dateStr) {
   /** @type {any} */
   const win = window;
   try {
-    const data = await viewFetch(`/api/v1/calendar/photos?date=${dateStr}`);
+    const data = await viewFetch(`/api/v1/calendar/photos?date=${dateStr}&limit=1000&offset=0`);
     if (!data) return; // user switched away mid-fetch
     if (!data.photos || data.photos.length === 0) {
       toast("No photos for this date");
@@ -347,6 +369,21 @@ export async function calendarOpenDay(dateStr) {
     win.currentGridItems = dayPhotos;
     win.currentView = "calendar_day";
     win.currentViewId = dateStr;
+    if (data.has_more) {
+      fetchAllPages(`/api/v1/calendar/photos?date=${dateStr}`, {
+        pageSize: 1000,
+        startOffset: dayPhotos.length,
+        stillWanted: () => win.currentView === "calendar_day" && win.currentViewId === dateStr,
+        onPage: (page) => {
+          const more = page.map((p) => photoMap.get(p.filepath) || {
+            id: p.id, filepath: p.filepath, thumb_hash: p.hash, date: p.date,
+            aggregate_score: p.score || 0, filename: p.filename,
+          });
+          dayPhotos.push(...more);
+          win.vgrid?.appendItems?.(more);
+        },
+      }).catch((e) => toastError("load the rest of that day", e));
+    }
     win.hide?.("calendar-view");
     win.show?.("photo-grid");
     const d = new Date(dateStr + "T00:00:00");
@@ -356,7 +393,8 @@ export async function calendarOpenDay(dateStr) {
       day: "numeric",
       year: "numeric",
     });
-    win.updateToolbarTitle?.(title, `${dayPhotos.length} photos`);
+    const total = typeof data.total === "number" ? data.total : dayPhotos.length;
+    win.updateToolbarTitle?.(title, `${total} photos`);
     win.updateBreadcrumbs?.(title, "Calendar", "navigateToCalendar()");
     win.updateToolbarForView?.();
     renderGridFromItems(dayPhotos);
@@ -380,6 +418,7 @@ export function _getCalState() {
     selStart: getCalSelStart(),
     selEnd: getCalSelEnd(),
     weekStart: _calWeekStart,
+    focusDay: _calFocusDay,
   };
 }
 

@@ -43,6 +43,13 @@ _ALLOWLIST = (
     ("storage.googleapis.com", "model-download", "Model downloads"),
     ("github.com/ultralytics", "model-download", "Model downloads"),
     ("openaipublic.azureedge.net", "model-download", "Model downloads"),
+    # Opt-in model downloads (NudeNet, buffalo_s, LaMa re-host).
+    ("raw.githubusercontent.com/notAI-tech", "model-download", "Model downloads"),
+    ("github.com/deepinsight", "model-download", "Model downloads"),
+    ("github.com/enesmsahin", "model-download", "Model downloads"),
+    # Signed remote-registry overlay — fetched at `import bpp` in every
+    # process. README "Model registry check" bullet.
+    ("arkalogy.github.io", "registry-check", "Model registry check"),
     # Update check (background; toggleable) — README "Update check"
     # bullet.
     ("api.github.com", "update-check", "Update check"),
@@ -97,9 +104,16 @@ _SOURCE_FILES = (
     REPO_ROOT / "bpp" / "scoring" / "clip_embed.py",
     REPO_ROOT / "bpp" / "scoring" / "clip_tokenizer.py",
     REPO_ROOT / "bpp" / "web" / "update_checker.py",
+    REPO_ROOT / "bpp" / "scoring" / "face_yunet.py",
+    REPO_ROOT / "bpp" / "scoring" / "face_embed_sface_runtime.py",
+    REPO_ROOT / "bpp" / "scoring" / "face_embed_buffalo_s.py",
+    REPO_ROOT / "bpp" / "scoring" / "nudity.py",
+    REPO_ROOT / "bpp" / "ai" / "inpainting.py",
+    REPO_ROOT / "bpp" / "registry" / "remote_registry.py",
     # JS: Map + lightbox tile layers
     REPO_ROOT / "bpp" / "web" / "static" / "js" / "modules" / "map.mjs",
     REPO_ROOT / "bpp" / "web" / "static" / "js" / "modules" / "lightbox.mjs",
+    REPO_ROOT / "bpp" / "web" / "static" / "js" / "modules" / "lightbox-info.mjs",
 )
 
 _URL_RE = re.compile(r"https?://([A-Za-z0-9.\-]+)(/[^\s\"')\}]*)?")

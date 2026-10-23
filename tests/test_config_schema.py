@@ -1,4 +1,4 @@
-"""R8-H12c: ConfigSchema validates Config.set() at write time.
+"""ConfigSchema validates Config.set() at write time.
 
 Before: ``ctx.config.set("face_detection_confidence", -42)`` was
 accepted and stored verbatim. Downstream readers got a negative
@@ -206,7 +206,7 @@ class TestIntegrationWithConfigSet:
         assert cfg.get("__plugin_only_key__") == "anything"
 
 
-# ─── R9-extensibility-M1: load_config validates YAML keys ─────────────
+# ─── load_config validates YAML keys ─────────────
 
 
 class TestLoadConfigValidatesYAML:

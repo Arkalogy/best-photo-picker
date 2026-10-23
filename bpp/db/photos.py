@@ -6,7 +6,8 @@ import os
 import sqlite3
 from typing import Any
 
-from bpp.constants import ACTIVE_PHOTO_SQL, SQL_BATCH_SIZE, visible_photo_conditions
+from bpp.constants import ACTIVE_PHOTO_SQL, visible_photo_conditions
+from bpp.db.sql_batches import in_batches
 from bpp.scoring.registry import get_score_db_columns
 from bpp.utils.logging import get_logger
 from bpp.utils.retry import retry_io
@@ -215,17 +216,20 @@ def get_photo_id_by_path(conn: sqlite3.Connection, filepath: str) -> int | None:
     return row[0] if row else None
 
 
-def get_photo_id_map_by_paths(conn: sqlite3.Connection, filepaths: list[str]) -> dict[str, int]:
-    """Resolve filepaths to a {filepath: photo_id} map in batched queries."""
+def get_photo_id_map_by_paths(
+    conn: sqlite3.Connection, filepaths: list[str], *, binned: bool | None = None
+) -> dict[str, int]:
+    """Resolve filepaths to a {filepath: photo_id} map in batched queries.
+
+    ``binned=True`` keeps only rows in the recycle bin (the rows a
+    permanent delete may name), ``False`` only live rows, ``None`` all."""
     if not filepaths:
         return {}
+    where = {True: " AND deleted_at IS NOT NULL", False: " AND deleted_at IS NULL", None: ""}
     result: dict[str, int] = {}
-    batch_size = SQL_BATCH_SIZE
-    for i in range(0, len(filepaths), batch_size):
-        batch = filepaths[i : i + batch_size]
-        placeholders = ",".join("?" * len(batch))
+    for placeholders, batch in in_batches(filepaths):
         rows = conn.execute(
-            f"SELECT filepath, id FROM photos WHERE filepath IN ({placeholders})",
+            f"SELECT filepath, id FROM photos WHERE filepath IN ({placeholders}){where[binned]}",
             batch,
         ).fetchall()
         for r in rows:
@@ -242,10 +246,7 @@ def get_photo_ids_by_paths(conn: sqlite3.Connection, filepaths: list[str]) -> li
     if not filepaths:
         return []
     ids: list[int] = []
-    batch_size = SQL_BATCH_SIZE
-    for i in range(0, len(filepaths), batch_size):
-        batch = filepaths[i : i + batch_size]
-        placeholders = ",".join("?" * len(batch))
+    for placeholders, batch in in_batches(filepaths):
         rows = conn.execute(
             f"SELECT id FROM photos WHERE filepath IN ({placeholders})",
             batch,
@@ -309,35 +310,6 @@ def get_photos_page(
     return [dict(r) for r in rows]
 
 
-def update_scores(conn: sqlite3.Connection, filepath: str, scores: dict[str, Any]) -> None:
-    """Update score columns for a photo."""
-    allowed = {*_SCORE_COLUMNS, "cluster_size"}
-    updates = {k: v for k, v in scores.items() if k in allowed}
-    if not updates:
-        return
-    set_clause = ", ".join(f"{k}=?" for k in updates)
-    conn.execute(
-        f"UPDATE photos SET {set_clause} WHERE filepath=?",
-        [*updates.values(), filepath],
-    )
-    conn.commit()
-
-
-def update_hashes(
-    conn: sqlite3.Connection, filepath: str, phash: int | None, ahash: int | None
-) -> None:
-    """Persist perceptual hashes (phash, ahash) for a photo by filepath.
-
-    Used by the background dedup pass to fill in hashes lazily after
-    initial analyze. Pass None for either if computation failed.
-    """
-    conn.execute(
-        "UPDATE photos SET phash=?, ahash=? WHERE filepath=?",
-        (phash, ahash, filepath),
-    )
-    conn.commit()
-
-
 def bulk_upsert_photos(conn: sqlite3.Connection, photos: list[dict[str, Any]]) -> int:
     """Batch upsert photos in a single transaction. Returns count inserted/updated."""
     if not photos:
@@ -356,8 +328,21 @@ def bulk_upsert_photos(conn: sqlite3.Connection, photos: list[dict[str, Any]]) -
     # wiped deliberately (re-hash + the live-photo no-ghost-row chain
     # depends on it; see analyze-worker seam docs).
     _PRESERVE_ON_UPDATE = {"dup_cluster_id", "moment_cluster_id", "moment_size", "cluster_size"}
+    # Provenance the import wrote and a scoring row never carries: kept
+    # unless the caller gives a value (sha256, import_batch), or never
+    # rewritten by an upsert at all (original_filename: the name the
+    # photo arrived with), or a re-analyze would blank the hashes the
+    # duplicate check and relocation rely on.
+    _KEEP_WHEN_ABSENT = {"sha256", "import_batch"}
+    _PRESERVE_ON_UPDATE = _PRESERVE_ON_UPDATE | {"original_filename"}
     updates = ", ".join(
-        f"{c}=excluded.{c}" for c in cols if c != "filepath" and c not in _PRESERVE_ON_UPDATE
+        (
+            f"{c}=COALESCE(excluded.{c}, photos.{c})"
+            if c in _KEEP_WHEN_ABSENT
+            else f"{c}=excluded.{c}"
+        )
+        for c in cols
+        if c != "filepath" and c not in _PRESERVE_ON_UPDATE
     )
     sql = (
         f"INSERT INTO photos ({', '.join(cols)}) VALUES ({placeholders})"
@@ -469,9 +454,12 @@ def get_photo_count(conn: sqlite3.Connection, include_missing: bool = False) -> 
     return row[0]
 
 
+# Per-photo column writers (scores, perceptual hashes) live in
+# photos_updates.py. Re-exported here.
 # Date-keyed queries + update_photo_date moved to photos_dates.py
 # during the 500-LOC split. Re-exported here.
 from bpp.db.photos_dates import (  # noqa: E402, F401
+    count_photos_by_date_range,
     get_date_distribution,
     get_photos_by_date_range,
     update_photo_date,
@@ -502,4 +490,10 @@ from bpp.db.photos_missing import (  # noqa: E402, F401
     check_missing,
     mark_missing,
     relocate_missing,
+    scan_missing,
+)
+from bpp.db.photos_updates import (  # noqa: E402, F401
+    update_hashes,
+    update_hashes_many,
+    update_scores,
 )

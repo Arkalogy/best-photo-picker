@@ -14,6 +14,7 @@
  * reachable).
  */
 
+import { focusInto, restoreFocusFrom } from "./dialog-focus.mjs";
 import { esc, escapeAttr } from "./text-format.mjs";
 
 /**
@@ -41,8 +42,14 @@ export function _showConfirmOverlay(dialogHTML) {
   );
   if (!dialog) return;
   dialog.innerHTML = dialogHTML;
+  // The overlay is named by #confirm-message (aria-labelledby): a custom
+  // body (the face-install dialogs) gets it on its first paragraph.
+  if (!dialog.querySelector("#confirm-message")) {
+    dialog.querySelector("p")?.setAttribute("id", "confirm-message");
+  }
   const overlay = document.getElementById("confirm-overlay");
   overlay?.classList.add("visible");
+  focusInto(overlay);
   // Capture phase + stopImmediatePropagation so ESC is consumed before
   // it reaches the lightbox's global keydown handler (which would
   // otherwise also close the lightbox).
@@ -80,7 +87,7 @@ export function appConfirm(message, subtitle, opts) {
   const { okLabel = "OK", okClass = "primary", bodyHTML = "" } = opts || {};
   return new Promise((resolve) => {
     _confirmResolve = resolve;
-    let html = `<p>${esc(message)}</p>`;
+    let html = `<p id="confirm-message">${esc(message)}</p>`;
     if (subtitle) {
       html += `<p class="confirm-sub">${esc(/** @type {string} */ (subtitle))}</p>`;
     }
@@ -115,7 +122,7 @@ export function appPrompt(title, opts) {
       );
       resolve(ok && input ? input.value.trim() : null);
     };
-    const html = `<p>${esc(title)}</p>
+    const html = `<p id="confirm-message">${esc(title)}</p>
       <input type="text" class="confirm-input" id="confirm-input"
         placeholder="${escapeAttr(placeholder)}" value="${escapeAttr(value)}">
       <div class="confirm-actions">
@@ -150,6 +157,7 @@ export function resolveConfirm(result) {
   document.removeEventListener("keydown", _onConfirmKey, true);
   const overlay = document.getElementById("confirm-overlay");
   overlay?.classList.remove("visible");
+  restoreFocusFrom(overlay);
   if (_confirmResolve) {
     _confirmResolve(result);
     _confirmResolve = null;

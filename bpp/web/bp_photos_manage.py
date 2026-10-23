@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from flask import Blueprint, Response, jsonify, request
@@ -20,8 +19,12 @@ from bpp.db.photos import (
     get_photo_id_map_by_paths,
     update_photo_date,
 )
+from bpp.db.photos_sha import get_sha256_map
 from bpp.errors import BppError, NotFoundError, ValidationError
 from bpp.utils.logging import get_logger
+from bpp.web.paging import page_args, page_fields
+from bpp.web.photo_cache import invalidate_photo_cache
+from bpp.web.photo_dict import build_similar_entry
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx
 
@@ -36,7 +39,8 @@ def api_duplicates_groups() -> tuple[Response, int]:
 
     Groups by dup_cluster_id (assigned by assign_near_duplicate_clusters()).
     Falls back to exact phash grouping if clustering has never run.
-    Groups are sorted by score difference descending (most useful first).
+    Groups are sorted by score difference descending (most useful first);
+    optional ``limit`` / ``offset`` page them.
     """
     from collections import defaultdict
 
@@ -75,27 +79,30 @@ def api_duplicates_groups() -> tuple[Response, int]:
         ).fetchall()
         group_key_idx = 3  # phash
 
+    limit, offset = page_args()
     if not rows:
-        return jsonify({"groups": [], "total": 0}), 200
+        return jsonify({"groups": [], **page_fields([], 0, limit, offset)}), 200
 
     groups_map: dict[int, list[dict]] = defaultdict(list)
     for r in rows:
         key = r[group_key_idx]
         if key is None or key == 0:
             continue
-        th = thumbs.get_hash(r[1]) if thumbs else ""
+        item = {
+            "filepath": r[1],
+            "original_filename": r[2],
+            "aggregate_score": r[4],
+            "blur_score": r[5],
+            "exposure_score": r[6],
+            "face_score": r[7],
+            "composition_score": r[8],
+            "date_day": r[9],
+        }
         groups_map[key].append(
             {
                 "id": r[0],
-                "filepath": r[1],
                 "original_filename": r[2],
-                "thumb_hash": th,
-                "aggregate_score": r[4] or 0,
-                "blur_score": r[5] or 0,
-                "exposure_score": r[6] or 0,
-                "face_score": r[7] or 0,
-                "composition_score": r[8] or 0,
-                "date_day": r[9] or "",
+                **build_similar_entry(item, thumbs, similarity=None),
             }
         )
 
@@ -114,7 +121,8 @@ def api_duplicates_groups() -> tuple[Response, int]:
         )
 
     result.sort(key=lambda g: -g["score_diff"])
-    return jsonify({"groups": result, "total": len(result)}), 200
+    page = result if limit is None else result[offset : offset + limit]
+    return jsonify({"groups": page, **page_fields(page, len(result), limit, offset)}), 200
 
 
 # --- Delete routes ---
@@ -137,7 +145,7 @@ def api_enhance_photos() -> tuple[Response, int]:
     errors: dict[str, str] = {}
     params_map: dict[str, dict] = {}
     id_map = get_photo_id_map_by_paths(conn, filepaths)
-    sha256_map = _get_sha256_map(conn, filepaths)
+    sha256_map = get_sha256_map(conn, filepaths)
     for fp in filepaths:
         photo_id = id_map.get(fp)
         if not photo_id:
@@ -160,7 +168,7 @@ def api_enhance_photos() -> tuple[Response, int]:
         # Invalidate cached full photo and thumbnail
         if ctx.thumbs:
             h = ctx.thumbs.get_hash(fp)
-            _invalidate_photo_cache(ctx, h, content_hash=sha256_map.get(fp))
+            invalidate_photo_cache(ctx, h, content_hash=sha256_map.get(fp))
         enhanced += 1
 
     ctx.invalidate_enhanced_cache()
@@ -168,6 +176,16 @@ def api_enhance_photos() -> tuple[Response, int]:
     if errors:
         result["errors"] = errors
     return jsonify(result), 200
+
+
+def _refresh_edit_albums(conn: Any) -> None:
+    """The albums that follow a photo's edits (the edit domain)."""
+    from bpp.db.smart_albums import get_affected_album_types, refresh_smart_albums
+
+    try:
+        refresh_smart_albums(conn, kinds=get_affected_album_types("edit"))
+    except Exception:
+        log.warning("smart album refresh after an edit failed", exc_info=True)
 
 
 @bp.post("/api/v1/photos/reset-edits")
@@ -183,7 +201,7 @@ def api_reset_edits() -> tuple[Response, int]:
 
     reset = 0
     id_map = get_photo_id_map_by_paths(conn, filepaths)
-    sha256_map = _get_sha256_map(conn, filepaths)
+    sha256_map = get_sha256_map(conn, filepaths)
     for fp in filepaths:
         photo_id = id_map.get(fp)
         if not photo_id:
@@ -192,10 +210,20 @@ def api_reset_edits() -> tuple[Response, int]:
         reset += reset_photo_edits(conn, photo_id)
         if ctx.thumbs:
             h = ctx.thumbs.get_hash(fp)
-            _invalidate_photo_cache(ctx, h, content_hash=sha256_map.get(fp))
+            invalidate_photo_cache(ctx, h, content_hash=sha256_map.get(fp))
 
     ctx.invalidate_enhanced_cache()
+    _refresh_edit_albums(conn)
     return jsonify({"reset": reset}), 200
+
+
+def _absolute_library_path(ctx: Any, filepath: str) -> str:
+    """A paired device sees device-safe paths (see ``bpp/web/lan_redaction.py``);
+    resolve those so its read-only lookups still find the row."""
+    from bpp.web.lan_redaction import resolve_device_path
+
+    lookup = ctx.thumbs.get_filepath if ctx.thumbs is not None else None
+    return resolve_device_path(filepath, ctx.library_path, lookup)
 
 
 @bp.get("/api/v1/photos/enhance-preview")
@@ -205,7 +233,7 @@ def api_enhance_preview() -> tuple[Response, int]:
 
     ctx = get_ctx()
     conn = ctx.get_conn()
-    filepath = request.args.get("filepath", "")
+    filepath = _absolute_library_path(ctx, request.args.get("filepath", ""))
     if not filepath:
         raise ValidationError("filepath required", field="filepath")
     if not get_photo_by_path(conn, filepath):
@@ -230,7 +258,7 @@ def api_get_edits() -> tuple[Response, int]:
     """Get current edits for a photo."""
     ctx = get_ctx()
     conn = ctx.get_conn()
-    filepath = request.args.get("filepath", "")
+    filepath = _absolute_library_path(ctx, request.args.get("filepath", ""))
     if not filepath:
         raise ValidationError("filepath required", field="filepath")
 
@@ -267,12 +295,22 @@ def api_save_edits() -> tuple[Response, int]:
             allowed=sorted(_VALID_ROTATIONS),
         )
 
+    from bpp.db.edits import valid_redeye_points
+
+    points = edits.get("redeye_points")
+    if points is not None and valid_redeye_points(points) != points:
+        raise ValidationError(
+            "redeye_points must be a list of {x, y, radius?} with finite numbers",
+            field="redeye_points",
+        )
+
     photo = get_photo_by_path(conn, filepath)
     if not photo:
         raise NotFoundError("Photo not found", filepath=filepath)
 
     save_photo_edits(conn, photo["id"], edits)
     ctx.invalidate_enhanced_cache()
+    _refresh_edit_albums(conn)
 
     # Invalidate cache
     if ctx.thumbs:
@@ -281,65 +319,9 @@ def api_save_edits() -> tuple[Response, int]:
         h = ctx.thumbs.get_hash(filepath)
         sha = photo.get("sha256") or ""
         c_hash = sha[:HASH_PREFIX_LEN] if sha else None
-        _invalidate_photo_cache(ctx, h, content_hash=c_hash)
+        invalidate_photo_cache(ctx, h, content_hash=c_hash)
 
     return jsonify({"status": "ok"}), 200
-
-
-def _get_sha256_map(conn: Any, filepaths: list[str]) -> dict[str, str]:
-    """Return {filepath: truncated_sha256} for inpaint cache key lookup."""
-    if not filepaths:
-        return {}
-    from bpp.constants import HASH_PREFIX_LEN, SQL_BATCH_SIZE
-
-    result: dict[str, str] = {}
-    for i in range(0, len(filepaths), SQL_BATCH_SIZE):
-        batch = filepaths[i : i + SQL_BATCH_SIZE]
-        placeholders = ",".join("?" * len(batch))
-        rows = conn.execute(
-            f"SELECT filepath, sha256 FROM photos WHERE filepath IN ({placeholders})",
-            batch,
-        ).fetchall()
-        for r in rows:
-            if r[1]:
-                result[r[0]] = r[1][:HASH_PREFIX_LEN]
-    return result
-
-
-def _invalidate_photo_cache(ctx: Any, path_hash: str, *, content_hash: str | None = None) -> None:
-    """Remove cached full photo and thumbnail variants for a hash.
-
-    Glob-based cleanup: matches `{path_hash}*.jpg` and `{path_hash}*.png`
-    so any current OR future suffix variant is caught automatically.
-    The `PHOTO_CACHE_SUFFIXES` registry in bpp.constants stays as
-    documentation but is no longer load-bearing for cleanup correctness.
-
-    Args:
-        path_hash: hash of the filepath (used for all variants whose
-            cache key is filepath-derived).
-        content_hash: truncated SHA-256 of file content. The inpaint
-            cache uses content hash because edits are content-addressed.
-            When provided, both content_hash and path_hash are swept
-            for backward compatibility.
-    """
-    if not ctx.thumbs:
-        return
-    import contextlib
-    import glob
-
-    ctx.thumbs.invalidate(path_hash)
-    cache_dir = ctx.thumbs.cache_dir
-
-    hashes = {path_hash}
-    if content_hash:
-        hashes.add(content_hash)
-    for h in hashes:
-        # Glob matches the base thumb ({h}.jpg) and every suffix variant
-        # ({h}_full.jpg, {h}_edited.jpg, {h}_inpainted.png, …).
-        for ext in (".jpg", ".png"):
-            for cached in glob.glob(os.path.join(cache_dir, f"{h}*{ext}")):
-                with contextlib.suppress(OSError):
-                    os.remove(cached)
 
 
 # --- Batch rename ---
@@ -401,6 +383,13 @@ def api_batch_rename_apply() -> tuple[Response, int]:
     failed = sum(1 for r in results if not r.get("success"))
     if failed:
         log.warning("Batch rename: %d/%d failed", failed, len(results))
+    if any(r.get("success") for r in results):
+        # Rows and thumbnail URLs are keyed by path: the next grid load
+        # must see the new paths and resolve their thumbnails.
+        from bpp.web.state_ops import refresh_thumb_map
+
+        ctx.invalidate_analysis()
+        refresh_thumb_map(ctx)
     return jsonify({"results": results}), 200
 
 
@@ -433,11 +422,3 @@ def api_photo_date(photo_id: int) -> tuple[Response, int]:
     ctx.invalidate_analysis()
 
     return jsonify({"date": new_date, "date_day": new_date[:10], "date_month": new_date[:7]}), 200
-
-
-# register_permanent_delete_recovery moved to bp_photos_lifecycle.
-# Re-exported here because WebAppState.startup imports it from
-# bpp.web.bp_photos_manage. Keep callers stable across the v0.1 split.
-from bpp.web.bp_photos_lifecycle import (  # noqa: E402, F401
-    register_permanent_delete_recovery,
-)

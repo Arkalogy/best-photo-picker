@@ -1,4 +1,4 @@
-"""R5-M2: live DB-connection observability warning.
+"""Live DB-connection observability warning.
 
 The thread-local connection model is intentional but unbounded —
 Werkzeug's dev server creates one thread per request and each thread

@@ -2,13 +2,13 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Best Photo Picker",
   "mainBinaryName": "Best Photo Picker",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "identifier": "com.arkalogy.bpp",
   "build": {
     "frontendDist": "../src",
-    "devUrl": "http://localhost:5001",
+    "devUrl": "http://127.0.0.1:5001",
     "beforeBuildCommand": "",
-    "beforeDevCommand": "pkill -f 'bpp serve' 2>/dev/null; sleep 0.5; cd .. && .venv/bin/bpp serve --library ~/Pictures/BestPhotoPicker --no-browser"
+    "beforeDevCommand": "pkill -f 'bpp serve' 2>/dev/null; sleep 0.5; cd .. && .venv/bin/bpp serve --library ~/Pictures/BestPhotoPickerDemo --no-browser --open-loopback"
   },
   "app": {
     "windows": [
@@ -24,7 +24,7 @@
     ],
     "withGlobalTauri": true,
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.tile.openstreetmap.org; connect-src 'self' http://localhost:5001 ws://localhost:5001; font-src 'self'; frame-src 'none'; object-src 'none'"
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.tile.openstreetmap.org; connect-src 'self' http://127.0.0.1:5001; font-src 'self'; frame-src 'none'; object-src 'none'"
     }
   },
   "bundle": {

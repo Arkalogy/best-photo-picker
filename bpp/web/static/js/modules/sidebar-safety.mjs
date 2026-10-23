@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * Protection B — independent failure domains for the sidebar.
+ * Independent failure domains for the sidebar.
  *
  * Why this exists
  * ---------------
@@ -48,7 +48,7 @@ import { toast } from "./toast.mjs";
 
 /**
  * Section identifier. Originally an enum of seven built-ins; widened
- * to plain string in P-07 so plugins can register their own sections
+ * to plain string so plugins can register their own sections
  * (e.g. a "trips" or "locations" plugin) and get the same retry-pill
  * / preserve-on-error protection the core sections have. Built-ins
  * still appear in {@link _builtinLabels} so the registry has a sane
@@ -216,7 +216,7 @@ export function safeRenderNav(renderFn) {
 }
 
 /**
- * Protection F — generalized render-failure boundary.
+ * Generalized render-failure boundary.
  *
  * Wraps a render function in a try/catch and substitutes a visible
  * "Reload" pill in the named container if the render throws. The

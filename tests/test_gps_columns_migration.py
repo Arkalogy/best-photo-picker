@@ -1,4 +1,4 @@
-"""R8-H9: GPS columns + partial index migration.
+"""GPS columns + partial index migration.
 
 Before: map view scanned the full photos table and json_extract'd
 gps_lat / gps_lon from exif_json on every row. With 50k+ photos
@@ -202,11 +202,11 @@ class TestGpsColumnsMigration:
         end = src.index("\ndef ", start + 1)
         func_src = src[start:end]
 
-        assert "p.gps_lat" in func_src, "get_photos_with_gps must read p.gps_lat directly (R8-H9)"
+        assert "p.gps_lat" in func_src, "get_photos_with_gps must read p.gps_lat directly"
         # Match function CALLS to json_extract / dialect.json_extract,
         # not docstring mentions of the term.
         assert not re.search(r"\bjson_extract\s*\(", func_src), (
-            "get_photos_with_gps must NOT call json_extract — that's the regression R8-H9 fixed"
+            "get_photos_with_gps must NOT call json_extract — that's the fixed regression"
         )
 
     def test_upsert_writes_gps_columns_directly(self, tmp_path):
@@ -243,7 +243,7 @@ class TestGpsColumnsMigration:
             close_all_connections()
 
 
-# ─── R9-rec-M2: range / NaN / type validation ─────────────────────────
+# ─── Range / NaN / type validation ─────────────────────────
 
 
 class TestValidateGpsPair:

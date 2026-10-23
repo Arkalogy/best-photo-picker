@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import functools
 import os
 import secrets
 import sqlite3
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any
@@ -28,7 +27,6 @@ from bpp.web.state_compat import _LegacyDelegateMixin
 from bpp.web.state_helpers import (  # noqa: F401
     AppState,
     clamp_k,
-    clamp_weight,
     heic_available,
 )
 from bpp.web.thumbnails import ThumbnailCache
@@ -144,7 +142,7 @@ class WebAppState(_LegacyDelegateMixin):
         # connect).
         self.bound_host: str = "127.0.0.1"
         self.face_op_lock = threading.Lock()
-        # T1.3: serializes the entire ``state_lifecycle.switch_library``
+        # Serializes the entire ``state_lifecycle.switch_library``
         # call so two concurrent library switches (Tauri sidecar +
         # Flask endpoint, or two browser tabs) don't interleave their
         # drain / close-hook phases. ``ctx.lock`` is held only briefly
@@ -152,7 +150,7 @@ class WebAppState(_LegacyDelegateMixin):
         # join — so without a dedicated lock the heavy section is
         # unprotected.
         self._switch_library_lock = threading.Lock()
-        # M8: signals when the deferred Phase 5 backfill
+        # Signals when the deferred Phase 5 backfill
         # (assign_near_duplicate_clusters + refresh_smart_albums) has
         # completed. Phase 5 runs in a daemon thread so the photo grid
         # paints immediately; tests / switch_library / shutdown wait
@@ -161,7 +159,7 @@ class WebAppState(_LegacyDelegateMixin):
         # has run) isn't perceived as "pending" by callers that wait.
         self.smart_album_backfill_done: threading.Event = threading.Event()
         self.smart_album_backfill_done.set()
-        # M8 followup: surfaces background Phase 5 failures to
+        # Surfaces background Phase 5 failures to
         # /api/v1/health so the user / operator sees 'smart album
         # counts may be stale' instead of a silent warning buried in
         # server.log. Set True by the daemon's except block; reset to
@@ -172,23 +170,25 @@ class WebAppState(_LegacyDelegateMixin):
         # The registry holds factories (callables → BackgroundWorker)
         # so a future plugin can register its own worker class without
         # touching this constructor — see WorkerRegistry below.
-        # P4: the dict + cancel-and-join-all loops moved into
+        # The dict + cancel-and-join-all loops moved into
         # :class:`WorkerPool`. ``self._workers`` is preserved as a
         # property delegate so existing call sites (bp_health,
         # state_lifecycle, tests) keep working unchanged.
         self.workers: WorkerPool = WorkerPool()
+        for worker in self.workers.values():
+            worker.ctx = self
         self.thumbs: ThumbnailCache | None = None
-        # P4: derived-state caches (face cluster map, enhanced ids,
+        # Derived-state caches (face cluster map, enhanced ids,
         # CLIP embeddings) live in :class:`ModelCache`. The bare
         # attributes (``clip_cache``, ``_face_cluster_map``, etc.)
         # are preserved as property delegates so the ~3,800 access
-        # sites the audit counted can migrate gradually.
+        # sites can migrate gradually.
         self.caches: ModelCache = ModelCache()
-        # P4b: phash_ready / _phash_generation / _compute_thread /
+        # Phash_ready / _phash_generation / _compute_thread /
         # _warm_thread / _cancel_warm now live on :class:`AnalysisStore`.
         # Property delegates preserve legacy access paths.
         self.analysis_store: AnalysisStore = AnalysisStore()
-        # P4 finish: LibraryLifecycle facade over state_lifecycle.
+        # LibraryLifecycle facade over state_lifecycle.
         # ``ctx.lifecycle.switch_library(...)`` is the new path;
         # ``ctx.switch_library(...)`` still works via the existing
         # method (which is now a delegate).
@@ -197,7 +197,7 @@ class WebAppState(_LegacyDelegateMixin):
         self.lifecycle: LibraryLifecycle = LibraryLifecycle(self)
         self.serve_mode: bool = library_path is not None
         # _edited_ids / _auto_enhanced_ids now live on caches.enhanced_ids
-        # (P4 ModelCache); property delegates preserve the legacy attribute
+        # (ModelCache); property delegates preserve the legacy attribute
         # access for build_photo_dict + invalidate_enhanced_cache callers.
         # Layered config resolver: walks DB → YAML → DEFAULTS. The
         # legacy `load_config()` returns DEFAULTS+YAML merged into a
@@ -211,13 +211,22 @@ class WebAppState(_LegacyDelegateMixin):
         yaml_overlay = {k: v for k, v in config.items() if v != DEFAULTS.get(k)}
         self.config: Config = Config(yaml_overlay, get_conn=self.get_conn)
         self.auth_token: str = secrets.token_hex(32)
+        # Which library this process is serving, as an opaque id the page
+        # echoes on every request: a tab opened before a library switch
+        # is refused instead of acting on the other library's rows.
+        self.library_id: str = secrets.token_hex(8)
+        # Set by `bpp serve` / the desktop shell: the loopback index page
+        # renders the owner token only to a caller presenting this secret
+        # (first load, then a cookie). None = open loopback (tests, dev
+        # opt-out), the pre-0.2.0 behaviour.
+        self.boot_secret: str | None = None
         # Port is set by the serve command after argparse, so endpoints
         # can render the correct share URL. The LAN sharing toggle
         # itself lives in DB settings (see bpp/web/share.py) so it
         # survives restarts.
         self.port: int = 5001
 
-        # P4b: warm_thread / compute_thread / cancel_warm now live on
+        # Warm_thread / compute_thread / cancel_warm now live on
         # self.analysis_store. Property delegates below keep the
         # legacy attribute access working unchanged.
 
@@ -308,7 +317,7 @@ class WebAppState(_LegacyDelegateMixin):
         Invalidated by ``invalidate_face_cluster_map()`` which face_worker
         calls after clustering completes. Cache miss cost: one JOIN query.
 
-        P4: delegates to :class:`ModelCache.face_cluster_map`.
+        Delegates to :class:`ModelCache.face_cluster_map`.
         """
         return self.caches.face_cluster_map.get(self.get_conn())
 
@@ -447,42 +456,10 @@ def get_ctx_or_none() -> WebAppState | None:
         return None
 
 
-def with_face_lock(fn: Callable[..., Any]) -> Callable[..., Any]:
-    """Serialize face-mutating operations via face_op_lock and invalidate
-    the face cluster map on exit.
-
-    All endpoints that mutate face_embeddings, photo_person_tags, or
-    smart_person albums MUST use this decorator. Two contracts:
-
-    1. ``face_op_lock`` serializes the body so concurrent face mutations
-       can't interleave.
-    2. ``invalidate_face_cluster_map()`` fires in ``finally`` so the
-       grid + recompute paths see fresh ``filepath → [cluster_ids]``
-       data on the next read.
-
-    Pre-fix every face-mutation endpoint (create, update_bbox, merge,
-    dismiss, split, restore, retry, tag_person, untag_person, reassign,
-    purge, recluster) relied on the analyse worker's Phase 7
-    invalidation. Between mutations, the cache stayed stale — the
-    /api/v1/pick handler boosted by the old cluster IDs and the photo
-    grid badged faces against the pre-merge state. Wiring the invalidate
-    into the decorator closes the gap at one site instead of 13.
-
-    The invalidate fires even on exception: a face mutation that partly
-    committed (e.g. a SAVEPOINT rolled back inside a multi-statement
-    handler) still leaves the cluster_id columns in a state the cache
-    doesn't reflect, so a stale cache after error is the worst outcome.
-    Cheap to invalidate; expensive to debug a "why does Alice show as
-    Bob" report.
-    """
-
-    @functools.wraps(fn)
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
-        ctx = get_ctx()
-        with ctx.face_op_lock:
-            try:
-                return fn(*args, **kwargs)
-            finally:
-                ctx.invalidate_face_cluster_map()
-
-    return wrapper
+# The face lock and the resume guard live in face_lock.py; re-exported
+# because every face-mutating blueprint imports them from here.
+from bpp.web.face_lock import (  # noqa: E402, F401
+    FACE_RECOVERY_MESSAGE,
+    refuse_while_face_recovery,
+    with_face_lock,
+)

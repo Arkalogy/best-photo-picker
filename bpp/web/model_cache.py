@@ -1,6 +1,6 @@
-"""P4 — WebAppState collaborator: derived-state caches.
+"""WebAppState collaborator: derived-state caches.
 
-Pre-P4, ``WebAppState`` held four conceptually unrelated caches as
+Originally ``WebAppState`` held four conceptually unrelated caches as
 bare attributes:
 
 * ``self._face_cluster_map`` + ``self._face_cluster_map_lock`` —
@@ -29,7 +29,7 @@ This module defines:
 ``WebAppState`` constructs one :class:`ModelCache` at start. Existing
 property accesses (``ctx.clip_cache``, ``ctx._edited_ids``, etc.)
 delegate to the cache via @property — a deprecation-window measure
-so the ~3,800 access sites the audit counted can migrate gradually.
+so the ~3,800 access sites can migrate gradually.
 """
 
 from __future__ import annotations
@@ -76,6 +76,11 @@ class FaceClusterMapCache:
             self._map = result
         return result
 
+    def peek(self) -> dict[str, list[int]] | None:
+        """The cached map without loading it (None = not loaded)."""
+        with self._lock:
+            return self._map
+
     def invalidate(self) -> None:
         with self._lock:
             self._map = None
@@ -121,7 +126,7 @@ class ModelCache:
     photo edit doesn't drop the face cluster map.
 
     ``clip_cache`` is kept as a plain dict for back-compat with the
-    CLIP loader in ``bpp.web.state_init``. P4's scope is to *bundle*
+    CLIP loader in ``bpp.web.state_init``. This class *bundles*
     the caches into a coherent collaborator; moving the loader is a
     follow-up so the deprecation window for the bare-attr access
     stays short.
@@ -137,7 +142,7 @@ class ModelCache:
         state. Currently switch_library replaces the whole WebAppState
         (and therefore the whole ModelCache) so this method is the
         belt-and-suspenders path; it exists for completeness and as
-        the explicit hook for in-place library swap (P4 follow-up)."""
+        the explicit hook for a future in-place library swap."""
         self.face_cluster_map.invalidate()
         self.enhanced_ids.invalidate()
         self.clip_cache.clear()

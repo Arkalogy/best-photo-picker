@@ -64,19 +64,39 @@ def recover_interrupted_rename(conn: sqlite3.Connection, library_path: str) -> l
     if not os.path.exists(jp):
         return []
 
+    from bpp.utils.json_utils import load_for_rewrite, move_aside
+
     try:
-        with open(jp) as f:
-            entries: list[dict[str, Any]] = json.load(f)
-    except (json.JSONDecodeError, OSError):
-        logger.warning("Corrupt rename journal at %s — removing", jp)
-        _remove_journal(jp)
+        # A corrupt or wrong-shape journal is kept as a .corrupt copy.
+        entries = load_for_rewrite(jp, None, expected_type=list, context="rename journal")
+    except OSError as exc:
+        # Unreadable for now (permission, locked, offline volume): keep it
+        # for the next start rather than lose the recovery record.
+        logger.warning("Can't read rename journal %s (%s); will retry next start", jp, exc)
+        return []
+    if entries is None:
+        return []
+
+    try:
+        committed = _committed_paths(conn, entries)
+    except sqlite3.Error as exc:
+        # Without the rows there is no telling which renames were
+        # committed: nothing moves, the journal waits for the next start.
+        logger.warning("Can't read the photo rows for the rename journal (%s); will retry", exc)
         return []
 
     reverted: list[dict[str, Any]] = []
+    malformed = retry = False
     for entry in entries:
-        old_path = entry.get("old")
-        new_path = entry.get("new")
-        if not old_path or not new_path:
+        old_path = entry.get("old") if isinstance(entry, dict) else None
+        new_path = entry.get("new") if isinstance(entry, dict) else None
+        if not (isinstance(old_path, str) and old_path and isinstance(new_path, str) and new_path):
+            malformed = True
+            continue
+        if committed.get(entry.get("id")) == new_path:
+            # The database already names the new path: that rename was
+            # committed before the crash, so the file is where the row
+            # says. Reverting it would strand the row.
             continue
         # If new_path exists on disk but old_path does not, revert.
         if os.path.exists(new_path) and not os.path.exists(old_path):
@@ -86,11 +106,35 @@ def recover_interrupted_rename(conn: sqlite3.Connection, library_path: str) -> l
                 logger.info("Reverted interrupted rename: %s -> %s", new_path, old_path)
             except OSError as e:
                 logger.error("Failed to revert rename %s -> %s: %s", new_path, old_path, e)
+                retry = True
 
-    _remove_journal(jp)
+    if retry:
+        # A revert failed (locked file, offline volume): keep the record
+        # in place so the next start tries again.
+        logger.warning("Kept rename journal %s to retry the failed reverts", jp)
+    elif malformed:
+        # Some entries couldn't be read: keep the journal for a manual fix.
+        try:
+            move_aside(jp, context="rename journal")
+        except OSError as exc:
+            logger.warning("Couldn't set aside rename journal %s (%s); left in place", jp, exc)
+    else:
+        _remove_journal(jp)
     if reverted:
         logger.info("Recovered %d interrupted renames from journal", len(reverted))
     return reverted
+
+
+def _committed_paths(conn: sqlite3.Connection, entries: list[Any]) -> dict[int, str]:
+    """``{photo id: filepath}`` as the database has it, for every journal
+    entry that names a photo — the record of which renames were
+    committed before the interruption."""
+    ids = sorted(
+        {int(e["id"]) for e in entries if isinstance(e, dict) and isinstance(e.get("id"), int)}
+    )
+    if not ids:
+        return {}
+    return _owners(conn, [{"id": i} for i in ids])
 
 
 def parse_pattern(pattern: str) -> list[tuple[str, str]]:
@@ -204,6 +248,51 @@ def build_rename_map(photos: list[dict[str, Any]], pattern: str) -> list[dict[st
     return mapping
 
 
+def _result(photo_id: Any, old: str, new: str, error: str | None) -> dict[str, Any]:
+    """One per-entry outcome row; ``error`` None means renamed."""
+    return {"id": photo_id, "old": old, "new": new, "success": error is None, "error": error}
+
+
+def _owners(conn: sqlite3.Connection, mapping: list[dict[str, Any]]) -> dict[int, str]:
+    """``{photo id: filepath}`` for every id in *mapping*, one query."""
+    from bpp.db.sql_batches import in_batches
+
+    ids = sorted({int(e["id"]) for e in mapping if e.get("id") is not None})
+    owners: dict[int, str] = {}
+    for ph, batch in in_batches(ids):
+        rows = conn.execute(f"SELECT id, filepath FROM photos WHERE id IN ({ph})", batch).fetchall()
+        owners.update({r[0]: r[1] for r in rows})
+    return owners
+
+
+def _entry_refusal(
+    owners: dict[int, str], old_path: str, new_path: str, photo_id: Any, allowed_base: Any
+) -> str | None:
+    """Why a rename entry can't run, or None when it may: both paths
+    inside the library, the entry names a photo that owns ``old_path``,
+    the target is free and the source exists."""
+    from pathlib import Path
+
+    if allowed_base is not None:
+        try:
+            inside = Path(old_path).resolve().is_relative_to(allowed_base) and Path(
+                new_path
+            ).resolve().is_relative_to(allowed_base)
+        except (ValueError, OSError) as e:
+            return f"Invalid path: {e}"
+        if not inside:
+            return f"Path outside library: {new_path}"
+    if photo_id is None:
+        return "Entry names no photo"
+    if owners.get(int(photo_id)) != old_path:
+        return "Photo id and path don't match"
+    if os.path.exists(new_path) and new_path != old_path:
+        return f"Target already exists: {new_path}"
+    if not os.path.exists(old_path):
+        return f"File not found: {old_path}"
+    return None
+
+
 def apply_rename(
     conn: sqlite3.Connection,
     mapping: list[dict[str, Any]],
@@ -232,6 +321,8 @@ def apply_rename(
         ]
         _write_journal(jp, journal_entries)
 
+    owners = _owners(conn, changed)
+
     for entry in mapping:
         if not entry.get("changed", False):
             continue
@@ -240,75 +331,16 @@ def apply_rename(
         new_path = entry["new_filepath"]
         photo_id = entry.get("id")
 
-        # Path traversal check
-        if allowed_base is not None:
-            try:
-                old_resolved = Path(old_path).resolve()
-                new_resolved = Path(new_path).resolve()
-                if not (
-                    old_resolved.is_relative_to(allowed_base)
-                    and new_resolved.is_relative_to(allowed_base)
-                ):
-                    results.append(
-                        {
-                            "id": photo_id,
-                            "old": old_path,
-                            "new": new_path,
-                            "success": False,
-                            "error": f"Path outside library: {new_path}",
-                        }
-                    )
-                    continue
-            except (ValueError, OSError) as e:
-                results.append(
-                    {
-                        "id": photo_id,
-                        "old": old_path,
-                        "new": new_path,
-                        "success": False,
-                        "error": f"Invalid path: {e}",
-                    }
-                )
-                continue
-
-        if os.path.exists(new_path) and new_path != old_path:
-            results.append(
-                {
-                    "id": photo_id,
-                    "old": old_path,
-                    "new": new_path,
-                    "success": False,
-                    "error": f"Target already exists: {new_path}",
-                }
-            )
-            logger.warning("Skipping rename, target exists: %s", new_path)
-            continue
-
-        if not os.path.exists(old_path):
-            results.append(
-                {
-                    "id": photo_id,
-                    "old": old_path,
-                    "new": new_path,
-                    "success": False,
-                    "error": f"File not found: {old_path}",
-                }
-            )
-            logger.warning("File not found for rename: %s", old_path)
+        refusal = _entry_refusal(owners, old_path, new_path, photo_id, allowed_base)
+        if refusal is not None:
+            results.append(_result(photo_id, old_path, new_path, refusal))
+            logger.warning("Skipping rename %s -> %s: %s", old_path, new_path, refusal)
             continue
 
         try:
             os.rename(old_path, new_path)
         except OSError as e:
-            results.append(
-                {
-                    "id": photo_id,
-                    "old": old_path,
-                    "new": new_path,
-                    "success": False,
-                    "error": str(e),
-                }
-            )
+            results.append(_result(photo_id, old_path, new_path, str(e)))
             logger.warning("Failed to rename %s -> %s: %s", old_path, new_path, e)
             continue
 
@@ -323,27 +355,11 @@ def apply_rename(
                 os.rename(new_path, old_path)
             except OSError:
                 logger.error("CRITICAL: Could not revert rename %s -> %s", new_path, old_path)
-            results.append(
-                {
-                    "id": photo_id,
-                    "old": old_path,
-                    "new": new_path,
-                    "success": False,
-                    "error": f"DB update failed: {e}",
-                }
-            )
+            results.append(_result(photo_id, old_path, new_path, f"DB update failed: {e}"))
             logger.warning("DB update failed for rename %s -> %s: %s", old_path, new_path, e)
             continue
 
-        results.append(
-            {
-                "id": photo_id,
-                "old": old_path,
-                "new": new_path,
-                "success": True,
-                "error": None,
-            }
-        )
+        results.append(_result(photo_id, old_path, new_path, None))
         logger.info("Renamed %s -> %s", old_path, new_path)
 
     # Single commit for all successful renames

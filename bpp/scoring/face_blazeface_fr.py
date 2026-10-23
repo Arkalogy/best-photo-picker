@@ -18,6 +18,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from bpp.scoring.install_hold import requires
 from bpp.scoring.model_base import ModelSingleton
 from bpp.utils.paths import models_dir as _models_dir
 
@@ -34,7 +35,7 @@ _MODEL_DIR = str(_models_dir())
 # Why this one: "_sparse" variant uses sparse weights for ~30%
 #         smaller download and equivalent quality at a slight FPS
 #         cost (irrelevant for offline batch scoring).
-# License: Apache 2.0 (MediaPipe).
+# License: see the bpp.registry entry ``mediapipe_blazeface_full_range``.
 # To bump: short-range URL pattern uses `/face_detector/.../latest/`
 #         which Google guarantees to keep stable; full-range uses
 #         a flat asset path so a new release would land at a new
@@ -81,8 +82,8 @@ _fr_detector = ModelSingleton(
     model_url=_FR_MODEL_URL,
     model_sha256=_FR_MODEL_SHA256,
     create_fn=_create_fr_interpreter,
-    registry_id=None,  # ancillary BlazeFace, no licensing concern
-    import_check=lambda: __import__("ai_edge_litert"),
+    registry_id="mediapipe_blazeface_full_range",
+    import_check=requires("ai_edge_litert.interpreter"),  # what create imports
 )
 # TFLite interpreters are NOT thread-safe — serialize inference calls.
 _fr_lock = threading.Lock()

@@ -1,6 +1,6 @@
 """Disk-full / permission-denied categorization in export_selected.
 
-Release audit finding H1: the export loop used to catch every OSError
+The export loop used to catch every OSError
 the same way — appended to ``failed`` and kept trying. On a USB stick
 that filled mid-export, the user got "36 exported, 14 failed" with no
 indication every photo from #37 onward failed for the same reason.
@@ -20,6 +20,7 @@ from unittest.mock import patch
 
 import pytest
 
+from bpp.output import export_modes
 from bpp.output.export import ExportResult, export_selected
 
 
@@ -67,7 +68,7 @@ class TestExportDiskFullCategorization:
 
         # Let photo #1 copy normally; raise on photo #2 and onwards. The
         # loop should abort after #2 instead of trying #3, #4, #5 too.
-        real_copy = __import__("shutil").copy2
+        real_copy = export_modes._copy_bytes
         calls = {"n": 0}
 
         def fake_copy(src, dest, *a, **kw):
@@ -76,7 +77,7 @@ class TestExportDiskFullCategorization:
                 return real_copy(src, dest, *a, **kw)
             raise OSError(err_code, os.strerror(err_code))
 
-        with patch("shutil.copy2", side_effect=fake_copy):
+        with patch.object(export_modes, "_copy_bytes", side_effect=fake_copy):
             result = export_selected(selection, [], outdir, mode="copy", strip_metadata=False)
 
         assert isinstance(result, ExportResult), (
@@ -104,7 +105,7 @@ class TestExportDiskFullCategorization:
 
         # Photo #2 fails with ENOENT (which is NOT in the fatal set);
         # the loop should keep going and successfully copy #3 and #4.
-        real_copy = __import__("shutil").copy2
+        real_copy = export_modes._copy_bytes
         calls = {"n": 0}
 
         def fake_copy(src, dest, *a, **kw):
@@ -113,7 +114,7 @@ class TestExportDiskFullCategorization:
                 raise OSError(errno.ENOENT, "No such file")
             return real_copy(src, dest, *a, **kw)
 
-        with patch("shutil.copy2", side_effect=fake_copy):
+        with patch.object(export_modes, "_copy_bytes", side_effect=fake_copy):
             result = export_selected(selection, [], outdir, mode="copy", strip_metadata=False)
 
         assert result.disk_error is None, "ENOENT is not in the fatal set — loop should not abort"

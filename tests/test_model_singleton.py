@@ -42,7 +42,7 @@ class TestEnsureModelHashCheck:
             model_url="https://example.com/model.onnx",
             model_sha256=digest,
             create_fn=lambda p: object(),
-            registry_id=None,
+            registry_id="openai_clip_vit_b32_onnx",
         )
         with patch("urllib.request.urlopen", return_value=_fake_resp(content)):
             result = ms.ensure_model()
@@ -67,9 +67,9 @@ class TestEnsureModelHashCheck:
             model_url="https://example.com/model.onnx",
             model_sha256=wrong_digest,
             create_fn=lambda p: object(),
-            registry_id=None,
+            registry_id="openai_clip_vit_b32_onnx",
         )
-        # D-02: hash mismatch on download propagates as
+        # Hash mismatch on download propagates as
         # ModelIntegrityError (was: returned None silently).
         with (
             patch("urllib.request.urlopen", return_value=_fake_resp(content)),
@@ -81,9 +81,10 @@ class TestEnsureModelHashCheck:
         tmp_file = target.with_suffix(target.suffix + ".tmp")
         assert not tmp_file.exists(), "tmp file must be cleaned up too"
 
-    def test_no_hash_keeps_legacy_behavior(self, tmp_path):
-        """Until every model registration has a hash, leaving model_sha256=None
-        must keep working — the field defaults to None for back-compat."""
+    def test_no_hash_refuses_the_download(self, tmp_path):
+        """A registration without a hash can't be verified, so nothing is
+        fetched and the model stays absent (an unverified install never
+        reaches the cache)."""
         content = b"legacy bytes"
         target = tmp_path / "model.onnx"
 
@@ -93,19 +94,21 @@ class TestEnsureModelHashCheck:
             model_url="https://example.com/model.onnx",
             model_sha256=None,
             create_fn=lambda p: object(),
-            registry_id=None,
+            registry_id="openai_clip_vit_b32_onnx",
         )
-        with patch("urllib.request.urlopen", return_value=_fake_resp(content)):
-            result = ms.ensure_model()
+        with patch("urllib.request.urlopen", return_value=_fake_resp(content)) as urlopen:
+            assert ms.ensure_model() is None
+            with pytest.raises(RuntimeError, match="sha256"):
+                ms.ensure_model_or_raise()
 
-        assert result == target
-        assert target.exists()
+        assert not target.exists()
+        urlopen.assert_not_called()
 
     def test_existing_file_with_correct_hash_skips_download(self, tmp_path):
         """If model_path exists AND its bytes match the pinned hash,
         ensure_model() short-circuits without re-downloading.
 
-        D-02: cached files ARE re-verified before use (was: trusted
+        Cached files ARE re-verified before use (was: trusted
         as-is). The cost is a hash of the cached bytes per process
         start; the gain is detecting cache tampering between sessions
         (compromised cache dir, cloud-sync overwrite, malicious bind
@@ -126,7 +129,7 @@ class TestEnsureModelHashCheck:
             model_url="https://example.com/model.onnx",
             model_sha256=good_hash,
             create_fn=lambda p: object(),
-            registry_id=None,
+            registry_id="openai_clip_vit_b32_onnx",
         )
         with patch("urllib.request.urlopen") as urlopen:
             result = ms.ensure_model()
@@ -135,10 +138,10 @@ class TestEnsureModelHashCheck:
         assert result == target
 
     def test_existing_file_with_wrong_hash_raises_and_clears_cache(self, tmp_path):
-        """D-02 contract: a cached file whose bytes don't match the
-        pinned hash is treated as tampered. Raise ModelIntegrityError
-        AND remove the bad file so the next caller can re-download
-        cleanly. Previously this was a silent skip-the-check pass."""
+        """Contract: a cached file whose bytes don't match the
+        pinned hash is treated as tampered: it's removed and fetched
+        again once; a re-fetch that still fails verification raises
+        ModelIntegrityError and leaves no bad bytes in the cache."""
         from bpp.scoring.model_base import ModelIntegrityError
 
         target = tmp_path / "model.onnx"
@@ -150,17 +153,19 @@ class TestEnsureModelHashCheck:
             model_url="https://example.com/model.onnx",
             model_sha256="0" * 64,
             create_fn=lambda p: object(),
-            registry_id=None,
+            registry_id="openai_clip_vit_b32_onnx",
         )
-        with pytest.raises(ModelIntegrityError, match="cached file"):
+        with (
+            patch("urllib.request.urlopen", return_value=_fake_resp(b"still tampered")),
+            pytest.raises(ModelIntegrityError, match="SHA-256 mismatch"),
+        ):
             ms.ensure_model()
         assert not target.exists(), "Tampered cache must be deleted on detection"
 
-    def test_bundled_fallback_skips_hash_check(self, tmp_path):
-        """Bundled fallback ships in our wheel — controlled by the
-        package build, not the network. Don't verify it (and don't
-        require the registration to populate model_sha256 with the
-        bundled-bytes digest)."""
+    def test_bundled_fallback_is_used_without_a_download(self, tmp_path):
+        """A bundled copy that matches the pin installs with no network
+        call (a mismatching one raises — see
+        tests/test_model_download_robustness.py)."""
         bundled = tmp_path / "bundled" / "model.onnx"
         bundled.parent.mkdir(parents=True)
         bundled.write_bytes(b"bundled bytes")
@@ -171,10 +176,10 @@ class TestEnsureModelHashCheck:
             name="test",
             model_path=target,
             model_url="https://example.com/model.onnx",
-            model_sha256="0" * 64,  # mismatch — but bundled path is taken first
+            model_sha256=hashlib.sha256(b"bundled bytes").hexdigest(),
             bundled_path=str(bundled),
             create_fn=lambda p: object(),
-            registry_id=None,
+            registry_id="openai_clip_vit_b32_onnx",
         )
         with patch("urllib.request.urlopen") as urlopen:
             result = ms.ensure_model()
@@ -184,7 +189,7 @@ class TestEnsureModelHashCheck:
         assert target.read_bytes() == b"bundled bytes"
 
     def test_get_propagates_hash_mismatch(self, tmp_path):
-        """D-02 inverted contract: a hash mismatch flows up through
+        """Inverted contract: a hash mismatch flows up through
         .get() as ModelIntegrityError. Previously get() returned None
         silently (treated as missing-dep), which let a tampered model
         degrade to a 0.0 score with no operator-visible signal —
@@ -200,7 +205,7 @@ class TestEnsureModelHashCheck:
             model_url="https://example.com/model.onnx",
             model_sha256="0" * 64,
             create_fn=lambda p: object(),
-            registry_id=None,
+            registry_id="openai_clip_vit_b32_onnx",
         )
         with (
             patch("urllib.request.urlopen", return_value=_fake_resp(content)),
@@ -213,7 +218,8 @@ class TestEnsureModelHashCheck:
     "module_path,attrs",
     [
         # Each model registration must set model_sha256 to a 64-hex string.
-        # Bundled-only models with model_url=None are exempt (NudeNet).
+        # Self-managed models with model_url=None are exempt (NudeNet's
+        # runner pins + verifies its own SHA in bpp.scoring.nudity).
         ("bpp.scoring.face_blazeface_fr", ["_fr_detector"]),
         ("bpp.scoring.face_scrfd", ["_scrfd_model"]),
         ("bpp.scoring.face_hand_filter", ["_hand_landmarker"]),
@@ -228,7 +234,7 @@ class TestEnsureModelHashCheck:
 class TestAllRegistrationsHaveHash:
     """Every ModelSingleton with a model_url must declare model_sha256.
     A new registration that ships without a hash silently re-introduces
-    the H2 attack surface."""
+    the unverified-download attack surface."""
 
     def test_registration_has_sha256(self, module_path, attrs):
         import importlib

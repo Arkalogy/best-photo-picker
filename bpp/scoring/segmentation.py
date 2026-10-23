@@ -8,11 +8,14 @@ in a photo, enabling composition scoring even when no face is detected
 from __future__ import annotations
 
 import os
+import threading
 from pathlib import Path
 
 import cv2
 import numpy as np
 
+from bpp.scoring.inference_log import report_inference_failure
+from bpp.scoring.install_hold import requires
 from bpp.scoring.model_base import ModelSingleton
 from bpp.utils.logging import get_logger
 from bpp.utils.paths import models_dir as _models_dir
@@ -30,7 +33,7 @@ _MODEL_DIR = str(_models_dir())
 # Why this one: float16 quantised "latest" — small (~1MB), CPU
 #         realtime. Despite the name, it works on any human-subject
 #         photo, not just selfies.
-# License: Apache 2.0 (MediaPipe).
+# License: see the bpp.registry entry ``mediapipe_selfie_segmenter``.
 # To bump: same `/latest/` pattern as other MediaPipe models —
 #         refresh SHA when Google rotates the artifact.
 _SEGMENTER_PATH = os.path.join(_MODEL_DIR, "selfie_segmenter.tflite")
@@ -61,9 +64,13 @@ _segmenter = ModelSingleton(
     model_url=_SEGMENTER_URL,
     model_sha256=_SEGMENTER_SHA256,
     create_fn=_create_segmenter,
-    registry_id=None,  # ancillary mediapipe segmenter, no licensing concern
-    import_check=lambda: __import__("mediapipe"),
+    registry_id="mediapipe_selfie_segmenter",
+    import_check=requires("mediapipe.tasks"),  # what create imports
 )
+
+
+#: MediaPipe tasks are not thread-safe: one inference at a time per instance.
+_segmenter_lock = threading.Lock()
 
 
 def _get_segmenter():
@@ -75,7 +82,7 @@ def ensure_segmenter_model() -> list[str]:
     """Pre-download segmenter model. Returns list of warnings."""
     warnings = []
     path = _segmenter.ensure_model()
-    if path is None:
+    if path is None and not _segmenter.license_blocked():
         warnings.append("Selfie segmenter unavailable — subject composition scoring disabled")
     return warnings
 
@@ -99,8 +106,10 @@ def segment_subject(image: np.ndarray) -> np.ndarray | None:
 
     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
     try:
-        result = segmenter.segment(mp_image)
+        with _segmenter_lock:
+            result = segmenter.segment(mp_image)
     except Exception:
+        report_inference_failure("Subject segmentation")
         return None
 
     if not result.confidence_masks:

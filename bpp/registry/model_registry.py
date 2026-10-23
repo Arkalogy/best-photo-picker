@@ -1,10 +1,10 @@
 """Single source of truth for every ML model BPP touches.
 
-The schema below is the data-model output of Batch 1 of the
-face-embedder legal-posture rollout. Items 3 (structured registry),
-19 (commit-permalinks + ack snapshots), 20 (multi-status lifecycle),
-and 24 (non-warranty field names + split commercial-mode flag) all
-land here.
+The schema below covers the structured registry, commit permalinks +
+acknowledgment snapshots, the multi-status lifecycle, and the
+non-warranty field names + split commercial-mode flag. The policy it
+encodes is described in ``MODEL_POLICY.md`` and
+``docs/adr/0005-legal-posture-and-model-registry.md``.
 
 What this is
 
@@ -17,9 +17,8 @@ What this is
 
 Why the field names look the way they do
 
-  The earlier draft used ``commercial_safe: bool``. A second legal
-  review flagged that phrasing as warranty-like — it reads as if
-  Arkalogy is opining that the model is safe for commercial use,
+  An earlier draft used ``commercial_safe: bool``. That phrasing is
+  warranty-like — it reads as if Arkalogy is opining that the model is safe for commercial use,
   which is the exact framing we want to avoid. The renamed fields
   describe the underlying facts (does a restriction exist, what did
   upstream claim, what does bppicker permit by default) without
@@ -28,7 +27,7 @@ Why the field names look the way they do
   plain English at presentation time so users see "Commercial use:
   restricted per upstream license," not raw flags.
 
-Status semantics (item 20)
+Status semantics
 
   ``ModelStatus`` replaces the prior boolean ``withdrawn`` flag.
   Four states distinguish behaviour for new downloads vs existing
@@ -49,7 +48,7 @@ Status semantics (item 20)
   :class:`StatusBehavior` so call sites in download, selection and
   startup-scan paths don't have to repeat the table.
 
-Acknowledgment evidence (item 19)
+Acknowledgment evidence
 
   Restricted models carry ``ack_text_version`` and ``ack_text_sha256``
   so the click-through dialog and the acceptance log can later prove
@@ -57,13 +56,15 @@ Acknowledgment evidence (item 19)
   versioned constants elsewhere; the registry only stores the
   pointers and hashes that make the wording reproducible.
 
-Not in scope for Batch 1
+What lives elsewhere
 
-  Actual download wiring, click-through dialog, hard-block, signed
-  remote registry, contributor policy, BYOM. Those land in later
-  batches and read from this registry's fields. Batch 1 only
-  establishes the data model + status semantics + a couple of
-  seeded entries enough for downstream batches to develop against.
+  Download wiring (:mod:`bpp.utils.download`), the click-through
+  dialog (:mod:`bpp.registry.acceptance`), the hard-block
+  (:mod:`bpp.registry.policy`), the signed remote registry
+  (:mod:`bpp.registry.overlay`) and BYOM (:mod:`bpp.registry.byom`)
+  all read from this registry's fields. This module only owns the
+  data model + status semantics; built-in entries live in
+  :mod:`bpp.registry.builtins`.
 """
 
 from __future__ import annotations
@@ -130,6 +131,15 @@ class StatusBehavior:
     ``requires_rights_assertion_to_use``: must the user re-affirm
         separate-rights before any further use? Only set for
         ``LEGALLY_BLOCKED``.
+
+    Only ``new_download_allowed`` is read by runtime code today (the
+    download gate and the model-picker filters). Whether a model may
+    load is decided by :func:`bpp.registry.policy.check_model_load_allowed`,
+    which is stricter than the two ``existing_local_use`` /
+    ``rights_assertion`` columns suggest: ``LEGALLY_BLOCKED`` refuses
+    every load with no override, and ``WITHDRAWN_NO_NEW_DOWNLOADS``
+    refuses every load of an entry that requires explicit
+    acknowledgment, including copies already on disk.
     """
 
     new_download_allowed: bool
@@ -169,7 +179,7 @@ _STATUS_BEHAVIOR: dict[ModelStatus, StatusBehavior] = {
 def status_behavior(status: ModelStatus) -> StatusBehavior:
     """Return the runtime policy for ``status``.
 
-    Encapsulates the item-20 behavior table so call sites in
+    Encapsulates the status behavior table so call sites in
     download, selection and startup-scan paths share one
     authoritative implementation rather than repeating the matrix.
     """
@@ -180,21 +190,24 @@ def status_behavior(status: ModelStatus) -> StatusBehavior:
 class ModelEntry:
     """One ML model BPP either ships, points at, or accepts as BYOM.
 
-    The fields land Batch-1 items 3 / 19 / 20 / 24 of the legal-
-    posture plan. Each field's purpose:
+    Each field's purpose:
 
     Identity:
         ``id`` — stable, machine-friendly key (e.g. ``"sface_yunet"``).
             Used as the foreign key on the acceptance log and as the
-            ``model_id`` tag on derived embeddings/clusters so item 21
-            (derived-data purge on removal) can find them later.
+            ``model_id`` tag on derived embeddings/clusters so the
+            derived-data purge on removal can find them later.
         ``display_name`` — human-readable title shown in pickers.
         ``kind`` — what surface the model plugs into
             (``"face_embedder"``, ``"face_detector"``, ``"semantic"``,
             ``"detection"``, ``"inpaint"``, etc.). UI groups by kind.
 
-    Provenance (item 19):
-        ``source_url`` — where to download the weight file from.
+    Provenance:
+        ``source_url`` — the model's upstream source: usually the
+            publisher's project page, occasionally a direct download
+            URL. The URL a loader actually fetches lives in that
+            loader's module and can be a re-host (LaMa's weights come
+            from the simple-lama-inpainting release assets).
         ``terms_url`` — upstream license / terms page (typically a
             README or LICENSE on GitHub). May change over time.
         ``terms_permalink_url`` — commit-pinned snapshot of
@@ -208,7 +221,7 @@ class ModelEntry:
             by :mod:`bpp.registry.labels` to fill the picker's
             subtitle slot.
 
-    Acknowledgment (item 19):
+    Acknowledgment:
         ``requires_explicit_ack`` — restricted models = ``True``.
             Drives whether the click-through dialog fires before
             first download / use.
@@ -217,11 +230,11 @@ class ModelEntry:
             the acceptance-log row so we can later reproduce what was
             shown.
         ``ack_text_sha256`` — hex SHA-256 of the canonical
-            acknowledgment text (item 7 disclaimer + model-specific
+            acknowledgment text (canonical disclaimer + model-specific
             extras). Lets the registry and the acceptance log verify
             the same string was shown.
 
-    License classification (item 24 — non-warranty field names):
+    License classification (non-warranty field names):
         ``upstream_claimed_license_class`` — what upstream says the
             license is. Note "claimed" — we are not opining; we are
             recording the upstream claim.
@@ -232,15 +245,15 @@ class ModelEntry:
             :mod:`bpp.registry.labels`.
         ``bppicker_commercial_default_allowed`` — does BPP, in its
             default configuration, let this model be used in
-            self-declared commercial mode? Drives the hard-block in
-            item 16.
+            self-declared commercial mode? Drives the commercial-use
+            hard-block.
         ``commercial_unlock_requires_rights_assertion`` — can a user
             override the default block by asserting separate
             commercial rights? Separated from the previous field so
             "block always" and "block unless user asserts rights"
             cannot collapse into one ambiguous flag.
 
-    Lifecycle (item 20):
+    Lifecycle:
         ``status`` — see :class:`ModelStatus`.
 
     Training data + integrity:
@@ -255,8 +268,7 @@ class ModelEntry:
     Defaults:
         ``default_for_kind`` — is this entry BPP's default selection
             for its ``kind``? Exactly one entry per kind should set
-            this to ``True``. Honored by item 1 (lock SFace as
-            default face embedder).
+            this to ``True`` (SFace is the default face embedder).
     """
 
     # Identity
@@ -264,25 +276,25 @@ class ModelEntry:
     display_name: str
     kind: str
 
-    # Provenance (item 19)
+    # Provenance
     source_url: str
     terms_url: str
     terms_permalink_url: str | None
     terms_retrieved_at: str
     license_summary: str
 
-    # Acknowledgment (item 19)
+    # Acknowledgment
     requires_explicit_ack: bool
     ack_text_version: str
     ack_text_sha256: str
 
-    # License classification (item 24)
+    # License classification
     upstream_claimed_license_class: LicenseClass
     commercial_use_restriction_known: bool
     bppicker_commercial_default_allowed: bool
     commercial_unlock_requires_rights_assertion: bool
 
-    # Lifecycle (item 20)
+    # Lifecycle
     status: ModelStatus
 
     # Training data + integrity
@@ -293,8 +305,8 @@ class ModelEntry:
     default_for_kind: bool
 
     # Discriminator for the acknowledgment text family the click-
-    # through dialog should render (Batch 6 / item 11). Two values
-    # are recognised today:
+    # through dialog should render. Two values are recognised
+    # today:
     #
     #   "canonical" — restricted third-party model, dialog renders
     #       CANONICAL_DISCLAIMER plus the four required checkboxes
@@ -345,6 +357,17 @@ class ModelEntry:
     #: user's disk.
     expected_download_size_bytes: int = 0
 
+    #: True for a supporting model that runs together with its kind's
+    #: default rather than as a fallback (the BlazeFace detectors run
+    #: next to YuNet on every photo). The Settings → Models picker
+    #: shows such a row as running, not as a backup.
+    runs_alongside_default: bool = False
+
+    #: True when the weights ship inside an installed library (the Haar
+    #: cascade inside opencv-python), so they are always on disk and
+    #: there is nothing to download.
+    ships_with_runtime: bool = False
+
 
 _REGISTRY: _ScoringRegistry[ModelEntry] = _ScoringRegistry("model entry", _log)
 
@@ -352,8 +375,8 @@ _REGISTRY: _ScoringRegistry[ModelEntry] = _ScoringRegistry("model entry", _log)
 def register_entry(entry: ModelEntry) -> None:
     """Register a :class:`ModelEntry`. Idempotent on ``id``.
 
-    Replacement of an existing entry is intentional — Batch 8 (signed
-    remote registry) overlays user-fetched updates onto the bundled
+    Replacement of an existing entry is intentional — the signed
+    remote registry overlays user-fetched updates onto the bundled
     baseline at startup; the replacement path runs here.
     """
     _log.debug(
@@ -364,6 +387,11 @@ def register_entry(entry: ModelEntry) -> None:
         entry.upstream_claimed_license_class.value,
     )
     _REGISTRY.register(entry, entry.id)
+    # The license decision depends on the entry (status, ack text), so a
+    # replaced entry must be re-checked, not served from a cached gate.
+    from bpp.scoring.model_load_gate import reset_gates_for
+
+    reset_gates_for(entry.id)
 
 
 def get_entry(entry_id: str) -> ModelEntry | None:
@@ -384,7 +412,7 @@ def iter_entries() -> Iterator[ModelEntry]:
 def get_default_for_kind(kind: str) -> ModelEntry | None:
     """Return the registered entry that is marked default for ``kind``.
 
-    Batch 2 (item 1): the default-selection layer reads from here
+    The default-selection layer reads from here
     rather than inferring "use whichever model loads" from a code path
     that could quietly land on a restricted model. Exactly one entry
     per kind may have ``default_for_kind=True``; multiple defaults are

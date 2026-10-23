@@ -4,24 +4,32 @@ from __future__ import annotations
 
 import contextlib
 import os
+from typing import Any
 
 from flask import Blueprint, Response, jsonify, request, send_file
 
 from bpp.constants import (
+    HASH_PREFIX_LEN,
     PHOTO_CACHE_SUFFIX_EDITED,
     PHOTO_CACHE_SUFFIX_EDITED_THUMB,
     PHOTO_CACHE_SUFFIX_FULL,
     PHOTO_CACHE_SUFFIX_SPRITE,
 )
 from bpp.errors import BppError, ForbiddenError, NotFoundError, ValidationError
+from bpp.media_types import MediaKind, media_kind_from_path
 from bpp.utils.logging import get_logger
-from bpp.utils.raw import RAW_EXTENSIONS as _RAW_EXTENSIONS
+from bpp.web.media_support import raw_full_jpeg_path, raw_preview_error
+from bpp.web.photo_cache import invalidate_photo_cache
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx
 
 log = get_logger(__name__)
 
 bp = Blueprint("media", __name__)
+
+
+#: What to check when a photo's file can't be read (shown in the viewer's toast).
+_MISSING_FILE_RECOVERY = "check that the file still exists and its drive is connected"
 
 
 def _safe_send_file(path: str, **kwargs) -> Response | tuple[Response, int]:
@@ -33,7 +41,13 @@ def _safe_send_file(path: str, **kwargs) -> Response | tuple[Response, int]:
     try:
         return send_file(path, **kwargs)
     except (FileNotFoundError, OSError) as e:
-        raise NotFoundError("File missing", path=path) from e
+        # The path stays in the log; the response (seen by paired phones
+        # too) gets the reason and what to check.
+        raise NotFoundError(
+            "File missing",
+            diagnostic_message=f"File missing: {path}",
+            recovery=_MISSING_FILE_RECOVERY,
+        ) from e
 
 
 @bp.get("/thumb/<path_hash>")
@@ -123,7 +137,7 @@ def serve_full_photo(path_hash: str) -> Response | tuple[Response, int]:
 
     filepath = ctx.thumbs.get_filepath(path_hash)
     if filepath is None or not os.path.isfile(filepath):
-        raise NotFoundError("Photo not found", path_hash=path_hash)
+        raise NotFoundError("Photo not found", path_hash=path_hash, recovery=_MISSING_FILE_RECOVERY)
 
     # Skip edits when ?raw=1 (editor needs the original for CSS live preview)
     edits = None if request.args.get("raw") else _get_edits_for_path(ctx, filepath)
@@ -151,24 +165,12 @@ def serve_full_photo(path_hash: str) -> Response | tuple[Response, int]:
         return _safe_send_file(jpeg_path, mimetype="image/jpeg")
 
     # RAW files: convert to JPEG via rawpy (cached)
-    if ext in _RAW_EXTENSIONS:
-        cache_dir = ctx.thumbs.cache_dir if ctx.thumbs else ctx.ensure_workdir()
-        jpeg_path = os.path.join(cache_dir, f"{path_hash}{PHOTO_CACHE_SUFFIX_FULL}.jpg")
-        needs_gen = not os.path.exists(jpeg_path)
-        if not needs_gen:
-            with contextlib.suppress(OSError):
-                needs_gen = os.path.getmtime(filepath) > os.path.getmtime(jpeg_path)
-        if needs_gen:
-            from bpp.utils.raw import convert_raw_to_jpeg
+    if media_kind_from_path(filepath) is MediaKind.RAW:
+        from bpp.utils.raw import ensure_raw_jpeg
 
-            result = convert_raw_to_jpeg(filepath, jpeg_path)
-            if result is None:
-                raise BppError(
-                    "Cannot convert RAW image",
-                    user_message="Cannot convert RAW image",
-                    diagnostic_message=f"rawpy conversion failed for {filepath}",
-                    path_hash=path_hash,
-                )
+        jpeg_path = raw_full_jpeg_path(ctx, path_hash)
+        if ensure_raw_jpeg(filepath, jpeg_path) is None:
+            raise raw_preview_error(path_hash, filepath)
         return _safe_send_file(jpeg_path, mimetype="image/jpeg")
 
     return _safe_send_file(filepath, mimetype="image/jpeg")
@@ -259,6 +261,7 @@ def api_video_trim() -> tuple[Response, int]:
             start=start,
             end=end,
         )
+    start_s, end_s = _trim_range(start, end)
 
     # Validate filepath is within the library directory.
     # shared allowlist helper — same realpath-resolve +
@@ -276,53 +279,105 @@ def api_video_trim() -> tuple[Response, int]:
     if not ffmpeg_available():
         raise ValidationError("ffmpeg is not installed", reason="ffmpeg_missing")
 
-    # Build output path: insert _trimmed before extension. The output
-    # also has to live inside the library — ffmpeg writes here, so a
-    # symlinked base could otherwise let it write outside the root.
+    # ffmpeg writes to a fresh hidden temp name beside the source (never
+    # a fixed name that could be another library file), inside the
+    # library — a symlinked base could otherwise let it write outside.
+    import tempfile
+
     base, ext = os.path.splitext(filepath)
-    out_path = f"{base}_trimmed{ext}"
+    fd, out_path = tempfile.mkstemp(
+        prefix=f".{os.path.basename(base)}.", suffix=f".trim{ext}", dir=os.path.dirname(filepath)
+    )
+    os.close(fd)
     if not is_path_under_any(out_path, allowed):
+        os.remove(out_path)
         raise ForbiddenError("Invalid filepath", reason="output_outside_library")
 
-    result = trim_video(filepath, out_path, start=float(start), end=float(end))
-    if not result["ok"]:
-        raise ValidationError(result["error"], reason="trim_failed")
+    try:
+        result = trim_video(filepath, out_path, start=start_s, end=end_s)
+        if not result["ok"]:
+            raise ValidationError(result["error"], reason="trim_failed")
 
-    # Re-resolve immediately before the destructive write — between the
-    # initial validation above and this replace, a symlink could be
-    # swapped to point outside the library (TOCTOU). Using the resolved
-    # target ensures we write to the path we already cleared.
-    if not is_path_under_any(filepath, allowed):
-        raise ForbiddenError("Path moved out of library", reason="toctou")
-    final_target = os.path.realpath(filepath)
-    os.replace(out_path, final_target)
+        # Re-resolve immediately before the destructive write — between
+        # the initial validation above and this replace, a symlink could
+        # be swapped to point outside the library (TOCTOU). Using the
+        # resolved target ensures we write to the path we already cleared.
+        if not is_path_under_any(filepath, allowed):
+            raise ForbiddenError("Path moved out of library", reason="toctou")
+        final_target = os.path.realpath(filepath)
+        os.replace(out_path, final_target)
+    finally:
+        # Whatever failed, no half-written clip stays beside the source.
+        with contextlib.suppress(OSError):
+            os.remove(out_path)
 
-    # Update video duration in DB
+    # The file changed: the row must describe the new bytes (hash,
+    # size, mtime) or the untrimmed original reads as a duplicate and
+    # the file can't be re-found by hash; plus the new duration/size.
+    from bpp.db.library import _sha256_file
     from bpp.utils.video import extract_video_metadata
 
     conn = ctx.get_conn()
-    vmeta = extract_video_metadata(filepath)
+    # The row is found by the path as stored, or by the resolved path:
+    # the request may spell it differently (a "./", a symlinked folder).
+    old = conn.execute(
+        "SELECT id, filepath, sha256 FROM photos WHERE filepath IN (?, ?)",
+        (filepath, final_target),
+    ).fetchone()
+    vmeta = extract_video_metadata(final_target)
+    if old is None:
+        log.warning("Trimmed %s, which has no photo row to update", filepath)
+        return jsonify({"status": "ok", "duration": vmeta["duration"] if vmeta else None}), 200
+    st = os.stat(final_target)
+    digest = _sha256_file(final_target)  # chunked: a 4K clip is not read into RAM
+    conn.execute(
+        "UPDATE photos SET sha256=?, file_size=?, file_mtime=?, "
+        "phash=NULL, ahash=NULL, dup_cluster_id=0, cluster_size=1 WHERE id=?",
+        (digest, st.st_size, st.st_mtime, old["id"]),
+    )
     if vmeta:
         conn.execute(
-            "UPDATE photos SET video_duration=? WHERE filepath=?",
-            (vmeta["duration"], filepath),
+            "UPDATE photos SET video_duration=?, video_width=?, video_height=?, video_fps=?, "
+            "video_codec=? WHERE id=?",
+            (
+                vmeta["duration"],
+                vmeta.get("width"),
+                vmeta.get("height"),
+                vmeta.get("fps"),
+                vmeta.get("codec"),
+                old["id"],
+            ),
         )
-        conn.commit()
-
-    # Cache-invalidation audit (2026-06): the trim overwrites the
-    # underlying file but the cached sprite + thumbnail are content-
-    # addressed against the OLD bytes. Without the invalidate, the
-    # next /video/sprite or /thumb request serves a sprite generated
-    # from frames that are no longer in the trimmed clip — the user
-    # sees frames that were chopped off the head/tail.
+    conn.commit()
+    # The row changed and the old bytes' cached derivatives are stale:
+    # the cached sprite + thumbnail are content-addressed against the
+    # OLD bytes, so without this the next /video/sprite or /thumb serves
+    # frames that were chopped off the head or tail.
+    ctx.invalidate_analysis()
     if ctx.thumbs is not None:
-        path_hash = ctx.thumbs.get_hash(filepath)
-        if path_hash:
-            from bpp.web.bp_photos_manage import _invalidate_photo_cache
-
-            _invalidate_photo_cache(ctx, path_hash)
+        old_sha = old["sha256"] or None
+        invalidate_photo_cache(
+            ctx,
+            ctx.thumbs.get_hash(old["filepath"]),
+            content_hash=old_sha[:HASH_PREFIX_LEN] if old_sha else None,
+        )
 
     return jsonify({"status": "ok", "duration": vmeta["duration"] if vmeta else None}), 200
+
+
+def _trim_range(start: Any, end: Any) -> tuple[float, float]:
+    """``(start, end)`` in seconds, or a 400: both finite numbers, start
+    at or after 0 and before end (a bad value used to be a 500 from
+    ``float()``)."""
+    import math
+
+    try:
+        start_s, end_s = float(start), float(end)
+    except (TypeError, ValueError) as e:
+        raise ValidationError("start and end must be numbers", start=start, end=end) from e
+    if not (math.isfinite(start_s) and math.isfinite(end_s)) or start_s < 0 or end_s <= start_s:
+        raise ValidationError("start must be 0 or more and before end", start=start_s, end=end_s)
+    return start_s, end_s
 
 
 # Photo edits engine moved to bpp.web.photo_edits. Re-exported here

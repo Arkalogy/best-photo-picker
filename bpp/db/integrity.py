@@ -47,7 +47,7 @@ def full_integrity_check(db_path: str) -> tuple[bool, list[str]]:
     The Jun-2 demo lib incident: ``quick_check`` returned "ok" but
     ``integrity_check`` revealed dozens of "Page N: never used"
     entries. The quick check is a sanity probe; the full check is
-    the diagnostic. Protection C runs the full version at startup
+    the diagnostic. The startup integrity gate runs the full version
     so we catch this class before any endpoint does.
 
     ``ok=True`` means SQLite returned exactly one row containing
@@ -73,10 +73,39 @@ def full_integrity_check(db_path: str) -> tuple[bool, list[str]]:
     return False, errors
 
 
-# Bug #9 / 256-d corruption: each row's ``embedding`` BLOB must be
-# exactly this many bytes. SFace and dlib both produce 128-d float32
-# = 512 bytes. Anything else is the SIGKILL-mid-write debris pattern.
+# Coordinate-space / 256-d corruption: a row's ``embedding`` BLOB must be
+# exactly its producing embedder's declared size in float32 bytes. Rows
+# without a producer tag predate tagging and came from SFace / dlib
+# (128-d = 512 bytes). Anything else is the SIGKILL-mid-write debris
+# pattern.
 _EMBEDDING_BYTES_EXPECTED = 128 * 4
+
+
+def _corrupt_rows_where(conn: sqlite3.Connection) -> tuple[str, tuple]:
+    """SQL condition (alias ``fe``) for rows that can't be valid, plus
+    its parameters. Sizes come from the registered embedders; a row
+    from an embedder this process doesn't know (a plugin — plugins load
+    after this check) is kept unless it isn't float32-sized at all."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(face_embeddings)")}
+    if "producing_model_id" not in cols:
+        return ("fe.embedding IS NULL OR length(fe.embedding) != ?", (_EMBEDDING_BYTES_EXPECTED,))
+    import bpp.scoring.face_embed  # noqa: F401 — registers the built-in embedders
+    from bpp.scoring.face_embedder_registry import list_embedders
+
+    sizes = {e.registry_id: e.embedding_dim * 4 for e in list_embedders()}
+    # Older rows were tagged with the bare method name.
+    sizes.update({e.name: e.embedding_dim * 4 for e in list_embedders()})
+    known = " ".join("WHEN ? THEN length(fe.embedding) != ?" for _ in sizes)
+    params: list = []
+    for rid, nbytes in sizes.items():
+        params += [rid, nbytes]
+    cond = (
+        "fe.embedding IS NULL OR length(fe.embedding) = 0 OR length(fe.embedding) % 4 != 0 "
+        "OR (fe.producing_model_id IS NULL AND length(fe.embedding) != ?) "
+        f"OR (CASE fe.producing_model_id {known} ELSE 0 END)"
+    )
+    return cond, (_EMBEDDING_BYTES_EXPECTED, *params)
+
 
 # How many affected (id, filepath) tuples to name in the prune-summary
 # log line. 20 keeps the log readable on a Jun-2-sized incident (136
@@ -95,8 +124,8 @@ def prune_corrupt_face_embeddings(db_path: str) -> int:
     valid 512-byte rows) crash the ``np.stack`` in cluster/recompute
     paths with ``ValueError: all input arrays must have the same
     shape``. NULL embeddings shouldn't exist per the schema, but a
-    SIGKILL-mid-write can leave one behind and Protection A's
-    read-side defense already returns None for them. Sweeping both
+    SIGKILL-mid-write can leave one behind and the read-side
+    ``decode_embedding`` defense already returns None for them. Sweeping both
     in one pass keeps the table consistent with what the app
     actually reads.
 
@@ -116,18 +145,13 @@ def prune_corrupt_face_embeddings(db_path: str) -> int:
                 # log line and find the cause. Capped at _PRUNE_LOG_SAMPLE
                 # so a library with thousands of bad rows doesn't
                 # produce an unreadable summary line.
+                where, params = _corrupt_rows_where(conn)
                 try:
                     affected = list(
                         conn.execute(
                             "SELECT fe.id, p.filepath FROM face_embeddings fe "
-                            "LEFT JOIN photos p ON p.id = fe.photo_id "
-                            "WHERE fe.embedding IS NULL "
-                            "   OR length(fe.embedding) != ? "
-                            "LIMIT ?",
-                            (
-                                _EMBEDDING_BYTES_EXPECTED,
-                                _PRUNE_LOG_SAMPLE + 1,
-                            ),
+                            f"LEFT JOIN photos p ON p.id = fe.photo_id WHERE {where} LIMIT ?",
+                            (*params, _PRUNE_LOG_SAMPLE + 1),
                         )
                     )
                 except sqlite3.OperationalError:
@@ -139,14 +163,15 @@ def prune_corrupt_face_embeddings(db_path: str) -> int:
                     affected = []
                 # Catch NULL too: the schema declares embedding NOT
                 # NULL, but a SIGKILL-mid-write could leave a half-
-                # state behind, and Protection A's read-side defense
+                # state behind, and the read-side decode defense
                 # already returns None for NULL blobs. Sweep both in
                 # one pass so the face count surfaces (Settings →
                 # Storage, Activity) match the count the app actually
                 # uses.
                 cur = conn.execute(
-                    "DELETE FROM face_embeddings WHERE embedding IS NULL OR length(embedding) != ?",
-                    (_EMBEDDING_BYTES_EXPECTED,),
+                    "DELETE FROM face_embeddings WHERE id IN "
+                    f"(SELECT fe.id FROM face_embeddings fe WHERE {where})",
+                    params,
                 )
                 n = cur.rowcount or 0
                 conn.commit()
@@ -170,7 +195,8 @@ def prune_corrupt_face_embeddings(db_path: str) -> int:
             tail = f" (+{more} more)" if more else ""
             _log.warning(
                 "Pruned %d corrupt face_embeddings row(s) at startup "
-                "(non-512-byte embedding BLOBs — likely SIGKILL-mid-write debris). "
+                "(embedding BLOBs of the wrong size for their model — "
+                "likely SIGKILL-mid-write debris). "
                 "Affected rows [id=filename]: %s%s",
                 n,
                 sample_str,
@@ -179,7 +205,8 @@ def prune_corrupt_face_embeddings(db_path: str) -> int:
         else:
             _log.warning(
                 "Pruned %d corrupt face_embeddings row(s) at startup "
-                "(non-512-byte embedding BLOBs — likely SIGKILL-mid-write debris)",
+                "(embedding BLOBs of the wrong size for their model — "
+                "likely SIGKILL-mid-write debris)",
                 n,
             )
     return n

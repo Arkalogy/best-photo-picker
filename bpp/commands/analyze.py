@@ -12,7 +12,7 @@ from __future__ import annotations
 import argparse
 import os
 
-from bpp.config import load_config
+from bpp.config import cfg_get, load_config
 from bpp.utils.logging import get_logger, setup_logging
 
 
@@ -22,9 +22,9 @@ def do_analyze(args: argparse.Namespace) -> int:
 
     # load plugin entry-points before consuming the scoring
     # registry. Idempotent under repeated calls within a process.
-    from bpp.plugins import load_plugin_entry_points
+    from bpp.plugins import load_plugins_for_cli
 
-    load_plugin_entry_points()
+    load_plugins_for_cli()
 
     cfg = load_config(getattr(args, "config", None))
     extensions = [e.strip().lower() for e in args.extensions.split(",")]
@@ -48,7 +48,7 @@ def do_analyze(args: argparse.Namespace) -> int:
         images = scan_images(
             input_path,
             extensions=extensions,
-            follow_symlinks=cfg.get("follow_symlinks", False),
+            follow_symlinks=cfg_get(cfg, "follow_symlinks"),
             max_images=args.max,
         )
 
@@ -62,14 +62,28 @@ def do_analyze(args: argparse.Namespace) -> int:
         log.info("[dry-run] Would analyze %d images", len(images))
         return 0
 
-    with timer.section("analyze"):
-        results = analyze_all(
-            images,
-            workdir=workdir,
-            config=cfg,
-            workers=args.workers,
-            seed=args.seed,
+    from bpp.scoring.model_base import ModelIntegrityError
+
+    try:
+        with timer.section("analyze"):
+            results = analyze_all(
+                images,
+                workdir=workdir,
+                config=cfg,
+                workers=args.workers,
+            )
+    except ModelIntegrityError as exc:
+        log.error(
+            "Analysis stopped: a model file failed its integrity check (%s). "
+            "Re-download it in Settings → Models, or delete the damaged file so "
+            "it's fetched again, then re-run.",
+            exc,
         )
+        return 1
+    except RuntimeError as exc:
+        # e.g. a worker process died: say so plainly, exit non-zero.
+        log.error("Analysis stopped: %s", exc)
+        return 1
 
     log.info(
         "Analysis complete: %d processed, %d skipped",
@@ -85,9 +99,14 @@ def do_select(args: argparse.Namespace) -> int:
     setup_logging(debug=False)
     log = get_logger(__name__)
 
+    # Plugins first: a dedupe strategy named in config may be one of theirs.
+    from bpp.plugins import load_plugins_for_cli
+
+    load_plugins_for_cli()
+
     cfg = load_config(getattr(args, "config", None))
 
-    from bpp.dedupe.cluster import deduplicate
+    from bpp.dedupe.select import dedupe_candidates
     from bpp.output.export import export_selected
     from bpp.scoring.aggregate import load_analysis
     from bpp.selection.choose import choose
@@ -112,12 +131,14 @@ def do_select(args: argparse.Namespace) -> int:
     log.info("Loaded analysis for %d images", len(analysis))
 
     with timer.section("dedupe"):
-        candidates = deduplicate(analysis, config=cfg)
+        candidates, dedup_mode = dedupe_candidates(analysis, cfg)
 
-    log.info("After dedup: %d candidates from %d clusters", len(candidates), len(analysis))
+    log.info(
+        "After dedup (%s): %d candidates from %d photos", dedup_mode, len(candidates), len(analysis)
+    )
 
     with timer.section("select"):
-        selected = choose(candidates, k=args.k, config=cfg, seed=args.seed)
+        selected = choose(candidates, k=args.k, config=cfg)
 
     log.info("Selected %d photos", len(selected))
 
@@ -157,7 +178,6 @@ def do_run(args: argparse.Namespace) -> int:
         workers=args.workers,
         debug=getattr(args, "debug", False),
         dry_run=args.dry_run,
-        seed=args.seed,
         extensions=args.extensions,
     )
     rc = do_analyze(analyze_ns)
@@ -175,7 +195,6 @@ def do_run(args: argparse.Namespace) -> int:
         export_mode=args.export_mode,
         gallery=getattr(args, "gallery", False),
         dry_run=args.dry_run,
-        seed=args.seed,
         extensions=args.extensions,
     )
     return do_select(select_ns)

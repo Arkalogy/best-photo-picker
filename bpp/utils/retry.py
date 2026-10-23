@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import os
 import time
 from collections.abc import Callable
@@ -15,14 +16,17 @@ log = get_logger(__name__)
 T = TypeVar("T")
 
 # Errors typically caused by transient NAS issues (mount drops, SMB timeouts, etc.)
+# errno constants, not numbers: ETIMEDOUT / EHOSTDOWN / ESTALE are 60 /
+# 64 / 70 on macOS and 110 / 112 / 116 on Linux.
 _TRANSIENT_ERRNOS = frozenset(
     {
-        5,  # EIO — I/O error
-        13,  # EACCES — Permission denied (temporary on reconnect)
-        110,  # ETIMEDOUT — Connection timed out
-        112,  # EHOSTDOWN — Host is down
-        113,  # EHOSTUNREACH — No route to host
-        116,  # ESTALE — Stale file handle (NFS)
+        errno.EIO,  # I/O error
+        errno.ETIMEDOUT,  # Connection timed out
+        errno.EHOSTDOWN,  # Host is down
+        errno.EHOSTUNREACH,  # No route to host
+        errno.ENETUNREACH,  # Network is unreachable
+        errno.ECONNRESET,  # Connection reset by peer
+        errno.ESTALE,  # Stale file handle (NFS; macOS says "Stale NFS file handle")
     }
 )
 
@@ -36,6 +40,7 @@ def is_transient(exc: OSError) -> bool:
         kw in msg
         for kw in (
             "stale file handle",
+            "stale nfs file handle",  # macOS wording
             "connection reset",
             "broken pipe",
             "host is down",

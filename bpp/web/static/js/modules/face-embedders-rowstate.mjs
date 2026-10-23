@@ -9,20 +9,20 @@
  * back-calls into the picker module, so there is no import cycle.
  */
 
+import { FACE_EMBEDDER_METHOD_VALUE, LEGACY_FEATURE_MAP } from "./face-embedders-catalog.mjs";
+import { _withoutGuesses } from "./face-embedders-guesses.mjs";
+import { licenseBlocker, licenseFacts } from "./face-embedders-license.mjs";
 import { feState } from "./face-embedders-state.mjs";
 import { _formatBytes } from "./format-helpers.mjs";
 import { escapeAttr, esc } from "./text-format.mjs";
+
+// Status + size cells live in face-embedders-cells.mjs (500-LOC cap).
 
 /**
  * Map registry id → ``face_embedding_method`` setting value. Only
  * face_embedder entries have a setting value because the analyze
  * dispatcher only reads one — non-face entries pass through.
  */
-const _FACE_EMBEDDER_METHOD_VALUE = {
-  sface_yunet: "sface",
-  dlib_face_recognition_resnet_v1: "dlib",
-  insightface_buffalo_s: "buffalo_s",
-};
 
 // ── Row state — single source of truth ──────────────────────────────
 //
@@ -43,6 +43,7 @@ const _FACE_EMBEDDER_METHOD_VALUE = {
  *   | "needs-runtime"
  *   | "partial"
  *   | "not-downloaded"
+ *   | "unknown"
  * )} RowLifecycle
  */
 
@@ -65,7 +66,7 @@ export const ROW_LIFECYCLE = Object.freeze({
    * Non-embedder row, on disk, license clear, NOT the kind's default.
    * Distinct from READY because the picker doesn't expose a switch
    * for non-embedder kinds (no setting names which one runs). The
-   * runtime uses default_for_kind as primary; non-default rows are
+   * server marks what runs as primary_for_kind; other rows are
    * available only as auto-fallback if the primary can't load. The
    * menu drops "Use this model" entirely for these rows so the user
    * doesn't expect an action that has no wiring.
@@ -77,6 +78,12 @@ export const ROW_LIFECYCLE = Object.freeze({
   PARTIAL: "partial",
   /** Weights aren't on this device (and aren't being downloaded right now). */
   NOT_DOWNLOADED: "not-downloaded",
+  /**
+   * Something this row's status depends on couldn't be loaded (install
+   * state, the acceptance list, the active face method): the picker says
+   * so above the list rather than guess.
+   */
+  UNKNOWN: "unknown",
 });
 
 /**
@@ -92,12 +99,18 @@ export const ROW_LIFECYCLE = Object.freeze({
  * @param {object | undefined} install  install state from /api/v1/models
  * @returns {{
  *   lifecycle: RowLifecycle,
+ *   installUnknown: boolean,
+ *   licenseUnknown: boolean,
+ *   methodUnknown: boolean,
  *   isFaceEmbedder: boolean,
  *   methodValue: string | undefined,
  *   isPicked: boolean,
  *   restricted: boolean,
  *   accepted: boolean,
  *   licenseBlocked: boolean,
+ *   needsReaccept: boolean,
+ *   needsCommercialRights: boolean,
+ *   unavailable: boolean,
  *   onDisk: boolean,
  *   isCatalog: boolean,
  *   isCatalogEntry: boolean,
@@ -112,26 +125,45 @@ export const ROW_LIFECYCLE = Object.freeze({
  */
 export function _deriveRowState(entry, install) {
   const isFaceEmbedder = entry?.kind === "face_embedder";
-  const methodValue = _FACE_EMBEDDER_METHOD_VALUE[entry?.id];
+  // The server says which face_embedding_method value picks the entry
+  // (a plugin embedder's too); the built-in table answers for an entry
+  // that arrived without it.
+  const methodValue = entry?.method_value ?? FACE_EMBEDDER_METHOD_VALUE[entry?.id];
   // "isPicked" — this row is the one currently producing results
   // for its kind. Two paths:
   //   * face_embedder: dispatched by setting (face_embedding_method
   //     names exactly one). The picked entry is "running" when its
   //     weights are on disk.
   //   * Other kinds (face_detector, pet, content filter, …): no
-  //     user-pickable setting. The entry marked default_for_kind in
-  //     the registry is THE one the runtime uses. Treat that as
-  //     picked so DEFAULT-marked rows read "Running" instead of
-  //     the misleading "Ready" once their weights arrive.
+  //     user-pickable setting. The server says which entry the runtime
+  //     uses (``primary_for_kind``: the kind's default, or — for a kind
+  //     with no default, like the content filter, pet detector and
+  //     object removal — the entry its loader selects). Treat that as
+  //     picked so the row reads "Running" once its weights arrive, not
+  //     "Backup". One signal, decided server-side.
+  //   * Supporting models that run together with the default (the
+  //     BlazeFace detectors next to YuNet) are in use too, not backups.
   const isPicked =
     (isFaceEmbedder &&
       methodValue !== undefined &&
       methodValue === feState.activeFaceMethod) ||
-    (!isFaceEmbedder && entry?.default_for_kind === true);
+    (!isFaceEmbedder &&
+      (entry?.primary_for_kind === true || entry?.runs_alongside_default === true));
 
-  const restricted = entry?.requires_explicit_ack === true;
-  const accepted = feState.acceptedIds.has(entry?.id);
-  const licenseBlocked = restricted && !accepted;
+  // The picker's map is the source for the row's registry facts (accept /
+  // withdraw update it); an entry the map doesn't hold is read as given,
+  // as is a load-gate decision the map has none of.
+  const live = /** @type {any} */ (feState.entries.get(entry?.id ?? "") ?? entry);
+  const restricted = live?.requires_explicit_ack === true;
+  const loadState = live?.load_state ?? entry?.load_state;
+  const {
+    accepted,
+    licenseBlocked,
+    needsReaccept,
+    needsCommercialRights,
+    unavailable,
+    licenseUnknown,
+  } = licenseFacts(entry?.id, restricted, loadState);
 
   const files = Array.isArray(install?.files) ? install.files : [];
   const hasDownloadable = files.some((f) => f && f.name);
@@ -142,22 +174,35 @@ export function _deriveRowState(entry, install) {
   // install record is attached — LaMa / NudeNet have BOTH a legacy row
   // (empty file list) AND catalog fetch, so the old `!install` inference
   // misrouted them and dropped their Download action.
-  const isCatalogEntry = entry?.is_catalog_entry === true;
+  const isCatalogEntry = live?.is_catalog_entry === true;
   const catalogOnDisk = entry?.catalog_on_disk === true;
   // OR, not "isCatalog && catalogOnDisk": catalog_on_disk is the real
   // on-disk truth for catalog entries and is false for non-catalog ones,
   // so consult it regardless of whether a legacy record is attached.
   // The old guard ignored it whenever a fileless legacy row existed,
   // leaving LaMa / NudeNet stuck at "Not downloaded" even once fetched.
-  const onDisk = filesOnDisk || catalogOnDisk;
+  // Weights shipped inside an installed library (the Haar cascade in
+  // opencv-python) are always present.
+  const onDisk = filesOnDisk || catalogOnDisk || entry?.ships_with_runtime === true;
 
   // Lifecycle: exactly one value. Order matters — the picked-row
   // states take priority over the not-picked equivalents because
   // they carry the cross-row narrative ("you picked this, here's
   // why it can't run").
+  // What this row needs but the last load couldn't fetch: its install
+  // record (rows linked to a legacy feature — catalog ones too: that
+  // record says "needs runtime" / "incomplete"); its acceptance (when the
+  // server sends no load state); whether it's the face model in use.
+  const legacyLabel = entry?.legacy_label ?? LEGACY_FEATURE_MAP[entry?.id]?.legacy_label;
+  const installUnknown = !!feState.unknown.install && !!legacyLabel;
+  const methodUnknown = !!feState.unknown.method && isFaceEmbedder && methodValue !== undefined;
+  const unknown = installUnknown || methodUnknown || licenseUnknown;
+
   /** @type {RowLifecycle} */
   let lifecycle;
-  if (isPicked && onDisk && !licenseBlocked) {
+  if (unknown) {
+    lifecycle = ROW_LIFECYCLE.UNKNOWN;
+  } else if (isPicked && onDisk && !licenseBlocked) {
     lifecycle = ROW_LIFECYCLE.RUNNING;
   } else if (isPicked && licenseBlocked) {
     // License gate takes priority over the download gate — license
@@ -179,8 +224,8 @@ export function _deriveRowState(entry, install) {
     // For face_embedder rows the user has a setting-driven switch
     // ("Use this model" → face_embedding_method) → READY signals the
     // model is pickable. For other kinds (face_detector, content
-    // filter, etc.) there's no user switch — the runtime picks the
-    // default_for_kind row, and non-default rows can only run as
+    // filter, etc.) there's no user switch — the server says which
+    // row runs (primary_for_kind), and other rows can only run as
     // auto-fallback. Reading those as READY misleads the user into
     // looking for an activate action that doesn't exist; mark them
     // BACKUP_AVAILABLE so the status + menu reflect reality.
@@ -193,12 +238,18 @@ export function _deriveRowState(entry, install) {
 
   return {
     lifecycle,
+    installUnknown,
+    licenseUnknown,
+    methodUnknown,
     isFaceEmbedder,
     methodValue,
     isPicked,
     restricted,
     accepted,
     licenseBlocked,
+    needsReaccept,
+    needsCommercialRights,
+    unavailable,
     onDisk,
     isCatalog,
     isCatalogEntry,
@@ -216,113 +267,6 @@ export function _deriveRowState(entry, install) {
         ? entry.expected_download_size_bytes
         : 0,
   };
-}
-
-// ── Status cell ─────────────────────────────────────────────────────
-
-//: Lifecycle → status badge mapping. One row per lifecycle value.
-//: When you add a new lifecycle, add an entry here.
-const _STATUS_BY_LIFECYCLE = {
-  [ROW_LIFECYCLE.RUNNING]: {
-    main: "Running",
-    sub: null,
-    cls: "fe-status-active",
-    tip: "This is your pick AND its weights are on this device. It's what runs at analyze time.",
-  },
-  [ROW_LIFECYCLE.PICKED_NEEDS_DOWNLOAD]: {
-    main: "Can’t run",
-    sub: "needs download",
-    cls: "fe-status-warn",
-    tip: "This is your pick, but its weights aren't on this device. Open ⋯ → Download to make it run. Until then a substitute model is doing the work.",
-  },
-  [ROW_LIFECYCLE.PICKED_NEEDS_LICENSE]: {
-    main: "Can’t run",
-    sub: "needs license",
-    cls: "fe-status-warn",
-    tip: "This is your pick, but its license isn't accepted (or was withdrawn). Open ⋯ → Review the license to enable it. Until then a substitute model is doing the work.",
-  },
-  [ROW_LIFECYCLE.NEEDS_LICENSE]: {
-    main: "Needs license",
-    sub: null,
-    cls: "fe-status-warn",
-    tip: "Weights are on this device, but the license hasn't been accepted (or was withdrawn). Open ⋯ → Review the license to enable use.",
-  },
-  [ROW_LIFECYCLE.READY]: {
-    main: "Ready",
-    sub: null,
-    cls: "fe-status-ok",
-    tip: "Downloaded and ready. Open ⋯ → “Use this model” to pick it.",
-  },
-  [ROW_LIFECYCLE.BACKUP_AVAILABLE]: {
-    main: "Backup",
-    sub: "auto-fallback",
-    cls: "fe-status-muted",
-    tip: "Downloaded and available. The runtime only uses this if the primary for its kind can't load — the picker doesn't expose a manual switch.",
-  },
-  [ROW_LIFECYCLE.NEEDS_RUNTIME]: {
-    main: "Needs runtime",
-    sub: null,
-    cls: "fe-status-warn",
-    tip: "Weights are downloaded, but a runtime package is missing — open ⋯ → “Install runtime…”.",
-  },
-  [ROW_LIFECYCLE.PARTIAL]: {
-    main: "Incomplete",
-    sub: "missing files",
-    cls: "fe-status-warn",
-    tip: "Some model files are missing — open ⋯ → “Redownload” to fix.",
-  },
-  [ROW_LIFECYCLE.NOT_DOWNLOADED]: {
-    main: "Not downloaded",
-    sub: null,
-    cls: "fe-status-muted",
-    tip: "Available to download — not yet on this device.",
-  },
-};
-
-/**
- * Plain-English status label for the Status column. Drives entirely
- * off the row's lifecycle — no flag-juggling, no cross-row guessing.
- *
- * @param {ReturnType<typeof _deriveRowState>} state
- */
-export function _statusCell(state) {
-  const s = _STATUS_BY_LIFECYCLE[state.lifecycle];
-  const tipAttr = s.tip ? ` title="${escapeAttr(s.tip)}"` : "";
-  const subHtml = s.sub
-    ? `<span class="fe-status-sub">${esc(s.sub)}</span>`
-    : "";
-  return `<span class="fe-status ${s.cls}"${tipAttr}><span class="fe-status-main">${esc(s.main)}</span>${subHtml}</span>`;
-}
-
-/**
- * Render the Size column cell. Three sources, in priority order:
- *
- *   1. Actual size from install state (file on disk, known bytes).
- *   2. Registered expected download size for catalog entries. The
- *      "~" estimate marker drops once the catalog entry is on disk
- *      (state.onDisk is true even if install.size_bytes is 0,
- *      because catalog entries report on-disk via catalog_on_disk
- *      rather than a populated install record).
- *   3. Em-dash when neither is known.
- *
- * @param {ReturnType<typeof _deriveRowState>} state
- */
-export function _sizeCell(state) {
-  if (state.sizeBytes > 0) {
-    return `<span class="fe-cell-size-val">${_formatBytes(state.sizeBytes)}</span>`;
-  }
-  if (state.expectedSize > 0) {
-    // When the catalog entry's weights are on disk, the size is no
-    // longer an estimate — render with the normal size class so it
-    // visually matches the installable rows. The italic
-    // "fe-cell-size-expected" style is reserved for pre-download
-    // estimates ("~121.7 MB"), where the italic + "~" together
-    // signal "this is what you would download, not what you have."
-    const cls = state.onDisk ? "fe-cell-size-val" : "fe-cell-size-expected";
-    const prefix = state.onDisk ? "" : "~";
-    return `<span class="${cls}" title="Download size">${prefix}${_formatBytes(state.expectedSize)}</span>`;
-  }
-  return `<span class="fe-cell-size-empty">—</span>`;
 }
 
 /**
@@ -362,24 +306,34 @@ export function _buildMenuFromState(entry, state) {
        // consent to OUR license; "the model's license" pins it.
        // Once accepted, the item states the fact ("accepted ✓") but
        // stays clickable so the user can re-read the terms any time.
-      label: state.accepted
-        ? "Model’s license accepted"
-        : "Review & accept the model’s license",
+      label: state.unavailable && !state.accepted
+        ? "View the model’s license"
+        : state.needsCommercialRights
+          ? "Confirm your commercial-use rights for this model"
+          : state.accepted
+            ? "Model’s license accepted"
+            : state.needsReaccept
+              ? "Re-accept the model’s license (terms updated)"
+              : "Review & accept the model’s license",
       action: "openFaceEmbedderAcceptance",
-      args: [entry.id],
+      // Withdrawn / blocked: read-only — accepting couldn't enable it.
+      args: state.unavailable ? [entry.id, "view"] : [entry.id],
       enabled: true,
-      done: state.accepted,
+      // ✓ only when the license is fully satisfied.
+      done: state.accepted && !state.needsCommercialRights && !state.unavailable,
     });
   }
 
   // 2. Download / Redownload. Catalog entries route through a
   //    different action; installable entries hit the legacy
   //    redownload endpoint.
-  const downloadSub = downloadBlocked ? "Accept the license first" : null;
+  const acceptFirst = licenseBlocker(state).short;
+  const downloadSub = downloadBlocked ? acceptFirst : null;
   if (state.hasDownloadable) {
     items.push({
       label: state.onDisk ? "Redownload" : "Download",
       sub: downloadSub,
+      needs: ["install", "license"],
       action: "redownloadFaceEmbedderEntry",
       args: [entry.id, state.installLabel],
       enabled: !downloadBlocked,
@@ -388,6 +342,7 @@ export function _buildMenuFromState(entry, state) {
     items.push({
       label: "Install runtime…",
       sub: state.installHint,
+      needs: ["install"],
       action: "installFaceEmbedderViaHint",
       args: [state.installHint, entry.display_name],
       enabled: true,
@@ -405,6 +360,7 @@ export function _buildMenuFromState(entry, state) {
     items.push({
       label: state.onDisk ? "Redownload" : `Download${sizeLabel}`,
       sub: downloadSub,
+      needs: ["install", "license"],
       action: "ensureCatalogWeights",
       args: [entry.id, entry.display_name],
       enabled: !downloadBlocked,
@@ -420,7 +376,7 @@ export function _buildMenuFromState(entry, state) {
     } else {
       let useSub = null;
       if (state.licenseBlocked) {
-        useSub = "Accept the license first";
+        useSub = acceptFirst;
       } else if (!state.onDisk) {
         // "Download to activate" when the picked row is the one
         // missing weights — emphasizes that the click completes a
@@ -431,6 +387,8 @@ export function _buildMenuFromState(entry, state) {
       items.push({
         label: "Use this model",
         sub: useSub,
+        // ("Download it first" may be wrong; switching away may not be.)
+        needs: ["install", "license", "method"],
         action: "setActiveFaceEmbedder",
         args: [state.methodValue, entry.display_name, entry.id],
         enabled: !state.licenseBlocked && state.onDisk,
@@ -442,13 +400,14 @@ export function _buildMenuFromState(entry, state) {
   items.push({
     label: "Uninstall",
     sub: state.onDisk ? null : "Not installed",
+    needs: ["install"],
     action: "uninstallFaceEmbedderEntry",
     args: [entry.id, state.installLabel],
     enabled: state.onDisk,
     danger: true,
   });
 
-  return items;
+  return _withoutGuesses(items, state);
 }
 
 /**

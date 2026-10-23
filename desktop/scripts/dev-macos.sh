@@ -26,7 +26,11 @@ if ! lsof -i:5001 -sTCP:LISTEN >/dev/null 2>&1; then
   pkill -f 'bpp serve' 2>/dev/null || true
   sleep 0.5
   cd "$PROJECT_DIR"
-  .venv/bin/bpp serve --library ~/Pictures/BestPhotoPicker --no-browser &
+  # --open-loopback: the dev shell has no shared boot key with a server
+  # it did not start, and the debug handshake accepts an open server.
+  # The open server has no boot key, so any local process can reach it:
+  # serve the demo library unless a path is given.
+  .venv/bin/bpp serve --library "${1:-$HOME/Pictures/BestPhotoPickerDemo}" --no-browser --open-loopback &
   SERVER_PID=$!
   sleep 2
 else

@@ -12,6 +12,7 @@
 
 import { esc } from "./text-format.mjs";
 import { toast } from "./toast.mjs";
+import { menuClosed, menuOpened } from "./menu-a11y.mjs";
 import {
   deleteFromCard,
   enhancePhotos,
@@ -119,11 +120,15 @@ export function showCardCtxMenu(e, filepath) {
   const vh = window.innerHeight;
   /** @type {HTMLElement} */ (menu).style.left = (mx + mw > vw ? vw - mw - 4 : mx) + "px";
   /** @type {HTMLElement} */ (menu).style.top = (my + mh > vh ? vh - mh - 4 : my) + "px";
+  menuOpened(menu, { trigger: e.target });
 }
 
 export function hideCardCtxMenu() {
   const menu = document.getElementById("card-ctx-menu");
-  if (menu) menu.classList.add("hidden");
+  if (menu) {
+    menu.classList.add("hidden");
+    menuClosed(menu);
+  }
   cardCtxFilepath = null;
 }
 
@@ -131,22 +136,33 @@ export function initCardCtxMenu() {
   /** @type {any} */
   const win = window;
   document.addEventListener("click", () => hideCardCtxMenu());
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") { hideCardCtxMenu(); return; }
-    if (!cardCtxFilepath) return;
-    const menu = document.getElementById("card-ctx-menu");
-    if (!menu || menu.classList.contains("hidden")) return;
-    const key = e.key.toLowerCase();
-    const item = /** @type {HTMLElement | null} */ (
-      [...menu.querySelectorAll(".ctx-menu-item[data-key]")].find(
-        (el) => /** @type {HTMLElement} */ (el).dataset.key === key &&
-                 /** @type {HTMLElement} */ (el).style.display !== "none"
-      ) || null
-    );
-    if (!item) return;
-    e.preventDefault();
-    item.click();
-  });
+  // Capture phase, and a handled key stops here: the grid's own "e"
+  // (Export) and the lightbox listen on document after this.
+  document.addEventListener(
+    "keydown",
+    (e) => {
+      const menu = document.getElementById("card-ctx-menu");
+      if (!menu || menu.classList.contains("hidden") || !cardCtxFilepath) return;
+      if (e.key === "Escape") {
+        e.stopImmediatePropagation();
+        hideCardCtxMenu();
+        return;
+      }
+      const key = e.key.toLowerCase();
+      const item = /** @type {HTMLElement | null} */ (
+        [...menu.querySelectorAll(".ctx-menu-item[data-key]")].find(
+          (el) =>
+            /** @type {HTMLElement} */ (el).dataset.key === key &&
+            /** @type {HTMLElement} */ (el).style.display !== "none"
+        ) || null
+      );
+      if (!item) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      item.click();
+    },
+    true
+  );
   const menu = document.getElementById("card-ctx-menu");
   if (!menu) return;
   menu.addEventListener("click", async (e) => {

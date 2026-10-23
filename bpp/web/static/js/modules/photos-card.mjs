@@ -107,7 +107,12 @@ export function renderCardHTML(p, idx) {
       `${ICONS.layers || "&#9783;"} ${stackCount}</div>`
     : "";
 
-  return `<div class="${cls}${msCls}${momentCls}${stackCount ? " moment-stack" : ""}"${momentStyle} data-action="handleCardClick" data-pass-event="true" data-arg0="${idx}" data-oncontextmenu="_bppCardCtxMenu" data-filepath="${escapeJsAttr(p.filepath)}" data-idx="${idx}">
+  // Keyboard: one card in the grid holds tabindex 0 (the grid sets it:
+  // roving focus), arrows move it (data-onkeydown), Enter / Space open
+  // it like a click (data-key-activate, see globals.js). role="group",
+  // not "button": a button's children are presentational, which would
+  // hide the favorite / include / delete buttons from a screen reader.
+  return `<div class="${cls}${msCls}${momentCls}${stackCount ? " moment-stack" : ""}"${momentStyle} role="group" aria-roledescription="photo" tabindex="-1" aria-label="${escapeAttr(p.filename)}, Enter opens" data-key-activate="true" data-onkeydown="_bppCardKeydown" data-action="handleCardClick" data-pass-event="true" data-arg0="${idx}" data-oncontextmenu="_bppCardCtxMenu" data-filepath="${escapeJsAttr(p.filepath)}" data-idx="${idx}">
       <div class="card-actions">
         <button class="card-action${favCls}" data-stop-propagation="true" data-action="toggleFavorite" data-arg0="${escapeJsAttr(p.filepath)}" title="${isFav ? "Remove from favorites" : "Add to favorites"}" aria-label="Favorite">&#9829;</button>
         <button class="card-action${incCls}" data-stop-propagation="true" data-action="setOverride" data-arg0="${escapeJsAttr(p.filepath)}" data-arg1="include" title="${ov === "include" ? "Clear override" : "Always include this photo"}" aria-label="Force include">&#10003;</button>

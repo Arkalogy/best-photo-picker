@@ -1,6 +1,6 @@
-"""P5b — unified plugin protocol with lifecycle hooks.
+"""Unified plugin protocol with lifecycle hooks.
 
-The pre-P5 plugin loader (``bpp.plugins``) supports plugins via a
+The base plugin loader (``bpp.plugins``) supports plugins via a
 single zero-arg ``setup()`` callable invoked at process startup.
 That covers "register your detector / album type / worker factory at
 process boot" but offers no hook for:
@@ -9,7 +9,7 @@ process boot" but offers no hook for:
 * clean teardown when the user switches library,
 * clean shutdown on Ctrl-C / SIGTERM.
 
-This module adds an opt-in protocol — :class:`Plugin` — with four
+This module adds an opt-in protocol — :class:`Plugin` — with five
 lifecycle hooks. Plugins that conform get called at the right points;
 plugins that don't (the existing zero-arg ``setup()`` shape) keep
 working unchanged. The protocol is a contract, not a mandate.
@@ -18,10 +18,9 @@ Lifecycle:
 
 * ``on_register(app)`` — once per process, just after the plugin's
   setup callable returns. Receives the Flask app (None in CLI
-  contexts). Use for: registering Flask blueprints, attaching
-  CLI subcommands, hooking the photo event bus.
+  contexts). Use for: registering Flask blueprints, hooking the photo event bus.
 * ``on_db_restore(corrupted_sidecar_path)`` — fires once per process
-  if Protection C auto-restored the DB from ``.backup`` at startup.
+  if the startup integrity check auto-restored the DB from ``.backup``.
   Receives the path of the corrupt-DB sidecar that was kept for
   triage. Use for: invalidating plugin-owned caches that index
   rows by id (the restored DB may have a different row set than
@@ -82,8 +81,8 @@ class Plugin(Protocol):
         ...
 
     def on_db_restore(self, corrupted_sidecar_path: str) -> None:
-        """Called once at startup if Protection C auto-restored the
-        DB from ``.backup``. ``corrupted_sidecar_path`` is the path of
+        """Called once at startup if the startup integrity check
+        auto-restored the DB from ``.backup``. ``corrupted_sidecar_path`` is the path of
         the kept-for-triage ``.corrupted-{ts}`` sidecar. Use to flush
         plugin-owned caches that may reference rows that no longer
         exist (or miss rows that came back). Optional."""
@@ -111,7 +110,7 @@ class Plugin(Protocol):
 _PLUGINS: list[Plugin] = []
 _lock = threading.Lock()
 
-#: One-shot signal that the Protection C restore fired at startup.
+#: One-shot signal that the startup DB auto-restore fired.
 #: Set by :func:`note_db_restore` (called from ``bpp.commands.serve``
 #: right after the restore succeeds) and drained by
 #: :func:`fire_on_db_restore_if_pending` (called from ``app.py`` after
@@ -149,8 +148,8 @@ def note_db_restore(corrupted_sidecar_path: str) -> None:
     """Stash the corrupt-DB sidecar path so the next
     :func:`fire_on_db_restore_if_pending` call fires the hook with it.
 
-    Called from ``bpp.commands.serve`` immediately after Protection C's
-    auto-restore succeeds. Plugins aren't registered yet at that point
+    Called from ``bpp.commands.serve`` immediately after the startup
+    DB auto-restore succeeds. Plugins aren't registered yet at that point
     (they load inside ``create_app``), so we can't fire the hook
     directly — this defers it until ``fire_on_register`` runs.
     """
@@ -226,7 +225,7 @@ def _safe_fire(plugin: Plugin, method: str, *args: Any) -> None:
     try:
         fn(*args)
     except Exception:
-        # T4: log the module-qualified class name, not ``%r``. ``repr()``
+        # Log the module-qualified class name, not ``%r``. ``repr()``
         # on a default plugin object renders ``<pkg.mod.Cls object at
         # 0x...>``; the pointer address is noise and the bare class name
         # gets lost in it. ``module.Class`` is what on-call greps for.

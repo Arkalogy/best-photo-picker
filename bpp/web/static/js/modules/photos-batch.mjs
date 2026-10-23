@@ -51,7 +51,15 @@ export async function batchOverride(mode) {
       body: JSON.stringify({ filepaths, mode }),
     });
   } catch (e) {
+    // The server kept the old state: so does the view.
+    for (const fp of filepaths) {
+      if (prevOverrides[fp]) overrides[fp] = prevOverrides[fp];
+      else delete overrides[fp];
+    }
+    saveOverrides();
+    scheduleRecompute();
     toastError("apply the override to the selected photos", e);
+    return;
   }
   const label =
     mode === "include"
@@ -72,13 +80,16 @@ export async function batchOverride(mode) {
       const m = prevOverrides[fp] || "null";
       (byMode[m] = byMode[m] || []).push(fp);
     }
-    for (const [m, fps] of Object.entries(byMode)) {
+    const calls = Object.entries(byMode).map(([m, fps]) =>
       apiFetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ filepaths: fps, mode: m === "null" ? null : m }),
-      }).catch((e) => console.warn("Batch override undo failed:", e));
-    }
+      })
+    );
+    Promise.all(calls).catch((e) => {
+      toastError("undo the batch change", e, "reload to see the saved state");
+    });
   });
 }
 
@@ -109,7 +120,13 @@ export async function batchFavorite(favorite) {
       body: JSON.stringify({ filepaths, favorite }),
     });
   } catch (e) {
+    for (const fp of filepaths) {
+      if (prevFavs[fp]) favorites.add(fp);
+      else favorites.delete(fp);
+    }
+    renderGrid();
     toastError("favorite the selected photos", e);
+    return;
   }
   const label = favorite
     ? `Favorited ${filepaths.length} photos`
@@ -122,18 +139,35 @@ export async function batchFavorite(favorite) {
     renderGrid();
     const toFav = filepaths.filter((fp) => prevFavs[fp]);
     const toUnfav = filepaths.filter((fp) => !prevFavs[fp]);
-    if (toFav.length)
-      apiFetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filepaths: toFav, favorite: true }),
-      }).catch((e) => console.warn("Batch favorite undo failed:", e));
-    if (toUnfav.length)
-      apiFetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filepaths: toUnfav, favorite: false }),
-      }).catch((e) => console.warn("Batch favorite undo failed:", e));
+    /** @type {[string[], boolean][]} */
+    const groups = [];
+    if (toFav.length) groups.push([toFav, true]);
+    if (toUnfav.length) groups.push([toUnfav, false]);
+    Promise.allSettled(
+      groups.map(([paths, fav]) =>
+        apiFetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filepaths: paths, favorite: fav }),
+        })
+      )
+    ).then((results) => {
+      // The server kept the batch for the call that failed: put only
+      // those photos back the way it has them.
+      let failure = null;
+      results.forEach((r, i) => {
+        if (r.status !== "rejected") return;
+        failure = r.reason;
+        for (const fp of groups[i][0]) {
+          if (favorite) favorites.add(fp);
+          else favorites.delete(fp);
+        }
+      });
+      if (failure) {
+        renderGrid();
+        toastError("undo the favorite change", failure, "reload to see the saved state");
+      }
+    });
   });
 }
 

@@ -35,12 +35,16 @@ hardening path.
 |--------|------------|
 | Random LAN attacker hits port 5001 | LAN gate (Settings → Share toggle) blocks all non-loopback when off |
 | Attacker scans your QR (screenshot, etc.) and gets the URL | TOFU pairing — owner must approve the device on Mac |
+| LAN host that never had the link | A device enters the pending list only when its request carries the share token (the QR / share URL); requests are rate-limited per IP. A revoked device can still ask again from its pairing page; it reappears in the pending list for the owner to decline |
+| A web page the owner visits rebinds its domain to 127.0.0.1 (DNS rebinding) | Host-header allowlist: the app answers only to `localhost`, IP literals and names listed in `BPP_TRUSTED_HOSTS` (a reverse proxy's public name goes there; a leading dot covers subdomains) |
 | Friend who paired once now has perpetual access | Per-device "Revoke" button kicks them immediately |
 | Revoked phone reloads → silent re-pending notifications on Mac | After revoke, soft-revival is *explicit*: phone user must tap "Request access again" — the row stays revoked across reloads |
 | Phone bookmarks the URL, server reboots | Persistent share token survives restarts |
 | Owner accidentally shares URL with the wrong person | "Revoke link" rotates the share token; all current URLs die |
 | Token leaks via browser history | `history.replaceState` strips `?_token=` after first paint |
 | Token leaks via Referer (outbound clicks) | `Referrer-Policy: no-referrer` on the index page |
+| Another local user or a sandboxed app reads the index page on 127.0.0.1 | Boot key: `bpp serve` prints a one-time `?_boot=` URL (the desktop app passes its own key to the sidecar); without it the page is a 403 with no token. `--open-loopback` restores the open page for single-user setups |
+| A paired phone learns the owner's folder layout | Every JSON response to a device is rewritten: library paths become relative, home becomes `~/…`, anything else becomes an opaque `@ext/<hash>/<name>` the device can still look the photo up by |
 | XSS exfiltrates the fingerprint cookie | `HttpOnly` cookie attribute |
 | CSRF via cross-origin form | `SameSite=Lax` cookie + custom `X-Auth-Token` header check |
 | Access log spammed by every phone API call | Dedup by (ip, user-agent) within a 10-minute window — one row per session |
@@ -143,6 +147,11 @@ A device's lifecycle in `share_devices`:
        revoked       pending (with prev_revoked=1 sticky)
 ```
 
+A pending request that nobody approves expires 24 hours after the
+phone first asked (`PENDING_TTL_SECONDS`, keyed on `first_seen`): the
+row is pruned, and the phone has to tap "request access" again, which
+needs the current share link.
+
 Two transitions matter for security UX:
 
 - **Revoke is sticky by default.** A phone whose row is `revoked`
@@ -167,12 +176,13 @@ untrusted LAN clients.
 
 ### 1. HTTPS
 
-`commands.py:cmd_serve` calls `app.run(host=..., port=...)`. Adding
-TLS is a config change:
+`bpp serve` (`do_serve` in `bpp/commands/serve.py`) already passes an
+optional `ssl_context` config entry to `app.run()`, so Flask-level TLS
+is a config change:
 
-```python
-ssl_context = config.get("ssl_context")  # ('/path/cert.pem', '/path/key.pem')
-app.run(host=host, port=port, ssl_context=ssl_context, ...)
+```yaml
+# config.yaml
+ssl_context: ["/path/cert.pem", "/path/key.pem"]
 ```
 
 For real-world deployment, run bpp behind nginx / Caddy with
@@ -185,6 +195,12 @@ When bpp sits behind nginx, `request.remote_addr` is the proxy IP
 trigger for everyone. The `behind_proxy` config flag wires
 `werkzeug.middleware.proxy_fix.ProxyFix` so `X-Forwarded-For` is
 honoured.
+
+Note that `BPP_TRUSTED_PROXIES` on its own (without `behind_proxy`)
+does something different: requests whose direct peer is in one of the
+listed ranges are treated as loopback, i.e. as the owner. The bundled
+`Dockerfile` relies on this (it trusts the Docker bridge ranges), which
+is why its container must be published to host loopback only.
 
 **`behind_proxy` requires `BPP_TRUSTED_PROXIES` to be set.** Vanilla
 ProxyFix rewrites `REMOTE_ADDR` from the `X-Forwarded-For` header
@@ -202,9 +218,11 @@ export BPP_TRUSTED_PROXIES="127.0.0.1/32"
 ```
 
 Off by default (no proxy assumed). When you turn it on, set the
-allowlist to match your reverse proxy's address — only RFC1918,
-loopback, and link-local CIDRs are accepted (the safety filter
-rejects `0.0.0.0/0`, `::/0`, and any range containing public IPs).
+allowlist to match your reverse proxy's address — only private
+(RFC1918 and the other ranges Python marks private), loopback,
+link-local and carrier-grade-NAT (`100.64.0.0/10`) CIDRs are accepted
+(the safety filter rejects `0.0.0.0/0`, `::/0`, and any range
+containing public IPs).
 
 ### 3. User accounts
 
@@ -223,8 +241,8 @@ When adding users:
 
 ### 4. Database backend swap (Postgres / MySQL)
 
-bpp ships with SQLite. Every dialect-specific operation goes
-through `bpp.db.dialect.dialect`:
+bpp ships with SQLite. A dialect layer, `bpp.db.dialect.dialect`,
+wraps the main dialect-specific operations:
 
 | Method | SQLite | Postgres |
 |--------|--------|----------|
@@ -247,14 +265,19 @@ Adding Postgres support:
        else SQLiteDialect()
    )
    ```
-3. The 30+ files that previously inlined dialect-specific SQL now
-   route through `dialect.X` calls — no further changes required.
+3. Audit the remaining SQLite-specific code. Many call sites route
+   through `dialect.X`, but not all: some modules still issue
+   `PRAGMA` statements directly (e.g. `bpp/db/backup.py`,
+   `bpp/db/schema_migrate.py`, `bpp/web/face_extraction_phase5.py`),
+   the code uses the `sqlite3` module and `sqlite3.Connection` types
+   throughout, and `get_db()` opens SQLite files. A Postgres port
+   needs those addressed too.
 
 The `tests/test_dialect.py::TestDBDialectABC` suite pins the required
 methods; a partially-implemented subclass fails at instantiation
 rather than at the first uncaught call site.
 
-### 4. Per-album sharing
+### 5. Per-album sharing
 
 `share_devices.scope_json` is a NULL TEXT column. Future shape:
 
@@ -265,19 +288,19 @@ rather than at the first uncaught call site.
 `authorize_request` would gate per-album endpoints against the
 device's scope. NULL = full library (today's behavior).
 
-### 5. Rate limiting
+### 6. Rate limiting
 
 Add a `flask-limiter` middleware around `_check_auth_token` to
 throttle 4xx responses per-IP. Don't rate-limit successful auths —
 trusted devices polling pair status are legitimate traffic.
 
-### 6. Audit log retention
+### 7. Audit log retention
 
 `share_access_log` is currently capped at 100 rows (FIFO). For
 forensic / compliance use cases, swap to a time-bounded retention
 (e.g. 30 days) and consider exporting to syslog.
 
-### 7. Device pairing UX upgrades
+### 8. Device pairing UX upgrades
 
 The current TOFU pairing is owner-side approval (one click from
 Settings → Share → Devices). For higher-friction-but-tighter security,
@@ -325,7 +348,7 @@ Settings (key/value):
 
 ## Test coverage
 
-The auth boundary is locked in by ~120 tests across 9 files:
+The auth boundary is locked in by 170+ Python tests across 11 files, plus a JS suite:
 
 | File | What it covers |
 |------|----------------|
@@ -338,6 +361,8 @@ The auth boundary is locked in by ~120 tests across 9 files:
 | `tests/test_share_access_log.py` | Audit trail + middleware dedup |
 | `tests/test_share_schema_migration.py` | v27 → v28 upgrade path (forward-compat columns intact) |
 | `tests/test_share.py` | Lower-level helpers (LAN IP detection, share URL builder, QR PNG) |
+| `tests/test_share_db.py` | Persistent share token + sharing flag in DB settings |
+| `tests/test_share_token_rotation_backups.py` | Token rotation also scrubs the old token from `.backup` / `.backup.prev` |
 | `tests-js/share-tab.module.test.mjs` | Settings → Share UI rendering + actions |
 
 Run all share tests:

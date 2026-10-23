@@ -97,7 +97,7 @@ export function renderOnThisDay() {
             : "",
         )
         .join("");
-      return `<div class="otd-card" data-action="openOnThisDayYear" data-arg0="${yr.year}" data-arg1="${m}" data-arg2="${d}" title="${yr.years_ago} year${yr.years_ago !== 1 ? "s" : ""} ago">
+      return `<div class="otd-card" tabindex="0" role="button" data-key-activate data-action="openOnThisDayYear" data-arg0="${yr.year}" data-arg1="${m}" data-arg2="${d}" title="${yr.years_ago} year${yr.years_ago !== 1 ? "s" : ""} ago">
       ${fanHtml}
       <div class="otd-card-main">
         <div class="memory-card-bg"${yr.hero_hash ? ` style="background-image:url(${authedSrc("/thumb/" + yr.hero_hash)})"` : ""}></div>

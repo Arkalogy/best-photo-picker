@@ -164,10 +164,11 @@ class TestHardNegatives:
 
 class TestAdaptiveThreshold:
     def test_no_feedback_returns_default(self, conn):
+        from bpp.constants import FACE_CLUSTER_THRESHOLD_FALLBACK
         from bpp.db.face_feedback import compute_adaptive_face_threshold
 
         threshold, info = compute_adaptive_face_threshold(conn)
-        assert threshold == 0.55
+        assert threshold == FACE_CLUSTER_THRESHOLD_FALLBACK
         assert info["source"] == "default"
         assert info["feedback_count"] == 0
 
@@ -181,10 +182,12 @@ class TestAdaptiveThreshold:
         # Merges at distance 0.6 — user says faces 0.6 apart are the same person
         for _ in range(20):
             store_face_feedback(conn, "merge", cluster_id_a=1, cluster_id_b=2, distance=0.6)
+        from bpp.constants import FACE_CLUSTER_THRESHOLD_FALLBACK
+
         threshold, info = compute_adaptive_face_threshold(conn)
         assert info["source"] != "default"
-        # With 20 samples, alpha≈1.0, threshold should be near 0.6 + margin
-        assert threshold > 0.55
+        # With 20 samples, alpha≈1.0: near 0.6 + margin — learned, not the default.
+        assert 0.6 < threshold < FACE_CLUSTER_THRESHOLD_FALLBACK
 
     def test_reassign_out_raises_threshold(self, conn):
         """Reassign-out = 'different' signal. Distance was 0.45 but face didn't belong."""

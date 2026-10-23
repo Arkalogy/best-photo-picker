@@ -293,7 +293,7 @@ export function updateLightboxSimilar(p) {
     const n = p.similar_photos.length;
     const label = document.querySelector("#lb-similar .lb-similar-label");
     if (p._isMoment) {
-      // Panel-cleanup item 6: one quiet header line + a compact strip of
+      // One quiet header line + a compact strip of
       // ALL the Moment's shots (current photo first, highlighted), no
       // similarity badges. Review = step through in the compare overlay.
       if (label) {

@@ -165,7 +165,11 @@ export function listenImportProgress() {
       // capability may be missing, instead of silently dropping the message.
       if (msg.message) toast(msg.message);
     } else if (msg.type === "import_done") {
-      win.showPreviewGallery?.(msg.imported);
+      // A failed page must say so, not leave the skeleton grid behind
+      // a generic toast.
+      Promise.resolve(win.showPreviewGallery?.(msg.imported)).catch((e) =>
+        toastError("show the imported photos", e)
+      );
       win.advanceTourToPhase?.(2);
       showNudge("analyze_photos", "nudge-container");
       _showImportSummary(msg);
@@ -204,7 +208,7 @@ export function listenImportProgress() {
       win.activeOperation = null;
       document.querySelector("main")?.classList.remove("analyzing-pending");
       win.hide?.("analyzing-banner");
-      toast(msg.message || "Import error", true);
+      toastError("import the photos", new Error(msg.message || "the import stopped"));
       win.hideStatusProgress?.();
       win.showStatusAnalyzing?.(false);
     }

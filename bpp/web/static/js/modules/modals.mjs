@@ -7,6 +7,7 @@
  */
 
 import { apiFetch, authEventSource } from "./api-client.mjs";
+import { loadFaceEmbedderPicker } from "./modals-face-embedders.mjs";
 import { esc, escapeAttr } from "./text-format.mjs";
 import { _formatBytes, parseSSE } from "./format-helpers.mjs";
 import { appConfirm } from "./dialogs.mjs";
@@ -121,14 +122,20 @@ export function startImportFromModal() {
   win.startImport?.();
 }
 
-export function showSettings() {
+/**
+ * Open Settings on *tab*, or (omitted: the toolbar button, the search
+ * palette) on the tab that was showing. The tab switch is the one place
+ * that loads per-tab content, so the Models picker is fetched exactly
+ * once per open.
+ * @param {string} [tab]
+ */
+export function showSettings(tab) {
   /** @type {any} */
   const win = window;
   document.getElementById("settings-overlay")?.classList.add("visible");
   const libName = document.getElementById("library-name-display");
   const settingsLib = document.getElementById("settings-library-name");
   if (settingsLib && libName) settingsLib.textContent = libName.textContent;
-  _updateSettingsLibraryBanner();
   const currentTheme = localStorage.getItem("bpp-theme") || "dark";
   document.querySelectorAll(".theme-btn").forEach((btn) => {
     const elH = /** @type {HTMLElement} */ (btn);
@@ -138,7 +145,7 @@ export function showSettings() {
     document.getElementById("check-updates-toggle")
   );
   if (updToggle) updToggle.checked = localStorage.getItem("bpp_check_updates") !== "false";
-  // M-S4 — Danger zone: fetch the library photo count so the wipe
+  // Danger zone: fetch the library photo count so the wipe
   // confirmation surfaces the actual blast radius BEFORE the user
   // types 'delete'. Today the toast tells them the count post-delete;
   // by then it's too late. Fail-soft: if the count fetch errors,
@@ -184,13 +191,25 @@ export function showSettings() {
     document.getElementById("follow-symlinks-toggle")
   );
   if (symlinkToggle) symlinkToggle.checked = getSetting("follow_symlinks", "false") === "true";
-  loadModelsList();
+  switchSettingsTab(typeof tab === "string" ? tab : _currentSettingsTab());
   win.updateOverrideStats?.();
   win.loadPresetList?.();
 }
 
+/** The tab showing now (tabs keep their state while Settings is closed). */
+function _currentSettingsTab() {
+  const active = /** @type {HTMLElement | null} */ (document.querySelector(".settings-tab.active"));
+  return active?.dataset.tab || "app";
+}
+
 export function hideSettings() {
   document.getElementById("settings-overlay")?.classList.remove("visible");
+  // A picker ⋯ menu / ⓘ popover left open would reappear next time.
+  for (const el of document.querySelectorAll(
+    "#settings-overlay .fe-overflow-menu.open, #settings-overlay .fe-license-popover.open",
+  )) {
+    el.classList.remove("open", "fe-overflow-menu--up");
+  }
 }
 
 /**
@@ -213,10 +232,9 @@ export function switchSettingsTab(tab) {
   }
   // Re-render the model registry picker whenever the Models tab
   // opens so install state, use-context, and active-embedder are
-  // fresh. The Models tab lives outside the legacy ML-Models flow
-  // so loadModelsList() doesn't reach it.
+  // fresh.
   if (tab === "models") {
-    /** @type {any} */ (window).loadFaceEmbedderPicker?.();
+    void loadFaceEmbedderPicker();
   }
 }
 
@@ -225,8 +243,7 @@ function _updateSettingsLibraryBanner() {
     document.getElementById("settings-library-banner")
   );
   if (!banner) return;
-  const activeTab = /** @type {HTMLElement | null} */ (document.querySelector(".settings-tab.active"));
-  const tab = activeTab ? activeTab.dataset.tab : "app";
+  const tab = _currentSettingsTab();
   // The Models tab is mostly app-wide (installed weights, the use-context
   // declaration, and legal acceptances are all global, not per-library —
   // only the *active* model is per-library), so the "Settings for library X"
@@ -373,7 +390,7 @@ export function showExportModal() {
       scopeEl.value = "picks";
       scopeEl.disabled = false;
     }
-    // UAT Bug #13: hide the entire 'What to export' field when in
+    // Hide the entire 'What to export' field when in
     // batch mode — there's only one option ('Selected photos'),
     // showing it as a disabled dropdown reads as broken UI when in
     // reality the choice is forced by how the user opened the modal.
@@ -454,7 +471,7 @@ export function batchExport() {
   // Silent guard: the batch bar (which hosts the Export button) is only
   // .visible when multiSelected.size > 0 (see photos-select.updateMultiSelectUI),
   // so this is unreachable with an empty selection — the hidden bar is the
-  // disabled affordance, no toast. (Toast-noise audit item 10.)
+  // disabled affordance, no toast.
   if (!ms.size) return;
   _exportBatchPaths = new Set(ms);
   showExportModal();
@@ -470,18 +487,3 @@ export function _resetModalsState() {
   _exportBatchPaths = null;
 }
 
-
-import {
-  installPackage,
-  loadModelsList,
-  redownloadFeature,
-  toggleModel,
-  uninstallFeature,
-} from "./modals-models.mjs";
-export {
-  installPackage,
-  loadModelsList,
-  redownloadFeature,
-  toggleModel,
-  uninstallFeature,
-};

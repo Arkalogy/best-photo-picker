@@ -68,7 +68,7 @@ def refresh_smart_albums(
 ) -> None:
     """Create or update smart albums.
 
-    L5: when ``kinds`` is given, only refresh those album types. Use
+    When ``kinds`` is given, only refresh those album types. Use
     this from HTTP handlers + worker callers that mutated a specific
     domain (e.g., a face merge only affects ``smart_person``; no need
     to re-walk every video / screenshot / document query). When
@@ -100,19 +100,14 @@ def refresh_smart_albums(
 # Imported here for the SmartAlbumRegistry built-in registration block
 # below + re-exported for production callers that historically reached
 # them via the smart_albums namespace.
-from bpp.db.smart_album_groups import _refresh_group_albums  # noqa: E402
+from bpp.db.smart_album_groups import _refresh_group_albums  # noqa: E402, F401  (re-exported)
 from bpp.db.smart_album_people import (  # noqa: E402, F401
     _is_default_person_name,
     _on_rename_smart_person,
     _refresh_person_albums,
 )
-from bpp.db.smart_album_pets import _refresh_pet_albums  # noqa: E402
-
-# ── Per-type handlers for get_smart_album_photo_ids ──
-# Implementations live in bpp.db.smart_album_queries.
-# Re-exported here so the registrations below + any external
-# imports keep working.
-from bpp.db.smart_album_queries import (  # noqa: E402
+from bpp.db.smart_album_pets import _refresh_pet_albums  # noqa: E402, F401  (re-exported)
+from bpp.db.smart_album_queries import (  # noqa: E402, F401  (re-exported)
     _get_all_ids,
     _get_deleted_ids,
     _get_document_ids,
@@ -132,6 +127,11 @@ from bpp.db.smart_album_queries import (  # noqa: E402
     _get_unsorted_ids,
     _get_video_ids,
 )
+
+# ── Per-type handlers for get_smart_album_photo_ids ──
+# Implementations live in bpp.db.smart_album_queries.
+# Re-exported here so the registrations below + any external
+# imports keep working.
 from bpp.db.smart_album_refreshers import (  # noqa: E402, F401
     _ensure_smart_album,
     _get_enhanced_ids,
@@ -150,14 +150,16 @@ from bpp.db.smart_album_refreshers import (  # noqa: E402, F401
     _refresh_video_album,
     _remove_smart_album_if_exists,
 )
-from bpp.db.smart_album_sensitive import (  # noqa: E402
+from bpp.db.smart_album_sensitive import (  # noqa: E402, F401  (re-exported)
     _get_sensitive_ids,
     _refresh_sensitive_album,
 )
+from bpp.db.smart_album_tags import _refresh_tag_albums  # noqa: E402, F401  (re-exported)
+
+#: The public name plugins create their album rows with (see docs/plugins.md).
+ensure_smart_album = _ensure_smart_album
 
 # Tag refresher lives in bpp.db.smart_album_tags.
-from bpp.db.smart_album_tags import _refresh_tag_albums  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Unified smart album registry: album_type → (refresh_fn | None, get_ids_fn)
@@ -167,6 +169,38 @@ from bpp.db.smart_album_tags import _refresh_tag_albums  # noqa: E402
 #   - get_ids_fn(conn, rule): re-evaluates the rule and returns matching photo IDs
 # Types with no refresh_fn (None) are query-only (e.g. "all", "smart_deleted").
 # ---------------------------------------------------------------------------
+#: The sidebar's icon key, tooltip and position for each built-in type
+#: (manual albums sit at 1; a type not listed here sorts in the middle).
+_BUILTIN_PRESENTATION: dict[str, tuple[str, str, float]] = {
+    "all": ("", "", 0),
+    "smart_score": ("star", "Top 10% by BPP score", 2),
+    "smart_recent": ("clock", "Imported in the last 7 days", 3),
+    "smart_edited": ("pencil", "", 4),
+    "smart_unsorted": ("inbox", "Photos not yet added to any album", 5),
+    "smart_video": ("video", "", 6),
+    "smart_screenshot": ("screenshot", "", 7),
+    "smart_moments": (
+        "moments",
+        "Bursts of visually-similar shots taken close together — review and keep the best",
+        7.5,
+    ),
+    "smart_duplicates": ("duplicate", "", 8),
+    "smart_no_faces": (
+        "noFace",
+        "Photos where face detection found no faces — may include small or partially hidden faces",
+        9,
+    ),
+    "smart_document": ("document", "", 10),
+    "smart_pet": ("paw", "", 11),
+    "smart_group": ("", "", 12),
+    "smart_hidden": ("hidden", "", 13),
+    "smart_time": ("", "", 14),
+    "smart_person": ("", "", 15),
+    "smart_tag": ("tag", "", 16),
+    "manual": ("", "", 1),  # not a smart type; the sidebar still places it
+}
+
+
 class SmartAlbumRegistry:
     """Mutable registry of smart-album types.
 
@@ -209,6 +243,9 @@ class SmartAlbumRegistry:
         searchable: bool = True,
         result_bucket: str = "album",
         replace: bool = False,
+        icon: str | None = None,
+        tooltip: str | None = None,
+        order: float | None = None,
     ) -> None:
         """Register a smart-album type.
 
@@ -238,6 +275,18 @@ class SmartAlbumRegistry:
           place to attach extra fields (e.g. cluster siblings for
           lightbox compare). Built-in usage: ``smart_duplicates``.
         """
+        if (
+            cls._builtin_keys
+            and album_type not in cls._builtin_keys
+            and not album_type.startswith("smart_")
+        ):
+            # The sidebar shows, and album delete dismisses, `smart_*`
+            # types only; a plugin type without the prefix would never
+            # appear and would be recreated after every delete.
+            raise ValueError(
+                f"smart album type {album_type!r} must start with 'smart_' "
+                "(e.g. 'smart_myplugin_kind')"
+            )
         new_entry = (refresh_fn, get_ids_fn)
         existing = cls._types.get(album_type)
         if existing is not None and existing != new_entry and not replace:
@@ -258,6 +307,15 @@ class SmartAlbumRegistry:
             bucket["user_renameable"] = True
         if ui_metadata_fn is not None:
             bucket["ui_metadata_fn"] = ui_metadata_fn
+        # How the sidebar draws the type: an icon key, a tooltip and a
+        # sort position. Sent with every album, so a plugin type looks
+        # the way its plugin says, not like a folder in the middle.
+        if icon is not None:
+            bucket["icon"] = icon
+        if tooltip is not None:
+            bucket["tooltip"] = tooltip
+        if order is not None:
+            bucket["order"] = float(order)
         # searchable defaults True; only store when opting OUT so the
         # accessor's default-True covers every unregistered/plain type.
         if not searchable:
@@ -288,6 +346,28 @@ class SmartAlbumRegistry:
         decide whether a refresh may overwrite the album's name with
         the code-generated default."""
         return bool(cls._hooks.get(album_type, {}).get("user_renameable"))
+
+    @classmethod
+    def presentation(cls, album_type: str) -> dict[str, Any]:
+        """``icon`` (a key of the UI's icon set, "" for the default
+        folder), ``tooltip`` and ``sort_order`` (unknown types sort in
+        the middle, like the sidebar always did)."""
+        bucket = cls._hooks.get(album_type, {})
+        icon, tip, order = _BUILTIN_PRESENTATION.get(album_type, ("", "", 5.0))
+        return {
+            "icon": bucket.get("icon", icon),
+            "tooltip": bucket.get("tooltip", tip),
+            "sort_order": float(bucket.get("order", order)),
+        }
+
+    @classmethod
+    def set_ui_metadata_fn(cls, album_type: str, fn: Any) -> None:
+        """Attach (or replace) the UI-metadata hook of a registered type.
+        The web layer uses it for hooks that shape API responses, which
+        the DB layer must not import."""
+        if album_type not in cls._types:
+            raise KeyError(f"unknown smart album type {album_type!r}")
+        cls._hooks.setdefault(album_type, {})["ui_metadata_fn"] = fn
 
     @classmethod
     def get_ui_metadata_fn(cls, album_type: str) -> Any:
@@ -337,89 +417,6 @@ class SmartAlbumRegistry:
 # a different impl during early test setup, it gets caught.
 
 
-_BUILTIN_REGISTRATIONS: tuple[tuple[str, Any, Any], ...] = (
-    ("all", None, _get_all_ids),
-    ("smart_time", _refresh_time_albums, _get_time_ids),
-    ("smart_score", _refresh_score_album, _get_score_ids),
-    ("smart_unsorted", _refresh_unsorted_album, _get_unsorted_ids),
-    ("smart_recent", _refresh_recent_album, _get_recent_ids),
-    ("smart_hidden", _refresh_hidden_album, _get_hidden_ids),
-    ("smart_person", _refresh_person_albums, _get_person_ids),
-    ("smart_pet", _refresh_pet_albums, _get_pet_ids),
-    ("smart_group", _refresh_group_albums, _get_group_ids),
-    ("smart_video", _refresh_video_album, _get_video_ids),
-    ("smart_screenshot", _refresh_screenshot_album, _get_screenshot_ids),
-    ("smart_moments", _refresh_moments_album, _get_moments_ids),
-    ("smart_duplicates", _refresh_duplicates_album, _get_duplicates_ids),
-    ("smart_sensitive", _refresh_sensitive_album, _get_sensitive_ids),
-    ("smart_no_faces", _refresh_no_faces_album, _get_no_faces_ids),
-    ("smart_document", _refresh_document_album, _get_document_ids),
-    ("smart_deleted", None, _get_deleted_ids),
-    ("smart_edited", _refresh_recently_edited_album, _get_edited_ids),
-    ("smart_enhanced", _refresh_enhanced_album, _get_enhanced_ids),
-    ("smart_tag", _refresh_tag_albums, _get_tag_ids),
-)
-for _kind, _refresh, _get_ids in _BUILTIN_REGISTRATIONS:
-    SmartAlbumRegistry.register(_kind, _refresh, _get_ids)
-# Hook registrations: smart_person is the only built-in with a rename hook.
-SmartAlbumRegistry.register(
-    "smart_person",
-    _refresh_person_albums,
-    _get_person_ids,
-    on_rename=_on_rename_smart_person,
-    user_renameable=True,
-    result_bucket="people",  # search routes person hits to the People list
-    replace=True,
-)
-# Review 2026-06-12: user-renameable types were a hardcoded set inside
-# _ensure_smart_album; expose the flag on the registry (mirrors
-# undeletable) so plugin album types can opt in without a core edit.
-SmartAlbumRegistry.register(
-    "smart_pet", _refresh_pet_albums, _get_pet_ids, user_renameable=True, replace=True
-)
-SmartAlbumRegistry.register(
-    "smart_group",
-    _refresh_group_albums,
-    _get_group_ids,
-    user_renameable=True,
-    replace=True,
-)
-# L1 / review 2026-05-31: the "all" album is undeletable. Previously
-# bp_albums.py hardcoded this check; expose it on the registry so a
-# plugin can mark its own type undeletable.
-SmartAlbumRegistry.register(
-    "all", None, _get_all_ids, undeletable=True, searchable=False, replace=True
-)
-# Internal/system albums: never surface in name search (Review 2026-06-17:
-# was a hardcoded _SKIP_TYPES set in bp_search; now a registry flag so a
-# plugin can hide its own album type from search).
-SmartAlbumRegistry.register("smart_deleted", None, _get_deleted_ids, searchable=False, replace=True)
-SmartAlbumRegistry.register(
-    "smart_hidden", _refresh_hidden_album, _get_hidden_ids, searchable=False, replace=True
-)
-
-
-# M6 / review 2026-05-31: smart_duplicates uses a UI-metadata hook for
-# the cluster-siblings sidebar; bp_albums.py used to hardcode the
-# dispatch. The hook receives (conn, ctx, photos, photos_data) and
-# mutates photos_data in place.
-def _smart_duplicates_ui_metadata(conn: Any, ctx: Any, photos: Any, photos_data: Any) -> None:
-    from bpp.web.bp_albums import _attach_cluster_siblings_from_db
-
-    _attach_cluster_siblings_from_db(conn, ctx.thumbs, photos, photos_data)
-
-
-SmartAlbumRegistry.register(
-    "smart_duplicates",
-    _refresh_duplicates_album,
-    _get_duplicates_ids,
-    ui_metadata_fn=_smart_duplicates_ui_metadata,
-    replace=True,
-)
-
-SmartAlbumRegistry._builtin_keys = frozenset(k for k, _, _ in _BUILTIN_REGISTRATIONS)
-
-
 # Back-compat alias for code/tests that still reference the dict
 # directly. New code should use `SmartAlbumRegistry.get(...)` /
 # `.items()`. Reads against this attribute reflect the live registry
@@ -434,8 +431,16 @@ def get_smart_album_photo_ids(conn: sqlite3.Connection, album: dict[str, Any]) -
     if not rule and album.get("rule_json"):
         from bpp.utils.json_utils import safe_json_loads
 
-        rule = safe_json_loads(album["rule_json"], {}, context=f"album {album.get('id', '?')}")
+        rule = safe_json_loads(
+            album["rule_json"], {}, context=f"album {album.get('id', '?')}", expected_type=dict
+        )
     entry = SmartAlbumRegistry.get(album.get("album_type", ""))
     if entry:
         return entry[1](conn, rule)
     return []
+
+
+# The built-in registrations live in smart_album_builtins (imported here
+# so they run when this module loads; the whole module above is what
+# they need, so this import is last).
+from bpp.db.smart_album_builtins import _BUILTIN_REGISTRATIONS  # noqa: E402, F401

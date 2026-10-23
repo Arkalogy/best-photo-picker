@@ -1,6 +1,6 @@
-"""P7 — unified error hierarchy.
+"""Unified error hierarchy.
 
-Pre-P7 the codebase had five disjoint exception classes — each a
+Originally the codebase had five disjoint exception classes — each a
 direct ``Exception`` or ``ValueError`` subclass without a common
 ancestor:
 
@@ -11,8 +11,8 @@ ancestor:
 * ``ClipEmbeddingsTooLarge(RuntimeError)``
 
 That made "catch every bpp-recoverable error" impossible without
-enumerating each by name. The audit's structured-error story stalled
-on the missing common base.
+enumerating each by name, and structured error responses had no common
+base to hang off.
 
 This module introduces :class:`BppError` as that base, plus five new
 subclasses for new exception sites
@@ -58,7 +58,7 @@ class BppError(Exception, metaclass=_BppErrorMeta):
     drive structured error responses. Defaults of 500 / "internal_error"
     apply when a subclass doesn't override.
 
-    Virtual subclasses (pre-P7 exception classes) get registered via
+    Virtual subclasses (older exception classes) get registered via
     :meth:`BppError.register` so they ``isinstance(e, BppError)`` even
     though they don't actually subclass it. The class attributes
     above don't apply to virtual subclasses — they get the default
@@ -189,6 +189,29 @@ class ConflictError(BppError):
     code = "conflict"
 
 
+class PayloadTooLargeError(BppError):
+    """The request body or the full form of a request is over its cap
+    (HTTP 413). A subclass names the way out when there is one."""
+
+    http_status = 413
+    code = "payload_too_large"
+
+
+class RateLimitedError(BppError):
+    """Too many requests from one source (HTTP 429)."""
+
+    http_status = 429
+    code = "rate_limited"
+
+
+class HostNotAllowedError(BppError):
+    """The Host header names something that isn't this app (HTTP 421);
+    see ``bpp/web/host_allowlist.py``."""
+
+    http_status = 421
+    code = "host_not_allowed"
+
+
 class ResourceExhaustedError(BppError):
     """A bounded resource is full / over limit (503)."""
 
@@ -220,15 +243,15 @@ class IntegrityError(BppError):
     code = "integrity_error"
 
 
-# Legacy pre-P7 exception classes
+# Legacy exception classes
 # (``ConfigValidationError``, ``ServingLockError``, ``ModelIntegrityError``,
 # ``FaceEmbeddingsTooLarge``, ``ClipEmbeddingsTooLarge``) now inherit
 # :class:`BppError` directly via multiple inheritance — see each
 # legacy class for the back-compat parent it kept (``ValueError`` /
 # ``RuntimeError`` / ``Exception``). ``except BppError`` catches them;
-# pre-P7 ``except ValueError`` / ``except RuntimeError`` keep working.
+# existing ``except ValueError`` / ``except RuntimeError`` keep working.
 #
-# Earlier P7 drafts used :meth:`BppError.register` for virtual-subclass
+# Earlier drafts used :meth:`BppError.register` for virtual-subclass
 # registration, but Python's ``except`` uses strict subtype matching
 # and doesn't honour ABC's ``__subclasscheck__``. Real inheritance is
 # the only way to make the legacy classes catchable as ``BppError``.

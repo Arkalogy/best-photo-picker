@@ -47,7 +47,7 @@ def _patch_io(monkeypatch, *, hash_fn):
     import bpp.web.derived_recovery as si
 
     monkeypatch.setattr(si, "get_db", lambda _p: object())
-    monkeypatch.setattr(si, "db_update_hashes", lambda *a, **k: None)
+    monkeypatch.setattr(si, "db_update_hashes_many", lambda *a, **k: None)
     monkeypatch.setattr(si, "compute_hashes_from_file", hash_fn)
     monkeypatch.setattr(sa, "refresh_smart_albums", lambda *a, **k: None)
 
@@ -134,7 +134,7 @@ def test_status_endpoint_exposes_phash_progress(tmp_path):
     assert pp is not None and set(pp) == {"running", "done", "total"}, pp
 
 
-# ── S4 (2026-06-12): ordered derived-recovery pipeline ──
+# ── Ordered derived-recovery pipeline ──
 
 
 def test_recovery_pipeline_runs_steps_in_order(monkeypatch):
@@ -152,7 +152,7 @@ def test_recovery_pipeline_runs_steps_in_order(monkeypatch):
 
     calls: list[str] = []
     monkeypatch.setattr(si, "get_db", lambda _p: object())
-    monkeypatch.setattr(si, "db_update_hashes", lambda *a, **k: None)
+    monkeypatch.setattr(si, "db_update_hashes_many", lambda *a, **k: None)
     monkeypatch.setattr(si, "compute_hashes_from_file", lambda fp: (1, 2))
     monkeypatch.setattr(
         live_photo,
@@ -201,7 +201,7 @@ def test_recovery_reentrancy_queues_one_rerun(monkeypatch):
     # kicking the pipeline (the batch-apply writes hashes onto that list).
     ctx.state["analysis"] = data2
     precompute_phashes(ctx, data2)  # queued, not raced
-    assert ctx.analysis_store.recovery_rerun is data2
+    assert ctx.analysis_store.recovery_rerun == data2
     assert ctx.analysis_store.compute_thread is first_thread, "second thread raced"
 
     gate.set()

@@ -1,4 +1,4 @@
-"""P7 — Flask integration tests for the BppError handler.
+"""Flask integration tests for the BppError handler.
 
 The handler is registered in ``bpp.web.app.create_app``. We test it
 in isolation here against a minimal Flask app to avoid the cost of
@@ -189,7 +189,7 @@ class TestLogRouting:
         assert records_with_exc, "handler log call must include exc_info"
 
     def test_handler_logs_exc_context(self, client, app, caplog):
-        """T4: the handler should log ``exc.context`` alongside the
+        """The handler should log ``exc.context`` alongside the
         diagnostic message so on-call has the actionable details
         without re-running the request.
 
@@ -229,7 +229,7 @@ class TestLogRouting:
 
 
 class TestLegacyExceptions:
-    """The five pre-P7 exception classes inherit BppError via multiple
+    """The five legacy exception classes inherit BppError via multiple
     inheritance. The Flask handler catches every one of them.
 
     Parametric test covers ALL five classes so a future MRO regression

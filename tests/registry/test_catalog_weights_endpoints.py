@@ -58,6 +58,31 @@ def _post_ensure(client, body):
     return resp.status_code, payload
 
 
+@pytest.fixture
+def gates_open():
+    """The license / status checks run before the job starts; these
+    tests exercise the download itself, so let them pass."""
+    with (
+        patch("bpp.web.download_gates.enforce_download_license_gate"),
+        patch("bpp.web.download_gates.enforce_download_status_gate"),
+    ):
+        yield
+
+
+def _wait_job(key, timeout=5.0):
+    import time
+
+    from bpp.web import model_download_jobs
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        snap = model_download_jobs.snapshot(key)
+        if snap and snap["status"] != "running":
+            return snap
+        time.sleep(0.01)
+    raise AssertionError(f"download job {key} still running")
+
+
 def _post_uninstall(client, body):
     resp = client.post(
         "/api/v1/face-embedders/uninstall-weights",
@@ -95,7 +120,7 @@ class TestEnsureWeightsValidation:
 
 
 class TestEnsureWeightsSuccessPath:
-    def test_calls_buffalo_s_ensure_fn(self, client, tmp_path):
+    def test_calls_buffalo_s_ensure_fn(self, client, tmp_path, gates_open):
         # Stub the ensure function to avoid the real ~121 MB download
         # and verify the endpoint actually invokes it and reports
         # the resulting file size.
@@ -107,12 +132,14 @@ class TestEnsureWeightsSuccessPath:
             return_value=str(fake_weight),
         ) as mock_ensure:
             status, payload = _post_ensure(client, {"registry_id": "insightface_buffalo_s"})
+            assert status == 202, f"got {status}: {payload}"
+            snap = _wait_job(payload["job"])
 
-        assert status == 200, f"got {status}: {payload}"
-        assert payload == {"ok": True, "size_bytes": 1024}
+        assert snap["status"] == "done", snap
+        assert snap["result"] == {"ok": True, "size_bytes": 1024}
         mock_ensure.assert_called_once()
 
-    def test_ensure_failure_surfaces_diagnostic(self, client):
+    def test_ensure_failure_surfaces_diagnostic(self, client, gates_open):
         # When the underlying ensure raises (policy block, integrity,
         # network), the endpoint must return the reason so the picker
         # toast can be specific — a bare "Failed" leaves the user
@@ -122,10 +149,27 @@ class TestEnsureWeightsSuccessPath:
             side_effect=RuntimeError("policy gate: missing acceptance"),
         ):
             status, payload = _post_ensure(client, {"registry_id": "insightface_buffalo_s"})
+            assert status == 202, f"got {status}: {payload}"
+            snap = _wait_job(payload["job"])
 
-        assert status >= 400
-        msg = (payload or {}).get("error", "") + (payload or {}).get("message", "")
-        assert "missing acceptance" in msg
+        assert snap["status"] == "error"
+        assert "missing acceptance" in snap["error"]
+
+    def test_ensure_failure_names_the_model_once(self, client, gates_open):
+        # "<model>: <reason>" — the picker's toast adds "Couldn't
+        # download …", so the job error must not repeat it.
+        from bpp.registry.model_registry import get_entry
+
+        with patch(
+            "bpp.scoring.nudity.ensure_nudenet_model",
+            side_effect=RuntimeError("no internet connection"),
+        ):
+            status, payload = _post_ensure(client, {"registry_id": "nudenet_320n"})
+            assert status == 202, f"got {status}: {payload}"
+            snap = _wait_job(payload["job"])
+
+        name = get_entry("nudenet_320n").display_name
+        assert snap["error"] == f"{name}: no internet connection"
 
 
 class TestUninstallWeights:
@@ -208,10 +252,10 @@ class TestOnDemandModelsAreCatalogEntries:
     the row dead-ends at "Review the license ✓" + a disabled Uninstall.
     Regression for that dead-end."""
 
-    def test_lama_and_nudenet_have_catalog_loaders(self, client):
-        from bpp.web.bp_model_registry import _catalog_loaders
+    def test_lama_and_nudenet_havecatalog_loaders(self, client):
+        from bpp.web.catalog_loaders import catalog_loaders
 
-        loaders = _catalog_loaders()
+        loaders = catalog_loaders()
         for cid in ("lama_inpaint_research", "nudenet_320n"):
             assert cid in loaders, f"{cid} missing catalog loader"
             is_on_disk, ensure_fn, remove_fn = loaders[cid]
@@ -239,7 +283,7 @@ class TestOnDemandModelsAreCatalogEntries:
         assert scrfd is not None
         assert _entry_to_picker_dict(scrfd)["is_catalog_entry"] is False
 
-    def test_ensure_weights_accepts_lama(self, client):
+    def test_ensure_weights_accepts_lama(self, client, gates_open):
         # The endpoint must recognise LaMa (not reject as "no catalog
         # loader"). Patch the ensure fn so no real download happens.
         with patch(
@@ -247,5 +291,17 @@ class TestOnDemandModelsAreCatalogEntries:
             return_value=__file__,  # any existing path so getsize() works
         ):
             status, payload = _post_ensure(client, {"registry_id": "lama_inpaint_research"})
-        assert status == 200, payload
-        assert payload["ok"] is True
+            assert status == 202, payload
+            snap = _wait_job(payload["job"])
+        assert snap["status"] == "done", snap
+        assert snap["result"]["ok"] is True
+
+
+def test_uninstall_failure_never_shows_a_local_path(client):
+    with patch(
+        "bpp.scoring.nudity.remove_local_weights",
+        side_effect=PermissionError(13, "Permission denied", "/Users/someone/.cache/x.onnx"),
+    ):
+        status, payload = _post_uninstall(client, {"registry_id": "nudenet_320n"})
+    assert status >= 400
+    assert "/Users" not in json.dumps(payload)

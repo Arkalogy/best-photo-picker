@@ -19,14 +19,27 @@
  * @typedef {object} FeState
  * @property {object | null} currentDraft  Open acceptance draft, or null.
  * @property {string} currentUseContext    Declared use-context value.
- * @property {string} activeFaceMethod     Active face_embedding_method.
+ * @property {string | null} activeFaceMethod  Active face_embedding_method (null: it couldn't be loaded).
  * @property {Map<string, object>} installState  registry id → /api/v1/models install state.
- * @property {Set<string>} requiresAckIds   Ids needing click-through before use.
- * @property {Set<string>} acceptedIds      Ids the user has accepted.
- * @property {Set<string>} catalogEntryIds  Ids fetched via the catalog endpoint.
+ * @property {Set<string>} acceptedIds      Ids accepted under the CURRENT license text.
+ * @property {Set<string>} reacceptIds      Ids accepted under an OLDER text — need re-accepting.
+ * @property {Map<string, object>} entries  Registry entries by id, as last loaded: the one
+ *   source for what needs a click-through (``requires_explicit_ack``), what comes via
+ *   the catalog (``is_catalog_entry``) and the server's load-gate decision
+ *   (``load_state``: ``ok`` / ``needs_license`` / ``needs_reaccept`` /
+ *   ``needs_commercial_rights`` / ``blocked``), which accept / withdraw update in place.
  * @property {Set<string>} busyRowIds       Ids mid-operation (download/uninstall).
- * @property {number | null} pendingScrollRestore  Parent scroll to restore post-render.
+ * @property {Map<string, string>} busyText  Their in-row status ("Downloading… 40%").
+ * @property {{install: string, license: string, method: string}} unknown
+ *   What the last load couldn't fetch (install state, the acceptance list,
+ *   the active face method) — why, or "" when it loaded: rows that need
+ *   it read "Unknown".
+ * @property {Map<string, boolean>} decided  Id → accepted (true) or withdrawn
+ *   (false) on this page: known even when the acceptance list doesn't
+ *   load; cleared once it does.
  */
+
+import { esc } from "./text-format.mjs";
 
 /** @type {FeState} */
 export const feState = {
@@ -34,47 +47,83 @@ export const feState = {
   currentUseContext: "unspecified",
   activeFaceMethod: "sface",
   installState: new Map(),
-  requiresAckIds: new Set(),
   acceptedIds: new Set(),
-  catalogEntryIds: new Set(),
+  reacceptIds: new Set(),
+  entries: new Map(),
   busyRowIds: new Set(),
-  pendingScrollRestore: null,
+  busyText: new Map(),
+  /** What the last load couldn't fetch (why): rows needing it read "Unknown". */
+  unknown: { install: "", license: "", method: "" },
+  decided: new Map(),
 };
 
 /**
- * Walk the picker groups and collect every entry id with
- * ``requires_explicit_ack=true``. Used by the ``setActiveFaceEmbedder``
- * pre-gate.
- *
- * @param {Array<{entries?: Array<object>}>} groups
- * @returns {Set<string>}
+ * Whether the entry needs a click-through before use (``=== true``: the
+ * row's own rule, so the dialog can't disagree with it).
+ * @param {string | undefined} id
  */
-export function _collectRequiresAckIds(groups) {
-  const out = new Set();
-  for (const g of groups || []) {
-    for (const e of g.entries || []) {
-      if (e && e.requires_explicit_ack && e.id) out.add(e.id);
-    }
-  }
-  return out;
+export function requiresAck(id) {
+  return feState.entries.get(id ?? "")?.requires_explicit_ack === true;
 }
 
 /**
- * Collect every entry id flagged ``is_catalog_entry`` by the backend.
- * Drives catalog-vs-legacy routing in the Download / Uninstall handlers
- * (which only receive a registry id, not the full entry).
- *
- * @param {Array<{entries?: Array<object>}>} groups
- * @returns {Set<string>}
+ * Whether the entry's weights come via the catalog ensure-weights
+ * endpoint (drives catalog-vs-legacy routing in Download / Uninstall,
+ * which only receive a registry id).
+ * @param {string | undefined} id
  */
-export function _collectCatalogEntryIds(groups) {
-  const out = new Set();
-  for (const g of groups || []) {
-    for (const e of g.entries || []) {
-      if (e && e.is_catalog_entry === true && e.id) out.add(e.id);
-    }
+export function isCatalogEntry(id) {
+  return feState.entries.get(id ?? "")?.is_catalog_entry === true;
+}
+
+/**
+ * The server's load-gate decision for the entry, as last loaded or as
+ * accept / withdraw updated it.
+ * @param {string | undefined} id
+ * @returns {string | undefined}
+ */
+export function loadStateOf(id) {
+  return feState.entries.get(id ?? "")?.load_state;
+}
+
+/**
+ * Record a load-gate decision made on this page (accept → ``ok``,
+ * withdraw → ``needs_license``): the map gets an updated copy of the
+ * entry (the server's payload object is never mutated), and the rows
+ * read the map, so the change shows at once. An id the picker hasn't
+ * loaded gets a bare entry (tests seed that way).
+ * @param {string} id
+ * @param {string} state
+ */
+export function setLoadState(id, state) {
+  feState.entries.set(id, { ...(feState.entries.get(id) || { id }), load_state: state });
+}
+
+/**
+ * Latest row per model from the ``/acceptance/list`` payload. The log
+ * is append-only and oldest-first, so the LAST row per model decides
+ * current status.
+ *
+ * @param {{acceptances?: Array<{model_id?: string, event?: string, current?: boolean, needs_reaccept?: boolean}>} | null} payload
+ * @returns {Map<string, {event: string, current: boolean, reaccept: boolean}>}
+ */
+function _latestRowByModel(payload) {
+  /** @type {Map<string, {event: string, current: boolean, reaccept: boolean}>} */
+  const latest = new Map();
+  const rows = (payload && payload.acceptances) || [];
+  for (const a of rows) {
+    if (!a || !a.model_id) continue;
+    // ``current`` is the server's version-aware verdict (acceptance of
+    // the CURRENT license text). Absent (older server) → trust the
+    // event, matching the previous behaviour.
+    const stale = a.current === false || a.needs_reaccept === true;
+    // ``needs_reaccept`` is the server's verdict that an OLDER text was
+    // accepted. Not current but not stale-text either (e.g. a damaged log
+    // line after it) is "no license", not "re-accept".
+    const reaccept = a.needs_reaccept === undefined ? stale : a.needs_reaccept === true;
+    latest.set(a.model_id, { event: a.event || "accept", current: !stale, reaccept });
   }
-  return out;
+  return latest;
 }
 
 /**
@@ -83,26 +132,73 @@ export function _collectCatalogEntryIds(groups) {
  * — the pre-gate then redirects the user to the dialog, which is
  * the safe failure mode.
  *
- * The log is append-only and oldest-first, so for each model the LATEST
- * row decides current status: an ``event === "revoke"`` withdrawal
- * supersedes an earlier acceptance (legacy rows have no ``event`` and
- * default to "accept").
+ * Only a latest row that is an ``accept`` of the CURRENT license text
+ * counts: a ``revoke`` withdrawal supersedes an earlier acceptance
+ * (legacy rows have no ``event`` and default to "accept"), and an
+ * acceptance of an older text (``current: false``) is NOT accepted —
+ * the server's load gate refuses it, so showing it as accepted would
+ * hide a feature that has silently stopped.
  *
- * @param {{acceptances?: Array<{model_id?: string, event?: string}>} | null} payload
+ * @param {{acceptances?: Array<{model_id?: string, event?: string, current?: boolean, needs_reaccept?: boolean}>} | null} payload
  * @returns {Set<string>}
  */
 export function _collectAcceptedIds(payload) {
-  /** @type {Map<string, string>} */
-  const latestEvent = new Map();
-  const rows = (payload && payload.acceptances) || [];
-  for (const a of rows) {
-    if (a && a.model_id) latestEvent.set(a.model_id, a.event || "accept");
-  }
   const out = new Set();
-  for (const [modelId, event] of latestEvent) {
-    if (event === "accept") out.add(modelId);
+  for (const [modelId, row] of _latestRowByModel(payload)) {
+    if (row.event === "accept" && row.current) out.add(modelId);
   }
   return out;
+}
+
+/**
+ * Ids whose latest row is an acceptance of an OLDER license text —
+ * the picker shows these as "Re-accept needed".
+ *
+ * @param {{acceptances?: Array<{model_id?: string, event?: string, current?: boolean, needs_reaccept?: boolean}>} | null} payload
+ * @returns {Set<string>}
+ */
+export function _collectReacceptIds(payload) {
+  const out = new Set();
+  for (const [modelId, row] of _latestRowByModel(payload)) {
+    if (row.event === "accept" && row.reaccept) out.add(modelId);
+  }
+  return out;
+}
+
+/**
+ * A notice for Settings → Models when a damaged line in the license
+ * record (e.g. after a power cut) made earlier acceptances read as
+ * withdrawn — otherwise those models would just flip to "needs license"
+ * with no reason given.
+ *
+ * @param {{withdrawn_by_damage?: unknown} | null} payload
+ * @returns {string}
+ */
+export function damagedLogNoticeHTML(payload) {
+  const ids = payload && Array.isArray(payload.withdrawn_by_damage) ? payload.withdrawn_by_damage : [];
+  if (ids.length === 0) return "";
+  const n = ids.length === 1 ? "1 model" : `${ids.length} models`;
+  return (
+    `<p class="setting-muted fe-damaged-log-notice" role="status">Part of your license record ` +
+    `couldn't be read (for example after a power cut), so ${n} you accepted before it ` +
+    `now need${ids.length === 1 ? "s" : ""} to be accepted again.</p>`
+  );
+}
+
+/**
+ * Say what the picker couldn't load (and why), with a Retry: the rows
+ * that needed it read "Unknown" rather than a confident wrong status.
+ * @param {Array<{what: string, why: string}>} failures
+ * @returns {string} HTML ("" when nothing failed)
+ */
+export function loadFailureNoticeHTML(failures) {
+  if (!failures.length) return "";
+  const parts = failures.map((f) => `${esc(f.what)} (${esc(f.why)})`).join(", ");
+  return (
+    `<p class="setting-muted fe-load-failure-notice" role="status">Couldn't load ${parts} — ` +
+    `models marked “Unknown” may be fine. ` +
+    `<button class="modal-btn modal-btn-secondary" data-action="loadFaceEmbedderPicker">Retry</button></p>`
+  );
 }
 
 /**
@@ -110,30 +206,47 @@ export function _collectAcceptedIds(payload) {
  * empty baseline. Not used in production code.
  */
 export function _resetFaceEmbedderStateForTests() {
-  feState.requiresAckIds = new Set();
   feState.acceptedIds = new Set();
-  feState.catalogEntryIds = new Set();
+  feState.reacceptIds = new Set();
+  feState.entries = new Map();
   feState.installState = new Map();
   feState.busyRowIds = new Set();
+  feState.busyText = new Map();
   feState.currentUseContext = "unspecified";
   feState.activeFaceMethod = "sface";
   feState.currentDraft = null;
-  feState.pendingScrollRestore = null;
+  feState.unknown = { install: "", license: "", method: "" };
+  feState.decided = new Map();
 }
 
 /**
  * Test seam: seed the picker state directly so unit tests can exercise
- * the picker without standing up the network sequence.
+ * the picker without standing up the network sequence. ``requiresAckIds``
+ * and ``catalogEntryIds`` are shorthand: they mark (or create) entries in
+ * the one map, the way a loaded registry would.
  *
  * @param {{requiresAckIds?: string[], acceptedIds?: string[],
- *          catalogEntryIds?: string[],
+ *          reacceptIds?: string[], catalogEntryIds?: string[],
+ *          entries?: Record<string, object>,
  *          installState?: Record<string, object>, activeFaceMethod?: string,
  *          useContext?: string}} state
  */
 export function _seedFaceEmbedderStateForTests(state) {
-  feState.requiresAckIds = new Set(state.requiresAckIds || []);
   feState.acceptedIds = new Set(state.acceptedIds || []);
-  feState.catalogEntryIds = new Set(state.catalogEntryIds || []);
+  feState.reacceptIds = new Set(state.reacceptIds || []);
+  if (state.entries) feState.entries = new Map(Object.entries(state.entries));
+  // Like the other keys, these replace the whole set: an id not listed
+  // loses the flag. Copies, never the caller's objects (a shared fixture
+  // must not change under the next test).
+  for (const flag of /** @type {const} */ (["requires_explicit_ack", "is_catalog_entry"])) {
+    const ids = new Set(flag === "requires_explicit_ack" ? state.requiresAckIds : state.catalogEntryIds);
+    for (const id of new Set([...feState.entries.keys(), ...ids])) {
+      const entry = /** @type {any} */ (feState.entries.get(id) || { id });
+      if (entry[flag] === true || ids.has(id)) {
+        feState.entries.set(id, { ...entry, [flag]: ids.has(id) });
+      }
+    }
+  }
   if (state.installState) {
     feState.installState = new Map(Object.entries(state.installState));
   }

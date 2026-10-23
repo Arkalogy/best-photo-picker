@@ -9,6 +9,7 @@
  */
 
 import { authedSrc } from "./api-client.mjs";
+import { focusInto } from "./dialog-focus.mjs";
 import { formatDate } from "./date-format.mjs";
 import { qualityLabel } from "./score-format.mjs";
 import { saveNavState } from "./navigation.mjs";
@@ -87,7 +88,7 @@ export function updateLightboxScores(p) {
  * @param {boolean | string} [animClass]
  */
 export function openLightbox(idx, animClass) {
-  // Protection F: wrap the full lightbox open in a top-level try/catch.
+  // Render-failure boundary: wrap the full lightbox open in a top-level try/catch.
   // A render exception here used to leave the user stuck — lightbox
   // overlay visible but with broken state — and only a page reload
   // could recover. Now any throw falls back to closing the lightbox
@@ -138,43 +139,10 @@ function _doOpenLightbox(idx, animClass) {
   const actionText = document.getElementById("lb-action-text");
   if (actionText) actionText.className = "lb-action-text";
 
-  if (p.is_video) {
-    img.classList.add("hidden");
-    video.classList.remove("hidden");
-    video.src = authedSrc("/video/" + p.thumb_hash);
-    video.poster = authedSrc("/thumb/" + p.thumb_hash);
-  } else {
-    img.classList.remove("hidden");
-    video.classList.add("hidden");
-    video.pause();
-    video.removeAttribute("src");
-    img.removeAttribute("src");
-    const photoUrl = authedSrc("/photo/" + p.thumb_hash + (p._enhanced ? "?t=" + Date.now() : ""));
-    img.onerror = () => {
-      console.error("[lightbox] Full photo failed to load:", photoUrl, "— falling back to thumbnail");
-      img.onerror = null;
-      img.src = authedSrc("/thumb/" + p.thumb_hash + "?t=" + Date.now());
-    };
-    img.src = photoUrl;
-  }
-  const fnEl = document.getElementById("lb-filename");
-  if (fnEl) {
-    fnEl.textContent = p.filename;
-    // Hover shows the full path; click copies it (data-action in markup).
-    fnEl.title = `${p.filepath}\nClick to copy file path`;
-  }
-  const dateEl = /** @type {HTMLElement | null} */ (document.getElementById("lb-date"));
-  const dateInput = document.getElementById("lb-date-input");
-  if (dateEl) {
-    dateEl.textContent = _formatLbDate(p.date || p.date_day || "");
-    dateEl.classList.remove("hidden");
-    dateEl.style.cursor = "default";
-    dateEl.title = "";
-    dateEl.onclick = null;
-  }
-  if (dateInput) dateInput.classList.add("hidden");
+  _showMedia(p, img, video);
+  _showHeader(p);
 
-  // Panel-cleanup item 2: the aggregate verdict LEADS the Quality section
+  // The aggregate verdict LEADS the Quality section
   // (big, tier-colored) instead of floating as small text in the header —
   // verdict and the bars that explain it live together. The header's
   // #lb-quality slot stays empty (date + filename only up there).
@@ -191,69 +159,19 @@ function _doOpenLightbox(idx, animClass) {
   updateLightboxFaces(p);
   updateLightboxPets(p);
 
-  // Moment membership wins over the CLIP near-dup cluster as the "similar"
-  // surface: a Moment is a persisted, user-meaningful burst (moment_cluster_id
-  // + moment_size), so when this photo belongs to one we populate the strip
-  // from its fellow Moment shots and flag it so the panel + compare overlay
-  // read as a Moment. The currently-open photo is the parent (left side of
-  // compare); its fellow members are the siblings.
-  if ((!p.similar_photos || p.similar_photos.length === 0) && p.moment_cluster_id && (p.moment_size || 1) > 1) {
-    const pool = /** @type {any[]} */ (
-      (win.photos && win.photos.length ? win.photos : win.currentGridItems) || []
-    );
-    const members = pool.filter(
-      (s) => s && s.moment_cluster_id === p.moment_cluster_id && s.filepath !== p.filepath && !s.deleted_at,
-    );
-    if (members.length > 0) {
-      p._isMoment = true;
-      p.similar_photos = members.map((s) => ({
-        filepath: s.filepath,
-        thumb_hash: s.thumb_hash,
-        similarity: null,
-        aggregate_score: s.aggregate_score || 0,
-        blur_score: s.blur_score || 0,
-        exposure_score: s.exposure_score || 0,
-        face_score: s.face_score || 0,
-        composition_score: s.composition_score || 0,
-        date_day: s.date_day || "",
-        filename: s.filename || s.original_filename || "",
-      }));
-    }
-  }
-
-  if ((!p.similar_photos || p.similar_photos.length === 0) && win._simClusterMap) {
-    const clusterPaths = win._simClusterMap[p.filepath];
-    if (clusterPaths && clusterPaths.length > 1) {
-      const itemsByPath = /** @type {Record<string, any>} */ ({});
-      for (const item of /** @type {any[]} */ (win.currentGridItems || [])) {
-        itemsByPath[item.filepath] = item;
-      }
-      p.similar_photos = clusterPaths
-        .filter((fp) => fp !== p.filepath)
-        .map((fp) => {
-          const s = itemsByPath[fp];
-          return s
-            ? {
-                filepath: s.filepath,
-                thumb_hash: s.thumb_hash,
-                similarity: null,
-                aggregate_score: s.aggregate_score || 0,
-                blur_score: s.blur_score || 0,
-                exposure_score: s.exposure_score || 0,
-                face_score: s.face_score || 0,
-                composition_score: s.composition_score || 0,
-                date_day: s.date_day || "",
-                filename: s.filename || s.original_filename || "",
-              }
-            : null;
-        })
-        .filter(Boolean);
-    }
-  }
+  if (!p.similar_photos || p.similar_photos.length === 0) _fillSimilarFromMoment(p, win);
+  if (!p.similar_photos || p.similar_photos.length === 0) _fillSimilarFromCluster(p, win);
 
   updateLightboxSimilar(p);
   lbSwitchTab();
-  document.getElementById("lightbox")?.classList.add("visible");
+  const lb = document.getElementById("lightbox");
+  const opening = !!lb && !lb.classList.contains("visible");
+  lb?.classList.add("visible");
+  // On the open transition only (not on every photo step): remember what
+  // had focus, move it into the dialog and keep Tab inside — a card
+  // opened from the keyboard would otherwise keep focus and its arrow /
+  // Enter keys would act on the grid behind. closeLightbox gives it back.
+  if (opening) focusInto(lb);
   saveNavState();
 
   if (animClass) {
@@ -266,6 +184,120 @@ function _doOpenLightbox(idx, animClass) {
       );
     });
   }
+}
+
+/**
+ * Show the photo (with a thumbnail fallback) or the video.
+ * @param {any} p
+ * @param {HTMLImageElement} img
+ * @param {HTMLVideoElement} video
+ */
+function _showMedia(p, img, video) {
+  if (p.is_video) {
+    img.classList.add("hidden");
+    video.classList.remove("hidden");
+    video.src = authedSrc("/video/" + p.thumb_hash);
+    video.poster = authedSrc("/thumb/" + p.thumb_hash);
+    return;
+  }
+  img.classList.remove("hidden");
+  video.classList.add("hidden");
+  video.pause();
+  video.removeAttribute("src");
+  img.removeAttribute("src");
+  const photoUrl = authedSrc("/photo/" + p.thumb_hash + (p._enhanced ? "?t=" + Date.now() : ""));
+  img.onerror = () => {
+    console.error("[lightbox] Full photo failed to load:", photoUrl, "— falling back to thumbnail");
+    img.onerror = null;
+    img.src = authedSrc("/thumb/" + p.thumb_hash + "?t=" + Date.now());
+  };
+  img.src = photoUrl;
+}
+
+/**
+ * Filename (hover: full path) and date in the header.
+ * @param {any} p
+ */
+function _showHeader(p) {
+  const fnEl = document.getElementById("lb-filename");
+  if (fnEl) {
+    fnEl.textContent = p.filename;
+    // Hover shows the full path; click copies it (data-action in markup).
+    fnEl.title = `${p.filepath}\nClick to copy file path`;
+  }
+  const dateEl = /** @type {HTMLElement | null} */ (document.getElementById("lb-date"));
+  const dateInput = document.getElementById("lb-date-input");
+  if (dateEl) {
+    dateEl.textContent = _formatLbDate(p.date || p.date_day || "");
+    dateEl.classList.remove("hidden");
+    dateEl.style.cursor = "default";
+    dateEl.title = "";
+    dateEl.onclick = null;
+  }
+  if (dateInput) dateInput.classList.add("hidden");
+}
+
+/**
+ * A sibling entry of the similar-photos strip.
+ * @param {any} s
+ */
+function _siblingEntry(s) {
+  return {
+    filepath: s.filepath,
+    thumb_hash: s.thumb_hash,
+    similarity: null,
+    aggregate_score: s.aggregate_score || 0,
+    blur_score: s.blur_score || 0,
+    exposure_score: s.exposure_score || 0,
+    face_score: s.face_score || 0,
+    composition_score: s.composition_score || 0,
+    date_day: s.date_day || "",
+    filename: s.filename || s.original_filename || "",
+  };
+}
+
+/**
+ * Moment membership wins over the CLIP near-dup cluster as the "similar"
+ * surface: a Moment is a persisted, user-meaningful burst (moment_cluster_id
+ * + moment_size), so when this photo belongs to one we populate the strip
+ * from its fellow Moment shots and flag it so the panel + compare overlay
+ * read as a Moment. The currently-open photo is the parent (left side of
+ * compare); its fellow members are the siblings.
+ * @param {any} p
+ * @param {any} win
+ */
+function _fillSimilarFromMoment(p, win) {
+  if (!p.moment_cluster_id || (p.moment_size || 1) <= 1) return;
+  const pool = /** @type {any[]} */ (
+    (win.photos && win.photos.length ? win.photos : win.currentGridItems) || []
+  );
+  const members = pool.filter(
+    (s) => s && s.moment_cluster_id === p.moment_cluster_id && s.filepath !== p.filepath && !s.deleted_at,
+  );
+  if (members.length > 0) {
+    p._isMoment = true;
+    p.similar_photos = members.map(_siblingEntry);
+  }
+}
+
+/**
+ * The near-duplicate cluster the grid computed (any view, not just the
+ * Duplicates album) as the "similar" surface.
+ * @param {any} p
+ * @param {any} win
+ */
+function _fillSimilarFromCluster(p, win) {
+  if (!win._simClusterMap) return;
+  const clusterPaths = win._simClusterMap[p.filepath];
+  if (!clusterPaths || clusterPaths.length <= 1) return;
+  const itemsByPath = /** @type {Record<string, any>} */ ({});
+  for (const item of /** @type {any[]} */ (win.currentGridItems || [])) {
+    itemsByPath[item.filepath] = item;
+  }
+  p.similar_photos = clusterPaths
+    .filter((fp) => fp !== p.filepath)
+    .map((fp) => (itemsByPath[fp] ? _siblingEntry(itemsByPath[fp]) : null))
+    .filter(Boolean);
 }
 
 export function refreshLightboxIfOpen() {

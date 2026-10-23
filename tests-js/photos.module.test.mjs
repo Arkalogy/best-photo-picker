@@ -1,10 +1,7 @@
 // @ts-check
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-
 import {
   _formatDuration,
-  _updateVisibleCards,
-  applyZoom,
   batchAddToAlbum,
   batchFavorite,
   batchOverride,
@@ -18,96 +15,14 @@ import {
   renderGrid,
   setOverride,
   showAlbumPickerModal,
-  stepZoom,
-  updateCardInPlace,
   updateMultiSelectUI,
   updateOverrideStats,
   vgrid,
 } from "../bpp/web/static/js/modules/photos.mjs";
+import { setup, teardown, jsonResp, samplePhoto } from "./_photos-setup.mjs";
 
-beforeEach(() => {
-  document.body.innerHTML = `
-    <div id="toast-container"></div>
-    <div id="photo-grid"></div>
-    <div class="content"></div>
-    <div id="toolbar-subtitle"></div>
-    <input id="sort-by" />
-    <input id="filter-by" />
-    <input id="zoom-slider" type="range" min="40" max="300" value="80" />
-    <span id="zoom-pct"></span>
-    <div id="batch-bar">
-      <span id="batch-count"></span>
-      <button id="batch-compare-btn" style="display:none"></button>
-    </div>
-    <div id="album-picker-overlay">
-      <div id="album-picker-list"></div>
-      <input id="album-picker-new-name" />
-    </div>
-    <span id="override-stats"></span>
-  `;
-  /** @type {any} */ (window).photos = [];
-  /** @type {any} */ (window).selectedPaths = new Set();
-  /** @type {any} */ (window).overrides = {};
-  /** @type {any} */ (window).favorites = new Set();
-  /** @type {any} */ (window).multiSelected = new Set();
-  /** @type {any} */ (window).albumList = [];
-  /** @type {any} */ (window).currentAlbumId = null;
-  /** @type {any} */ (window).currentGridItems = [];
-  /** @type {any} */ (window).sortedItems = [];
-  /** @type {any} */ (window).lastMultiClickIdx = -1;
-  /** @type {any} */ (window)._albumPickerFilepaths = [];
-  /** @type {any} */ (window)._simClusterMap = {};
-  /** @type {any} */ (window).ICONS = { paw: "<i>p</i>", pencil: "<i>e</i>", trash: "<i>t</i>" };
-  /** @type {any} */ (window).openLightbox = vi.fn();
-  /** @type {any} */ (window).updatePersonPhotoSelection = vi.fn();
-  /** @type {any} */ (window).renderAlbumNav = vi.fn();
-});
-
-afterEach(() => {
-  document.body.innerHTML = "";
-  vi.unstubAllGlobals();
-  for (const k of [
-    "photos",
-    "selectedPaths",
-    "overrides",
-    "favorites",
-    "multiSelected",
-    "albumList",
-    "currentAlbumId",
-    "currentGridItems",
-    "sortedItems",
-    "lastMultiClickIdx",
-    "_albumPickerFilepaths",
-    "_simClusterMap",
-    "ICONS",
-    "openLightbox",
-    "updatePersonPhotoSelection",
-    "renderAlbumNav",
-  ]) {
-    delete (/** @type {any} */ (window)[k]);
-  }
-});
-
-/**
- * @param {object} body
- */
-function jsonResp(body) {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-  });
-}
-
-const samplePhoto = {
-  filepath: "/a.jpg",
-  filename: "a.jpg",
-  thumb_hash: "h1",
-  aggregate_score: 0.7,
-  blur_score: 0.6,
-  exposure_score: 0.7,
-  face_score: 0.5,
-  composition_score: 0.4,
-};
+beforeEach(setup);
+afterEach(teardown);
 
 describe("_formatDuration", () => {
   test("under 1 hour: M:SS format", () => {
@@ -201,7 +116,7 @@ describe("renderGrid", () => {
     expect(document.getElementById("photo-grid")?.textContent).toContain("No favorited photos");
   });
 
-  test("empty-state survives a subsequent vgrid.onResize() (UAT Bug #7)", () => {
+  test("empty-state survives a subsequent vgrid.onResize()", () => {
     // The bug: when a filter switch lands on items.length === 0, the
     // empty-state branch sets grid.innerHTML correctly. But vgrid still
     // holds the PREVIOUS filter's items in vgrid.items. Anything that
@@ -535,75 +450,5 @@ describe("updateOverrideStats", () => {
     /** @type {any} */ (window).overrides = { "/a": "include", "/b": "include", "/c": "exclude" };
     updateOverrideStats();
     expect(document.getElementById("override-stats")?.textContent).toBe("2 included, 1 excluded");
-  });
-});
-
-describe("applyZoom / stepZoom", () => {
-  test("clamps to [40, 300] and updates label", () => {
-    applyZoom(150, false);
-    expect(document.getElementById("zoom-pct")?.textContent).toBe("150%");
-    applyZoom(500, false);
-    expect(document.getElementById("zoom-pct")?.textContent).toBe("300%");
-    applyZoom(10, false);
-    expect(document.getElementById("zoom-pct")?.textContent).toBe("40%");
-  });
-
-  test("stepZoom adjusts the slider by delta", () => {
-    /** @type {HTMLInputElement} */ (document.getElementById("zoom-slider")).value = "100";
-    stepZoom(20);
-    expect(document.getElementById("zoom-pct")?.textContent).toBe("120%");
-  });
-});
-
-describe("vgrid", () => {
-  test("setItems populates internal items array", () => {
-    vgrid.setItems([samplePhoto]);
-    expect(vgrid.items).toHaveLength(1);
-  });
-
-  test("appendItems concatenates", () => {
-    vgrid.setItems([samplePhoto]);
-    vgrid.appendItems([{ ...samplePhoto, filepath: "/b" }]);
-    expect(vgrid.items).toHaveLength(2);
-  });
-
-  test("onResize re-renders with updated clientHeight", () => {
-    // Simulate initial render when clientHeight=0 (layout not yet resolved)
-    const grid = document.getElementById("photo-grid");
-    const content = document.querySelector(".content");
-    if (!grid || !content) throw new Error("DOM not set up");
-
-    // Give the grid a measurable size so measure() can compute rowHeight
-    Object.defineProperty(grid, "clientWidth", { value: 1000, configurable: true });
-
-    const items = Array.from({ length: 50 }, (_, i) => ({
-      ...samplePhoto,
-      filepath: `/p${i}.jpg`,
-      thumb_hash: `h${i}`,
-    }));
-    vgrid.rowHeight = 260;
-    vgrid.setItems(items);
-
-    // clientHeight=0 → render schedules a rAF retry, lastRow stays -1
-    Object.defineProperty(content, "clientHeight", { value: 0, configurable: true });
-    vgrid.render(true);
-    // With clientHeight=0 the render returns early (rAF retry) — lastRow unchanged
-    expect(vgrid.lastRow).toBe(-1);
-
-    // clientHeight=800 → re-render fills the viewport
-    Object.defineProperty(content, "clientHeight", { value: 800, configurable: true });
-    vgrid.onResize();
-    const rowsAfterResize = vgrid.lastRow - vgrid.firstRow + 1;
-    expect(rowsAfterResize).toBeGreaterThan(vgrid.buffer);
-  });
-});
-
-describe("_updateVisibleCards / updateCardInPlace", () => {
-  test("_updateVisibleCards iterates without throwing", () => {
-    expect(() => _updateVisibleCards()).not.toThrow();
-  });
-
-  test("updateCardInPlace returns false when card missing", () => {
-    expect(updateCardInPlace("/missing.jpg")).toBe(false);
   });
 });

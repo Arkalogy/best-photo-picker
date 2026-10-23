@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
 vi.mock("../bpp/web/static/js/modules/api-client.mjs", () => ({
   apiFetch: h.apiFetch,
   authedSrc: (/** @type {string} */ s) => s,
+  faceCropUrl: (/** @type {string} */ h, /** @type {number} */ i) => `/api/v1/faces/crop/${h}/${i}`,
 }));
 vi.mock("../bpp/web/static/js/modules/toast.mjs", () => ({
   toast: h.toast,

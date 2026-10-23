@@ -84,107 +84,19 @@ def backup_db(db_path: str, preserve_prev: bool = False) -> str | None:
         # migration path) — the existing `.backup.prev` is already
         # the pre-upgrade snapshot we want to keep.
         if os.path.isfile(backup_path) and not preserve_prev:
-            shutil.copy2(backup_path, prev_path)
-            for suffix in ("-wal", "-shm"):
-                bwal = backup_path + suffix
-                if os.path.isfile(bwal):
-                    shutil.copy2(bwal, prev_path + suffix)
-                else:
-                    # Stale .prev WAL/SHM would falsely advertise a
-                    # WAL we no longer have — drop it.
-                    pwal = prev_path + suffix
-                    if os.path.isfile(pwal):
-                        os.remove(pwal)
+            _copy_db_with_sidecars(backup_path, prev_path)
             from bpp.db.connection import _restrict_db_perms
 
             _restrict_db_perms(prev_path)
             rotated = True
 
         # Create new backup from current DB
-        shutil.copy2(db_path, backup_path)
-        for suffix in ("-wal", "-shm"):
-            wal = db_path + suffix
-            if os.path.isfile(wal):
-                shutil.copy2(wal, backup_path + suffix)
-            else:
-                # Clean up stale backup WAL/SHM if source no longer has them
-                bwal = backup_path + suffix
-                if os.path.isfile(bwal):
-                    os.remove(bwal)
+        _copy_db_with_sidecars(db_path, backup_path)
 
         # Verify the COPY, not just the source. A partial / truncated
         # write would otherwise silently sit on disk as a "backup".
         if not check_integrity(backup_path):
-            # timestamped quarantine name. The previous shape
-            # used a fixed `.backup.corrupt` target, which collided
-            # if a prior failure left a quarantine file behind (or
-            # if two backup runs raced). Now every failure lands a
-            # unique file, evidence is never overwritten, and the
-            # earlier remove-existing-quarantine step is no longer
-            # needed.
-            #
-            # all log lines in this
-            # cascade share a quarantine_event_id so an operator
-            # triaging server.log can thread them. UTC timestamp
-            # doubles as both the unique suffix and the event ID.
-            #
-            # every step that can OSError logs with
-            # `exc_info=True` so a silent quarantine failure is
-            # impossible. If quarantine AND fallback removal both
-            # fail, an explicit ERROR records that manual cleanup
-            # is required.
-            # 1-second resolution collided when two backup
-            # verifications failed in the same wall-clock second
-            # (concurrent runs, fast retries). Microsecond precision
-            # makes `.corrupt-*` filenames effectively unique without
-            # changing the lexically-sortable ordering. The trailing
-            # `Z` stays so the suffix is still ISO-8601 UTC.
-            quarantine_event_id = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%S.%fZ")
-            quarantine = f"{backup_path}.corrupt-{quarantine_event_id}"
-            _log.error(
-                "[quarantine=%s] Backup at %s failed verification — "
-                "quarantining and restoring from .backup.prev",
-                quarantine_event_id,
-                backup_path,
-            )
-            try:
-                shutil.move(backup_path, quarantine)
-            except OSError:
-                _log.warning(
-                    "[quarantine=%s] Could not quarantine corrupt "
-                    "backup %s -> %s; attempting to remove the corrupt "
-                    "copy in place",
-                    quarantine_event_id,
-                    backup_path,
-                    quarantine,
-                    exc_info=True,
-                )
-                # Fallback: at least remove the corrupt copy so it
-                # can't masquerade as a valid backup.
-                try:
-                    os.remove(backup_path)
-                except OSError:
-                    _log.error(
-                        "[quarantine=%s] Corrupt backup at %s could "
-                        "neither be quarantined nor removed — it will "
-                        "remain on disk and may be mistaken for a valid "
-                        "backup. Manual cleanup required.",
-                        quarantine_event_id,
-                        backup_path,
-                        exc_info=True,
-                    )
-            for suffix in ("-wal", "-shm"):
-                bad = backup_path + suffix
-                if os.path.isfile(bad):
-                    try:
-                        os.remove(bad)
-                    except OSError:
-                        _log.warning(
-                            "[quarantine=%s] Could not remove bad backup sidecar %s",
-                            quarantine_event_id,
-                            bad,
-                            exc_info=True,
-                        )
+            _quarantine_bad_backup(backup_path)
 
             # Restore .backup from .backup.prev if we rotated, so the
             # user still has the previous good generation. If no
@@ -217,6 +129,88 @@ def backup_db(db_path: str, preserve_prev: bool = False) -> str | None:
     except OSError as e:
         _log.warning("Failed to create DB backup: %s", e)
         return None
+
+
+def _copy_db_with_sidecars(src: str, dst: str) -> None:
+    """Copy a DB file and its WAL/SHM; a stale WAL/SHM at the destination
+    that the source no longer has would falsely advertise a WAL, so it
+    is dropped."""
+    shutil.copy2(src, dst)
+    for suffix in ("-wal", "-shm"):
+        wal = src + suffix
+        if os.path.isfile(wal):
+            shutil.copy2(wal, dst + suffix)
+        else:
+            stale = dst + suffix
+            if os.path.isfile(stale):
+                os.remove(stale)
+
+
+def _quarantine_bad_backup(backup_path: str) -> None:
+    """Move a backup that failed verification to a timestamped
+    ``.corrupt-<event>`` name (removing it in place if that fails) and
+    drop its WAL/SHM.
+
+    The previous shape used a fixed `.backup.corrupt` target, which
+    collided if a prior failure left a quarantine file behind (or if
+    two backup runs raced). Now every failure lands a unique file and
+    evidence is never overwritten. All log lines in this cascade share
+    a quarantine_event_id so an operator triaging server.log can thread
+    them; the UTC timestamp doubles as the unique suffix and the event
+    ID. Every step that can OSError logs with `exc_info=True` so a
+    silent quarantine failure is impossible; if quarantine AND fallback
+    removal both fail, an explicit ERROR records that manual cleanup is
+    required. Microsecond precision makes `.corrupt-*` filenames
+    effectively unique (1-second resolution collided when two
+    verifications failed in the same second) while keeping the
+    lexically-sortable, ISO-8601 UTC shape.
+    """
+    quarantine_event_id = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%S.%fZ")
+    quarantine = f"{backup_path}.corrupt-{quarantine_event_id}"
+    _log.error(
+        "[quarantine=%s] Backup at %s failed verification — "
+        "quarantining and restoring from .backup.prev",
+        quarantine_event_id,
+        backup_path,
+    )
+    try:
+        shutil.move(backup_path, quarantine)
+    except OSError:
+        _log.warning(
+            "[quarantine=%s] Could not quarantine corrupt "
+            "backup %s -> %s; attempting to remove the corrupt "
+            "copy in place",
+            quarantine_event_id,
+            backup_path,
+            quarantine,
+            exc_info=True,
+        )
+        # Fallback: at least remove the corrupt copy so it
+        # can't masquerade as a valid backup.
+        try:
+            os.remove(backup_path)
+        except OSError:
+            _log.error(
+                "[quarantine=%s] Corrupt backup at %s could "
+                "neither be quarantined nor removed — it will "
+                "remain on disk and may be mistaken for a valid "
+                "backup. Manual cleanup required.",
+                quarantine_event_id,
+                backup_path,
+                exc_info=True,
+            )
+    for suffix in ("-wal", "-shm"):
+        bad = backup_path + suffix
+        if os.path.isfile(bad):
+            try:
+                os.remove(bad)
+            except OSError:
+                _log.warning(
+                    "[quarantine=%s] Could not remove bad backup sidecar %s",
+                    quarantine_event_id,
+                    bad,
+                    exc_info=True,
+                )
 
 
 def _write_backup_meta(db_path: str, backup_path: str) -> None:
@@ -284,17 +278,12 @@ def read_backup_meta(backup_path: str) -> dict | None:
     """Read the metadata sidecar for `backup_path`. Returns None if
     missing, unparseable, or has the wrong shape — caller falls back
     to filesystem mtime."""
-    import json
+    from bpp.utils.json_utils import load_json_file
 
-    meta_path = backup_path + ".meta.json"
-    if not os.path.isfile(meta_path):
-        return None
-    try:
-        with open(meta_path, encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(data, dict) or "created_at_epoch" not in data:
+    data = load_json_file(
+        backup_path + ".meta.json", None, expected_type=dict, context="backup metadata"
+    )
+    if data is None or "created_at_epoch" not in data:
         return None
     return data
 
@@ -322,7 +311,7 @@ def restore_from_backup_if_corrupt(db_path: str) -> str | None:
 
     Concurrency:
         Primarily intended for startup (before any pool connection
-        exists). As of P-11, the swap goes through a staging file +
+        exists). The swap goes through a staging file +
         atomic ``os.replace`` so ``db_path`` is never absent during
         the operation — a plugin calling this from a non-startup
         context won't observe "file not found." A live pool reader
@@ -368,7 +357,7 @@ def restore_from_backup_if_corrupt(db_path: str) -> str | None:
     corrupt_sidecar = db_path + f".corrupted-{ts}"
     staging_path = db_path + ".restoring"
 
-    # P-11: never leave ``db_path`` absent during the operation.
+    # Never leave ``db_path`` absent during the operation.
     #
     # Old sequence was move(db_path → corrupt) then copy(backup → db_path).
     # Between those two steps ``db_path`` didn't exist; a concurrent
@@ -412,7 +401,10 @@ def restore_from_backup_if_corrupt(db_path: str) -> str | None:
             with contextlib.suppress(OSError):
                 os.remove(staging_path)
         raise
-    # Wipe -wal and -shm too — they're keyed to the corrupt main DB.
+    # Wipe -wal and -shm too — they're keyed to the corrupt main DB —
+    # then bring the backup's own WAL along: the rows it holds were part
+    # of the backup that passed its integrity check (the CLI restore
+    # copies it too).
     for suffix in ("-wal", "-shm"):
         side = db_path + suffix
         if os.path.isfile(side):
@@ -420,6 +412,18 @@ def restore_from_backup_if_corrupt(db_path: str) -> str | None:
                 os.remove(side)
             except OSError as exc:
                 _log.warning("Could not remove stale %s: %s", side, exc)
+    for suffix in ("-wal", "-shm"):
+        side = backup_path + suffix
+        if os.path.isfile(side):
+            try:
+                _shutil.copy2(side, db_path + suffix)
+            except OSError as exc:
+                _log.warning(
+                    "Restored the main file but couldn't copy %s: %s — rows in the "
+                    "backup's WAL are not part of the restore",
+                    side,
+                    exc,
+                )
     _log.warning(
         "Auto-restored %s from %s; corrupt file kept at %s. "
         "User-visible changes since the last backup may be lost.",

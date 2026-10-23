@@ -1,4 +1,4 @@
-"""Protection E — periodic WAL checkpoint during long face extraction.
+"""Periodic WAL checkpoint during long face extraction.
 
 What this prevents
 ------------------
@@ -13,7 +13,7 @@ periodic checkpoints, the WAL grows for the whole multi-minute
 extraction run. A SIGKILL anywhere in that window can corrupt the
 WAL.
 
-Protection E adds ``PRAGMA wal_checkpoint(TRUNCATE)`` every N
+The periodic WAL checkpoint adds ``PRAGMA wal_checkpoint(TRUNCATE)`` every N
 photos extracted. The SIGKILL-corruption window is bounded by the
 checkpoint interval rather than the full run length.
 
@@ -64,7 +64,8 @@ class TestPeriodicWalCheckpoint:
         production call site uses TRUNCATE."""
         import inspect
 
-        src = inspect.getsource(face_extraction_phase5.extract_new_embeddings)
+        # The per-photo commit / checkpoint / progress step of extract_new_embeddings.
+        src = inspect.getsource(face_extraction_phase5._commit_and_report)
         assert "wal_checkpoint(TRUNCATE)" in src, (
             "Periodic checkpoint must use TRUNCATE mode to actually "
             "shrink the WAL. Other modes leave the file growing."
@@ -82,7 +83,8 @@ class TestPeriodicWalCheckpoint:
         whole machinery."""
         import inspect
 
-        src = inspect.getsource(face_extraction_phase5.extract_new_embeddings)
+        # The per-photo commit / checkpoint / progress step of extract_new_embeddings.
+        src = inspect.getsource(face_extraction_phase5._commit_and_report)
         # Look for the pattern: PRAGMA wal_checkpoint(TRUNCATE) is
         # inside a try block whose except catches OperationalError.
         # Naive string search is fine — the cadence block is small.
@@ -153,14 +155,14 @@ class TestRuntimeCheckpointBehavior:
 
 class TestSignalHandlersStillTrappedInServer:
     """Sanity: the existing graceful-shutdown signal handlers in
-    bpp.commands.serve are still in place. Protection E adds periodic
+    bpp.commands.serve are still in place. the periodic WAL checkpoint adds periodic
     checkpoint as a SIGKILL-window-shrinker; SIGTERM / SIGINT
     handling has been there for a while and shouldn't regress."""
 
     def test_sigterm_handler_registered_in_source(self) -> None:
         """Source-level check: serve.py wires SIGTERM + SIGINT to a
         graceful_shutdown function. If anyone removes this, the
-        Protection E checkpoint cadence doesn't help on `docker stop`
+        the periodic WAL checkpoint cadence doesn't help on `docker stop`
         / `Ctrl+C` — those go through SIGTERM/SIGINT to the trapped
         path, NOT SIGKILL."""
         import pathlib

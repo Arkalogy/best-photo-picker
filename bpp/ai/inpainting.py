@@ -28,6 +28,7 @@ from io import BytesIO
 
 from PIL import Image
 
+from bpp.scoring.install_hold import requires
 from bpp.scoring.model_base import ModelSingleton
 from bpp.utils.logging import get_logger
 from bpp.utils.paths import models_dir
@@ -48,11 +49,6 @@ _LAMA_MODEL_URL = (
 # execution. Re-pin only after auditing the new upstream artifact.
 _LAMA_MODEL_SHA256 = "7ba7aa7ac37a4d41fdbbeba3a2af7ead18058552997e3a3cd1a3b2210c9e6b4c"
 _LAMA_MODEL_PATH = models_dir() / "big-lama.pt"
-
-
-def _import_check() -> None:
-    """Raise ImportError if simple_lama_inpainting is not installed."""
-    import simple_lama_inpainting  # noqa: F401
 
 
 def _create_lama(verified_path):
@@ -83,14 +79,19 @@ def _create_lama(verified_path):
 # panel reads this registration to surface a Redownload affordance,
 # Uninstall control, and the pinned-download consent prompt before
 # the first inpaint click.
+#: The registry entry this loader selects (its kind has no default).
+REGISTRY_ID = "lama_inpaint_research"
+
 _LAMA = ModelSingleton(
     name="LaMa inpainting",
     model_path=_LAMA_MODEL_PATH,
     model_url=_LAMA_MODEL_URL,
     model_sha256=_LAMA_MODEL_SHA256,
     create_fn=_create_lama,
-    registry_id="lama_inpaint_research",
-    import_check=_import_check,
+    registry_id=REGISTRY_ID,
+    # Gated: not imported while pip writes it, nor (with the torch it
+    # loads) after an install changed it, until a restart.
+    import_check=requires("simple_lama_inpainting"),
 )
 
 
@@ -133,14 +134,7 @@ def ensure_lama_model() -> str:
     # ``ensure_model`` is a no-op verify when the file is already
     # cached, so the wording stays neutral ("Ensuring"/"ready").
     log.info("Ensuring LaMa inpainting weights (source=%s)", _LAMA_MODEL_URL)
-    path = _LAMA.ensure_model()
-    if path is None:
-        raise RuntimeError(
-            f"LaMa weights could not be downloaded "
-            f"(registry_id=lama_inpaint_research, source={_LAMA_MODEL_URL}; "
-            f"ensure_model returned None — check network access and the "
-            f"pinned upstream URL)."
-        )
+    path = _LAMA.ensure_model_or_raise()
     log.info("LaMa inpainting weights ready: %s", path)
     return str(path)
 
@@ -157,24 +151,24 @@ def remove_local_weights() -> int:
     stays on disk, with no trail to diagnose why (project convention:
     nothing should be silent).
     """
+    from bpp.utils.download import remove_partial_downloads
+
     freed = 0
-    if _LAMA_MODEL_PATH.exists():
-        freed = _LAMA_MODEL_PATH.stat().st_size
-        try:
-            _LAMA_MODEL_PATH.unlink()
-        except OSError:
-            freed = 0
-            log.warning(
-                "Failed to delete LaMa weights at %s",
-                _LAMA_MODEL_PATH,
-                exc_info=True,
-            )
-    tmp = _LAMA_MODEL_PATH.with_suffix(_LAMA_MODEL_PATH.suffix + ".tmp")
-    if tmp.exists():
-        try:
-            tmp.unlink()
-        except OSError:
-            log.warning("Failed to delete LaMa temp file at %s", tmp, exc_info=True)
+    # Wait for a download in progress: its retry would otherwise put
+    # the weights back after the user removed them.
+    with _LAMA.download_lock:
+        if _LAMA_MODEL_PATH.exists():
+            freed = _LAMA_MODEL_PATH.stat().st_size
+            try:
+                _LAMA_MODEL_PATH.unlink()
+            except OSError:
+                freed = 0
+                log.warning(
+                    "Failed to delete LaMa weights at %s",
+                    _LAMA_MODEL_PATH,
+                    exc_info=True,
+                )
+        remove_partial_downloads(str(_LAMA_MODEL_PATH))
     _LAMA.reset()
     return freed
 
@@ -192,10 +186,7 @@ def _get_model():
     Internally delegates to the ModelSingleton — same thread-safe lazy
     init as every other ML model in the codebase.
     """
-    from bpp.registry import enforce_load_policy_for
-
-    enforce_load_policy_for("lama_inpaint_research")
-    return _LAMA.get()
+    return _LAMA.get_or_raise()
 
 
 def inpaint(image: Image.Image, mask: Image.Image) -> Image.Image:

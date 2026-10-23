@@ -4,18 +4,20 @@ restore / recluster.
 Extracted from ``bpp.web.bp_faces_manage`` during the v0.1 cleanup. Owns
 its own Flask blueprint and is registered explicitly by ``app.py``
 alongside ``bp_faces_manage``. (Earlier we used a side-effect-import
-pattern; P0 of the refactor plan converted it to explicit registration.)
+pattern; it has since been converted to explicit registration.)
 """
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 from flask import Blueprint, Response, jsonify, request
 
+from bpp.config import cfg_get
 from bpp.constants import (
     ACTIVE_PHOTO_SQL,
     CLUSTER_DISMISSED,
-    FACE_CLUSTER_THRESHOLD_FALLBACK,
 )
 from bpp.db.albums import (
     list_albums as db_list_albums,
@@ -40,6 +42,9 @@ from bpp.web.state import get_ctx, with_face_lock
 bp = Blueprint("faces_cluster_ops", __name__)
 
 log = get_logger(__name__)
+
+#: Budget for one block of the face x centroid distance product.
+NEAREST_BLOCK_BYTES = 64 * 1024 * 1024
 
 _ACTIVE = ACTIVE_PHOTO_SQL
 
@@ -247,7 +252,6 @@ def api_faces_restore() -> tuple[Response, int]:
     Restored faces get ``CLUSTER_UNASSIGNED`` (-1) so the next recluster
     picks them up.
     """
-    from bpp.constants import CLUSTER_UNASSIGNED
 
     ctx = get_ctx()
     data = request.get_json(silent=True) or {}
@@ -265,6 +269,37 @@ def api_faces_restore() -> tuple[Response, int]:
         )
 
     conn = ctx.get_conn()
+    count = _restore_to_unassigned(conn, restore_all, face_ids)
+
+    if count > 0:
+        # Incremental assignment: assign each restored face to its nearest
+        # existing cluster. Never global-recluster — that destroys named
+        # cluster mappings.
+        from bpp.db.face_queries import FaceEmbeddingsTooLarge
+
+        try:
+            _assign_unassigned_to_nearest(ctx, conn)
+        except FaceEmbeddingsTooLarge as e:
+            log.warning("Refusing face restore reassignment: %s", e)
+            return jsonify(
+                {
+                    "error": str(e),
+                    "code": "face_embeddings_too_large",
+                    "count": e.count,
+                    "cap": e.cap,
+                    "restored": count,
+                }
+            ), 503
+        refresh_smart_albums(conn, kinds=get_affected_album_types("face_tag"))
+
+    albums = db_list_albums(conn)
+    return jsonify({"status": "restored", "count": count, "albums": albums}), 200
+
+
+def _restore_to_unassigned(conn: Any, restore_all: bool, face_ids: list[int]) -> int:
+    """Move the dismissed faces (all, or the given ids) to
+    ``CLUSTER_UNASSIGNED``; returns how many rows changed."""
+    from bpp.constants import CLUSTER_UNASSIGNED
 
     if restore_all:
         cursor = conn.execute(
@@ -281,126 +316,157 @@ def api_faces_restore() -> tuple[Response, int]:
         )
     count = cursor.rowcount
     conn.commit()
+    return count
 
-    if count > 0:
-        # Incremental assignment: assign each restored face to its nearest
-        # existing cluster. Never global-recluster — that destroys named
-        # cluster mappings.
-        import numpy as np
 
-        from bpp.db.face_feedback import get_hard_negatives
-        from bpp.db.face_queries import FaceEmbeddingsTooLarge, assert_face_load_cap
+def _assign_unassigned_to_nearest(ctx: Any, conn: Any) -> None:
+    """Assign every unassigned face to its nearest existing cluster (or a
+    new one). Raises ``FaceEmbeddingsTooLarge`` above the load cap."""
+    from bpp.constants import CLUSTER_UNASSIGNED
+    from bpp.db.face_embedding_safety import decode_rows
+    from bpp.db.face_feedback import get_hard_negatives
+    from bpp.db.face_queries import assert_face_load_cap
 
-        # Cap check before the np.stack work: the centroid + reassignment
-        # pass loads every active face into memory. Refuse early on huge
-        # libraries with a structured 503 so the user sees a banner
-        # instead of an OOM-kill mid-request.
-        active_count = conn.execute(
-            f"SELECT COUNT(*) FROM face_embeddings WHERE cluster_id != {CLUSTER_DISMISSED}"
-        ).fetchone()[0]
-        try:
-            assert_face_load_cap(conn, active_count)
-        except FaceEmbeddingsTooLarge as e:
-            log.warning("Refusing face restore reassignment: %s", e)
-            return jsonify(
-                {
-                    "error": str(e),
-                    "code": "face_embeddings_too_large",
-                    "count": e.count,
-                    "cap": e.cap,
-                    "restored": count,
+    # Cap check before the np.stack work: the centroid + reassignment
+    # pass loads every active face into memory. Refuse early on huge
+    # libraries with a structured 503 so the user sees a banner
+    # instead of an OOM-kill mid-request.
+    active_count = conn.execute(
+        f"SELECT COUNT(*) FROM face_embeddings WHERE cluster_id != {CLUSTER_DISMISSED}"
+    ).fetchone()[0]
+    assert_face_load_cap(conn, active_count)
+
+    # Build hard-negative bidirectional map (user-separated pairs)
+    neg_pairs = get_hard_negatives(conn)
+    hard_neg_map: dict[int, set[int]] = {}
+    for pair in neg_pairs:
+        a, b = pair["cluster_id_a"], pair["cluster_id_b"]
+        hard_neg_map.setdefault(a, set()).add(b)
+        hard_neg_map.setdefault(b, set()).add(a)
+
+    # Compute centroids for all existing (non-dismissed, non-unassigned) clusters
+    existing_rows = conn.execute(
+        "SELECT cluster_id, embedding FROM face_embeddings WHERE cluster_id >= 0"
+    ).fetchall()
+    cluster_embs: dict[int, list[np.ndarray]] = {}
+    for cid, emb in decode_rows(
+        conn,
+        ((r["cluster_id"], r["embedding"]) for r in existing_rows),
+        where="bp_faces_cluster_ops.centroids",
+    ):
+        cluster_embs.setdefault(cid, []).append(emb)
+    centroids = {cid: np.mean(embs, axis=0) for cid, embs in cluster_embs.items()}
+    if not centroids:
+        return
+
+    threshold = float(cfg_get(ctx.config, "face_cluster_threshold"))
+    # Assign each unassigned face to nearest cluster or create new
+    unassigned = conn.execute(
+        f"SELECT id, embedding FROM face_embeddings WHERE cluster_id = {CLUSTER_UNASSIGNED}"
+    ).fetchall()
+    assigned_count = 0
+    new_count = 0
+    usable = decode_rows(
+        conn,
+        ((r["id"], r["embedding"]) for r in unassigned),
+        where="bp_faces_cluster_ops.unassigned",
+    )
+    usable_ids = {i for i, _ in usable}
+    unassigned = [r for r in unassigned if r["id"] in usable_ids]
+    if unassigned:
+        updates, assigned_count, new_count = _nearest_cluster_updates(
+            [r["id"] for r in unassigned],
+            np.stack([emb for _, emb in usable]),
+            centroids,
+            hard_neg_map,
+            threshold,
+        )
+        conn.executemany(
+            "UPDATE face_embeddings SET cluster_id = ? WHERE id = ?",
+            updates,
+        )
+    conn.commit()
+    log.info(
+        "Incremental restore: %d faces → %d assigned to existing, %d new clusters",
+        len(unassigned),
+        assigned_count,
+        new_count,
+    )
+
+
+def _nearest_cluster_updates(
+    face_ids: list[int],
+    embs_mat: np.ndarray,
+    centroids: dict[int, np.ndarray],
+    hard_neg_map: dict[int, set[int]],
+    threshold: float,
+) -> tuple[list[tuple[int, int]], int, int]:
+    """``(cluster_id, face_id)`` updates for the faces, with how many
+    joined an existing cluster and how many opened a new one.
+
+    Vectorizes the N-face x M-cluster nearest-centroid scan: one (N, M)
+    distance matrix instead of N*M np.linalg.norm calls.
+    """
+    ambiguity_radius = threshold * 1.5
+    max_cid = max(centroids.keys())
+    cluster_ids = list(centroids.keys())
+    centroids_mat = np.stack([centroids[c] for c in cluster_ids])
+    cid_to_col = {c: i for i, c in enumerate(cluster_ids)}
+    # ||a-b||^2 = ||a||^2 + ||b||^2 - 2 a·b; clip to 0 before sqrt
+    # to absorb tiny negative values from float roundoff. The faces go
+    # through in blocks so the distance product stays within
+    # NEAREST_BLOCK_BYTES (an N x M matrix at 100k x 10k would be 4 GB).
+    b2 = (centroids_mat * centroids_mat).sum(axis=1)
+    n_faces = len(face_ids)
+    best_cols = np.empty(n_faces, dtype=np.int64)
+    best_dists = np.empty(n_faces, dtype=np.float64)
+    # The hard-negative check needs, per face, only the distances to the
+    # partners of its own best cluster: gathered per block as they are
+    # computed, never as another N x M matrix.
+    neg_dists: dict[int, dict[int, float]] = {}
+    block = max(1, NEAREST_BLOCK_BYTES // max(1, len(cluster_ids) * 8))
+    for start in range(0, n_faces, block):
+        chunk = embs_mat[start : start + block]
+        a2 = (chunk * chunk).sum(axis=1)
+        dist2 = a2[:, None] + b2[None, :] - 2.0 * (chunk @ centroids_mat.T)
+        np.maximum(dist2, 0, out=dist2)
+        np.sqrt(dist2, out=dist2)
+        cols = dist2.argmin(axis=1)
+        best_cols[start : start + len(chunk)] = cols
+        best_dists[start : start + len(chunk)] = dist2[np.arange(len(chunk)), cols]
+        for r, col in enumerate(cols):
+            partners = hard_neg_map.get(cluster_ids[int(col)])
+            if partners:
+                neg_dists[start + r] = {
+                    p: float(dist2[r, cid_to_col[p]]) for p in partners if p in cid_to_col
                 }
-            ), 503
+        del dist2
 
-        # Build hard-negative bidirectional map (user-separated pairs)
-        neg_pairs = get_hard_negatives(conn)
-        hard_neg_map: dict[int, set[int]] = {}
-        for pair in neg_pairs:
-            a, b = pair["cluster_id_a"], pair["cluster_id_b"]
-            hard_neg_map.setdefault(a, set()).add(b)
-            hard_neg_map.setdefault(b, set()).add(a)
-
-        # Compute centroids for all existing (non-dismissed, non-unassigned) clusters
-        existing_rows = conn.execute(
-            "SELECT cluster_id, embedding FROM face_embeddings WHERE cluster_id >= 0"
-        ).fetchall()
-        cluster_embs: dict[int, list[np.ndarray]] = {}
-        for r in existing_rows:
-            cluster_embs.setdefault(r["cluster_id"], []).append(
-                np.frombuffer(r["embedding"], dtype=np.float32)
-            )
-        centroids = {cid: np.mean(embs, axis=0) for cid, embs in cluster_embs.items()}
-
-        if centroids:
-            threshold = float(
-                ctx.config.get("face_cluster_threshold", FACE_CLUSTER_THRESHOLD_FALLBACK)
-            )
-            ambiguity_radius = threshold * 1.5
-            max_cid = max(centroids.keys())
-            # Assign each unassigned face to nearest cluster or create new
-            unassigned = conn.execute(
-                f"SELECT id, embedding FROM face_embeddings WHERE cluster_id = {CLUSTER_UNASSIGNED}"
-            ).fetchall()
-            assigned_count = 0
-            new_count = 0
-            if unassigned:
-                # Vectorize the N-face x M-cluster nearest-centroid scan: one
-                # (N, M) distance matrix instead of N*M np.linalg.norm calls.
-                cluster_ids = list(centroids.keys())
-                centroids_mat = np.stack([centroids[c] for c in cluster_ids])
-                cid_to_col = {c: i for i, c in enumerate(cluster_ids)}
-                embs_mat = np.stack(
-                    [np.frombuffer(r["embedding"], dtype=np.float32) for r in unassigned]
-                )
-                # ||a-b||^2 = ||a||^2 + ||b||^2 - 2 a·b; clip to 0 before sqrt
-                # to absorb tiny negative values from float roundoff.
-                a2 = (embs_mat * embs_mat).sum(axis=1)
-                b2 = (centroids_mat * centroids_mat).sum(axis=1)
-                dist2 = a2[:, None] + b2[None, :] - 2.0 * (embs_mat @ centroids_mat.T)
-                np.maximum(dist2, 0, out=dist2)
-                dist_mat = np.sqrt(dist2)
-                best_cols = dist_mat.argmin(axis=1)
-                best_dists = dist_mat[np.arange(len(unassigned)), best_cols]
-
-                updates: list[tuple[int, int]] = []
-                for i, r in enumerate(unassigned):
-                    best_cid = cluster_ids[int(best_cols[i])]
-                    best_dist = float(best_dists[i])
-                    assigned = False
-                    if best_dist <= threshold:
-                        # Hard-negative check: if the best cluster has a known
-                        # confusable partner and this face is close to both,
-                        # create a new cluster instead of guessing wrong.
-                        skip = False
-                        for neg_cid in hard_neg_map.get(best_cid, set()):
-                            neg_col = cid_to_col.get(neg_cid)
-                            if neg_col is not None and dist_mat[i, neg_col] < ambiguity_radius:
-                                skip = True
-                                break
-                        if not skip:
-                            updates.append((best_cid, r["id"]))
-                            assigned_count += 1
-                            assigned = True
-                    if not assigned:
-                        max_cid += 1
-                        updates.append((max_cid, r["id"]))
-                        new_count += 1
-                conn.executemany(
-                    "UPDATE face_embeddings SET cluster_id = ? WHERE id = ?",
-                    updates,
-                )
-            conn.commit()
-            log.info(
-                "Incremental restore: %d faces → %d assigned to existing, %d new clusters",
-                len(unassigned),
-                assigned_count,
-                new_count,
-            )
-
-        refresh_smart_albums(conn, kinds=get_affected_album_types("face_tag"))
-
-    albums = db_list_albums(conn)
-    return jsonify({"status": "restored", "count": count, "albums": albums}), 200
+    updates: list[tuple[int, int]] = []
+    assigned_count = 0
+    new_count = 0
+    for i, face_id in enumerate(face_ids):
+        best_cid = cluster_ids[int(best_cols[i])]
+        best_dist = float(best_dists[i])
+        assigned = False
+        if best_dist <= threshold:
+            # Hard-negative check: if the best cluster has a known
+            # confusable partner and this face is close to both,
+            # create a new cluster instead of guessing wrong.
+            skip = False
+            for neg_dist in neg_dists.get(i, {}).values():
+                if neg_dist < ambiguity_radius:
+                    skip = True
+                    break
+            if not skip:
+                updates.append((best_cid, face_id))
+                assigned_count += 1
+                assigned = True
+        if not assigned:
+            max_cid += 1
+            updates.append((max_cid, face_id))
+            new_count += 1
+    return updates, assigned_count, new_count
 
 
 # /api/v1/faces/recluster is registered by bpp.web.bp_faces_recluster

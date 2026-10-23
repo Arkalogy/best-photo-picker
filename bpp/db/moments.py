@@ -24,7 +24,7 @@ from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
 
-# Defaults per the Moments spec (pm.md). Looser than the 0.92 pick-dedup and
+# Moments defaults. Looser than the 0.92 pick-dedup and
 # wider than the 30s pick time window: the cost of slightly-too-loose is one
 # extra glance at a batch; too-tight silently splits similar shots apart and
 # defeats the feature.
@@ -135,7 +135,7 @@ def get_moment_groups(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """Return every multi-photo Moment as a group of photo ids.
 
     Each group: ``{"moment_cluster_id": int, "size": int, "photo_ids": [int]}``,
-    ordered by cluster id. The Phase-2 review UI hydrates these into the
+    ordered by cluster id. The review UI hydrates these into the
     keeper-ranked review cards; this query is the storage-side contract.
     """
     rows = conn.execute(

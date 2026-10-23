@@ -1,4 +1,4 @@
-"""TDD tests for C-2: restrict /api/open-folder to library root."""
+"""TDD tests: restrict /api/open-folder to library root."""
 
 from __future__ import annotations
 
@@ -146,7 +146,7 @@ class TestOpenFolderSubprocessFailure:
             assert resp.status_code == 504
 
     def test_launcher_timeout_threshold_is_generous(self):
-        """R8-M3: the timeout must be ≥ 30s so slow disks / sleeping
+        """The timeout must be ≥ 30s so slow disks / sleeping
         HDDs / busy GUI sessions don't produce spurious 504s on
         legitimate launcher operations. Locks the threshold so a
         future "minimize the timeout" change doesn't silently regress
@@ -154,14 +154,14 @@ class TestOpenFolderSubprocessFailure:
         from bpp.web.bp_os_integration import _LAUNCH_TIMEOUT_S
 
         assert _LAUNCH_TIMEOUT_S >= 30, (
-            f"R8-M3: OS launcher timeout must be ≥ 30s "
+            f"OS launcher timeout must be ≥ 30s "
             f"(was 5s, caused spurious 504s on slow-disk reveals). "
             f"Got {_LAUNCH_TIMEOUT_S}s."
         )
 
 
 class TestOpenFolderPlatformGate:
-    """Lock down platform-specific argv selection (L4 regression).
+    """Lock down platform-specific argv selection (regression).
 
     Headless Linux (no DISPLAY) and unrecognized platforms must return
     None from `_open_folder_cmd` so the endpoint reports 501 instead
@@ -222,3 +222,35 @@ class TestOpenFolderPlatformGate:
             resp = c.post("/api/v1/open-folder", json={"path": sub})
             assert resp.status_code == 501
             assert "platform" in resp.get_json()["error"].lower()
+
+
+class TestBundleDirectoriesAreNotOpened:
+    """On macOS a ``.app`` (or any package directory) is a directory, and
+    ``open <dir>`` launches it. The endpoint opens folders, not programs."""
+
+    def test_an_app_bundle_under_home_is_refused(self, tmp_path, monkeypatch):
+        app, d = _app_and_dir(tmp_path)
+        bundle = os.path.join(d, "Evil.app")
+        os.makedirs(os.path.join(bundle, "Contents"))
+        with open(os.path.join(bundle, "Contents", "Info.plist"), "w") as f:
+            f.write("<plist/>")
+        _force_launcher(monkeypatch)
+        fake = _ok_subprocess()
+        with app.test_client() as c, patch("bpp.web.bp_os_integration.subprocess", fake):
+            resp = c.post("/api/v1/open-folder", json={"path": bundle})
+        assert resp.status_code == 400
+        assert resp.get_json()["context"]["reason"] == "bundle"
+        fake.run.assert_not_called()
+
+    def test_a_package_without_a_bundle_suffix_is_refused_too(self, tmp_path, monkeypatch):
+        app, d = _app_and_dir(tmp_path)
+        pkg = os.path.join(d, "plain-name")
+        os.makedirs(os.path.join(pkg, "Contents"))
+        with open(os.path.join(pkg, "Contents", "Info.plist"), "w") as f:
+            f.write("<plist/>")
+        _force_launcher(monkeypatch)
+        fake = _ok_subprocess()
+        with app.test_client() as c, patch("bpp.web.bp_os_integration.subprocess", fake):
+            resp = c.post("/api/v1/open-folder", json={"path": pkg})
+        assert resp.status_code == 400
+        fake.run.assert_not_called()

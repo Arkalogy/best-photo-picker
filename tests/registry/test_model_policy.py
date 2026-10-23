@@ -1,4 +1,4 @@
-"""Batch 10 — contributor-policy gates (item 22).
+"""Contributor-policy gates.
 
 Pins:
 
@@ -21,10 +21,11 @@ exact handle owns it."
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 import pytest
+
+from tests._git import tracked_files
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -140,20 +141,13 @@ ALLOWED_BANNED_EXTENSION_PATH_PREFIXES = (
 
 
 class TestNoBinaryModelWeights:
-    """Catches the canonical Item-22 mistake: a contributor adds a
+    """Catches the canonical contributor mistake: a contributor adds a
     `.onnx` or `.pt` to the repo so the model 'just works for the
     grader.' The git ls-files scan is the cheapest possible enforcer."""
 
     def test_no_banned_extensions_tracked(self) -> None:
-        result = subprocess.run(
-            ["git", "ls-files"],
-            cwd=str(REPO_ROOT),
-            capture_output=True,
-            text=True,
-            check=True,
-        )
         offenders: list[str] = []
-        for path in result.stdout.splitlines():
+        for path in tracked_files():
             if not path:
                 continue
             if any(path.startswith(prefix) for prefix in ALLOWED_BANNED_EXTENSION_PATH_PREFIXES):

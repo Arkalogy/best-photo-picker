@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from flask import Blueprint, Response, jsonify, request
 
-from bpp.errors import BppError, NotFoundError, ValidationError
+from bpp.errors import NotFoundError, RateLimitedError, ValidationError
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx
 
@@ -28,7 +28,7 @@ def api_share_info() -> tuple[Response, int]:
     The share URL embeds the *persistent* share token (not the app
     session token), so URLs handed to phones survive server restarts.
 
-    L6: the response body contains the share token as part of the URL
+    The response body contains the share token as part of the URL
     query string. This is *necessary* for the URL to function when
     pasted/scanned, but we set ``Cache-Control: no-store`` so the
     response isn't cached by any intermediary or shown in browser back-
@@ -144,7 +144,7 @@ def api_share_revoke() -> tuple[Response, int]:
         else None
     )
     resp = jsonify({"share_url": share_url})
-    resp.headers["Cache-Control"] = "no-store"  # L6: token embedded in URL
+    resp.headers["Cache-Control"] = "no-store"  # token embedded in URL
     return resp, 200
 
 
@@ -161,6 +161,7 @@ def api_share_pair_status() -> tuple[Response, int]:
         cookies are cleared and the user re-scans
     """
     from bpp.web.share import FP_COOKIE_NAME, get_device_by_fingerprint
+    from bpp.web.share_devices import touch_device
 
     ctx = get_ctx()
     fp = request.cookies.get(FP_COOKIE_NAME)
@@ -173,6 +174,11 @@ def api_share_pair_status() -> tuple[Response, int]:
         return jsonify({"state": "revoked"}), 200
     if device["trusted_at"] is not None:
         return jsonify({"state": "trusted"}), 200
+    # A phone that keeps polling is still waiting: last_seen tells the
+    # owner so. Only a pending request is touched — a revoked device
+    # polling forever must not look alive — and the request still
+    # expires by its age (prune_expired_pending), not by this bump.
+    touch_device(ctx.get_conn(), int(device["id"]))
     return jsonify({"state": "pending"}), 200
 
 
@@ -196,9 +202,7 @@ def api_share_pair_request() -> tuple[Response, int]:
 
     ip = request.remote_addr or ""
     if not consume_pair_request_token(ip):
-        exc = BppError("Too many requests", code="rate_limited")
-        exc.http_status = 429  # type: ignore[misc]
-        raise exc
+        raise RateLimitedError("Too many requests")
 
     ctx = get_ctx()
     fp = request.cookies.get(FP_COOKIE_NAME)

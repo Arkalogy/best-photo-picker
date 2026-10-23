@@ -1,10 +1,8 @@
 // @ts-check
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-
 import {
   _lbApplyTransform,
   _lbShowZoomIndicator,
-  _lbTogglePanel,
   _lbUntagPerson,
   closeLightbox,
   hideLbCtxMenu,
@@ -29,161 +27,10 @@ import {
   updateLightboxTrim,
   updateLightboxVideoInfo,
 } from "../bpp/web/static/js/modules/lightbox.mjs";
+import { setup, teardown, jsonResp, samplePhoto } from "./_lightbox-setup.mjs";
 
-beforeEach(() => {
-  vi.useFakeTimers();
-  document.body.innerHTML = `
-    <div id="toast-container"></div>
-    <div id="confirm-overlay"><div class="confirm-dialog"></div></div>
-    <div id="album-picker-overlay"></div>
-    <div id="settings-overlay"></div>
-    <div id="export-modal-overlay"></div>
-    <div id="import-modal-overlay"></div>
-    <div id="modal-overlay"></div>
-    <div id="wizard-overlay"></div>
-    <div id="lightbox">
-      <div class="lb-img-wrapper">
-        <img id="lb-img" />
-        <video id="lb-video" class="hidden"></video>
-      </div>
-      <div id="lightbox-panel" class="lightbox-panel">
-        <div id="lb-panel-handle" class="lb-panel-handle" role="button" tabindex="0"></div>
-        <div class="lb-header"></div>
-      </div>
-      <div id="lb-flash"></div>
-      <div id="lb-action-text"></div>
-      <div id="lb-zoom-level"></div>
-      <span id="lb-filename"></span>
-      <span id="lb-date"></span>
-      <input id="lb-date-input" />
-      <span id="lb-quality"></span>
-      <div id="lb-scores"></div>
-      <div id="lb-actions"></div>
-      <button id="lb-top-include"></button>
-      <button id="lb-top-exclude"></button>
-      <button id="lb-top-fav"></button>
-      <button id="lb-top-delete"></button>
-      <button id="lb-undo" class="kb-undo"></button>
-      <button id="editor-enhance-btn"></button>
-      <div id="lb-faces"></div>
-      <div id="lb-pets"></div>
-      <div id="lb-tags"></div>
-      <div id="lb-similar"></div>
-      <div id="lb-exif"></div>
-      <div id="lb-video-info"></div>
-      <div id="lb-trim"></div>
-      <div id="lb-map-container">
-        <div id="lb-map-header"><span id="lb-map-toggle"></span></div>
-        <div id="lb-map"></div>
-      </div>
-      <div id="lb-ctx-menu" class="hidden">
-        <div class="ctx-menu-item" id="lb-ctx-include" data-action="include"></div>
-        <div class="ctx-menu-item" id="lb-ctx-exclude" data-action="exclude"></div>
-        <div class="ctx-menu-item" id="lb-ctx-fav" data-action="favorite"></div>
-        <div class="ctx-menu-item" id="lb-ctx-enhance" data-action="enhance"></div>
-        <div class="ctx-menu-item" id="lb-ctx-tag" data-action="tag-person"></div>
-      </div>
-    </div>
-  `;
-  /** @type {any} */ (window).lightboxIdx = -1;
-  /** @type {any} */ (window).lbZoom = 1;
-  /** @type {any} */ (window).lbPanX = 0;
-  /** @type {any} */ (window).lbPanY = 0;
-  /** @type {any} */ (window).LB_ZOOM_MIN = 1;
-  /** @type {any} */ (window).LB_ZOOM_MAX = 10;
-  /** @type {any} */ (window).SCORE_LABELS = {
-    blur_score: "Sharpness",
-    exposure_score: "Exposure",
-    face_score: "Faces",
-    composition_score: "Composition",
-  };
-  /** @type {any} */ (window).currentGridItems = [];
-  /** @type {any} */ (window).favorites = new Set();
-  /** @type {any} */ (window).overrides = {};
-  /** @type {any} */ (window).faceClusters = [];
-  /** @type {any} */ (window).albumList = [];
-  /** @type {any} */ (window).multiSelected = new Set();
-  /** @type {any} */ (window).selectedPaths = new Set();
-  /** @type {any} */ (window).editorActive = false;
-  /** @type {any} */ (window).ICONS = { paw: "<i>p</i>" };
-  /** @type {any} */ (window).hideCardCtxMenu = vi.fn();
-  /** @type {any} */ (window).personDisplayName = vi.fn(() => null);
-  /** @type {any} */ (window).petDisplayName = vi.fn(() => null);
-  /** @type {any} */ (window).getPersonAlbumId = vi.fn(() => 100);
-  /** @type {any} */ (window).showPersonCtxMenu = vi.fn();
-  /** @type {any} */ (window).showPeopleView = vi.fn();
-  /** @type {any} */ (window).renderAlbumNav = vi.fn();
-  /** @type {Record<string, string>} */
-  const store = {};
-  vi.stubGlobal("localStorage", {
-    getItem: (k) => (k in store ? store[k] : null),
-    setItem: (k, v) => {
-      store[k] = String(v);
-    },
-    removeItem: (k) => {
-      delete store[k];
-    },
-    clear: () => {
-      for (const k of Object.keys(store)) delete store[k];
-    },
-  });
-});
-
-afterEach(() => {
-  document.body.innerHTML = "";
-  vi.useRealTimers();
-  vi.unstubAllGlobals();
-  for (const k of [
-    "lightboxIdx",
-    "lbZoom",
-    "lbPanX",
-    "lbPanY",
-    "LB_ZOOM_MIN",
-    "LB_ZOOM_MAX",
-    "SCORE_LABELS",
-    "currentGridItems",
-    "favorites",
-    "overrides",
-    "faceClusters",
-    "albumList",
-    "multiSelected",
-    "selectedPaths",
-    "editorActive",
-    "ICONS",
-    "hideCardCtxMenu",
-    "personDisplayName",
-    "petDisplayName",
-    "getPersonAlbumId",
-    "showPersonCtxMenu",
-    "showPeopleView",
-    "renderAlbumNav",
-  ]) {
-    delete (/** @type {any} */ (window)[k]);
-  }
-});
-
-/**
- * @param {object} body
- */
-function jsonResp(body) {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-  });
-}
-
-const samplePhoto = {
-  id: 5,
-  filepath: "/a.jpg",
-  filename: "a.jpg",
-  thumb_hash: "h1",
-  date: "2024-01-01T12:00:00",
-  aggregate_score: 0.7,
-  blur_score: 0.6,
-  exposure_score: 0.7,
-  face_score: 0.5,
-  composition_score: 0.4,
-};
+beforeEach(setup);
+afterEach(teardown);
 
 describe("lbResetZoom / _lbApplyTransform / _lbShowZoomIndicator / lbZoomAt", () => {
   test("lbResetZoom resets state and clears zoom level visibility", () => {
@@ -369,7 +216,7 @@ describe("updateLightboxExif", () => {
     });
     const html = document.getElementById("lb-exif")?.innerHTML || "";
     expect(html).toContain("Apple iPhone 14");
-    // Panel-cleanup item 3: one "Info" section, coordinates live on the
+    // Panel cleanup: one "Info" section, coordinates live on the
     // map (tooltip), never as a text row.
     expect(html).toContain("Info");
     expect(html).not.toContain("37.7000, -122.4000");
@@ -439,6 +286,49 @@ describe("updateLightboxFaces / _lbUntagPerson", () => {
     /** @type {any} */ (window).faceClusters = [{ cluster_id: 5, photo_count: 10 }];
     await updateLightboxFaces(samplePhoto);
     expect(document.getElementById("lb-faces")?.innerHTML).toContain("Alice");
+  });
+
+  test("a late face list for the photo the user left is not rendered", async () => {
+    /** @type {any} */
+    const win = window;
+    const photoA = { ...samplePhoto, thumb_hash: "hash-a" };
+    const photoB = { ...samplePhoto, thumb_hash: "hash-b" };
+    win.faceClusters = [
+      { cluster_id: 5, photo_count: 10 },
+      { cluster_id: 6, photo_count: 10 },
+    ];
+    /** @type {(v: any) => void} */
+    let resolveA = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url) => {
+        if (String(url).includes("hash-a")) {
+          return new Promise((resolve) => {
+            resolveA = () =>
+              resolve(
+                jsonResp({
+                  faces: [{ face_id: 1, face_index: 0, cluster_id: 5, name: "Alice" }],
+                  person_tags: [],
+                })
+              );
+          });
+        }
+        return jsonResp({
+          faces: [{ face_id: 2, face_index: 0, cluster_id: 6, name: "Bob" }],
+          person_tags: [],
+        });
+      })
+    );
+    // A's load is still in flight when the user arrows to B.
+    const loadA = updateLightboxFaces(photoA);
+    win.currentGridItems = [photoA, photoB];
+    win.lightboxIdx = 1;
+    await updateLightboxFaces(photoB);
+    resolveA();
+    await loadA;
+    const chips = document.getElementById("lb-faces")?.innerHTML || "";
+    expect(chips).toContain("Bob");
+    expect(chips).not.toContain("Alice");
   });
 
   test("_lbUntagPerson DELETEs the tag and toasts", async () => {
@@ -602,75 +492,5 @@ describe("lbTrimPreview", () => {
     video.pause = vi.fn();
     lbTrimPreview();
     expect(video.play).toHaveBeenCalled();
-  });
-});
-
-describe("lbDelete", () => {
-  test("calls deletePhotos and closes", async () => {
-    /** @type {any} */ (window).currentGridItems = [samplePhoto];
-    /** @type {any} */ (window).lightboxIdx = 0;
-    const fetchMock = vi.fn(async () => jsonResp({}));
-    vi.stubGlobal("fetch", fetchMock);
-    const dialogs = await import("../bpp/web/static/js/modules/dialogs.mjs");
-    const promise = lbDelete();
-    await Promise.resolve();
-    await Promise.resolve();
-    dialogs.resolveConfirm(true);
-    await promise;
-    expect(/** @type {any} */ (window).lightboxIdx).toBe(-1);
-  });
-});
-
-describe("_lbTogglePanel (mobile bottom sheet)", () => {
-  test("starts collapsed: panel has no .expanded class on first render", () => {
-    const panel = document.getElementById("lightbox-panel");
-    expect(panel?.classList.contains("expanded")).toBe(false);
-  });
-
-  test("toggles .expanded on the panel element", () => {
-    const panel = document.getElementById("lightbox-panel");
-    _lbTogglePanel();
-    expect(panel?.classList.contains("expanded")).toBe(true);
-    _lbTogglePanel();
-    expect(panel?.classList.contains("expanded")).toBe(false);
-  });
-
-  test("closeLightbox resets .expanded so the next photo starts collapsed", () => {
-    const panel = document.getElementById("lightbox-panel");
-    _lbTogglePanel();
-    expect(panel?.classList.contains("expanded")).toBe(true);
-    closeLightbox();
-    expect(panel?.classList.contains("expanded")).toBe(false);
-  });
-
-  test("noop when the panel element is missing — no throw", () => {
-    document.getElementById("lightbox-panel")?.remove();
-    expect(() => _lbTogglePanel()).not.toThrow();
-  });
-});
-
-describe("R8-M7 — picker listener cleanup registry", () => {
-  // Source-scan regression for the cleanup-registry pattern. Any
-  // future picker that registers document-level listeners must hand
-  // its teardown to `_lbActiveCleanups` so `closeLightbox` can drain
-  // open pickers, otherwise the listeners outlive the picker.
-  //
-  // The original offender (`_lbShowFacePicker`) was removed when the
-  // photo-menu "Tag person" was routed to `_iphShowTagPicker`
-  // (manual person tag, no face hijacking). The registry stays in
-  // place because new pickers will need it.
-
-  test("lightbox source contains the cleanups registry", async () => {
-    const fs = await import("node:fs/promises");
-    const src = await fs.readFile("bpp/web/static/js/modules/lightbox.mjs", "utf-8");
-    expect(src).toContain("_lbActiveCleanups");
-  });
-
-  test("closeLightbox drains _lbActiveCleanups", async () => {
-    // closeLightbox moved to lightbox-actions in the v0.1 lightbox
-    // split; the drain loop lives there now.
-    const fs = await import("node:fs/promises");
-    const src = await fs.readFile("bpp/web/static/js/modules/lightbox-actions.mjs", "utf-8");
-    expect(src).toMatch(/for \(const cleanup of \[\.\.\._lbActiveCleanups\]\)/);
   });
 });

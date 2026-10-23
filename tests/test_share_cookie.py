@@ -21,6 +21,16 @@ import os
 import pytest
 
 
+def _share_url(app) -> str:
+    """The share link's path: a device the owner hasn't seen yet joins the
+    pending list only when it presents the share token."""
+    from bpp.web.share import get_share_token
+
+    ctx = app.extensions["bpp"]
+    with app.app_context():
+        return f"/?_token={get_share_token(ctx.get_conn())}"
+
+
 @pytest.fixture
 def app(tmp_path):
     from bpp.web.app import create_app
@@ -42,7 +52,7 @@ def app(tmp_path):
 class TestFingerprintCookie:
     def test_lan_visit_sets_cookie(self, app):
         client = app.test_client()
-        r = client.get("/", environ_overrides={"REMOTE_ADDR": "192.168.1.5"})
+        r = client.get(_share_url(app), environ_overrides={"REMOTE_ADDR": "192.168.1.5"})
         assert r.status_code == 200
         cookies = r.headers.getlist("Set-Cookie")
         assert any("bpp_share_fp=" in c for c in cookies), (
@@ -61,7 +71,7 @@ class TestFingerprintCookie:
         """Once the client has a fingerprint, don't churn it. Stable
         fingerprint = stable trust state across page reloads."""
         client = app.test_client()
-        r = client.get("/", environ_overrides={"REMOTE_ADDR": "192.168.1.5"})
+        r = client.get(_share_url(app), environ_overrides={"REMOTE_ADDR": "192.168.1.5"})
         first_cookies = r.headers.getlist("Set-Cookie")
         # Find the fingerprint value
         fp_cookie = next(c for c in first_cookies if c.startswith("bpp_share_fp="))
@@ -69,7 +79,7 @@ class TestFingerprintCookie:
 
         # Second request with the cookie set
         client.set_cookie("bpp_share_fp", fp_value)
-        r2 = client.get("/", environ_overrides={"REMOTE_ADDR": "192.168.1.5"})
+        r2 = client.get(_share_url(app), environ_overrides={"REMOTE_ADDR": "192.168.1.5"})
         new_set = [c for c in r2.headers.getlist("Set-Cookie") if c.startswith("bpp_share_fp=")]
         # Either no new Set-Cookie, or the same value (browser-friendly idempotent)
         if new_set:
@@ -78,7 +88,7 @@ class TestFingerprintCookie:
     def test_cookie_attributes(self, app):
         """HttpOnly (no JS access) + SameSite=Lax (CSRF-resistant) + 1y expiry."""
         client = app.test_client()
-        r = client.get("/", environ_overrides={"REMOTE_ADDR": "192.168.1.5"})
+        r = client.get(_share_url(app), environ_overrides={"REMOTE_ADDR": "192.168.1.5"})
         cookies = r.headers.getlist("Set-Cookie")
         fp = next(c for c in cookies if c.startswith("bpp_share_fp="))
         assert "HttpOnly" in fp
@@ -89,7 +99,7 @@ class TestFingerprintCookie:
     def test_cookie_not_secure_over_http(self, app):
         """Secure flag must NOT be set on plain HTTP (default LAN use)."""
         client = app.test_client()
-        r = client.get("/", environ_overrides={"REMOTE_ADDR": "192.168.1.5"})
+        r = client.get(_share_url(app), environ_overrides={"REMOTE_ADDR": "192.168.1.5"})
         cookies = r.headers.getlist("Set-Cookie")
         fp = next(c for c in cookies if c.startswith("bpp_share_fp="))
         assert "Secure" not in fp, "Secure flag should not be set on plain HTTP"
@@ -98,7 +108,7 @@ class TestFingerprintCookie:
         """Secure flag must be set when the request scheme is HTTPS."""
         client = app.test_client()
         r = client.get(
-            "/",
+            _share_url(app),
             environ_overrides={
                 "REMOTE_ADDR": "192.168.1.5",
                 "wsgi.url_scheme": "https",
@@ -118,7 +128,7 @@ class TestCookieCreatesDeviceRow:
 
         client = app.test_client()
         r = client.get(
-            "/",
+            _share_url(app),
             environ_overrides={"REMOTE_ADDR": "192.168.1.5"},
             headers={"User-Agent": "iPhone Safari"},
         )
@@ -142,7 +152,7 @@ class TestCookieCreatesDeviceRow:
 class TestReferrerPolicy:
     def test_referrer_policy_header_on_index(self, app):
         client = app.test_client()
-        r = client.get("/", environ_overrides={"REMOTE_ADDR": "192.168.1.5"})
+        r = client.get(_share_url(app), environ_overrides={"REMOTE_ADDR": "192.168.1.5"})
         assert r.headers.get("Referrer-Policy") == "no-referrer", (
             "index must set Referrer-Policy: no-referrer to prevent the "
             "share token from leaking via outbound clicks"
@@ -159,7 +169,7 @@ class TestHistoryReplaceShim:
         need to. Prevents accidental token sharing via screenshots /
         screen recordings."""
         client = app.test_client()
-        r = client.get("/", environ_overrides={"REMOTE_ADDR": "192.168.1.5"})
+        r = client.get(_share_url(app), environ_overrides={"REMOTE_ADDR": "192.168.1.5"})
         body = r.get_data(as_text=True)
         assert "history.replaceState" in body, (
             "index template must include a history.replaceState call to "

@@ -21,6 +21,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from bpp.scoring.install_hold import requires
 from bpp.scoring.model_base import ModelSingleton
 from bpp.utils.logging import get_logger
 
@@ -45,7 +46,7 @@ _MODEL_DIR = _cache_dir()
 #         per photo. Larger variants (ViT-L/14) would 4x the storage
 #         and inference time without proportional precision gain on
 #         a personal photo library.
-# License: MIT (same as upstream openai/CLIP).
+# License: see the bpp.registry entry ``openai_clip_vit_b32_onnx``.
 # Pinned:  initial release of bpp's CLIP feature.
 # To bump: change URL + filename + SHA together; CLIP_OUTPUT_NAME and
 #         tokenizer vocab in clip_tokenizer.py must match the new
@@ -83,7 +84,7 @@ _clip_visual = ModelSingleton(
     model_sha256=_MODEL_SHA256,
     create_fn=_make_ort_session,
     registry_id="openai_clip_vit_b32_onnx",
-    import_check=lambda: __import__("onnxruntime"),
+    import_check=requires("onnxruntime"),
 )
 
 _clip_text = ModelSingleton(
@@ -93,7 +94,7 @@ _clip_text = ModelSingleton(
     model_sha256=_TEXT_MODEL_SHA256,
     create_fn=_make_ort_session,
     registry_id="openai_clip_vit_b32_onnx",
-    import_check=lambda: __import__("onnxruntime"),
+    import_check=requires("onnxruntime"),
 )
 
 
@@ -114,12 +115,9 @@ def text_is_available() -> bool:
 
 def can_install() -> bool:
     """Return True if onnxruntime is importable (model can be downloaded)."""
-    try:
-        import onnxruntime  # noqa: F401
+    from bpp.scoring.install_hold import importable
 
-        return True
-    except ImportError:
-        return False
+    return importable("onnxruntime")
 
 
 # ---------------------------------------------------------------------------
@@ -157,6 +155,32 @@ def _get_session():
     return _clip_visual.get()
 
 
+def visual_model_problem() -> str | None:
+    """Load the visual model now: None if it's usable, else why not (for
+    the user: the reason and what to do)."""
+    from bpp.registry.policy import ModelLoadBlockedError
+
+    if _clip_visual._available is False:
+        _clip_visual.reset()  # an earlier failure: really try again
+    try:
+        if _clip_visual.get_or_raise() is not None:
+            return None
+    except ModelLoadBlockedError:
+        return (
+            "its license isn't accepted — accept it in Settings → Models (or "
+            "re-accept it if its terms were updated), then try again"
+        )
+    if not can_install():
+        return (
+            "the ONNX runtime it runs on is missing or failed to load — install "
+            "it (pip install onnxruntime), then restart Best Photo Picker"
+        )
+    return (
+        "the model couldn't be downloaded or loaded — check your connection, "
+        "then try again (details in the server log)"
+    )
+
+
 def _get_text_session():
     """Return (and lazily create) the shared text ONNX InferenceSession."""
     return _clip_text.get()
@@ -182,7 +206,10 @@ def _preprocess(image: np.ndarray) -> np.ndarray:
     # Resize shortest side to 224, then center crop
     h, w = rgb.shape[:2]
     scale = _CLIP_SIZE / min(h, w)
-    new_h, new_w = int(h * scale), int(w * scale)
+    # Round, and never below the crop size: truncation gave 223 for
+    # about 8% of sizes (2448 among them), leaving a 1-pixel crop.
+    new_h = max(_CLIP_SIZE, round(h * scale))
+    new_w = max(_CLIP_SIZE, round(w * scale))
     resized = cv2.resize(rgb, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
     # Center crop
@@ -233,10 +260,11 @@ def compute_clip_embedding_from_file(filepath: str) -> np.ndarray | None:
     """Load an image and compute its CLIP embedding."""
     from bpp.scoring.aggregate import read_image_for_scoring
 
-    # Canonical scoring image reader: cv2.imread → PIL fallback,
-    # wrapped in retry_io for transient FS failures. Returns None
-    # (with log.warning) on persistent failure.
-    img = read_image_for_scoring(filepath)
+    # Canonical scoring image reader (cv2 → PIL fallback, RAW decoder,
+    # retry_io for transient FS failures). Returns None (with
+    # log.warning) on persistent failure. RAW at half size: CLIP's input
+    # is 224 px, so a full-size demosaic would be wasted work.
+    img = read_image_for_scoring(filepath, raw_half_size=True)
     if img is None:
         return None
     return compute_clip_embedding(img)
@@ -320,6 +348,7 @@ ModelRegistry.register(
         url=_MODEL_URL,
         sha256=_MODEL_SHA256,
         reset=_clip_visual.reset,
+        legal_id="openai_clip_vit_b32_onnx",
     )
 )
 ModelRegistry.register(
@@ -329,5 +358,6 @@ ModelRegistry.register(
         url=_TEXT_MODEL_URL,
         sha256=_TEXT_MODEL_SHA256,
         reset=_clip_text.reset,
+        legal_id="openai_clip_vit_b32_onnx",
     )
 )

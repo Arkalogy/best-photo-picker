@@ -398,17 +398,26 @@ export async function toggleFavorite(filepath) {
     toastError("favorite this photo", e);
     return;
   }
-  const label = wasFav ? "Unfavorited" : "Favorited";
-  win.showToast?.(label, 4000, () => {
-    if (wasFav) favorites.add(filepath);
+  /** Flip the local favorite and redraw. */
+  const show = (fav) => {
+    if (fav) favorites.add(filepath);
     else favorites.delete(filepath);
     if (!win.updateCardInPlace?.(filepath)) win.renderGrid?.();
     win.renderAlbumNav?.();
-    apiFetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ filepath }),
-    }).catch((e) => console.warn("Favorite toggle failed:", e));
+  };
+  const label = wasFav ? "Unfavorited" : "Favorited";
+  win.showToast?.(label, 4000, async () => {
+    show(wasFav);
+    try {
+      await apiFetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filepath }),
+      });
+    } catch (e) {
+      show(!wasFav); // the server still has the toggle
+      toastError("undo the favorite", e);
+    }
   });
 }
 

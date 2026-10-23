@@ -1,6 +1,6 @@
-"""Regression coverage for the cache-invalidation audit (2026-06).
+"""Regression coverage for cache-invalidation gaps.
 
-Findings the audit surfaced:
+Gaps covered:
 
 * ``with_face_lock`` decorated 13 face-mutation endpoints but never
   invalidated ``face_cluster_map``. Mutations between background-worker
@@ -11,7 +11,7 @@ Findings the audit surfaced:
 * ``api_video_trim`` overwrote the video file but didn't invalidate
   the content-addressed sprite/thumbnail cache, so the next
   /video/sprite request served frames cut off the head/tail. Fix
-  adds an explicit ``_invalidate_photo_cache`` call after the DB
+  adds an explicit ``invalidate_photo_cache`` call after the DB
   duration update.
 
 Both fixes are structural — locking them with these tests means a
@@ -86,10 +86,10 @@ class TestWithFaceLockInvalidatesClusterMap:
 
         ctx = self._build_ctx()
         call_log = []
-        ctx.face_op_lock.__enter__ = MagicMock(side_effect=lambda: call_log.append("lock_acquired"))
-        ctx.face_op_lock.__exit__ = MagicMock(
-            side_effect=lambda *_: call_log.append("lock_released")
+        ctx.face_op_lock.acquire = MagicMock(
+            side_effect=lambda **_kw: call_log.append("lock_acquired") or True
         )
+        ctx.face_op_lock.release = MagicMock(side_effect=lambda: call_log.append("lock_released"))
         ctx.invalidate_face_cluster_map = MagicMock(
             side_effect=lambda: call_log.append("invalidated")
         )
@@ -114,7 +114,7 @@ class TestWithFaceLockInvalidatesClusterMap:
         ]
 
     def test_every_face_mutation_endpoint_still_carries_the_decorator(self):
-        """Source-scan: the 13 endpoints the audit identified all
+        """Source-scan: the 13 face-mutation endpoints all
         decorate with @with_face_lock. A future refactor that removes
         the decorator from any of them loses the cache fix silently
         — this test fails loud instead.
@@ -176,8 +176,8 @@ class TestVideoTrimInvalidatesPhotoCache:
         m = re.search(r"\n(@bp\.|def )", src[idx + 10 :])
         end = idx + 10 + m.start() if m else len(src)
         body = src[idx:end]
-        assert "_invalidate_photo_cache" in body, (
-            "api_video_trim must call _invalidate_photo_cache after "
+        assert "invalidate_photo_cache" in body, (
+            "api_video_trim must call invalidate_photo_cache after "
             "the trim overwrites the file on disk — otherwise the "
             "cached sprite serves frames from the pre-trim video"
         )

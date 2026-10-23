@@ -32,6 +32,7 @@ class TestIsPresent:
             sha256="0" * 64,
             size_mb=1.0,
             host="example.com",
+            legal_entry_id="openai_clip_vit_b32_onnx",
             bundled_path=bundled_path,
         )
 
@@ -175,7 +176,13 @@ class TestPendingDownloads:
 class TestImmutability:
     def test_entry_is_frozen(self):
         e = ModelEntry(
-            name="x", path=Path("/tmp/x"), url="https://x", sha256="0" * 64, size_mb=1, host="x"
+            name="x",
+            path=Path("/tmp/x"),
+            url="https://x",
+            sha256="0" * 64,
+            size_mb=1,
+            host="x",
+            legal_entry_id="openai_clip_vit_b32_onnx",
         )
         with pytest.raises((AttributeError, TypeError)):
             e.name = "y"

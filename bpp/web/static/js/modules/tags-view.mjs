@@ -9,14 +9,16 @@
  *   * Right-click a card  → Rename / Merge into… / Delete.
  *
  * Card grid clones the Groups view pattern (#tags-view container,
- * .people-grid layout); the photo grid clones the Moments-timeline
- * pattern (vgrid parked, renderCardHTML cards into #photo-grid).
+ * .people-grid layout); the photo grid is the shared virtual grid
+ * (vgrid.setItems), as the Memories and calendar views use it.
  */
 
 import { apiFetch, authedSrc } from "./api-client.mjs";
 import { appConfirm, appPrompt } from "./dialogs.mjs";
+import { menuClosed, menuOpened, wireMenuActions } from "./menu-a11y.mjs";
+import { renderGridFromItems } from "./memories.mjs";
+import { fetchAllPages } from "./paging.mjs";
 import { esc, escapeAttr } from "./text-format.mjs";
-import { renderCardHTML } from "./photos-card.mjs";
 import { toast, toastError } from "./toast.mjs";
 
 /** @type {Array<{id:number,name:string,count:number,cover_thumb_hash:string|null}>} */
@@ -109,8 +111,8 @@ export async function navigateToTags() {
 }
 
 /**
- * Open one tag's photos as a full-card grid in #photo-grid (lightbox
- * works via currentGridItems; vgrid parked like the Moments timeline).
+ * Open one tag's photos in #photo-grid through the shared virtual grid
+ * (lightbox works via currentGridItems).
  * @param {number} tagId
  */
 export async function navigateToTagPhotos(tagId) {
@@ -118,7 +120,7 @@ export async function navigateToTagPhotos(tagId) {
   const win = window;
   let data;
   try {
-    data = await apiFetch(`/api/v1/tags/${tagId}/photos`);
+    data = await apiFetch(`/api/v1/tags/${tagId}/photos?limit=${PAGE}&offset=0`);
   } catch (e) {
     toastError("open that tag", e);
     return;
@@ -134,22 +136,41 @@ export async function navigateToTagPhotos(tagId) {
   }
   const grid = document.getElementById("photo-grid");
   if (!grid) return;
-  if (win.vgrid) win.vgrid.items = [];
   win.photos = photos;
   win.currentGridItems = photos;
-  grid.classList.add("simple-cards");
+  grid.classList.remove("simple-cards");
   grid.style.paddingTop = "0";
   grid.style.paddingBottom = "0";
-  grid.innerHTML = photos.length
-    ? photos.map((p, i) => renderCardHTML(p, i)).join("")
-    : `<div class="empty-state"><div class="title">No photos</div>
+  if (photos.length) {
+    // Windowed rendering: a tag can hold thousands of photos; later
+    // pages are appended while this tag stays open.
+    renderGridFromItems(photos);
+    if (data.has_more) {
+      fetchAllPages(`/api/v1/tags/${tagId}/photos`, {
+        pageSize: PAGE,
+        startOffset: photos.length,
+        stillWanted: () => win.currentView === "tag-photos" && win.currentViewId === tagId,
+        onPage: (page) => {
+          photos.push(...page);
+          win.vgrid?.appendItems?.(page);
+        },
+      }).catch((e) => toastError("load the rest of that tag", e));
+    }
+  } else {
+    if (win.vgrid) win.vgrid.items = [];
+    grid.innerHTML = `<div class="empty-state"><div class="title">No photos</div>
        <div class="desc">No active photos carry this tag.</div></div>`;
+  }
   win.show?.("photo-grid");
-  win.updateToolbarTitle?.(`Tag: ${name}`, `${photos.length} photo${photos.length === 1 ? "" : "s"}`);
+  const total = typeof data.total === "number" ? data.total : photos.length;
+  win.updateToolbarTitle?.(`Tag: ${name}`, `${total} photo${total === 1 ? "" : "s"}`);
   win.renderAlbumNav?.();
 }
 
 // ── Card context menu: Rename / Merge into… / Delete ──
+
+/** Photos per page when opening a tag. */
+const PAGE = 1000;
 
 /** @type {number|null} */
 let _ctxTagId = null;
@@ -175,27 +196,41 @@ export function _tagCardCtxMenu(e) {
       <div class="ctx-menu-item" data-action="_tagCtxMerge">Merge into&hellip; <span class="ctx-shortcut">M</span></div>
       <div class="ctx-menu-item danger" data-action="_tagCtxDelete">Delete <span class="ctx-shortcut">D</span></div>`;
     document.body.appendChild(menu);
-    document.addEventListener("click", () => menu?.classList.add("hidden"));
-    document.addEventListener("keydown", (ke) => {
-      if (menu?.classList.contains("hidden") || _ctxTagId === null) return;
-      const map = /** @type {Record<string, string>} */ ({
-        r: "_tagCtxRename", m: "_tagCtxMerge", d: "_tagCtxDelete",
-      });
-      const action = map[ke.key.toLowerCase()];
-      if (action) {
-        ke.preventDefault();
-        menu.querySelector(`[data-action="${action}"]`)?.dispatchEvent(
-          new MouseEvent("click", { bubbles: true }),
-        );
-        menu.classList.add("hidden");
-      } else if (ke.key === "Escape") {
-        menu.classList.add("hidden");
-      }
-    });
+    const hide = () => {
+      menu?.classList.add("hidden");
+      menuClosed(menu);
+    };
+    wireMenuActions(menu, { items: ".ctx-menu-item", after: hide });
+    document.addEventListener("click", hide);
+    // Capture phase + stopImmediatePropagation: the lightbox's global
+    // keydown must not also see this Escape (it would clear the
+    // selection) or the R/M/D shortcuts.
+    document.addEventListener(
+      "keydown",
+      (ke) => {
+        if (menu?.classList.contains("hidden") || _ctxTagId === null) return;
+        const map = /** @type {Record<string, string>} */ ({
+          r: "_tagCtxRename", m: "_tagCtxMerge", d: "_tagCtxDelete",
+        });
+        const action = map[ke.key.toLowerCase()];
+        if (action) {
+          ke.preventDefault();
+          ke.stopImmediatePropagation();
+          menu.querySelector(`[data-action="${action}"]`)?.dispatchEvent(
+            new MouseEvent("click", { bubbles: true }),
+          );
+        } else if (ke.key === "Escape") {
+          ke.stopImmediatePropagation();
+          hide();
+        }
+      },
+      true
+    );
   }
   menu.style.left = `${e.clientX}px`;
   menu.style.top = `${e.clientY}px`;
   menu.classList.remove("hidden");
+  menuOpened(menu, { trigger: this });
 }
 
 function _ctxTag() {

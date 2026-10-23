@@ -37,7 +37,7 @@ import { toggleSidebar, updateToolbarTitle } from "./core.mjs";
 import { updateToolbarForView } from "./toolbar.mjs";
 
 export async function loadAlbumList() {
-  // Protection B: route through wrapSectionLoader so an /api/v1/albums
+  // Route through wrapSectionLoader so an /api/v1/albums
   // failure can't blank the sidebar. The wrapper catches, sets a
   // sentinel, surfaces a retry toast, and re-renders the nav so the
   // OTHER sections (People / Pets / Tags) still display.

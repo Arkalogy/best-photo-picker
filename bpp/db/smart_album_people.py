@@ -16,13 +16,14 @@ import re
 import sqlite3
 from typing import Any
 
-from bpp.constants import ACTIVE_PHOTO_SQL
+from bpp.constants import ACTIVE_PHOTO_SQL, active_photo_sql
 from bpp.db.dialect import dialect
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
 
 _ACTIVE = ACTIVE_PHOTO_SQL
+_P_ACTIVE = active_photo_sql("p")
 
 
 def _is_default_person_name(name: str) -> bool:
@@ -48,7 +49,7 @@ def _load_person_tags(conn: sqlite3.Connection) -> dict[int, set[int]]:
         tag_rows = conn.execute(
             "SELECT pt.cluster_id, pt.photo_id FROM photo_person_tags pt "
             "JOIN photos p ON p.id = pt.photo_id "
-            f"WHERE p.{_ACTIVE}"
+            f"WHERE {_P_ACTIVE}"
         ).fetchall()
     except sqlite3.OperationalError as e:
         log.debug("photo_person_tags table not ready, skipping: %s", e)
@@ -68,7 +69,7 @@ def _load_cluster_photo_map(
     mapping_rows = conn.execute(
         "SELECT fe.cluster_id, fe.photo_id FROM face_embeddings fe "
         "JOIN photos p ON p.id = fe.photo_id "
-        f"WHERE fe.cluster_id >= 0 AND p.{_ACTIVE}"
+        f"WHERE fe.cluster_id >= 0 AND {_P_ACTIVE}"
     ).fetchall()
     out: dict[int, set[int]] = {}
     for cid, pid in mapping_rows:
@@ -115,7 +116,7 @@ def _collect_orphan_albums(
     ``user_named_orphans`` is the subset whose name isn't a default
     "Person N" — those need name-transfer treatment in step 2.
     """
-    # P5b: read the shadow column directly. The previous load-and-parse
+    # Read the shadow column directly. The previous load-and-parse
     # pattern hit every row's rule_json text; the shadow column gives
     # the same data via the indexed lookup path.
     existing = conn.execute(
@@ -201,7 +202,7 @@ def _transfer_orphan_names(
         if best_cid is not None and best_overlap > 0:
             claimed_cids.add(best_cid)
             transferred.add(album_id)
-            # P5b: indexed shadow-column lookup.
+            # Indexed shadow-column lookup.
             conn.execute(
                 "UPDATE albums SET name=? WHERE album_type='smart_person' "
                 "AND smart_person_cluster_id=?",
@@ -243,7 +244,7 @@ def _create_tag_only_clusters(conn: sqlite3.Connection, embedding_cluster_ids: s
 def _refresh_person_albums(conn: sqlite3.Connection) -> None:
     """Create smart albums per face cluster, clean up stale ones.
 
-    M12.d: split into named phases (load → step 1 create → step 2
+    Split into named phases (load → step 1 create → step 2
     orphan/transfer → step 3 tag-only). The orchestrator stays in
     this function so the order + commit boundary are obvious.
     """
@@ -252,7 +253,7 @@ def _refresh_person_albums(conn: sqlite3.Connection) -> None:
             "SELECT fe.cluster_id, COUNT(DISTINCT fe.photo_id) as cnt "
             "FROM face_embeddings fe "
             "JOIN photos p ON p.id = fe.photo_id "
-            f"WHERE fe.cluster_id >= 0 AND p.{_ACTIVE} "
+            f"WHERE fe.cluster_id >= 0 AND {_P_ACTIVE} "
             "GROUP BY fe.cluster_id HAVING cnt >= 1 "
             "ORDER BY cnt DESC"
         ).fetchall()

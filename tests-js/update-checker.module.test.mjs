@@ -56,14 +56,20 @@ describe("showUpdateBanner", () => {
     showUpdateBanner({
       available: true,
       latest: "1.2.3",
-      url: "https://example.com/release",
+      url: "https://github.com/example/releases/tag/v1.2.3",
       current: "1.2.0",
     });
     expect(bannerText().textContent).toBe("v1.2.3 is available");
     expect(
       /** @type {HTMLAnchorElement} */ (document.getElementById("update-banner-link")).href
-    ).toContain("example.com/release");
+    ).toContain("github.com/example/releases/tag/v1.2.3");
     expect(banner().classList.contains("hidden")).toBe(false);
+  });
+
+  test("a link that isn't a GitHub page falls back to '#'", () => {
+    showUpdateBanner({ available: true, latest: "1.2.3", url: "https://example.com/release" });
+    const link = /** @type {HTMLAnchorElement} */ (document.getElementById("update-banner-link"));
+    expect(link.getAttribute("href")).toBe("#");
   });
 
   test("falls back to '#' href when url is missing", () => {

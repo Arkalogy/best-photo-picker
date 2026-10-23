@@ -1,68 +1,18 @@
-"""R10-M4: third-party plugin packages auto-load via entry-points.
+"""Third-party plugin packages auto-load via entry-points — part 1 of 2."""
 
-Rounds 8-9 added public registries (FaceDetectorRegistry,
-FaceEmbedderRegistry, ConfigSchema, etc.) for plugin authors. But
-nothing IMPORTED a third-party plugin package — registration is an
-import side effect, so a plugin wheel installed in the venv stayed
-dormant until something import'd it.
-
-`bpp.plugins.load_plugin_entry_points()` walks the ``bpp.plugins``
-entry-point group and calls each registered setup callable. This
-test file pins the loader's contract:
-
-  * Entry-points are loaded.
-  * Failures don't abort startup.
-  * Idempotent — repeated calls don't re-invoke the same plugin.
-"""
+# Shared fixtures are imported by name and re-bound as test parameters.
+# ruff: noqa: F811
 
 from __future__ import annotations
 
 import importlib.metadata
 
-import pytest
-
-
-@pytest.fixture(autouse=True)
-def _reset_loaded():
-    """Each test starts with a clean loaded-set so order doesn't
-    matter."""
-    from bpp.plugins import _reset_for_tests
-
-    _reset_for_tests()
-    yield
-    _reset_for_tests()
-
-
-@pytest.fixture
-def plugins_enabled(monkeypatch):
-    """R11-H1: plugins are off by default. Tests that exercise the
-    happy path opt in via env var so they're representative of a
-    user who said `BPP_ENABLE_PLUGINS=1`."""
-    monkeypatch.setenv("BPP_ENABLE_PLUGINS", "1")
-
-
-class _FakeEP:
-    """Minimal stand-in for an importlib.metadata EntryPoint."""
-
-    def __init__(self, name: str, value: str, target):
-        self.name = name
-        self.value = value
-        self._target = target
-
-    def load(self):
-        return self._target
-
-
-def _patch_entry_points(monkeypatch, eps_list):
-    """Stub importlib.metadata.entry_points() to return a selectable
-    object exposing only `bpp.plugins`. Mirrors the Python 3.10+
-    EntryPoints.select(group=...) API the loader uses."""
-
-    class _Selectable:
-        def select(self, group):
-            return eps_list if group == "bpp.plugins" else []
-
-    monkeypatch.setattr(importlib.metadata, "entry_points", lambda: _Selectable())
+from tests._plugin_loader_shared import (  # noqa: F401
+    _FakeEP,
+    _patch_entry_points,
+    _reset_loaded,
+    plugins_enabled,
+)
 
 
 class TestLoadPluginEntryPoints:
@@ -196,7 +146,7 @@ class TestLoadPluginEntryPoints:
 
 
 class TestPluginsDisabledByDefault:
-    """R11-H1: third-party plugins must be opt-in via
+    """Third-party plugins must be opt-in via
     BPP_ENABLE_PLUGINS=1. Default-on lets any pip-installed package
     declaring `bpp.plugins` execute arbitrary `setup()` code at
     process start — strictly worse for an OSS distribution where
@@ -288,7 +238,7 @@ class TestPluginsDisabledByDefault:
 
 
 class TestLockReleasedDuringSetup:
-    """R11-M3: `_loaded_lock` must NOT cover plugin `target()`
+    """`_loaded_lock` must NOT cover plugin `target()`
     invocation. A plugin whose setup function takes 5 seconds would
     otherwise serialize every other concurrent loader call for the
     full duration."""
@@ -324,7 +274,7 @@ class TestLockReleasedDuringSetup:
 
 
 class TestNonCallableTargetLog:
-    """R11-L8: a plugin whose target isn't a callable (relying on
+    """A plugin whose target isn't a callable (relying on
     import-time side effects) used to log only at DEBUG. Promote to
     INFO so plugin authors trying to debug "did my entry land?" see
     a breadcrumb without --debug."""
@@ -468,120 +418,3 @@ class TestCheckBppVersionRequirement:
 
         monkeypatch.setattr(plugins_mod, "_BPP_VERSION", "git-abcdef")
         assert plugins_mod._check_bpp_version_requirement(">=0.1", "demo") is True
-
-
-class TestLoaderRespectsVersionRequirement:
-    """End-to-end: a plugin whose `__bpp_version_required__` doesn't
-    match the running bpp is skipped with a warning, and setup() never
-    runs. The entry is still marked processed so the loader doesn't
-    retry on the next call."""
-
-    def test_mismatched_version_skips_setup(self, monkeypatch, caplog, plugins_enabled):
-        from bpp import plugins as plugins_mod
-
-        called = {"count": 0}
-
-        def plugin_main():
-            called["count"] += 1
-
-        plugin_main.__plugin_name__ = "future-plugin"
-        plugin_main.__plugin_version__ = "9.9.9"
-        plugin_main.__bpp_version_required__ = ">=99.0"  # impossible
-        # Make `target.__module__` point at something that won't
-        # accidentally have its own metadata.
-        plugin_main.__module__ = "module_that_does_not_exist_xyz"
-
-        monkeypatch.setattr(plugins_mod, "_BPP_VERSION", "0.5.0")
-        _patch_entry_points(
-            monkeypatch,
-            [_FakeEP("demo", "demo_pkg:setup", plugin_main)],
-        )
-
-        with caplog.at_level("WARNING", logger="bpp.plugins"):
-            loaded = plugins_mod.load_plugin_entry_points()
-
-        assert loaded == 1, (
-            "loader counts the skipped plugin (one-shot guard prevents retry on the next call)"
-        )
-        assert called["count"] == 0, (
-            "setup() must NOT run when bpp version is outside the plugin's declared compat range"
-        )
-        msgs = " ".join(rec.message for rec in caplog.records)
-        assert "doesn't satisfy it" in msgs
-        assert ">=99.0" in msgs
-
-    def test_matched_version_runs_setup(self, monkeypatch, plugins_enabled):
-        from bpp import plugins as plugins_mod
-
-        called = {"count": 0}
-
-        def plugin_main():
-            called["count"] += 1
-
-        plugin_main.__plugin_name__ = "current-plugin"
-        plugin_main.__bpp_version_required__ = ">=0.1,<1.0"
-        plugin_main.__module__ = "module_that_does_not_exist_xyz"
-
-        monkeypatch.setattr(plugins_mod, "_BPP_VERSION", "0.5.0")
-        _patch_entry_points(
-            monkeypatch,
-            [_FakeEP("demo", "demo_pkg:setup", plugin_main)],
-        )
-
-        loaded = plugins_mod.load_plugin_entry_points()
-        assert loaded == 1
-        assert called["count"] == 1
-
-    def test_friendly_label_appears_in_log(self, monkeypatch, caplog, plugins_enabled):
-        """`__plugin_name__` + `__plugin_version__` should show up in
-        the success log line, not the raw entry-point id."""
-        from bpp import plugins as plugins_mod
-
-        def plugin_main():
-            pass
-
-        plugin_main.__plugin_name__ = "labelled-plugin"
-        plugin_main.__plugin_version__ = "1.2.3"
-        plugin_main.__module__ = "module_that_does_not_exist_xyz"
-
-        _patch_entry_points(
-            monkeypatch,
-            [_FakeEP("demo", "demo_pkg:setup", plugin_main)],
-        )
-
-        with caplog.at_level("INFO", logger="bpp.plugins"):
-            plugins_mod.load_plugin_entry_points()
-
-        msgs = " ".join(rec.message for rec in caplog.records)
-        assert "labelled-plugin" in msgs
-        assert "v1.2.3" in msgs
-
-
-class TestLoaderWiredAtStartup:
-    """Source-scan to confirm the loader is invoked from the two
-    documented startup paths (web app + CLI)."""
-
-    def test_create_app_calls_loader(self):
-        from pathlib import Path
-
-        src = Path("bpp/web/app.py").read_text()
-        assert "load_plugin_entry_points" in src, (
-            "create_app must call load_plugin_entry_points so plugin "
-            "registrations land before WebAppState is built"
-        )
-
-    def test_cli_pick_calls_loader(self):
-        # bpp/commands.py became bpp/commands/ package during the v0.1 split.
-        from pathlib import Path
-
-        src = Path("bpp/commands/pick.py").read_text()
-        assert "load_plugin_entry_points" in src
-
-    def test_cli_analyze_calls_loader(self):
-        from pathlib import Path
-
-        # Loader must fire in both analyze and pick CLI entry points.
-        analyze_src = Path("bpp/commands/analyze.py").read_text()
-        pick_src = Path("bpp/commands/pick.py").read_text()
-        assert "load_plugin_entry_points" in analyze_src
-        assert "load_plugin_entry_points" in pick_src

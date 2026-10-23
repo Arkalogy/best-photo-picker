@@ -109,13 +109,26 @@ def _register_config_field() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _get_high_confidence_ids(conn: Any, config: dict[str, Any]) -> list[int]:
+def _refresh_high_confidence(conn):
+    """Create or update the album row from the ids ``_get_high_confidence_ids`` returns."""
+    from bpp.db.smart_albums import ensure_smart_album
+
+    ensure_smart_album(
+        conn,
+        name="High confidence",
+        album_type="smart_high_confidence",
+        rule={"min_score": 0.8},
+        photo_ids=_get_high_confidence_ids(conn, {"min_score": 0.8}),
+    )
+
+
+def _get_high_confidence_ids(conn: Any, rule: dict[str, Any]) -> list[int]:
     """Return photo IDs whose aggregate_score >= 0.90.
 
     This is the resolver function for the smart-album type: bpp calls it
     whenever it needs to know which photos belong to the album.
     """
-    threshold = float(config.get("example_score_boost", 1.0)) * 0.90
+    threshold = float(rule.get("min_score", 0.90))
     rows = conn.execute(
         "SELECT id FROM photos WHERE aggregate_score >= ? "
         "AND deleted_at IS NULL AND hidden_at IS NULL",
@@ -133,13 +146,12 @@ def _register_smart_album() -> None:
     from bpp.db.smart_albums import SmartAlbumRegistry
 
     # SmartAlbumRegistry.register(album_type, refresh_fn, get_ids_fn)
-    # refresh_fn(conn, config) → updates album membership in the DB.
-    # get_ids_fn(conn, config) → returns list of photo IDs in the album.
-    # Here we use a simple get_ids approach and let bpp handle the refresh
-    # by wrapping it as both.
+    # refresh_fn(conn) → creates/updates the album row and its membership
+    #   (ensure_smart_album does both; core never creates the row).
+    # get_ids_fn(conn, rule) → the photo ids the album should hold.
     SmartAlbumRegistry.register(
         "smart_high_confidence",
-        refresh_fn=lambda conn, config: None,  # no-op; membership is read from get_ids_fn
+        refresh_fn=_refresh_high_confidence,
         get_ids_fn=_get_high_confidence_ids,
     )
 

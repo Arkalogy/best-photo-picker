@@ -11,6 +11,8 @@ import zipfile
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 
 class TestWriteAnalysisJson:
     """Verify that analysis.json is written atomically."""
@@ -51,6 +53,7 @@ class TestWriteAnalysisJson:
         assert list(tmp_path.glob("*.tmp")) == [], "no .tmp file should remain after failure"
 
 
+@pytest.mark.usefixtures("offline_downloads")
 class TestZipPathTraversal:
     """Verify that malicious zip entries are rejected."""
 
@@ -123,8 +126,9 @@ def _drain(worker):
     return msgs
 
 
+@pytest.mark.usefixtures("offline_downloads")
 class TestTarExtraction:
-    """H4 regression: tar path needs the same size cap and traversal
+    """Regression: tar path needs the same size cap and traversal
     rejection that zips already get, plus error handling for the
     Py3.12+ tarfile filter raising on malicious entries."""
 

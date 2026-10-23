@@ -1,11 +1,8 @@
 // @ts-check
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-
 import {
   _getCardCtxFilepath,
-  _resetDeletedState,
   batchDelete,
-  batchEnhance,
   batchHide,
   deleteFromCard,
   deletePhotos,
@@ -27,120 +24,10 @@ import {
   unhideAllHidden,
   unhidePhotos,
 } from "../bpp/web/static/js/modules/deleted.mjs";
+import { setup, teardown, jsonResp, withConfirm } from "./_deleted-setup.mjs";
 
-beforeEach(() => {
-  document.body.innerHTML = `
-    <div id="toast-container"></div>
-    <div id="confirm-overlay">
-      <div class="confirm-dialog"></div>
-    </div>
-    <div id="photo-grid"></div>
-    <div id="deleted-count"></div>
-    <div id="hidden-count"></div>
-    <div id="album-picker-overlay">
-      <div id="album-picker-list"></div>
-      <input id="album-picker-new-name" />
-    </div>
-    <div id="card-ctx-menu" class="hidden">
-      <div class="ctx-menu-item" id="card-ctx-fav" data-action="favorite"></div>
-      <div class="ctx-menu-item" id="card-ctx-include" data-action="include"></div>
-      <div class="ctx-menu-item" id="card-ctx-exclude" data-action="exclude"></div>
-      <div class="ctx-menu-item" id="card-ctx-tag" data-action="tag-person"></div>
-      <div class="ctx-menu-item" id="card-ctx-enhance" data-action="enhance"></div>
-      <div class="ctx-menu-item" id="card-ctx-revert" data-action="revert-enhance"></div>
-      <div class="ctx-menu-item" id="card-ctx-hide" data-action="hide"></div>
-      <div class="ctx-menu-item" id="card-ctx-unhide" data-action="unhide"></div>
-      <div class="ctx-menu-item" id="card-ctx-delete" data-action="delete"></div>
-      <div class="ctx-menu-item" id="card-ctx-restore" data-action="restore"></div>
-      <div class="ctx-menu-item" id="card-ctx-perm-delete" data-action="perm-delete"></div>
-      <div id="card-ctx-sep1"></div>
-      <div id="card-ctx-sep2"></div>
-    </div>
-  `;
-  /** @type {any} */ (window).albumList = [];
-  /** @type {any} */ (window).currentAlbumId = null;
-  /** @type {any} */ (window).currentView = "library";
-  /** @type {any} */ (window).currentViewId = null;
-  /** @type {any} */ (window).photos = [];
-  /** @type {any} */ (window).favorites = new Set();
-  /** @type {any} */ (window).overrides = {};
-  /** @type {any} */ (window).multiSelected = new Set();
-  /** @type {any} */ (window).faceClusters = [];
-  /** @type {any} */ (window).ICONS = { trash: "<i>tr</i>", hidden: "<i>hi</i>" };
-  /** @type {any} */ (window).clearMultiSelect = vi.fn();
-  /** @type {any} */ (window).renderAlbumNav = vi.fn();
-  /** @type {any} */ (window).hide = vi.fn();
-  /** @type {any} */ (window).show = vi.fn();
-  /** @type {any} */ (window).updateToolbarTitle = vi.fn();
-  /** @type {any} */ (window).updateToolbarForView = vi.fn();
-  /** @type {any} */ (window).loadPhotosAndRecompute = vi.fn();
-  /** @type {any} */ (window).toggleFavorite = vi.fn();
-  /** @type {any} */ (window).setOverride = vi.fn();
-  /** @type {any} */ (window).showBatchRenameModal = vi.fn();
-  /** @type {any} */ (window)._iphShowTagPicker = vi.fn();
-  // resolveConfirm is window-bridged from dialogs.mjs
-  /** @type {any} */ (window).resolveConfirm = vi.fn();
-  _resetDeletedState();
-});
-
-afterEach(() => {
-  document.body.innerHTML = "";
-  vi.unstubAllGlobals();
-  for (const k of [
-    "albumList",
-    "currentAlbumId",
-    "currentView",
-    "currentViewId",
-    "photos",
-    "favorites",
-    "overrides",
-    "multiSelected",
-    "faceClusters",
-    "ICONS",
-    "clearMultiSelect",
-    "renderAlbumNav",
-    "hide",
-    "show",
-    "updateToolbarTitle",
-    "updateToolbarForView",
-    "loadPhotosAndRecompute",
-    "toggleFavorite",
-    "setOverride",
-    "showBatchRenameModal",
-    "_iphShowTagPicker",
-    "_albumPickerFilepaths",
-    "resolveConfirm",
-  ]) {
-    delete (/** @type {any} */ (window)[k]);
-  }
-  _resetDeletedState();
-});
-
-/**
- * @param {object} body
- */
-function jsonResp(body) {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-  });
-}
-
-/**
- * Run a function that calls appConfirm, then immediately resolve the
- * confirm dialog with the given answer.
- * @param {() => Promise<any>} action
- * @param {boolean} answer
- */
-async function withConfirm(action, answer) {
-  const dialogs = await import("../bpp/web/static/js/modules/dialogs.mjs");
-  const promise = action();
-  // Wait one microtask for the dialog to render
-  await Promise.resolve();
-  await Promise.resolve();
-  dialogs.resolveConfirm(answer);
-  return promise;
-}
+beforeEach(setup);
+afterEach(teardown);
 
 describe("deletePhotos", () => {
   test("noop on empty input", async () => {
@@ -486,6 +373,19 @@ describe("restorePhotos / permanentDeletePhotos", () => {
     expect(call && JSON.parse(call[1].body).confirmation).toBe("delete");
   });
 
+  test("permanentDeletePhotos says which files stayed on disk", async () => {
+    const fetchMock = vi.fn(async (url) =>
+      String(url).includes("delete-permanent")
+        ? jsonResp({ status: "partial", count: 2, files_removed: 1, files_failed: ["/y"] })
+        : jsonResp({ photos: [] })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await withConfirm(() => permanentDeletePhotos(["/y", "/z"]), true);
+    const warn = document.querySelector("#toast-container .toast.warning");
+    expect(warn?.textContent).toContain("1 of 2");
+    expect(warn?.textContent).toContain("retried at the next start");
+  });
+
   test("permanentDeletePhotos declined = no fetch", async () => {
     const fetchMock = vi.fn(async () => jsonResp({ photos: [] }));
     vi.stubGlobal("fetch", fetchMock);
@@ -497,12 +397,12 @@ describe("restorePhotos / permanentDeletePhotos", () => {
 
 describe("restoreAllDeleted / permanentDeleteAll / unhideAllHidden", () => {
   test("restoreAllDeleted gathers filepaths and restores", async () => {
-    const grid = /** @type {HTMLElement} */ (document.getElementById("photo-grid"));
-    grid.innerHTML = `
-      <div class="deleted-card" data-filepath="/a"></div>
-      <div class="deleted-card" data-filepath="/b"></div>
-    `;
-    const fetchMock = vi.fn(async () => jsonResp({ photos: [] }));
+    // Every page of the listing, not the cards on screen.
+    const fetchMock = vi.fn(async (url) =>
+      String(url).includes("/photos/deleted")
+        ? jsonResp({ photos: [{ filepath: "/a" }, { filepath: "/b" }], total: 2 })
+        : jsonResp({ photos: [], count: 2 })
+    );
     vi.stubGlobal("fetch", fetchMock);
     await restoreAllDeleted();
     const calls = /** @type {any[][]} */ (fetchMock.mock.calls);
@@ -515,13 +415,17 @@ describe("restoreAllDeleted / permanentDeleteAll / unhideAllHidden", () => {
     const fetchMock = vi.fn(async () => jsonResp({}));
     vi.stubGlobal("fetch", fetchMock);
     await permanentDeleteAll();
-    expect(fetchMock).not.toHaveBeenCalled();
+    // The listing is read (one page, empty); nothing is deleted.
+    const calls = /** @type {any[][]} */ (fetchMock.mock.calls);
+    expect(calls.find((c) => String(c[0]).includes("delete-permanent"))).toBeUndefined();
   });
 
   test("unhideAllHidden gathers and unhides", async () => {
-    const grid = /** @type {HTMLElement} */ (document.getElementById("photo-grid"));
-    grid.innerHTML = `<div class="deleted-card" data-filepath="/h"></div>`;
-    const fetchMock = vi.fn(async () => jsonResp({ photos: [] }));
+    const fetchMock = vi.fn(async (url) =>
+      String(url).includes("/photos/hidden")
+        ? jsonResp({ photos: [{ filepath: "/h" }], total: 1 })
+        : jsonResp({ photos: [], count: 1 })
+    );
     vi.stubGlobal("fetch", fetchMock);
     await unhideAllHidden();
     const calls = /** @type {any[][]} */ (fetchMock.mock.calls);
@@ -565,14 +469,5 @@ describe("hidePhotos / unhidePhotos / batchHide", () => {
     vi.stubGlobal("fetch", fetchMock);
     await batchHide();
     expect(fetchMock).toHaveBeenCalled();
-  });
-});
-
-describe("batchEnhance", () => {
-  test("noop on empty selection", async () => {
-    const fetchMock = vi.fn(async () => jsonResp({}));
-    vi.stubGlobal("fetch", fetchMock);
-    await batchEnhance();
-    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

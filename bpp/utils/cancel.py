@@ -1,6 +1,6 @@
-"""Unified cancellation contract — P1 of refactor-plan.md.
+"""Unified cancellation contract.
 
-The audit found three incompatible cancellation styles in the codebase:
+The codebase used to have three incompatible cancellation styles:
 
   * ``threading.Event`` in :class:`bpp.web.base_worker.BackgroundWorker._cancelled`
   * a separate ``multiprocessing.Event`` passed into subprocess children
@@ -11,10 +11,10 @@ The audit found three incompatible cancellation styles in the codebase:
 And one outright gap:
 
   * :func:`bpp.web.analyze_face_extract.run_face_extraction_subprocess`
-    does NOT propagate cancellation into its child. The chunk loop also
-    has no cancel check between chunks. A user clicking Cancel during a
-    5 000-photo face extraction stops seeing progress in the UI but the
-    child process runs to completion.
+    did NOT propagate cancellation into its child, and its chunk loop had
+    no cancel check between chunks. A user clicking Cancel during a
+    5 000-photo face extraction stopped seeing progress in the UI but the
+    child process ran to completion.
 
 This module defines the unified ``CancellationToken`` protocol and two
 concrete implementations:
@@ -142,14 +142,14 @@ def mirror_token_to_process_event(
     This is how :class:`bpp.web.base_worker.BackgroundWorker` (which signals
     cancel via a ``threading.Event``) reaches a spawn child that's reading
     a ``multiprocessing.Event``. Without it, every subprocess runner has
-    to plumb the bridge itself — the audit found this gap in
-    ``run_face_extraction_subprocess`` and adjacent flows.
+    to plumb the bridge itself — a gap that ``run_face_extraction_subprocess``
+    and adjacent flows used to have.
 
     ``poll_interval_s`` defaults to 100 ms. Higher latency than that and
     the cancel button feels broken; lower and we waste CPU on a no-op
     polling thread.
 
-    ``stop_event`` (T1.2) is the natural-completion signal. When the
+    ``stop_event`` is the natural-completion signal. When the
     worker finishes WITHOUT a cancel, neither ``source`` nor ``target``
     ever fires, so the bridge thread polls forever — in a long-lived
     Flask parent process every successful subprocess run leaked a
@@ -179,7 +179,7 @@ def mirror_token_to_process_event(
             # finished-pipeline window.
             if target.is_set():
                 return
-            # T1.2: caller-driven natural-completion signal. Checked
+            # Caller-driven natural-completion signal. Checked
             # AFTER the cancel paths above so a cancel that fires
             # concurrently with stop_event still propagates.
             if stop_event is not None and stop_event.is_set():

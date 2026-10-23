@@ -14,7 +14,9 @@ Usage::
         model_url="https://...",
         create_fn=lambda path: ort.InferenceSession(str(path), ...),
         registry_id="openai_clip_vit_b32_onnx",  # legal-registry entry
-        import_check=lambda: __import__("onnxruntime"),
+        # Through the install hold: never imported while (or after) the
+        # in-app installer rewrites it, until the restart.
+        import_check=install_hold.requires("onnxruntime"),
     )
 
     session = _clip_visual.get()  # Thread-safe, lazy download + init
@@ -30,6 +32,8 @@ from pathlib import Path
 from typing import Any
 
 from bpp.errors import IntegrityError as _IntegrityError
+from bpp.scoring.install_hold import HeldForRestart
+from bpp.scoring.model_load_gate import MemoizedLoadGate
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -45,8 +49,8 @@ class ModelIntegrityError(_IntegrityError):
     would defeat the supply-chain protection (the user would just see
     an empty score and assume the photo is safe).
 
-    Subclassed handlers (e.g. NudeNet's bundled-wheel SHA verifier)
-    raise this; ModelSingleton.get() lets it propagate by listing
+    SHA verifiers (``bpp.utils.download.verify_existing`` /
+    ``download_file``) raise this; ModelSingleton.get() lets it propagate by listing
     the type in `fatal_exceptions`. Callers handle it as they would
     any other RuntimeError — typically by aborting the operation
     instead of returning a "best guess" score.
@@ -62,7 +66,8 @@ class ModelSingleton:
         Human-readable name used in log messages.
     model_path:
         Path where the model file is stored (or will be downloaded to).
-        Pass ``None`` when the library manages its own model (e.g. NudeNet).
+        Pass ``None`` when the module manages the file itself (e.g. the
+        NudeNet runner, whose ``create_fn`` fetches + verifies it).
     model_url:
         URL to download the model from.  Pass ``None`` to skip download
         (library-managed models or bundled-only models).
@@ -85,8 +90,7 @@ class ModelSingleton:
         upstream tampering — every model we run does ONNX or native
         inference, so unverified bytes are RCE on import.
 
-        Bundled-fallback bytes are NOT verified — they ship in our wheel
-        and are part of the trusted build.
+        A copy installed from *bundled_path* is verified against it too.
     """
 
     def __init__(
@@ -96,7 +100,7 @@ class ModelSingleton:
         model_url: str | None,
         create_fn: Callable[[Path | None], Any],
         *,
-        registry_id: str | None,
+        registry_id: str,
         import_check: Callable[[], None] | None = None,
         bundled_path: str | None = None,
         model_sha256: str | None = None,
@@ -106,11 +110,19 @@ class ModelSingleton:
         self.model_path: Path | None = Path(model_path) if model_path is not None else None
         self.model_url = model_url
         self.create_fn = create_fn
-        # Keyword-only, required: the legal-registry id (or None for an
-        # ancillary detector with no licensing concern). Passed to
-        # bpp.utils.download.download_file so the policy gate fires
-        # before the network call. See bpp/utils/download.py docstring.
+        # Keyword-only, required: the bpp.registry entry for these
+        # weights. It is the only place the model's license is written;
+        # get() refuses to load the model until the entry's license is
+        # accepted (when it needs acceptance), and download_file runs
+        # the same gate before any network call.
+        if not registry_id:
+            raise ValueError(
+                f"ModelSingleton {name!r}: registry_id is required. Every "
+                "model needs a bpp.registry entry that records its license."
+            )
         self.registry_id = registry_id
+        self._gate = MemoizedLoadGate(registry_id)
+        self._blocked_logged = False
         self.import_check = import_check
         self.bundled_path: str | None = bundled_path
         self.model_sha256: str | None = model_sha256
@@ -125,6 +137,7 @@ class ModelSingleton:
 
         self._instance: Any = None
         self._lock = threading.Lock()
+        self._download_lock = threading.Lock()
         self._available: bool | None = None  # tri-state: None=unknown, True=yes, False=no
 
     # ------------------------------------------------------------------
@@ -163,6 +176,23 @@ class ModelSingleton:
         """
         if self._available is False:
             return None
+        if not self._license_allows_load():
+            return None
+        return self._get_loaded()
+
+    def get_or_raise(self) -> Any:
+        """Like :meth:`get`, but a license refusal raises
+        :class:`~bpp.registry.policy.ModelLoadBlockedError` instead of
+        returning ``None``. The license is checked once per call (cached
+        until the acceptance files change), so it suits per-photo paths."""
+        if self._available is False:
+            return None
+        self._gate.enforce()
+        return self._get_loaded()
+
+    def _get_loaded(self) -> Any:
+        """The model instance, loading it on first use (license already
+        checked by the caller)."""
         if self._instance is not None:
             return self._instance
 
@@ -198,12 +228,44 @@ class ModelSingleton:
                     exc_info=True,
                 )
                 raise
+            except HeldForRestart as exc:
+                # Installed from the app: loads after a restart (or at once,
+                # if the hold is lifted) — not a verdict to cache.
+                log.debug("%s waits for a restart: %s", self.name, exc)
+                return None
             except (ImportError, Exception) as exc:
                 log.debug("%s unavailable: %s", self.name, exc)
                 self._available = False
                 return None
 
         return self._instance
+
+    def _license_allows_load(self) -> bool:
+        """Run the registry's load gate. Its result (pass or block) is
+        cached only until the acceptance files change, so an accept or a
+        revoke takes effect on the next call."""
+        from bpp.registry.policy import ModelLoadBlockedError
+
+        try:
+            self._gate.enforce()
+        except ModelLoadBlockedError as exc:
+            if not self._blocked_logged:
+                self._blocked_logged = True
+                log.info("%s is off until its license is accepted: %s", self.name, exc)
+            return False
+        return True
+
+    def enforce_license(self) -> None:
+        """Raise :class:`~bpp.registry.policy.ModelLoadBlockedError` unless
+        the registry entry's license allows loading. The decision is
+        cached until the acceptance files change (each call still stats
+        those two files)."""
+        self._gate.enforce()
+
+    def license_blocked(self) -> bool:
+        """True while the registry entry's license isn't accepted (so a
+        missing file is "off until accepted", not a download failure)."""
+        return not self._license_allows_load()
 
     def is_available(self) -> bool:
         """Return ``True`` if the model can be loaded.
@@ -240,101 +302,130 @@ class ModelSingleton:
     def ensure_model(self) -> Path | None:
         """Ensure the model file is present, downloading it if needed.
 
-        Steps:
-        1. Return immediately if *model_path* is ``None`` (library-managed).
-        2. Return *model_path* if it already exists.
-        3. Copy from *bundled_path* if it exists.
-        4. Download from *model_url* using ``download_file()`` with
-           atomic tmp+rename.
+        Returns the resolved :class:`~pathlib.Path`, or ``None`` on failure
+        (:meth:`ensure_model_or_raise` says why).
+        """
+        return self._ensure_serialized()[0]
 
-        Returns the resolved :class:`~pathlib.Path`, or ``None`` on failure.
+    def ensure_model_or_raise(self) -> Path | None:
+        """Like :meth:`ensure_model`, but a failure raises ``RuntimeError``
+        carrying just the reason in plain words (callers add their own
+        "Couldn't download …")."""
+        path, reason = self._ensure_serialized()
+        if path is None and self.model_path is not None:
+            raise RuntimeError(reason or "unknown error")
+        return path
+
+    def _ensure_serialized(self) -> tuple[Path | None, str | None]:
+        # One download at a time per model: concurrent callers wait and
+        # then find the file present, instead of fetching it again.
+        with self._download_lock:
+            return self._ensure_locked()
+
+    def _ensure_locked(self) -> tuple[Path | None, str | None]:
+        """Steps:
+
+        1. Nothing to do when *model_path* is ``None`` (library-managed).
+        2. A cached file is verified against the pinned SHA; a file that
+           fails is deleted and fetched again once (below).
+        3. Copy from *bundled_path* if it exists.
+        4. Download from *model_url* via ``download_file()`` to a
+           per-writer temp file, then rename into place.
+
+        Returns ``(path, None)`` or ``(None, reason)``.
         """
         if self.model_path is None:
-            # Library manages its own model (e.g. NudeNet)
-            return None
+            # create_fn manages the file itself
+            return None, None
 
         if self.model_path.exists():
-            # D-02: verify cached files against the pinned SHA before
+            # Verify cached files against the pinned SHA before
             # returning them. The download path already verifies on
             # first fetch, but a cached file could have been replaced
-            # between sessions (compromised cache, cloud-sync overwrite,
-            # malicious bind mount in Docker, etc.). Without this
-            # check, post-download tampering would silently load
-            # unverified bytes into ONNX/native inference. Empty
-            # `model_sha256` means "unverifiable" (some legacy callers)
-            # — accept the file as-is rather than refuse to load.
-            if self.model_sha256:
-                from bpp.utils.download import verify_existing
+            # or truncated between sessions (compromised cache,
+            # cloud-sync overwrite, a crash mid-copy). Empty
+            # `model_sha256` means "unverifiable" — accept as-is.
+            if not self.model_sha256:
+                return self.model_path, None
+            from bpp.utils.download import verify_existing
 
-                # Lets ModelIntegrityError propagate through get() —
-                # listed in fatal_exceptions by default.
+            try:
                 verify_existing(str(self.model_path), sha256=self.model_sha256)
-            return self.model_path
+                return self.model_path, None
+            except ModelIntegrityError:
+                # verify_existing deleted the bad file. With nowhere to
+                # get good bytes from, stay loud (get() propagates it).
+                if self.model_url is None and not self._bundled_exists():
+                    raise
+                log.warning("Cached %s model fails its integrity check; fetching again", self.name)
+                repairing = True
+        else:
+            repairing = False
 
         # Try bundled copy first (no network needed)
-        if self.bundled_path is not None and os.path.exists(self.bundled_path):
+        if self._bundled_exists():
             import shutil
 
             self.model_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(self.bundled_path, self.model_path)
+            shutil.copy2(str(self.bundled_path), self.model_path)
+            if self.model_sha256:
+                # Checked like any other copy: a bundle that doesn't match
+                # its pin would otherwise load (and be "repaired" from
+                # itself) forever.
+                from bpp.utils.download import verify_existing
+
+                verify_existing(str(self.model_path), sha256=self.model_sha256)
             log.info("Installed bundled %s model to %s", self.name, self.model_path)
-            return self.model_path
+            return self.model_path, None
 
         # Download from URL
         if self.model_url is None:
             log.warning("%s model missing and no download URL configured", self.name)
-            return None
+            return None, "it has no download source"
+        # Never fetch weights whose license hasn't been accepted (and
+        # don't burn the retry loop on a refusal that can't change).
+        if not self._license_allows_load():
+            return None, "its license isn't accepted (Settings → Models)"
+        if not self.model_sha256:
+            # download_file refuses an unpinned fetch; say so here in the
+            # documented shape (None + reason) instead of raising.
+            log.warning(
+                "%s model can't be downloaded: no pinned sha256 for %s", self.name, self.model_url
+            )
+            return None, "its download has no pinned sha256"
+        return self._download(repairing)
 
-        self.model_path.parent.mkdir(parents=True, exist_ok=True)
-        log.info("Downloading %s to %s ...", self.name, self.model_path)
+    def _bundled_exists(self) -> bool:
+        return self.bundled_path is not None and os.path.exists(self.bundled_path)
 
-        import time
+    def _download(self, repairing: bool) -> tuple[Path | None, str | None]:
+        """Fetch the weights; the retry loop lives in ``model_download``."""
+        from bpp.scoring.model_download import download_model
 
-        from bpp.utils.download import download_file
+        return download_model(self, repairing)
 
-        tmp_path = self.model_path.with_suffix(self.model_path.suffix + ".tmp")
-        _max_attempts = 3
-        for attempt in range(1, _max_attempts + 1):
-            try:
-                download_file(
-                    self.model_url,
-                    str(tmp_path),
-                    registry_id=self.registry_id,
-                    sha256=self.model_sha256,
-                )
-                os.replace(tmp_path, self.model_path)
-                size_mb = self.model_path.stat().st_size // (1024 * 1024)
-                log.info("%s downloaded (%d MB)", self.name, size_mb)
-                return self.model_path
-            except ModelIntegrityError:
-                # SHA mismatch is unrecoverable — propagate immediately so
-                # the caller hears about tampering/corruption without retry.
-                if tmp_path.exists():
-                    tmp_path.unlink()
-                log.error("Integrity failure downloading %s from %s", self.name, self.model_url)
-                raise
-            except Exception as exc:
-                if tmp_path.exists():
-                    tmp_path.unlink()
-                if attempt < _max_attempts:
-                    delay = 2**attempt
-                    log.warning(
-                        "Failed to download %s (attempt %d/%d): %s — retrying in %ds",
-                        self.name,
-                        attempt,
-                        _max_attempts,
-                        exc,
-                        delay,
-                    )
-                    time.sleep(delay)
-                else:
-                    log.error(
-                        "Failed to download %s after %d attempts: %s",
-                        self.name,
-                        _max_attempts,
-                        exc,
-                    )
-        return None
+    def remove_files(self) -> int:
+        """Delete the model file and any partial downloads; returns the
+        bytes freed. Waits for a download in progress, so its retry
+        can't put the model back after the user removed it."""
+        from bpp.utils.download import remove_partial_downloads
+
+        freed = 0
+        with self._download_lock:
+            if self.model_path is not None:
+                if self.model_path.exists():
+                    size = self.model_path.stat().st_size
+                    self.model_path.unlink()  # OSError propagates: not freed
+                    freed = size
+                remove_partial_downloads(str(self.model_path))
+        self.reset()
+        return freed
+
+    @property
+    def download_lock(self) -> threading.Lock:
+        """Held while this model's file is fetched (for removers that
+        manage the file themselves)."""
+        return self._download_lock
 
     def reset(self) -> None:
         """Clear the cached model instance (e.g. for model re-download).
@@ -344,93 +435,17 @@ class ModelSingleton:
         with self._lock:
             self._instance = None
             self._available = None
+            self._blocked_logged = False
+        # Re-check the license on next use (a revoke or re-download).
+        self._gate.reset()
 
 
-# ── ModelRegistry ──────────────────────────────────────────────────
-#
-# Centralizes the (path, url, sha256, reset) lookup for every ML
-# model the user can redownload / uninstall via Settings → Advanced →
-# ML Models.
-#
-# Pattern parallels `WorkerRegistry` (workers) and `SmartAlbumRegistry`
-# (smart album types). Each scoring module appends its registration(s)
-# at module load — see `bpp/scoring/face.py` for a typical example.
-#
-# `name` is the user-facing string the JS sends as the redownload /
-# uninstall key — it MUST match the corresponding `_file_info(name=...)`
-# call in `bpp/web/models_status.py`. Tests in
-# `tests/test_model_registry.py` enforce that.
-
-
-from dataclasses import dataclass, field  # noqa: E402
-from typing import ClassVar  # noqa: E402
-
-
-@dataclass(frozen=True)
-class ModelEntry:
-    """One row in the ModelRegistry.
-
-    `path` is the on-disk model file path (already resolved at
-    registration time — env-var paths like BPP_MODELS_DIR are read
-    when the scoring module is imported, which is at app boot).
-
-    `url` is None for bundled-in-wheel models (today: NudeNet).
-    `sha256` is None when no integrity check is configured (the
-    test suite warns on this).
-
-    `reset` is a zero-arg callable that clears whatever cache
-    layer holds the live model so a redownload / uninstall is
-    visible on next `.get()`. ModelSingleton-backed models point
-    to `singleton.reset`; modules that use thread-local + module-
-    global negative caches (YuNet, SFace) supply a closure that
-    clears the right global.
-
-    `reset` is excluded from `__eq__` because re-importing a
-    scoring module under test (importlib.reload) creates a new
-    closure object pointing at the new singleton — equality on
-    the bound-method would falsely say "different entry" and
-    refuse the re-registration. Path/url/sha are stable identity.
-    """
-
-    name: str
-    path: str
-    url: str | None
-    sha256: str | None
-    reset: Callable[[], None] = field(compare=False)
-
-
-class ModelRegistry:
-    """Mutable registry of ML model lifecycle entries.
-
-    Re-registering the same `ModelEntry` for an existing name is a
-    no-op (idempotent on module re-import). Different entry for the
-    same name raises — pass `replace=True` for tests.
-    """
-
-    _entries: ClassVar[dict[str, ModelEntry]] = {}
-
-    @classmethod
-    def register(cls, entry: ModelEntry, *, replace: bool = False) -> None:
-        existing = cls._entries.get(entry.name)
-        if existing is not None and existing != entry and not replace:
-            raise ValueError(
-                f"ModelRegistry: {entry.name!r} already registered with a "
-                "different entry (pass replace=True if intentional)"
-            )
-        cls._entries[entry.name] = entry
-
-    @classmethod
-    def get(cls, name: str) -> ModelEntry | None:
-        return cls._entries.get(name)
-
-    @classmethod
-    def all(cls) -> list[ModelEntry]:
-        return list(cls._entries.values())
-
-    @classmethod
-    def names(cls) -> list[str]:
-        return list(cls._entries.keys())
-
-    @classmethod
-    def _reset_for_tests(cls) -> None:
-        cls._entries.clear()
+# The file-lifecycle registry lives in bpp.scoring.model_lifecycle;
+# re-exported here so existing ``from bpp.scoring.model_base import
+# ModelEntry, ModelRegistry`` imports keep working.
+from bpp.scoring.model_lifecycle import (  # noqa: E402, F401
+    ModelEntry,
+    ModelRegistry,
+    declared_legal_id,
+    plugin_model_entries,
+)

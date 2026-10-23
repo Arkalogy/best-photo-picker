@@ -16,6 +16,7 @@
 
 import { analyzePreflightConsent } from "./analysis-preflight.mjs";
 import { apiFetch, authEventSource } from "./api-client.mjs";
+import { fetchAllPages } from "./paging.mjs";
 import { MONTHS_SHORT, formatDate } from "./date-format.mjs";
 import { appConfirm } from "./dialogs.mjs";
 import { _doFaceInstall, _promptFaceInstall } from "./analysis-install.mjs";
@@ -56,16 +57,26 @@ export function _analyzeStop() {
   }
 }
 
+let _previewWalkRunning = false;
+let _previewWalkAgain = false;
+
 function _schedulePreviewRefresh() {
   /** @type {any} */
   const win = window;
   if (_previewRefreshTimer) return;
   _previewRefreshTimer = setTimeout(async () => {
     _previewRefreshTimer = null;
+    // One walk of the pages at a time; a batch that lands meanwhile
+    // asks for one more walk after it, not a second one alongside.
+    if (_previewWalkRunning) {
+      _previewWalkAgain = true;
+      return;
+    }
+    _previewWalkRunning = true;
     try {
-      const data = await apiFetch("/api/v1/photos/preview");
-      if (data.photos && data.photos.length > 0) {
-        win.photos = data.photos;
+      const photos = await fetchAllPages("/api/v1/photos/preview", { pageSize: 500 });
+      if (photos.length > 0) {
+        win.photos = photos;
         win.selectedPaths = new Set();
         win.renderGrid?.();
         win.show?.("photo-grid");
@@ -76,6 +87,12 @@ function _schedulePreviewRefresh() {
       }
     } catch {
       /* ignore during analysis */
+    } finally {
+      _previewWalkRunning = false;
+      if (_previewWalkAgain) {
+        _previewWalkAgain = false;
+        _schedulePreviewRefresh();
+      }
     }
   }, 1000);
 }
@@ -92,11 +109,18 @@ export async function startReanalyze() {
 
   if (!(await analyzePreflightConsent())) return;
 
-  if (!win.faceRecognitionAvailable) {
+  // A face install stopped part way is offered again (that's the repair) —
+  // where the app can redo it, now or once what blocks installs ends (the
+  // prompt then says why): never with nothing to click (no pip at all).
+  const facesToRepair =
+    win.interruptedInstalls?.includes("faces") && (win.faceInstallable || !!win.installBlocked);
+  if (!win.faceRecognitionAvailable || facesToRepair) {
     const choice = await _promptFaceInstall();
     if (choice === "install") {
       const installed = await _doFaceInstall();
-      if (!installed) return;
+      // "restart": installed, usable after a restart — and analysis waits
+      // for it too (the toast and banner say so).
+      if (installed !== true) return;
       win.faceRecognitionAvailable = true;
     } else if (choice !== "continue") {
       return;
@@ -143,7 +167,7 @@ function _listenAnalyzeProgress() {
     const msg = /** @type {any} */ (parseSSE(ev.data));
     if (!msg) return;
     if (msg.type === "phase") {
-      // M15: structured phase events let the UI surface a stepper
+      // Structured phase events let the UI surface a stepper
       // ("Step 3 of 5: Scoring images") instead of a single black-box bar.
       const label = msg.label || msg.phase || "Working…";
       const step = msg.step && msg.of ? ` (Step ${msg.step}/${msg.of})` : "";
@@ -178,7 +202,7 @@ function _listenAnalyzeProgress() {
       removeNudge("analyze_photos");
       loadPhotosAndRecompute();
       refreshSmartAlbums();
-      // Sensitive-photo alert (P0): active notice with a path into the
+      // Sensitive-photo alert: active notice with a path into the
       // Sensitive album. Only fires on NEW flags (server-side count
       // delta) so re-analysis of an unchanged library stays silent.
       if (msg.sensitive_new > 0) {
@@ -204,7 +228,7 @@ function _listenAnalyzeProgress() {
       _previewRefreshTimer = null;
       hideStatusProgress();
       _analyzeStop();
-      toast(msg.message || "Analysis failed", true);
+      toastError("analyze the library", new Error(msg.message || "the analysis stopped"));
     } else if (msg.type === "cancelled") {
       src.close();
       win.activeOperation = null;
@@ -300,7 +324,7 @@ export function listenProgress() {
     const msg = /** @type {any} */ (parseSSE(ev.data));
     if (!msg) return;
     if (msg.type === "phase") {
-      // M15: structured phase events drive the high-level stepper.
+      // Structured phase events drive the high-level stepper.
       const label = msg.label || msg.phase || "Working…";
       const step = msg.step && msg.of ? ` (Step ${msg.step}/${msg.of})` : "";
       showStatusProgress(`${label}${step}`, 0);
@@ -353,7 +377,7 @@ export function listenProgress() {
       win.activeOperation = null;
       if (_previewRefreshTimer) clearTimeout(_previewRefreshTimer);
       _previewRefreshTimer = null;
-      toast(msg.message || "Analysis error", true);
+      toastError("analyze the library", new Error(msg.message || "the analysis stopped"));
       hideStatusProgress();
     } else if (msg.type === "batch_ready") {
       _schedulePreviewRefresh();

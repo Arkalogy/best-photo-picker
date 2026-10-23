@@ -101,7 +101,7 @@ def test_handlers_were_actually_found():
 
 
 def test_api_md_does_not_advertise_removed_propagated_field():
-    """R12-L1: `docs/API.md` previously documented a `propagated`
+    """`docs/API.md` previously documented a `propagated`
     field in `/api/v1/faces/merge` and `/api/v1/faces/reassign`
     response examples. Both handlers actually return only
     `{"status": "...", "albums": [...]}` — `propagated` was a

@@ -12,6 +12,7 @@
 
 import { closeFaceEmbedderAcceptance } from "./face-embedders-acceptance.mjs";
 import { feState } from "./face-embedders-state.mjs";
+import { menuClosed, menuOpened } from "./menu-a11y.mjs";
 import { escapeAttr, esc } from "./text-format.mjs";
 import { toast } from "./toast.mjs";
 
@@ -38,6 +39,7 @@ export function _feOverflowToggle(entryId) {
   _feCloseAllPopovers(menu);
   if (wasOpen) {
     menu.classList.remove("open", "fe-overflow-menu--up");
+    menuClosed(menu);
     return;
   }
   // Open downward by default, then flip up if it would be clipped by the
@@ -53,6 +55,20 @@ export function _feOverflowToggle(entryId) {
   } catch {
     /* positioning is best-effort; default (down) still works */
   }
+  menuOpened(menu, { trigger: _feTriggerFor(entryId) });
+}
+
+/**
+ * The ⋯ button of a row.
+ * @param {string} entryId
+ * @returns {HTMLElement | undefined}
+ */
+function _feTriggerFor(entryId) {
+  return /** @type {HTMLElement | undefined} */ (
+    [...document.querySelectorAll(".fe-overflow-trigger")].find(
+      (el) => /** @type {HTMLElement} */ (el).dataset.arg0 === entryId,
+    )
+  );
 }
 
 /**
@@ -114,8 +130,48 @@ function _feCloseAllPopovers(keepOpen) {
   for (const open of document.querySelectorAll(
     ".fe-overflow-menu.open, .fe-license-popover.open",
   )) {
-    if (open !== keepOpen) open.classList.remove("open", "fe-overflow-menu--up");
+    if (open !== keepOpen) {
+      open.classList.remove("open", "fe-overflow-menu--up");
+      menuClosed(/** @type {HTMLElement} */ (open));
+    }
   }
+}
+
+/**
+ * ESC for the picker's foreground layers: the acceptance dialog first,
+ * then any open ⋯ menu / ⓘ popover. Runs in the capture phase and stops
+ * the event outright, so app-wide ESC handlers (the lightbox's closes
+ * the whole Settings overlay) never see a key that only meant "close
+ * this menu". Focus returns to the menu's ⋯ trigger.
+ *
+ * @param {KeyboardEvent} e
+ */
+function _feEscapeKeydown(e) {
+  if (e.key !== "Escape") return;
+  const overlay = document.getElementById("fe-acceptance-overlay");
+  if (overlay && overlay.classList.contains("visible")) {
+    closeFaceEmbedderAcceptance();
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    return;
+  }
+  const openMenu = document.querySelector(".fe-overflow-menu.open");
+  const any = openMenu || document.querySelector(".fe-license-popover.open");
+  if (!any) return;
+  _feCloseAllPopovers();
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  // Focus goes back to the row's ⋯ button — menuClosed did it for a menu
+  // opened through the toggle; this covers one opened any other way.
+  const entryId = openMenu?.id.replace(/^fe-ovr-/, "");
+  const trigger = entryId ? _feTriggerFor(entryId) : undefined;
+  if (trigger && document.activeElement !== trigger) trigger.focus({ preventScroll: true });
+}
+
+/** Close every open picker menu / popover (e.g. when Settings closes,
+ *  so a menu left open doesn't reappear on the next visit). */
+export function closeFePopovers() {
+  _feCloseAllPopovers();
 }
 
 /** Document-level handlers: ESC closes the dialog AND any open
@@ -125,24 +181,7 @@ function _feCloseAllPopovers(keepOpen) {
 export function _feInstallGlobalHandlers() {
   if (/** @type {any} */ (window).__feGlobalHandlersInstalled) return;
   /** @type {any} */ (window).__feGlobalHandlersInstalled = true;
-  document.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape") return;
-    // Acceptance dialog takes precedence over popovers — it's the
-    // foreground modal when both are open.
-    const overlay = document.getElementById("fe-acceptance-overlay");
-    if (overlay && overlay.classList.contains("visible")) {
-      closeFaceEmbedderAcceptance();
-      e.stopPropagation();
-      return;
-    }
-    const any = document.querySelector(
-      ".fe-overflow-menu.open, .fe-license-popover.open",
-    );
-    if (any) {
-      _feCloseAllPopovers();
-      e.stopPropagation();
-    }
-  });
+  document.addEventListener("keydown", _feEscapeKeydown, true);
   document.addEventListener("click", (e) => {
     const target = /** @type {HTMLElement} */ (e.target);
     if (!target) return;

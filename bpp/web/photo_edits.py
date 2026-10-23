@@ -24,10 +24,13 @@ from __future__ import annotations
 
 import contextlib
 import os
+import threading
+import zlib
 
 from PIL import Image, ImageOps
 
 from bpp.constants import JPEG_QUALITY_CROP, JPEG_QUALITY_FULL
+from bpp.utils.fresh_file import replace_fresh
 from bpp.utils.logging import get_logger
 from bpp.utils.retry import retry_io
 
@@ -44,6 +47,25 @@ def _get_edits_for_path(ctx: object, filepath: str) -> dict | None:
     if not photo:
         return None
     return get_photo_edits(conn, photo["id"])
+
+
+# A fixed stripe of locks (not one per path, which would grow for the
+# life of the process): two outputs sharing a stripe wait for each other,
+# which is harmless; one output always maps to one stripe.
+_OUTPUT_LOCK_STRIPES = 64
+_output_locks = [threading.Lock() for _ in range(_OUTPUT_LOCK_STRIPES)]
+
+
+def _output_lock(output_path: str) -> threading.Lock:
+    return _output_locks[zlib.crc32(output_path.encode("utf-8")) % _OUTPUT_LOCK_STRIPES]
+
+
+def _is_fresh(filepath: str, output_path: str) -> bool:
+    """A cached file newer than its source needs no rebuild."""
+    try:
+        return os.path.getmtime(output_path) >= os.path.getmtime(filepath)
+    except OSError:
+        return False
 
 
 def _generate_cached_image(
@@ -63,21 +85,29 @@ def _generate_cached_image(
 
     Returns True on success, False on failure (logs warning).
     """
-    tmp_path = output_path + ".tmp"
+    # Two requests for the same photo overlap easily (lightbox + compare +
+    # slideshow + editor). Each writer gets its own temp name, and the
+    # output path is written under a per-path lock with a freshness
+    # re-check, so the second writer reuses the first's result instead of
+    # racing it (the RAW converter uses the same scheme).
+    tmp_path = f"{output_path}.{os.getpid()}.{threading.get_ident()}.tmp"
     try:
         from bpp.constants import THUMBNAIL_MAX_SIZE
 
         quality = JPEG_QUALITY_CROP if thumb_size else JPEG_QUALITY_FULL
-        img = retry_io(Image.open, filepath, label="cached_img_open")
-        with img:
-            img = ImageOps.exif_transpose(img)
-            img = img.convert("RGB")
-            if edits:
-                img = _apply_edits(img, edits)
-            if thumb_size:
-                img.thumbnail((THUMBNAIL_MAX_SIZE, THUMBNAIL_MAX_SIZE), Image.LANCZOS)
-            img.save(tmp_path, "JPEG", quality=quality)
-        os.replace(tmp_path, output_path)
+        with _output_lock(output_path):
+            if _is_fresh(filepath, output_path):
+                return True
+            img = retry_io(Image.open, filepath, label="cached_img_open")
+            with img:
+                img = ImageOps.exif_transpose(img)
+                img = img.convert("RGB")
+                if edits:
+                    img = _apply_edits(img, edits)
+                if thumb_size:
+                    img.thumbnail((THUMBNAIL_MAX_SIZE, THUMBNAIL_MAX_SIZE), Image.LANCZOS)
+                with replace_fresh(output_path, part=tmp_path) as fh:
+                    img.save(fh, "JPEG", quality=quality)
         log.debug("Generated cached image: %s", output_path)
         return True
     except Exception as e:
@@ -160,6 +190,21 @@ _ADVANCED_KEYS = (
 )
 
 
+def _gaussian_filter(arr, sigma: float):
+    """Gaussian blur of an HxWxC float image across its two image axes only:
+    each colour channel on its own, so colours stay true. (The scipy blur
+    used before also mixed neighbouring channels — saved Definition and
+    Noise reduction edits render with truer colours now.) No scipy: only
+    the faces extra installs it. Kernel and edges as scipy's
+    ``gaussian_filter(arr, (sigma, sigma, 0))``: 4-sigma radius, 'reflect'."""
+    if sigma <= 0:
+        return arr  # no blur (as scipy; the edit values aren't range-checked)
+    import cv2
+
+    size = 2 * int(4.0 * sigma + 0.5) + 1
+    return cv2.GaussianBlur(arr, (size, size), sigma, borderType=cv2.BORDER_REFLECT)
+
+
 def _apply_advanced(img: Image.Image, edits: dict) -> Image.Image:
     """All numpy-array based adjustments. Operates on a single numpy
     buffer so we don't pay the PIL→numpy round-trip per knob."""
@@ -230,18 +275,14 @@ def _apply_advanced(img: Image.Image, edits: dict) -> Image.Image:
 
     definition_val = edits.get("definition", 0.0)
     if definition_val:
-        from scipy.ndimage import gaussian_filter
-
-        blurred = gaussian_filter(arr, sigma=10)
+        blurred = _gaussian_filter(arr, 10)
         detail = arr - blurred
         arr = np.clip(arr + detail * definition_val * 1.5, 0, 255)
 
     noise_reduction_val = edits.get("noise_reduction", 0.0)
     if noise_reduction_val:
-        from scipy.ndimage import gaussian_filter
-
         sigma = noise_reduction_val * 3.0  # 0-3 pixel radius
-        arr = gaussian_filter(arr, sigma=sigma)
+        arr = _gaussian_filter(arr, sigma)
         arr = np.clip(arr, 0, 255)
 
     vignette_amt = edits.get("vignette", 0.0)
@@ -278,7 +319,9 @@ def _apply_perspective(img: Image.Image, edits: dict) -> Image.Image:
 
 def _apply_redeye(img: Image.Image, edits: dict) -> Image.Image:
     """Apply red-eye removal at the user-marked points (if any)."""
-    redeye_points = edits.get("redeye_points")
+    from bpp.db.edits import valid_redeye_points
+
+    redeye_points = valid_redeye_points(edits.get("redeye_points"))
     if not redeye_points:
         return img
     return _apply_redeye_fix(img, redeye_points)
@@ -288,7 +331,7 @@ def _apply_edits(img: Image.Image, edits: dict) -> Image.Image:
     """Apply all edits in order: crop → orient → basic color → advanced
     numpy adjustments → perspective → redeye.
 
-    M12.b: this used to be a 195-LOC function with eight inline phases
+    This used to be a 195-LOC function with eight inline phases
     plus a deeply nested numpy block. Each phase is now its own
     helper; ``_apply_edits`` is a flat pipeline that's easy to reorder
     or extend (a new tool just plugs in another helper).

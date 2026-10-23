@@ -1,12 +1,11 @@
-"""Bounded subprocess runner — P2 of refactor-plan.md.
+"""Bounded subprocess runner.
 
-The audit identified that ``run_scoring_subprocess`` and
-``run_face_extraction_subprocess`` reimplement the same machinery from
-scratch: queue setup, sentinel handling, fatal-error path, timeout,
-graceful-then-force join, ``proc.exitcode`` post-mortem, cancel-event
-shape normalization. Drift between the two has already caused real
-bugs (P1's audit found face extraction silently dropping cancel — a
-gap that scoring didn't have).
+``run_scoring_subprocess`` and ``run_face_extraction_subprocess`` used to
+reimplement the same machinery from scratch: queue setup, sentinel
+handling, fatal-error path, timeout, graceful-then-force join,
+``proc.exitcode`` post-mortem, cancel-event shape normalization. Drift
+between the two caused real bugs (face extraction silently dropped
+cancel — a gap that scoring didn't have).
 
 This module hoists that machinery into a generic
 :class:`BoundedSubprocessRunner` parameterized by a
@@ -19,7 +18,7 @@ This module hoists that machinery into a generic
 * a single reducer that turns each queue message into ``(new_state,
   optional_progress_msg_to_forward)``.
 
-The runner owns everything else. Adding a Phase-4 worker becomes "write
+The runner owns everything else. Adding a new subprocess worker becomes "write
 a Phase class," not "duplicate 80 lines of drain-loop machinery."
 
 ADR: docs/adr/0001-subprocess-runner.md.
@@ -30,6 +29,7 @@ from __future__ import annotations
 import multiprocessing
 import queue
 import threading
+import time
 from collections.abc import Callable
 from typing import Any, Generic, Protocol, TypeVar
 
@@ -132,12 +132,17 @@ class BoundedSubprocessRunner(Generic[I, O]):
       the parent always reaps within a known bound after the drain ends.
     * Cancel-event integration — every runner consults a token; never
       again the situation where one flow ignored cancel and another
-      didn't (the P1 audit's load-bearing bug).
+      didn't (face extraction's dropped-cancel bug).
 
     The runner does NOT bound peak memory inside the child — that's
     each phase's responsibility (e.g. face-extraction chunks for
     bounded allocator growth).
     """
+
+    #: How often the drain looks up from the queue to see whether the
+    #: child is still alive: a SIGKILLed child never sends SENTINEL, and
+    #: without this check its loss surfaces only at the message timeout.
+    dead_child_poll_s: float = 1.0
 
     def __init__(
         self,
@@ -180,15 +185,15 @@ class BoundedSubprocessRunner(Generic[I, O]):
         checks. Both are returned even when the child crashes or times out
         so callers can react to partial work without an exception path.
 
-        ``cancel_event`` accepts the unified P1 contract: a
+        ``cancel_event`` accepts the unified cancellation contract: a
         :class:`bpp.utils.cancel.CancellationToken`, a raw
         ``multiprocessing.Event``, a raw ``threading.Event``, or
         ``None``. The runner normalizes it into a picklable mp.Event
         for the child (bridging via mirror thread when needed) so the
         phase doesn't have to know.
         """
-        # P1 cancel-event normalization — one place, all phases.
-        # T1.2: ``bridge_stop`` is the natural-completion hint for any
+        # Cancel-event normalization — one place, all phases.
+        # ``bridge_stop`` is the natural-completion hint for any
         # mirror-bridge thread the normalization spun up. Set after the
         # child has joined so the bridge exits instead of polling
         # forever in this long-lived parent process.
@@ -215,7 +220,7 @@ class BoundedSubprocessRunner(Generic[I, O]):
                 proc.kill()
                 proc.join(timeout=self.force_join_s)
         finally:
-            # T1.2: tell the cancel-bridge thread (if any) the child is
+            # Tell the cancel-bridge thread (if any) the child is
             # done. ``try/finally`` covers the rare drain/kill exception
             # path too — without this, a raise from `_drain` would leak
             # the bridge.
@@ -252,15 +257,15 @@ class BoundedSubprocessRunner(Generic[I, O]):
     ) -> tuple[multiprocessing.synchronize.Event, threading.Event | None]:
         """Normalize the cancel input into a picklable mp.Event.
 
-        See P1's ADR (docs/adr/0002-cancellation-contract.md) for the
-        accepted shapes. The implementation mirrors what each runner
-        used to do inline; centralizing here is the actual P2 win.
+        See docs/adr/0002-cancellation-contract.md for the accepted
+        shapes. The implementation mirrors what each runner used to do
+        inline; centralizing it here is the point of this module.
 
         Returns ``(mp_event, bridge_stop)``. ``bridge_stop`` is ``None``
         when no mirror-bridge thread was spawned (caller already gave
         us a usable mp.Event). When non-``None``, the caller MUST
         ``.set()`` it after the child has joined so the bridge thread
-        exits — see T1.2.
+        exits instead of polling forever.
         """
         from bpp.utils.cancel import (
             ProcessCancellation,
@@ -296,26 +301,52 @@ class BoundedSubprocessRunner(Generic[I, O]):
         """
         state = self.phase.initial_state()
         child_crashed = False
+        deadline = time.monotonic() + self.message_timeout_s
         while True:
             try:
-                msg = result_queue.get(timeout=self.message_timeout_s)
+                wait = min(self.dead_child_poll_s, max(0.0, deadline - time.monotonic()))
+                msg = result_queue.get(timeout=wait)
+                deadline = time.monotonic() + self.message_timeout_s
             except queue.Empty:
-                log.warning(
-                    "Phase %r queue timeout — pid=%s alive=%s exitcode=%s",
-                    self.phase.name,
-                    proc.pid,
-                    proc.is_alive(),
-                    proc.exitcode,
-                )
-                if progress_callback:
-                    progress_callback(
-                        {
-                            "type": "error",
-                            "message": f"{self.phase.name} timed out",
-                        }
+                if not proc.is_alive():
+                    # Gone without a SENTINEL (SIGKILL, OOM killer): one
+                    # last look for messages that landed as it died.
+                    try:
+                        msg = result_queue.get(timeout=self.dead_child_poll_s)
+                    except queue.Empty:
+                        log.error(
+                            "Phase %r subprocess died without finishing (pid=%s exitcode=%s)",
+                            self.phase.name,
+                            proc.pid,
+                            proc.exitcode,
+                        )
+                        if progress_callback:
+                            progress_callback(
+                                {
+                                    "type": "error",
+                                    "message": f"{self.phase.name} stopped unexpectedly",
+                                }
+                            )
+                        child_crashed = True
+                        break
+                    # A last message did land (SENTINEL, fatal_error or
+                    # progress): handled below like any other.
+                elif time.monotonic() < deadline:
+                    continue
+                else:
+                    log.warning(
+                        "Phase %r queue timeout — pid=%s alive=%s exitcode=%s",
+                        self.phase.name,
+                        proc.pid,
+                        proc.is_alive(),
+                        proc.exitcode,
                     )
-                child_crashed = True
-                break
+                    if progress_callback:
+                        progress_callback(
+                            {"type": "error", "message": f"{self.phase.name} timed out"}
+                        )
+                    child_crashed = True
+                    break
 
             if msg == SENTINEL:
                 break
@@ -332,12 +363,14 @@ class BoundedSubprocessRunner(Generic[I, O]):
                 )
                 child_crashed = True
                 if progress_callback:
-                    progress_callback(
-                        {
-                            "type": "error",
-                            "message": f"{self.phase.name} crashed: {msg.get('error')}",
-                        }
+                    # A refusal the child wrote for the user (a BppError's
+                    # user_message) is shown as is; anything else stays
+                    # the generic line, since a raw exception text may
+                    # carry paths.
+                    message = msg.get("user_message") or (
+                        f"{self.phase.name} crashed; see server.log for the error"
                     )
+                    progress_callback({"type": "error", "message": message})
                 # Keep draining — the child may still emit SENTINEL on
                 # its way out, and we want to consume it cleanly.
                 continue

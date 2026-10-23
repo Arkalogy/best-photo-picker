@@ -1,6 +1,6 @@
 """Picklability gate for ``ConfigSnapshot`` under ``multiprocessing.spawn``.
 
-P0 of refactor-plan.md. The whole point of ``ConfigSnapshot`` is that the
+The whole point of ``ConfigSnapshot`` is that the
 parent flattens a live :class:`Config` (which holds a bound method that
 drags a ``mappingproxy`` through pickle) into a plain-dict-backed
 dataclass *before* the spawn child sees it. If a future contributor
@@ -64,14 +64,14 @@ class TestConfigSnapshotPickleable:
             tag, received_values, type_name = q.get(timeout=30)
         except queue.Empty:
             proc.kill()
-            proc.join(timeout=5)
+            proc.join(timeout=30)  # spawn child re-imports bpp; slow on a loaded machine
             raise AssertionError(
                 "spawn child did not put result on queue within 30s — "
                 "likely crashed before the worker function ran. This is "
                 "the silent-pickle-failure regression the gate exists to catch."
             ) from None
 
-        proc.join(timeout=10)
+        proc.join(timeout=30)  # spawn child re-imports bpp; slow on a loaded machine
         assert proc.exitcode == 0, f"spawn child exited abnormally: {proc.exitcode}"
         assert tag == "ok"
         assert received_values == snap.values

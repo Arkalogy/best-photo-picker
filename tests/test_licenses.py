@@ -66,12 +66,6 @@ KNOWN_COPYLEFT: dict[str, tuple[str, str, str]] = {
         "faces",
         "LGPL-3.0; transitive via insightface, faces extra only",
     ),
-    # bppicker[nudity]: NudeNet is GPL — users accept by installing the extra
-    "nudenet": (
-        "nudenet",
-        "nudity",
-        "GPL-3.0; opt-in [nudity] extra; NOTICE.txt documents the obligation",
-    ),
     # bppicker[raw]: rawpy links LibRaw (LGPL-2.1)
     "rawpy": (
         "rawpy",
@@ -98,7 +92,7 @@ KNOWN_COPYLEFT: dict[str, tuple[str, str, str]] = {
     # Apache-2.0 runtime hooks — no bare-GPL bytes in the artifact.
     # Standing constraints (NOTICE.txt § Desktop app build toolchain):
     # never modify/fork the bootloader; never vendor PyInstaller into the
-    # repo or releases. Decision: pm.md 2026-06-12, option 1.
+    # repo or releases.
     "pyinstaller": (
         "pyinstaller",
         "desktop build (CI-only)",
@@ -254,7 +248,6 @@ def test_known_copyleft_packages_are_documented():
     "extra_pkg,extra_name",
     [
         ("pillow-heif", "heic"),
-        ("nudenet", "nudity"),
     ],
 )
 def test_known_copyleft_extras_not_in_base_dependencies(extra_pkg, extra_name):
@@ -273,3 +266,22 @@ def test_known_copyleft_extras_not_in_base_dependencies(extra_pkg, extra_name):
         f"{extra_pkg!r} is copyleft and must NOT be in pyproject base "
         f"dependencies — it's gated via the [{extra_name}] extra."
     )
+
+
+def test_nudenet_package_is_not_a_dependency_anywhere():
+    """BPP runs the NudeNet 320n weights with its own ONNX runner (the
+    weights download only after the user accepts them in Settings →
+    Models). The AGPL ``nudenet`` Python package must not come back as
+    a base dependency OR an optional extra."""
+    import tomllib
+
+    project = tomllib.loads(Path("pyproject.toml").read_text())["project"]
+    groups = {"<base>": project.get("dependencies", [])}
+    groups.update(project.get("optional-dependencies", {}))
+    offenders = {
+        group: dep
+        for group, deps in groups.items()
+        for dep in deps
+        if dep.split(">=")[0].split("[")[0].split("=")[0].strip().lower() == "nudenet"
+    }
+    assert not offenders, f"nudenet package declared in pyproject: {offenders}"

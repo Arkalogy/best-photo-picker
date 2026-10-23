@@ -16,7 +16,7 @@
  * window at call time.
  */
 
-import { apiFetch, authedSrc } from "./api-client.mjs";
+import { apiFetch, faceCropUrl, LONG_OP_TIMEOUT_MS } from "./api-client.mjs";
 import { showModal } from "./modal.mjs";
 import {getSetting, saveSetting} from "./settings-client.mjs";
 import { showNudge } from "./nudges.mjs";
@@ -50,7 +50,7 @@ export async function refreshSmartAlbums() {
  * @param {boolean} [afterExtraction]
  */
 export async function loadFaceClusters(afterExtraction) {
-  // Protection B: wrap the actual loader so a /api/v1/faces/clusters
+  // Wrap the actual loader so a /api/v1/faces/clusters
   // 500 (Jun-2 incident) can't take down the whole sidebar by
   // throwing out of the orchestrator. wrapSectionLoader catches +
   // logs + renders an error pill in the People section + leaves
@@ -123,14 +123,22 @@ export async function applyFaceRecluster() {
     btn.disabled = true;
     btn.textContent = "Applying…";
   }
-  const resp = await apiFetch("/api/v1/faces/recluster", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ threshold }),
-  });
-  if (btn) {
-    btn.disabled = false;
-    btn.textContent = "Apply";
+  let resp;
+  try {
+    resp = await apiFetch("/api/v1/faces/recluster", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ threshold }),
+      signal: AbortSignal.timeout(LONG_OP_TIMEOUT_MS), // reclustering every face takes minutes
+    });
+  } catch (e) {
+    toastError("regroup faces", e);
+    return;
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Apply";
+    }
   }
   if (resp.error) {
     toastError("regroup faces", new Error(resp.error));
@@ -234,7 +242,7 @@ export function renderFaceGallery() {
       const label = name || shortCount(c.photo_count);
       return `<div class="boost-chip${sel}" data-action="toggleFace" data-arg0="${c.cluster_id}"
                  title="${escapeAttr(tip)}">
-      <div class="boost-chip-img"><img src="${authedSrc(`/api/v1/faces/crop/${esc(rep.thumb_hash)}/${rep.face_index}`)}" loading="lazy"></div>
+      <div class="boost-chip-img"><img src="${faceCropUrl(rep.thumb_hash, rep.face_index)}" loading="lazy"></div>
       <span class="boost-chip-name">${esc(label)}</span>
     </div>`;
     })

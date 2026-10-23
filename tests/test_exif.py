@@ -11,6 +11,7 @@ import pytest
 from PIL import Image
 
 from bpp.exif_utils import extract_exif_metadata
+from tests._models import skip_unless_scoring_models
 
 # ── Helpers ──
 
@@ -280,6 +281,7 @@ class TestAnalysisPipelineExif:
 
     def test_analyze_single_includes_exif(self, tmp_path):
         """analyze_single_image includes exif_json in its result."""
+        skip_unless_scoring_models()  # real scoring pass
         from PIL.ExifTags import Base as ExifBase
 
         img = Image.new("RGB", (200, 150))
@@ -321,7 +323,7 @@ class TestBuildPhotoDictExif:
             "aggregate_score": 0.8,
         }
 
-        # Mock a minimal WebAppState. P4: enhanced-ids cache lives on
+        # Mock a minimal WebAppState. The enhanced-ids cache lives on
         # `state.caches.enhanced_ids` so pre-populate it instead of the
         # legacy `_edited_ids` / `_auto_enhanced_ids` attributes.
         import threading

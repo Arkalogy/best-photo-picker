@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from PIL import Image
 
 from bpp.cli import build_parser, main
 from bpp.db.albums import create_album
@@ -35,7 +36,8 @@ def library(tmp_path):
     # Create 10 fake analyzed photos with scores
     for i in range(10):
         img = photos_dir / f"IMG_{i:04d}.jpg"
-        img.write_bytes(b"\xff\xd8\xff\xe0" + bytes([i]) * 100)
+        # A real (tiny) JPEG: the export re-encodes photos to drop metadata.
+        Image.new("RGB", (8, 8), (20 * i, 90, 120)).save(img, "JPEG")
         upsert_photo(
             conn,
             {
@@ -190,7 +192,7 @@ class TestPickCommand:
         assert rc != 0
 
     def test_pick_resolves_canonical_db_path(self, tmp_path):
-        """Regression for round-9: `bpp pick` must look for the DB at
+        """Regression: `bpp pick` must look for the DB at
         `<library>/data/photopicker.db` to match the layout that
         `bpp serve` (and every other write path) uses. A pre-fix run
         looked for `<library>/photopicker.db` and erroneously errored

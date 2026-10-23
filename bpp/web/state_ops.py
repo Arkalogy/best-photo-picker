@@ -20,8 +20,8 @@ import os
 import sqlite3
 from typing import TYPE_CHECKING, Any
 
+from bpp.config import cfg_get
 from bpp.db.clip import record_dedup_feedback
-from bpp.db.photos import purge_old_deleted
 from bpp.scoring.clip_embed import cosine_similarity as clip_cosine_similarity
 from bpp.utils.logging import get_logger
 from bpp.web.photo_dict import build_photo_dict as _build_photo_dict_impl
@@ -47,30 +47,54 @@ def refresh_thumb_map(ctx: WebAppState) -> None:
 
 
 def auto_purge(ctx: WebAppState) -> None:
-    """Purge photos deleted more than 30 days ago."""
-    # shared allowlist helper.
-    from bpp.utils.path_validation import build_library_allowlist, is_path_under_any
+    """Purge photos deleted more than 30 days ago.
+
+    The same permanent delete the owner can run: journaled before the
+    rows go (a crash between the DB delete and the disk loop is replayed
+    at the next start) and the purged photos' cached variants and crops
+    are swept with the files.
+    """
+    from bpp.db.photos_lifecycle import permanent_delete_photos
+    from bpp.db.photos_sha import get_sha256_map
+    from bpp.utils.path_validation import build_library_allowlist
+    from bpp.web.permanent_delete import run_permanent_delete
 
     try:
         conn = ctx.get_conn()
-        filepaths = purge_old_deleted(conn, days=30)
-        allowed = build_library_allowlist(library_path=ctx.state["library_path"])
-        for fp in filepaths:
-            try:
-                if not is_path_under_any(fp, allowed):
-                    log.warning("Skipping purge of file outside library: %s", fp)
-                    continue
-                if os.path.isfile(fp):
-                    os.remove(fp)
-            except OSError:
-                log.warning("Failed to remove file during auto-purge: %s", fp)
-        if filepaths:
-            log.info("Auto-purged %d photos deleted >30 days ago", len(filepaths))
+        # One selection drives the journal, the DB delete and the disk
+        # loop, so nothing is deleted that the journal doesn't name.
+        rows = conn.execute(
+            "SELECT id, filepath FROM photos "
+            "WHERE deleted_at IS NOT NULL AND deleted_at < datetime('now', '-30 days')"
+        ).fetchall()
+        if not rows:
+            return
+        filepaths = [r[1] for r in rows]
+        if ctx.thumbs is None:
+            # Startup runs the purge before the thumbnail map is built;
+            # the cache folder exists regardless, and the sweep needs it.
+            ctx.thumbs = ThumbnailCache(ctx.dirs["thumbs"])
+        sha256_map = get_sha256_map(conn, filepaths)
+        allowed = build_library_allowlist(
+            library_path=ctx.state["library_path"], workdir=ctx.state.get("workdir")
+        )
+        log.info("Purging %d photos soft-deleted more than 30 days ago", len(rows))
+        result = run_permanent_delete(
+            ctx,
+            conn,
+            {r[1]: int(r[0]) for r in rows},
+            sha256_map,
+            allowed,
+            delete_rows=lambda purge_ids: permanent_delete_photos(conn, purge_ids),
+        )
+        log.info(
+            "Auto-purged %d photos deleted >30 days ago (%d files)",
+            result.rows_deleted,
+            result.removed,
+        )
     except Exception:
         # include the traceback so a
         # silent auto-purge failure isn't an unsolvable mystery.
-        # The previous shape only printed the exception's value
-        # which omits the failing frame's file/line.
         log.warning("Auto-purge failed", exc_info=True)
 
 
@@ -79,9 +103,8 @@ def build_photo_dict(
     item: dict[str, Any],
     selected: bool | None = None,
 ) -> dict[str, Any]:
-    from bpp.constants import SENSITIVE_NUDITY_THRESHOLD
 
-    threshold = ctx.config.get("sensitive_nudity_threshold", SENSITIVE_NUDITY_THRESHOLD)
+    threshold = cfg_get(ctx.config, "sensitive_nudity_threshold")
     d = _build_photo_dict_impl(item, ctx.thumbs, selected, sensitive_threshold=threshold)
     # Lazy-fill the enhanced/auto-enhanced caches under ctx.lock so a
     # concurrent invalidate_enhanced_cache() can't null the field
@@ -126,7 +149,7 @@ def check_dedup_feedback(
     if photo_emb is None:
         return False
 
-    threshold = ctx.config.get("clip_similarity_threshold", 0.92)
+    threshold = cfg_get(ctx.config, "clip_similarity_threshold")
     verdict = "same" if mode == "exclude" else "different"
     recorded = False
 

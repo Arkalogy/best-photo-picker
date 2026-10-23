@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import threading
 from typing import Any
 
 import cv2
@@ -17,6 +18,7 @@ from bpp.constants import (
     VIDEO_SPRITE_START,
     VIDEO_SPRITE_WIDTH,
 )
+from bpp.utils.fresh_file import replace_fresh
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -32,6 +34,44 @@ def is_video_file(filepath: str) -> bool:
     return ext in VIDEO_EXTENSIONS
 
 
+#: FFmpeg (OpenCV's backend) follows the URLs inside a DASH / HLS manifest
+#: that merely carries a video extension. The control is the manifest
+#: sniff in open_capture (such a file never reaches the decoder); this
+#: capture option asks the backend for the local file protocol only, but
+#: the bundled OpenCV wheel does not honour it, so it is best effort, not
+#: a second layer.
+os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "protocol_whitelist;file")
+
+
+def _looks_like_a_manifest(filepath: str) -> bool:
+    """A text file (an XML / M3U playlist with a video extension) is not a
+    video container: every container this app reads starts with binary
+    bytes. Such a file is never handed to the decoder at all."""
+    try:
+        with open(filepath, "rb") as f:
+            head = f.read(64)
+    except OSError:
+        return False
+    if not head:
+        return True
+    text = head.lstrip(b"\xef\xbb\xbf \t\r\n")
+    return text[:1] in (b"<", b"#") or all(32 <= b < 127 or b in (9, 10, 13) for b in head)
+
+
+def open_capture(filepath: str) -> cv2.VideoCapture | None:
+    """The one way this app decodes a video: refuses manifests (the one
+    real guard against a playlist with a video extension), returns None
+    when the file does not open. (:func:`trim_video` gates ffmpeg the
+    same way, plus ``-protocol_whitelist file``.)"""
+    if _looks_like_a_manifest(filepath):
+        return None
+    cap = cv2.VideoCapture(filepath, cv2.CAP_FFMPEG)
+    if not cap.isOpened():
+        cap.release()
+        return None
+    return cap
+
+
 def extract_video_frame(filepath: str, position: float = 0.5) -> Image.Image | None:
     """Extract a single frame from a video file using OpenCV.
 
@@ -43,8 +83,8 @@ def extract_video_frame(filepath: str, position: float = 0.5) -> Image.Image | N
         PIL Image of the frame, or None if extraction fails.
     """
     try:
-        cap = cv2.VideoCapture(filepath)
-        if not cap.isOpened():
+        cap = open_capture(filepath)
+        if cap is None:
             return None
 
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -77,8 +117,8 @@ def extract_video_metadata(filepath: str) -> dict | None:
     Returns None if the file cannot be opened as a video.
     """
     try:
-        cap = cv2.VideoCapture(filepath)
-        if not cap.isOpened():
+        cap = open_capture(filepath)
+        if cap is None:
             return None
 
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -138,8 +178,8 @@ def generate_video_sprite(
     try:
         import numpy as np
 
-        cap = cv2.VideoCapture(filepath)
-        if not cap.isOpened():
+        cap = open_capture(filepath)
+        if cap is None:
             return False
 
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -180,7 +220,9 @@ def generate_video_sprite(
         sprite = np.hstack(padded)
         rgb = cv2.cvtColor(sprite, cv2.COLOR_BGR2RGB)
         img = Image.fromarray(rgb)
-        img.save(output_path, "JPEG", quality=JPEG_QUALITY_SPRITE)
+        tmp = f"{output_path}.{os.getpid()}.{threading.get_ident()}.tmp"
+        with replace_fresh(output_path, part=tmp) as fh:
+            img.save(fh, "JPEG", quality=JPEG_QUALITY_SPRITE)
         return True
     except Exception as e:
         log.debug("Failed to generate video sprite for %s: %s", filepath, e)
@@ -208,12 +250,18 @@ def trim_video(src: str, dest: str, start: float, end: float) -> dict[str, Any]:
         return {"ok": False, "error": "Start time must be before end time"}
     if not os.path.isfile(src):
         return {"ok": False, "error": f"Source file not found: {src}"}
+    if _looks_like_a_manifest(src):
+        # A playlist with a video extension would have ffmpeg open
+        # whatever it lists; the decoder refuses it, so does the trim.
+        return {"ok": False, "error": "This file is a playlist, not a video"}
     if not ffmpeg_available():
         return {"ok": False, "error": "ffmpeg is not installed"}
 
     cmd = [
         "ffmpeg",
         "-y",
+        "-protocol_whitelist",
+        "file",
         "-ss",
         str(start),
         "-to",

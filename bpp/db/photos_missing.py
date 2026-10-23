@@ -14,7 +14,9 @@ from __future__ import annotations
 import hashlib
 import os
 import sqlite3
+from dataclasses import dataclass
 
+from bpp.db.sql_batches import in_batches
 from bpp.utils.logging import get_logger
 from bpp.utils.retry import retry_io
 
@@ -35,30 +37,108 @@ def mark_missing(conn: sqlite3.Connection, filepath: str) -> None:
     log.info("Marked photo as missing: %s", filepath)
 
 
-def check_missing(conn: sqlite3.Connection) -> list[str]:
-    """Find photos whose files no longer exist on disk. Marks them and returns paths.
+#: Below this many rows the mass-flip guard doesn't apply (a tiny library
+#: really can lose most of its photos to a cleanup).
+MASS_FLIP_MIN_ROWS = 20
+#: This many consecutive files with no answer from storage ends the scan.
+UNANSWERED_LIMIT = 3
 
-    Uses retry_io to avoid false positives from transient NAS errors.
+
+def file_present(filepath: str) -> bool | None:
+    """True / False when the filesystem answered; None when it didn't
+    (a transient error that outlasted the retries). ``os.path.exists``
+    swallows errors into False, so only ``os.stat`` can tell "gone"
+    from "unreachable right now"."""
+    try:
+        retry_io(os.stat, filepath, label="check_missing", max_retries=1)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError as exc:
+        log.warning("Can't tell whether %s exists (%s); leaving it as is", filepath, exc)
+        return None
+    return True
+
+
+@dataclass(frozen=True)
+class MissingScan:
+    """Outcome of one missing-file scan: the paths newly marked missing,
+    and ``refused`` as ``(missing, total)`` when the scan declined to mark
+    more than half the library at once."""
+
+    newly_missing: list[str]
+    refused: tuple[int, int] | None = None
+    #: False when the scan was skipped (storage unreachable) or aborted
+    #: (storage stopped answering): it says nothing about the library.
+    completed: bool = True
+
+
+def check_missing(
+    conn: sqlite3.Connection, *, photos_dir: str | None = None, force: bool = False
+) -> list[str]:
+    """:func:`scan_missing`'s newly-missing paths (the historical shape)."""
+    return scan_missing(conn, photos_dir=photos_dir, force=force).newly_missing
+
+
+def scan_missing(
+    conn: sqlite3.Connection, *, photos_dir: str | None = None, force: bool = False
+) -> MissingScan:
+    """Find photos whose files no longer exist on disk and mark them.
+
+    Transient storage errors never count as missing. Unless ``force``,
+    the scan is skipped when ``photos_dir`` isn't reachable, and refused
+    when more than half the library would flip at once: that is an
+    outage, not a cleanup, and rows marked missing vanish from every view.
+    A refusal is reported in the result (and by /api/v1/health) so a
+    real mass deletion isn't mistaken for a healthy library; the manual
+    recheck (``force``) marks the files.
     """
+    from bpp.utils.retry import check_storage_accessible
+
+    if photos_dir and not force:
+        access = check_storage_accessible(photos_dir)
+        if not access["accessible"]:
+            log.warning(
+                "Skipping the missing-file scan: %s isn't reachable (%s)",
+                photos_dir,
+                access["error"],
+            )
+            return MissingScan([], completed=False)
     rows = conn.execute("SELECT filepath FROM photos WHERE missing=0").fetchall()
     newly_missing = []
+    unanswered = 0
     for row in rows:
-        fp = row[0]
-        try:
-            exists = retry_io(os.path.exists, fp, label="check_missing")
-        except OSError:
-            exists = False
-        if not exists:
-            newly_missing.append(fp)
-    if newly_missing:
-        placeholders = ", ".join(["?"] * len(newly_missing))
-        conn.execute(
-            f"UPDATE photos SET missing=1 WHERE filepath IN ({placeholders})",
-            newly_missing,
+        present = file_present(row[0])
+        if present is None:
+            unanswered += 1
+            if unanswered >= UNANSWERED_LIMIT:
+                log.warning(
+                    "Stopping the missing-file scan: %d files in a row got no answer from storage",
+                    unanswered,
+                )
+                return MissingScan([], completed=False)
+            continue
+        unanswered = 0
+        if present is False:
+            newly_missing.append(row[0])
+    if not force and len(rows) >= MASS_FLIP_MIN_ROWS and len(newly_missing) * 2 > len(rows):
+        log.warning(
+            "%d of %d photos look missing at once; treating that as a storage outage "
+            "and not marking them (the manual recheck forces the scan)",
+            len(newly_missing),
+            len(rows),
         )
+        return MissingScan([], refused=(len(newly_missing), len(rows)))
+    if newly_missing:
+        # Batched: a forced scan after an outage can name most of the
+        # library, past SQLite's bound-variable limit in one statement.
+        for placeholders, batch in in_batches(newly_missing):
+            conn.execute(
+                f"UPDATE photos SET missing=1 WHERE filepath IN ({placeholders})",
+                batch,
+            )
         conn.commit()
         log.info("Marked %d photos as missing", len(newly_missing))
-    return newly_missing
+    return MissingScan(newly_missing)
 
 
 def relocate_missing(conn: sqlite3.Connection, search_dir: str) -> int:

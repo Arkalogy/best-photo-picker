@@ -156,9 +156,8 @@ def api_remove_model() -> tuple[Any, int]:
     Body: ``{"model_id": "...", "purge_derived": true|false}``.
     Both fields are required — the endpoint fails closed when
     ``purge_derived`` is omitted, matching the CLI's explicit-flag
-    requirement (Q8). Default behaviour in the GUI is purge; the
-    confirmation modal sends ``purge_derived=true`` unless the user
-    explicitly checked the "Keep derived data" opt-out.
+    requirement (``bpp model remove``). No GUI screen calls this
+    endpoint yet.
     """
     from bpp.web.state import get_ctx
 

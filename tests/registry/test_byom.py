@@ -1,4 +1,4 @@
-"""Batch 6 BYOM tests.
+"""Bring-Your-Own-Model (BYOM) tests.
 
 Pins:
 
@@ -17,7 +17,7 @@ Pins:
   separate-rights assertion because Arkalogy isn't in the rights
   chain.
 * The BYOM disclaimer carries the verbatim user-responsibility
-  wording the legal-posture spec specified.
+  wording.
 """
 
 from __future__ import annotations
@@ -70,7 +70,7 @@ def _write_model_file(tmp_path: Path, content: bytes = b"fake-model") -> Path:
 
 class TestBYOMDisclaimer:
     """The BYOM disclaimer carries the verbatim user-responsibility
-    wording the legal-posture spec specified."""
+    wording."""
 
     def test_user_responsibility_paragraph_is_present(self) -> None:
         assert (
@@ -91,7 +91,7 @@ class TestBYOMDisclaimer:
         assert "user-provided" in compressed
 
     def test_does_not_name_specific_restricted_models(self) -> None:
-        """Item 14 / trap T3 — the BYOM disclaimer must not name
+        """The BYOM disclaimer must not name
         AdaFace / buffalo / antelopev2 / w600k. That would recreate
         the inducement problem."""
         forbidden = (
@@ -209,9 +209,8 @@ class TestPrepareAcceptanceDispatchesByKind:
         from bpp.registry.builtins import BUFFALO_S_ENTRY
 
         # SFace used to be the canonical-dialog reference here, but
-        # it moved to the permissive-attribution dialog under
-        # Option B. Use a truly restricted entry (buffalo_s) so the
-        # regression guard still validates the four-checkbox
+        # it moved to the permissive-attribution dialog. Use a truly
+        # restricted entry (buffalo_s) so the regression guard still validates the four-checkbox
         # canonical flow.
         draft = prepare_acceptance(BUFFALO_S_ENTRY, use_context=UseContext.PERSONAL)
         assert draft.ack_text_sha256 == canonical_disclaimer_sha256()

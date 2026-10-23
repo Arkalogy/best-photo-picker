@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * UAT Test 16: BPP Picks recompute via the K input.
+ * BPP Picks recompute via the K input.
  *
  * Path:
  *   user types a new K in #toolbar-k → syncKFromToolbar mirrors it into
@@ -20,7 +20,7 @@ import { openApp, photoCount } from "./_helpers.mjs";
 // the K=25/K=50 recompute counts to be meaningful. Not run in CI (no demo
 // library there). Run before releases via `npm run test:e2e:demo`. Against
 // a small synthetic/empty library this self-skips (see the guard below).
-test.describe("UAT 16 @demo — toolbar K change triggers recompute, picks count follows", () => {
+test.describe("BPP Picks @demo — toolbar K change triggers recompute, picks count follows", () => {
   test("K=25 picks 25, K=50 picks 50, no errors during debounce", async ({ page }) => {
     /** @type {string[]} */
     const errors = [];

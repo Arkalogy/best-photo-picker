@@ -20,13 +20,19 @@ Routes:
 
 from __future__ import annotations
 
+import contextlib
 import os
+from typing import Any
 
 from flask import Blueprint, Response, jsonify, request
 
-from bpp.constants import MODEL_TOGGLE_KEYS
 from bpp.errors import BppError, ValidationError
+
+# (Through the module, never bare names: one patch point for the tests.)
+from bpp.scoring import model_lifecycle
+from bpp.scoring.toggles import all_toggle_keys
 from bpp.utils.logging import get_logger
+from bpp.web import download_gates
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx
 
@@ -35,11 +41,21 @@ log = get_logger(__name__)
 bp = Blueprint("models", __name__)
 
 
+@bp.get("/api/v1/models/content-filter")
+def api_content_filter_status() -> tuple[Response, int]:
+    """Whether automatic sensitive-photo detection is on (accepted + on
+    disk). Cheap — the sidebar hint re-reads it after any model change
+    instead of fetching the whole /api/v1/status snapshot."""
+    from bpp.scoring.nudity import is_active
+
+    return jsonify({"active": bool(is_active())}), 200
+
+
 @bp.get("/api/v1/models")
 def api_models() -> tuple[Response, int]:
     """Return ML model status grouped by feature.
 
-    M12.c: the per-feature dicts and library/file checks live in
+    The per-feature dicts and library/file checks live in
     ``bpp.web.models_status``; this handler is now a thin wrapper.
     """
     from bpp.web.models_status import build_model_features
@@ -60,7 +76,7 @@ def api_models_toggle() -> tuple[Response, int]:
     key = data.get("key", "")
     enabled = data.get("enabled")
 
-    if key not in MODEL_TOGGLE_KEYS:
+    if key not in all_toggle_keys():
         raise ValidationError(
             f"Invalid model key: {key}",
             field="key",
@@ -89,7 +105,7 @@ def api_models_redownload() -> tuple[Response, int]:
 
     LOCAL_APP-only — deleting cached model files forces a fresh
     download from the public host. A paired LAN device triggering
-    this could DoS-by-bandwidth and (worse) racing against C-02's
+    this could DoS-by-bandwidth and (worse) racing against the
     owner-only PyPI install path opens the same supply-chain
     surface."""
     data = request.get_json(silent=True) or {}
@@ -98,52 +114,38 @@ def api_models_redownload() -> tuple[Response, int]:
         raise ValidationError("name required", field="name")
 
     try:
-        result = _redownload_model(model_name)
-        return jsonify(result), 200
+        path, url, sha, legal_id = _prepare_redownload(model_name)
     except ValueError as e:
         raise ValidationError(
             "Invalid model name",
             field="name",
             value=model_name,
         ) from e
-    except Exception as e:
-        raise BppError(
-            "Failed to redownload model",
-            # LOCAL_APP-only endpoint — the caller is the machine owner, so
-            # surfacing the concrete reason (network error, integrity
-            # mismatch, disk path) is useful, not a leak. A bare "Failed"
-            # left the user with no idea what went wrong.
-            user_message=f"Couldn't download {model_name}: {e!s}",
-            diagnostic_message=f"redownload error for {model_name}: {e!s}",
-            name=model_name,
-        ) from e
+    # Gate refusals (status / license / unmapped licensed file) raised
+    # above already carry a specific user_message and return at once.
+    # The fetch itself can take minutes, so it runs as a background job;
+    # the picker polls /api/v1/models/download-jobs/<job> for progress.
+    from bpp.web import model_download_jobs
+
+    job, _started = model_download_jobs.start(
+        f"model:{model_name}",
+        model_name,
+        lambda: _fetch_redownload(model_name, path, url, sha, legal_id),
+    )
+    return jsonify(job.to_dict()), 202
 
 
-def _ensure_model_modules_imported() -> None:
-    """Force-import every scoring module that registers a ModelEntry.
+@bp.get("/api/v1/models/download-jobs/<path:job_key>")
+@requires_local_app
+def api_model_download_job(job_key: str) -> tuple[Response, int]:
+    """Progress of a background model download started by redownload or
+    ensure-weights: ``{status, bytes_done, bytes_total, result, error}``."""
+    from bpp.web import model_download_jobs
 
-    The ModelRegistry is populated by side effects of importing each
-    scoring module. The `_model_path_url_sha` and `_reset_model_cache`
-    callers might run before any scoring code has been touched (e.g.
-    a fresh server hits Settings → ML Models before any photo is
-    scored), so we ensure the registry is fully populated here.
-    """
-    import importlib
-
-    for mod in (
-        "bpp.scoring.face",
-        "bpp.scoring.face_blazeface_fr",
-        "bpp.scoring.face_embed",
-        "bpp.scoring.face_expression",
-        "bpp.scoring.face_hand_filter",
-        "bpp.scoring.face_scrfd",
-        "bpp.scoring.pose",
-        "bpp.scoring.segmentation",
-        "bpp.scoring.pets",
-        "bpp.scoring.clip_embed",
-        "bpp.scoring.clip_tokenizer",
-    ):
-        importlib.import_module(mod)
+    snap = model_download_jobs.snapshot(job_key)
+    if snap is None:
+        return jsonify({"error": f"No download job {job_key!r}"}), 404
+    return jsonify(snap), 200
 
 
 def _model_path_url_sha(name: str) -> tuple[str, str, str | None]:
@@ -155,7 +157,7 @@ def _model_path_url_sha(name: str) -> tuple[str, str, str | None]:
     """
     from bpp.scoring.model_base import ModelRegistry
 
-    _ensure_model_modules_imported()
+    model_lifecycle.ensure_builtin_model_files_registered()
     entry = ModelRegistry.get(name)
     if entry is None:
         raise ValueError(f"Unknown model: {name}")
@@ -167,109 +169,31 @@ def _model_path_url_sha(name: str) -> tuple[str, str, str | None]:
     return (os.path.expanduser(entry.path), entry.url or "", entry.sha256)
 
 
-def _reset_model_cache(name: str) -> None:
-    """Clear cached model state so next .get() re-initialises from
-    disk. Used by both redownload and uninstall.
-
-    Driven by ModelRegistry. ModelSingleton-backed entries point at
-    `singleton.reset`; YuNet / SFace use module-global negative-cache
-    resetters defined in their own scoring modules. Unknown names are
-    silently ignored (no raise).
-    """
-    from bpp.scoring.model_base import ModelRegistry
-
-    _ensure_model_modules_imported()
-    entry = ModelRegistry.get(name)
-    if entry is not None:
-        entry.reset()
-
-
-#: Legacy scoring-registry file names → ``bpp.registry`` legal entry
-#: ids. The redownload endpoint receives the file-level name (e.g.
-#: ``"SFace recognition"``) because that's what the legacy
-#: ``ModelRegistry`` uses; the status gate operates on the legal
-#: registry's ``ModelEntry.id`` (e.g. ``"sface_yunet"``). One legal
-#: entry may map to multiple files (CLIP visual + CLIP text both
-#: belong to ``openai_clip_vit_b32_onnx``). Files with no legal entry
-#: are ancillary models with no licensing concern (BlazeFace,
-#: segmenter, etc.) — they fall through the gate.
-_LEGAL_ENTRY_ID_FOR_FILE_NAME: dict[str, str] = {
-    "SFace recognition": "sface_yunet",
-    "YuNet (primary)": "opencv_yunet",
-    "SCRFD 2.5g": "insightface_scrfd_25g",
-    "CLIP visual": "openai_clip_vit_b32_onnx",
-    "CLIP text": "openai_clip_vit_b32_onnx",
-    "YOLO pet detector": "ultralytics_yolov11n_pets",
-}
-
-
-def _enforce_download_status_gate(name: str) -> None:
-    """Refuse the download if the corresponding legal-registry entry's
-    ``status`` says new downloads are not allowed.
-
-    Closes the item-12 + item-20 gap where a signed remote-registry
-    overlay can flip an entry to ``WITHDRAWN_NO_NEW_DOWNLOADS`` or
-    ``LEGALLY_BLOCKED`` but the Redownload button still re-fetches
-    silently. Without this gate the signed manifest's takedown power
-    is cosmetic — the user can always click Redownload to get the
-    file back.
-
-    Files with no legal-registry counterpart fall through (ancillary
-    detectors / segmenters that don't carry a licensing concern).
-    """
-    legal_id = _LEGAL_ENTRY_ID_FOR_FILE_NAME.get(name)
-    if legal_id is None:
-        return
-    from bpp.registry import get_entry, status_behavior
-
-    entry = get_entry(legal_id)
-    if entry is None:
-        return
-    behavior = status_behavior(entry.status)
-    if behavior.new_download_allowed:
-        return
-    log.info(
-        "Download refused for %s (legal_id=%s) — status=%s",
-        name,
-        legal_id,
-        entry.status.value,
-    )
-    raise BppError(
-        f"Download refused for {name!r}",
-        user_message=(
-            f"This model is {entry.status.value.replace('_', ' ')} "
-            "and cannot be downloaded. Existing local copies may "
-            "still work depending on the upstream takedown; new "
-            "downloads are blocked at the registry level."
-        ),
-        diagnostic_message=(
-            f"_enforce_download_status_gate: legal entry "
-            f"{legal_id} has status {entry.status.value} "
-            "(new_download_allowed=False)"
-        ),
-        name=name,
-        legal_entry_id=legal_id,
-        status=entry.status.value,
-    )
-
-
 def _redownload_model(name: str) -> dict:
-    """Delete and re-download a model. Returns updated model info."""
-    from bpp.utils.download import download_file
+    """Re-download a model synchronously. Returns updated model info."""
+    path, url, sha, legal_id = _prepare_redownload(name)
+    return _fetch_redownload(name, path, url, sha, legal_id)
 
-    _enforce_download_status_gate(name)
+
+def _prepare_redownload(name: str) -> tuple[str, str, str | None, str]:
+    """Resolve the file and run every refusal check (fast, synchronous)."""
     path, url, sha = _model_path_url_sha(name)
+    # Resolve the file name → legal entry id (fails closed when the
+    # file declares none).
+    legal_id = download_gates.resolve_legal_id(name)
+    download_gates.enforce_download_status_gate(name, legal_id)
+    download_gates.enforce_download_license_gate(name, legal_id)
+    return path, url, sha, legal_id
+
+
+def _fetch_redownload(name: str, path: str, url: str, sha: str | None, legal_id: str) -> dict:
+    """Fetch to a temp file and swap it in. The existing copy stays in
+    place (and usable) until the new one is verified."""
+    from bpp.utils.download import download_file, download_temp_path
+
     log.info("Re-downloading model %s from %s", name, url)
-
-    if os.path.exists(path):
-        os.remove(path)
-
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp_path = path + ".tmp"
-    # Resolve the file-name → legal entry id; ancillary models (no
-    # licensing concern, no entry in the legal registry) explicitly
-    # pass registry_id=None to opt out of the policy gate.
-    legal_id = _LEGAL_ENTRY_ID_FOR_FILE_NAME.get(name)
+    tmp_path = download_temp_path(path)
     try:
         download_file(url, tmp_path, registry_id=legal_id, sha256=sha)
         os.replace(tmp_path, path)
@@ -278,7 +202,7 @@ def _redownload_model(name: str) -> dict:
             os.remove(tmp_path)
         raise
 
-    _reset_model_cache(name)
+    model_lifecycle.reset_model_file(name)
 
     from bpp.web.models_status import _file_info
 
@@ -310,15 +234,18 @@ def api_models_uninstall() -> tuple[Response, int]:
             value=model_name,
         ) from e
 
+    from bpp.utils.download import remove_partial_downloads
+
     bytes_freed = 0
     try:
-        if os.path.exists(path):
-            bytes_freed = os.path.getsize(path)
-            os.remove(path)
-        # Also clear any stray .tmp from an interrupted download
-        tmp = path + ".tmp"
-        if os.path.exists(tmp):
-            os.remove(tmp)
+        # Wait for a download of this file in progress, so its retry
+        # can't put the model back after the user removed it.
+        with _download_lock_for(model_name):
+            if os.path.exists(path):
+                bytes_freed = os.path.getsize(path)
+                os.remove(path)
+            # Also clear leftovers of interrupted downloads
+            remove_partial_downloads(path)
     except OSError as e:
         raise BppError(
             "Failed to delete model file",
@@ -327,7 +254,7 @@ def api_models_uninstall() -> tuple[Response, int]:
             name=model_name,
         ) from e
 
-    _reset_model_cache(model_name)
+    model_lifecycle.reset_model_file(model_name)
     log.info(
         "Uninstalled model %s (%.1f MB freed)",
         model_name,
@@ -337,3 +264,15 @@ def api_models_uninstall() -> tuple[Response, int]:
     from bpp.web.models_status import _file_info
 
     return jsonify({"file": _file_info(model_name, path), "bytes_freed": bytes_freed}), 200
+
+
+def _download_lock_for(model_name: str) -> contextlib.AbstractContextManager[Any]:
+    """The download lock of the ModelSingleton that owns this file, or a
+    no-op for files managed by their own helpers."""
+    from bpp.scoring.model_base import ModelRegistry, ModelSingleton
+
+    entry = ModelRegistry.get(model_name)
+    owner = (entry.owner or getattr(entry.reset, "__self__", None)) if entry else None
+    if isinstance(owner, ModelSingleton):
+        return owner.download_lock
+    return contextlib.nullcontext()

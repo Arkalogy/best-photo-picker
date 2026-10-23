@@ -6,16 +6,16 @@ from flask import Blueprint, Response, jsonify
 
 from bpp.constants import ACTIVE_PHOTO_SQL
 from bpp.db.memories import generate_memories, get_memory, list_memories
+from bpp.db.sql_batches import in_batches
 from bpp.errors import NotFoundError
 from bpp.utils.logging import get_logger
+from bpp.web.photo_dict import build_photo_brief
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx
 
 log = get_logger(__name__)
 
 bp = Blueprint("memories", __name__)
-
-_BATCH_SIZE = 500
 
 
 @bp.get("/api/v1/memories")
@@ -45,26 +45,15 @@ def api_memories_detail(memory_id: int) -> tuple[Response, int]:
     # must never bypass the active filter.
     photo_ids = m.get("photo_ids") or []
     all_rows = []
-    for i in range(0, len(photo_ids), _BATCH_SIZE):
-        batch = photo_ids[i : i + _BATCH_SIZE]
-        placeholders = ",".join("?" * len(batch))
+    for placeholders, batch in in_batches(photo_ids):
         rows = conn.execute(
-            f"SELECT id, filepath, sha256, date, aggregate_score "
+            f"SELECT id, filepath, date, aggregate_score, original_filename "
             f"FROM photos WHERE id IN ({placeholders}) AND {ACTIVE_PHOTO_SQL} "
             f"ORDER BY date",
             batch,
         ).fetchall()
         all_rows.extend(rows)
-    m["photos"] = [
-        {
-            "id": r["id"],
-            "filepath": r["filepath"],
-            "hash": r["sha256"],
-            "date": r["date"],
-            "score": r["aggregate_score"],
-        }
-        for r in all_rows
-    ]
+    m["photos"] = [build_photo_brief(dict(r), ctx.thumbs) for r in all_rows]
     return jsonify(m), 200
 
 

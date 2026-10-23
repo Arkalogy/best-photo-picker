@@ -70,9 +70,7 @@ def _maybe_lift_gps_from_exif(values: dict[str, Any]) -> None:
         return
     from bpp.utils.json_utils import safe_json_loads
 
-    data = safe_json_loads(blob, default=None, context="exif_json gps lift")
-    if not isinstance(data, dict):
-        return
+    data = safe_json_loads(blob, default={}, context="exif_json gps lift", expected_type=dict)
     lat = data.get("gps_lat")
     lon = data.get("gps_lon")
     if _valid_gps_pair(lat, lon):

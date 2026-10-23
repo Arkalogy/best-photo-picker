@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import csv
 import errno
-import json
 import os
+import threading
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
-from bpp import __version__
 from bpp.output.export_metadata import (
     _iter_weighted_score_pairs,
     _safe_source_name,
@@ -29,11 +27,12 @@ from bpp.output.export_modes import (  # noqa: F401 — re-exported for plugins/
     _needs_processing,
     _process_image,
     bundle_selected_zip,
+    metadata_not_strippable,
     register_export_mode,
 )
+from bpp.output.export_reports import _write_manifest, _write_reports
 from bpp.utils.logging import get_logger
 from bpp.utils.paths import safe_join
-from bpp.utils.retry import retry_io
 from bpp.utils.video import is_video_file
 
 # Re-exported from bpp.output.export_metadata since the v0.1 cleanup.
@@ -78,6 +77,14 @@ class ExportResult:
     exported: int
     failed: int
     disk_error: dict[str, Any] | None = None
+    #: One entry per failed photo: ``{"index", "source", "error"}``.
+    failures: list[dict[str, Any]] = field(default_factory=list)
+    #: Files exported with their metadata although removal was asked for
+    #: (videos: the export doesn't re-encode them). Reported, never silent.
+    metadata_kept: int = 0
+    #: The run was cancelled between photos: ``exported`` counts what was
+    #: written before the stop; no manifest, report, gallery or bundle.
+    cancelled: bool = False
 
     def __iter__(self):
         # Back-compat for any caller that still tuple-unpacks the
@@ -85,6 +92,18 @@ class ExportResult:
         # read the fields by name.
         yield self.exported
         yield self.failed
+
+
+@dataclass(frozen=True)
+class _WritePlan:
+    """How each photo is written: the options of one export run."""
+
+    mode: str  # the per-photo mode ("copy" when bundling to zip)
+    fmt: str
+    max_size: int | None
+    quality: int
+    strip_metadata: bool
+    process: bool  # format / resize conversion needed
 
 
 def export_selected(
@@ -103,6 +122,7 @@ def export_selected(
     include_source_paths: bool = False,
     strip_metadata: bool = True,
     on_progress: Callable[[int, int, str], None] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> ExportResult:
     """Export selected photos and write reports.
 
@@ -124,7 +144,10 @@ def export_selected(
     these sidecar files. Pass ``include_source_paths=True``
     to opt in to absolute paths for diagnostics. Image exports in copy/original
     mode strip embedded metadata by default; pass ``strip_metadata=False`` to
-    preserve original image bytes intentionally."""
+    preserve original image bytes intentionally.
+
+    ``cancel_event`` is checked between photos: once set, the loop stops,
+    what was written stays, and the sidecar files are skipped."""
     if config is None:
         config = {}
 
@@ -134,17 +157,31 @@ def export_selected(
     # 'Overwrite' silently nuked everything. Now we create the folder if
     # missing and let individual photo writes overwrite same-named files
     # in place. Non-export files in the destination are preserved.
-    selected_dir = os.path.join(outdir, "selected")
-    os.makedirs(selected_dir, exist_ok=True)
-
     # "zip" is a bundle mode: write each photo exactly as copy mode would
     # (so format/resize/strip-metadata all apply — Option A), then pack
     # the staging folder into a single archive after the loop. The
-    # per-photo write therefore uses the "copy" code path.
+    # per-photo write therefore uses the "copy" code path. The staging
+    # folder is this export's own temporary one, so bundling removes
+    # only what this export wrote — never an earlier export's files in
+    # ``selected/``.
     bundle_zip = mode == "zip"
-    effective_mode = "copy" if bundle_zip else mode
+    if bundle_zip:
+        import tempfile
 
-    process = _needs_processing(effective_mode, fmt, max_size)
+        os.makedirs(outdir, exist_ok=True)
+        selected_dir = tempfile.mkdtemp(prefix=".bundle-", dir=outdir)
+    else:
+        selected_dir = os.path.join(outdir, "selected")
+        os.makedirs(selected_dir, exist_ok=True)
+    effective_mode = "copy" if bundle_zip else mode
+    plan = _WritePlan(
+        mode=effective_mode,
+        fmt=fmt,
+        max_size=max_size,
+        quality=quality,
+        strip_metadata=strip_metadata,
+        process=_needs_processing(effective_mode, fmt, max_size),
+    )
 
     # snapshot the weighted-scorer registry ONCE per
     # export run instead of re-walking it for every photo's XMP
@@ -153,17 +190,143 @@ def export_selected(
     # now it's 1.
     score_pairs = _iter_weighted_score_pairs()
 
-    # Export files
-    exported = []
-    failed = []
+    cancelled = False
+    keep_staging = False  # the photos stay, visible or not: never removed
+    try:
+        exported, failed, disk_error, metadata_kept, cancelled = _write_photos(
+            selected, selected_dir, plan, score_pairs, write_xmp, on_progress, cancel_event
+        )
+        if failed:
+            log.warning("Export completed with %d failures out of %d", len(failed), len(selected))
+
+        if cancelled:
+            log.info("Export cancelled after %d of %d photos", len(exported), len(selected))
+            if bundle_zip and exported:
+                # The photos written so far stay, where the user can see them.
+                keep_staging = True
+                selected_dir = _keep_staging_visible(outdir, selected_dir)
+        else:
+            if write_manifest and exported:
+                _write_manifest(outdir, exported, score_pairs, library_path, include_source_paths)
+
+            report_path = _write_reports(
+                outdir, selected, analysis, config, score_pairs, library_path, include_source_paths
+            )
+            log.info("Exported %d photos to %s", len(exported), selected_dir)
+            log.info("Report: %s", report_path)
+
+            if bundle_zip and exported and disk_error is None:
+                disk_error = _bundle_zip(outdir, selected_dir, exported)
+                if disk_error is not None:
+                    # The zip failed: keep the photos, under a name the user
+                    # can see, instead of in the hidden staging folder.
+                    keep_staging = True
+                    selected_dir = _keep_staging_visible(outdir, selected_dir)
+    finally:
+        if (
+            bundle_zip
+            and not keep_staging
+            and os.path.isdir(selected_dir)
+            and os.path.basename(selected_dir).startswith(".bundle-")
+        ):
+            import shutil
+
+            shutil.rmtree(selected_dir, ignore_errors=True)
+
+    if gallery and not bundle_zip and not cancelled:
+        from bpp.output.gallery import generate_gallery
+
+        generate_gallery(selected, outdir)
+
+    return ExportResult(
+        exported=len(exported),
+        failed=len(failed),
+        disk_error=disk_error,
+        failures=failed,
+        metadata_kept=metadata_kept,
+        cancelled=cancelled,
+    )
+
+
+def _fatal_disk_error(e: OSError, first_failed_index: int) -> dict[str, Any] | None:
+    """The ``disk_error`` payload for an OSError that will repeat for
+    every further write, else None."""
+    category = _FATAL_OSERROR_CATEGORIES.get(e.errno or -1)
+    if category is None:
+        return None
+    return {
+        "category": category,
+        "errno": e.errno,
+        "first_failed_index": first_failed_index,
+        "message": str(e),
+    }
+
+
+def _write_one(src: str, dest: str, is_vid: bool, plan: _WritePlan) -> str:
+    """Write one photo; returns the destination path actually written
+    (a format conversion can change the extension)."""
+    if plan.process and not is_vid:
+        return _process_image(
+            src, dest, plan.fmt, plan.max_size, plan.quality, keep_exif=not plan.strip_metadata
+        )
+    # Mode dispatch goes through ExportModeRegistry so
+    # plugin-registered modes work the same as built-ins.
+    # Unknown modes (typos / legacy clients) fall back to
+    # copy.
+    ext = os.path.splitext(src)[1].lower()
+    if plan.mode == "copy" and plan.strip_metadata and not is_vid:
+        # Removal was asked for: an image type the export can't strip
+        # fails rather than shipping its metadata (videos, and the link
+        # modes, are counted by the caller instead).
+        if ext not in _METADATA_STRIP_EXTS:
+            raise metadata_not_strippable(src, "this type can't be re-encoded")
+        return _copy_image_without_metadata(src, dest, plan.quality)
+    else:
+        mode_def = ExportModeRegistry.get(plan.mode)
+        handler = mode_def.handler if mode_def else _export_copy
+        handler(src, dest)
+    return dest
+
+
+def _keeps_metadata(plan: _WritePlan, is_vid: bool) -> bool:
+    """A file written with its metadata although removal was asked for:
+    a video (never re-encoded) or any file in a mode that links or hands
+    the original bytes over (hardlink, symlink, a plugin mode)."""
+    if not plan.strip_metadata:
+        return False
+    if is_vid:
+        return True  # never re-encoded, in any mode
+    return not plan.process and plan.mode != "copy"
+
+
+def _write_photos(
+    selected: list[dict[str, Any]],
+    selected_dir: str,
+    plan: _WritePlan,
+    score_pairs: list[tuple[str, str]],
+    write_xmp: bool,
+    on_progress: Callable[[int, int, str], None] | None,
+    cancel_event: threading.Event | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None, int, bool]:
+    """The per-photo loop. Returns ``(exported, failed, disk_error,
+    metadata_kept, cancelled)``; the loop stops at the first OSError
+    every further write would repeat, and between photos once
+    ``cancel_event`` is set."""
+    exported: list[dict[str, Any]] = []
+    failed: list[dict[str, Any]] = []
     disk_error: dict[str, Any] | None = None
+    metadata_kept = 0
+    cancelled = False
     total = len(selected)
     for i, item in enumerate(selected, 1):
+        if cancel_event is not None and cancel_event.is_set():
+            cancelled = True
+            break
         src = item["filepath"]
         orig_name = os.path.basename(src)
         dest_name = f"{i:03d}_{orig_name}"
         dest = safe_join(selected_dir, dest_name)
-        # L-S3: progress callback fires per-photo so the UI can show
+        # Progress callback fires per-photo so the UI can show
         # determinate progress on long exports (100+ photos with
         # format conversion ran for 30-60s with no feedback before).
         # Fail-soft: a misbehaving callback can't break the export.
@@ -175,27 +338,11 @@ def export_selected(
 
         is_vid = item.get("is_video") or is_video_file(src)
         try:
-            if process and not is_vid:
-                dest = _process_image(src, dest, fmt, max_size, quality)
-                dest_name = os.path.basename(dest)
-            else:
-                # Mode dispatch goes through ExportModeRegistry so
-                # plugin-registered modes work the same as built-ins.
-                # Unknown modes (typos / legacy clients) fall back to
-                # copy.
-                ext = os.path.splitext(src)[1].lower()
-                if (
-                    effective_mode == "copy"
-                    and strip_metadata
-                    and not is_vid
-                    and ext in _METADATA_STRIP_EXTS
-                ):
-                    _copy_image_without_metadata(src, dest, quality)
-                else:
-                    mode_def = ExportModeRegistry.get(effective_mode)
-                    handler = mode_def.handler if mode_def else _export_copy
-                    handler(src, dest)
+            dest = _write_one(src, dest, bool(is_vid), plan)
+            dest_name = os.path.basename(dest)
             exported.append({"index": i, "source": src, "dest": dest_name, "item": item})
+            if _keeps_metadata(plan, bool(is_vid)):
+                metadata_kept += 1
             if write_xmp:
                 # pass the full item dict; write_xmp_sidecar
                 # iterates the scorer registry to pick out the fields
@@ -211,166 +358,57 @@ def export_selected(
         except OSError as e:
             log.warning("Failed to export %s: %s", src, e)
             failed.append({"index": i, "source": src, "error": str(e)})
-            category = _FATAL_OSERROR_CATEGORIES.get(e.errno or -1)
-            if category is not None:
-                disk_error = {
-                    "category": category,
-                    "errno": e.errno,
-                    "first_failed_index": i,
-                    "message": str(e),
-                }
+            disk_error = _fatal_disk_error(e, i)
+            if disk_error is not None:
                 log.warning(
                     "Aborting export at photo %d: %s (errno=%s)",
                     i,
-                    category,
+                    disk_error["category"],
                     e.errno,
                 )
                 break
+        except Exception as e:
+            # A plugin export handler that raised something other than an
+            # OSError: the documented contract is per-photo isolation, so
+            # record it and carry on (it says nothing about the disk).
+            log.warning("Export handler failed on %s: %s", src, e, exc_info=True)
+            failed.append({"index": i, "source": src, "error": str(e)})
+    return exported, failed, disk_error, metadata_kept, cancelled
 
-    if failed:
-        log.warning("Export completed with %d failures out of %d", len(failed), len(selected))
 
-    # Write manifest.json (optional). build the per-photo
-    # `scores` dict from the registry — every weighted scorer + the
-    # aggregate, no hardcoded keys. reuse the
-    # `score_pairs` snapshot from the top of `export_selected`
-    # instead of walking the registry a second time.
-    if write_manifest and exported:
+def _keep_staging_visible(outdir: str, staging_dir: str) -> str:
+    """Rename a zip staging folder to a visible, dated ``selected-…``
+    folder (the bundle failed; the photos are still the export)."""
+    import datetime as _dt
 
-        def _full_scores(item: dict[str, Any]) -> dict[str, Any]:
-            scores = {"aggregate_score": item.get("aggregate_score", 0)}
-            for _short, full in score_pairs:
-                scores[full] = item.get(full, 0)
-            return scores
+    stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    visible = os.path.join(outdir, f"selected-{stamp}")
+    try:
+        os.replace(staging_dir, visible)
+    except OSError as e:
+        log.warning("Couldn't rename %s to %s: %s", staging_dir, visible, e)
+        return staging_dir
+    log.info("Bundle failed; the exported photos are in %s", visible)
+    return visible
 
-        manifest_data = [
-            {
-                "dest_name": e["dest"],
-                "original_path": e["source"],
-                "scores": _full_scores(e["item"]),
-                "rank": e["index"],
-            }
-            for e in exported
-        ]
-        write_json_manifest(
-            outdir,
-            manifest_data,
-            library_path,
-            include_source_paths=include_source_paths,
-            score_pairs=score_pairs,
-        )
 
-    # Write report.json
-    selected_paths = {s["filepath"] for s in selected}
+def _bundle_zip(
+    outdir: str, selected_dir: str, exported: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """ZIP bundle: pack the staging folder into one archive and drop the
+    loose folder so the user gets a single hand-off file. A
+    folder-relative gallery can't ride inside the zip, so it's skipped
+    in bundle mode. On a zip write failure we keep the loose folder —
+    the export isn't lost, just not bundled. Returns a ``disk_error``
+    when the failure would repeat, else None."""
+    archive_path = os.path.join(outdir, ZIP_BUNDLE_NAME)
+    try:
+        bundle_selected_zip(selected_dir, archive_path, [e["dest"] for e in exported])
+        import shutil
 
-    def _entry_filename(item: dict[str, Any]) -> str:
-        """Recipient-safe name. ``include_source_paths`` opts back in
-        to the absolute path — the report.json contract still uses
-        the ``filepath`` key for the value."""
-        if include_source_paths:
-            return item["filepath"]
-        return _safe_source_name(item["filepath"], library_path)
-
-    # every weighted scorer's full `<key>_score` field name
-    # comes from the registry, so a custom scorer's column lands in
-    # both report.json and the CSV without callsite edits.
-    # reuse the `score_pairs` snapshot from the top of
-    # `export_selected` — third walk of the registry per export, now
-    # the same first walk's result.
-    report_full_keys = [full for _short, full in score_pairs]
-
-    def _selected_entry(i: int, item: dict[str, Any]) -> dict[str, Any]:
-        out: dict[str, Any] = {
-            "index": i + 1,
-            "filepath": _entry_filename(item),
-            "date": item.get("date", ""),
-            "aggregate_score": item.get("aggregate_score", 0),
-        }
-        for full in report_full_keys:
-            out[full] = item.get(full, 0)
-        out["selection_reason"] = item.get("selection_reason", "")
-        out["cluster_size"] = item.get("cluster_size", 1)
-        return out
-
-    report = {
-        "version": __version__,
-        "config": config,
-        "total_analyzed": len(analysis),
-        "total_selected": len(selected),
-        "selected": [_selected_entry(i, item) for i, item in enumerate(selected)],
-        "skipped": [
-            {
-                "filepath": _entry_filename(item),
-                "aggregate_score": item.get("aggregate_score", 0),
-            }
-            for item in analysis
-            if item["filepath"] not in selected_paths
-        ],
-    }
-
-    def _write_json_report():
-        tmp = report_path + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(report, f, indent=2)
-        os.replace(tmp, report_path)
-
-    report_path = os.path.join(outdir, "report.json")
-    retry_io(_write_json_report, label="write_report_json")
-
-    # Write report.csv. fieldnames mirror the JSON shape.
-    csv_fieldnames = [
-        "index",
-        "filepath",
-        "date",
-        "aggregate_score",
-        *report_full_keys,
-        "selection_reason",
-    ]
-
-    def _write_csv_report():
-        with open(csv_path, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=csv_fieldnames)
-            writer.writeheader()
-            for entry in report["selected"]:
-                writer.writerow({k: entry.get(k, "") for k in writer.fieldnames})
-
-    csv_path = os.path.join(outdir, "report.csv")
-    retry_io(_write_csv_report, label="write_report_csv")
-
-    log.info("Exported %d photos to %s", len(exported), selected_dir)
-    log.info("Report: %s", report_path)
-
-    # ZIP bundle: pack the staging folder into one archive and drop the
-    # loose folder so the user gets a single hand-off file. A
-    # folder-relative gallery can't ride inside the zip, so it's skipped
-    # in bundle mode (below). On a zip write failure we keep the loose
-    # folder — the export isn't lost, just not bundled.
-    if bundle_zip and exported and disk_error is None:
-        archive_path = os.path.join(outdir, ZIP_BUNDLE_NAME)
-        try:
-            bundle_selected_zip(selected_dir, archive_path, [e["dest"] for e in exported])
-            import shutil
-
-            shutil.rmtree(selected_dir, ignore_errors=True)
-            log.info("Bundled %d photos into %s", len(exported), archive_path)
-        except OSError as e:
-            log.warning("Failed to bundle export into %s: %s", archive_path, e)
-            category = _FATAL_OSERROR_CATEGORIES.get(e.errno or -1)
-            if category is not None:
-                disk_error = {
-                    "category": category,
-                    "errno": e.errno,
-                    "first_failed_index": 0,
-                    "message": str(e),
-                }
-
-    if gallery and not bundle_zip:
-        from bpp.output.gallery import generate_gallery
-
-        generate_gallery(selected, outdir)
-
-    return ExportResult(
-        exported=len(exported),
-        failed=len(failed),
-        disk_error=disk_error,
-    )
+        shutil.rmtree(selected_dir, ignore_errors=True)
+        log.info("Bundled %d photos into %s", len(exported), archive_path)
+        return None
+    except OSError as e:
+        log.warning("Failed to bundle export into %s: %s", archive_path, e)
+        return _fatal_disk_error(e, 0)

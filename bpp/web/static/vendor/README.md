@@ -17,7 +17,7 @@ clauses.
 
 ## Why vendored, not pinned via CDN
 
-A CDN script tag in `index.html` is a network call on every page
+A CDN script tag in `bpp/web/templates/index.html` is a network call on every page
 load. The README claims "local-first, opt-in network features
 only" — a `unpkg.com` fetch on first paint contradicts that. CDN
 risks include outage, version pin drift, supply-chain compromise,

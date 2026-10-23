@@ -16,10 +16,11 @@ the rest of the cluster ops — there's no second blueprint to wire up.
 
 from __future__ import annotations
 
-import numpy as np
 from flask import Response, jsonify, request
 
-from bpp.constants import CLUSTER_DISMISSED
+from bpp.constants import CLUSTER_DISMISSED, CLUSTER_UNASSIGNED
+from bpp.db.event_hooks import dispatch_post_cluster
+from bpp.db.face_queries import assert_face_load_cap
 from bpp.db.smart_albums import get_affected_album_types, refresh_smart_albums
 from bpp.errors import ConflictError, ValidationError
 from bpp.scoring.face_cluster import cluster_faces
@@ -74,6 +75,13 @@ def api_faces_recluster() -> tuple[Response, int]:
     # Snapshot old cluster→photo mappings BEFORE re-clustering
     old_cluster_photos = _snapshot_cluster_photos(conn)
 
+    # Every non-dismissed embedding is loaded below: refuse past the cap
+    # with a structured 503 (as merge/restore do) instead of an OOM kill.
+    active_count = conn.execute(
+        f"SELECT COUNT(*) FROM face_embeddings WHERE cluster_id != {CLUSTER_DISMISSED}"
+    ).fetchone()[0]
+    assert_face_load_cap(conn, active_count)
+
     # Load all non-dismissed embeddings (ORDER BY ensures deterministic cluster IDs)
     rows = conn.execute(
         "SELECT fe.id, fe.photo_id, fe.face_index, fe.embedding "
@@ -84,8 +92,15 @@ def api_faces_recluster() -> tuple[Response, int]:
     if not rows:
         return jsonify({"status": "reclustered", "clusters": 0}), 200
 
-    fe_ids = [r[0] for r in rows]
-    embeddings = [np.frombuffer(r[3], dtype=np.float32) for r in rows]
+    from bpp.db.face_embedding_safety import decode_rows
+
+    # Only the library's current-size, valid embeddings: a mixed or
+    # corrupt row would otherwise misalign labels with ids.
+    usable = decode_rows(conn, ((r[0], r[3]) for r in rows), where="bp_faces_recluster")
+    if not usable:
+        return jsonify({"status": "reclustered", "clusters": 0}), 200
+    fe_ids = [fid for fid, _ in usable]
+    embeddings = [emb for _, emb in usable]
 
     labels = cluster_faces(embeddings, threshold=threshold)
 
@@ -93,6 +108,12 @@ def api_faces_recluster() -> tuple[Response, int]:
         "UPDATE face_embeddings SET cluster_id=? WHERE id=?",
         zip(labels, fe_ids, strict=True),
     )
+    # Rows left out (unreadable, or another model's size) must not keep
+    # an old cluster number that now means someone else.
+    kept_ids = set(fe_ids)
+    skipped = [(CLUSTER_UNASSIGNED, r[0]) for r in rows if r[0] not in kept_ids]
+    if skipped:
+        conn.executemany("UPDATE face_embeddings SET cluster_id=? WHERE id=?", skipped)
     conn.commit()
 
     # Remap named albums and person tags from old cluster IDs to new ones
@@ -112,5 +133,6 @@ def api_faces_recluster() -> tuple[Response, int]:
     # Refresh smart albums for the new clusters
     refresh_smart_albums(conn, kinds=get_affected_album_types("face_tag"))
 
-    n_clusters = len(set(labels))
+    n_clusters = len({label for label in labels if label != CLUSTER_UNASSIGNED})
+    dispatch_post_cluster(conn, "face", n_clusters)
     return jsonify({"status": "reclustered", "clusters": n_clusters}), 200

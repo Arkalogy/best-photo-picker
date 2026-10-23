@@ -53,6 +53,8 @@ _REDACT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
     # ?_token=<value> or &_token=<value> in URLs / log lines
     (re.compile(r"([?&]_token=)([^\s\"'&#]+)"), r"\1[REDACTED]"),
+    # ?_boot=<value>: the loopback boot key (werkzeug access lines).
+    (re.compile(r"([?&]_boot=)([^\s\"'&#]+)"), r"\1[REDACTED]"),
     # *_auth_token / *_share_token / *_app_token bare key=value or
     # key: value (YAML / Python dict-repr / debug dumps).
     # Optional prefix `\w+_` catches `lan_share_token`,
@@ -103,6 +105,11 @@ _REDACT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (
         re.compile(r"(?<![/A-Za-z0-9._-])/home/[^/\s'\"]+/"),
         "~/",
+    ),
+    # Windows `C:\\Users\\<name>\\`.
+    (
+        re.compile(r"(?<![\\A-Za-z0-9._-])[A-Za-z]:\\+Users\\+[^\\\s'\"]+\\+"),
+        r"~\\",
     ),
 )
 
@@ -155,7 +162,7 @@ class InMemoryHandler(logging.Handler):
         # needs to see in Activity, not just buried in server.log.
         if record.name.startswith(self._UI_NOISE_LOGGERS) and record.levelno < logging.ERROR:
             return
-        # Bug #11 (UAT 2026-06-01): the activity-log dropdown surfaces
+        # The activity-log dropdown surfaces
         # the formatted message verbatim. Python's standard formatter
         # appends the traceback to the message when record.exc_info is
         # set — dumping 50+ lines of urllib internals into the user-

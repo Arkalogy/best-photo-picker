@@ -1,6 +1,6 @@
 """Click-through dialog endpoints for the restricted-model registry.
 
-Batch 4 / item 5 of the legal-posture rollout. The HTML/JS dialog
+The HTML/JS dialog
 (and the CLI text prompt — see :mod:`bpp.commands.model` for the
 CLI parity story) POSTs through here. The blueprint stays thin —
 all the validation + persistence lives in
@@ -56,69 +56,23 @@ from bpp.registry import (
     confirm_acceptance,
     get_entry,
     iter_entries,
-    list_acceptances,
     prepare_acceptance,
     read_record,
     set_use_context,
     utc_now_iso,
 )
-from bpp.registry.labels import group_for_entry, ui_label_for_entry
+from bpp.registry.labels import group_for_entry
 from bpp.utils.logging import get_logger
-from bpp.web.bp_catalog import _catalog_loaders
+from bpp.web.catalog_loaders import catalog_loaders
+from bpp.web.picker_fields import entry_to_picker_dict
 from bpp.web.share import requires_local_app
+
+#: Kept under its old name for the tests that build one row directly.
+_entry_to_picker_dict = entry_to_picker_dict
 
 log = get_logger(__name__)
 
 bp = Blueprint("model_registry", __name__)
-
-
-def _entry_to_picker_dict(entry: Any, loaders: dict | None = None) -> dict[str, Any]:
-    """Serialise one :class:`ModelEntry` into the picker shape.
-
-    ``loaders`` is the catalog-loader map (``_catalog_loaders()``). The
-    entries endpoint computes it ONCE and passes it in so this isn't
-    rebuilt (with its lazy imports) per row. Callers that serialise a
-    single entry can omit it — it's resolved lazily. Resolved per call
-    rather than cached at module level so test patches on the loader
-    functions still take effect.
-    """
-    if loaders is None:
-        loaders = _catalog_loaders()
-    group_title, group_subtitle = group_for_entry(entry)
-    catalog_info = loaders.get(entry.id)
-    return {
-        "id": entry.id,
-        "display_name": entry.display_name,
-        "kind": entry.kind,
-        "ui_label": ui_label_for_entry(entry),
-        "group_title": group_title,
-        "group_subtitle": group_subtitle,
-        "license_summary": entry.license_summary,
-        "status": entry.status.value,
-        "requires_explicit_ack": entry.requires_explicit_ack,
-        "commercial_use_restriction_known": (entry.commercial_use_restriction_known),
-        "default_for_kind": entry.default_for_kind,
-        "ack_text_kind": entry.ack_text_kind,
-        # Surfaced so the Settings → Models picker can show the
-        # download size BEFORE the user accepts and triggers the
-        # fetch. ``0`` means unknown — picker falls back to "—".
-        "expected_download_size_bytes": getattr(entry, "expected_download_size_bytes", 0),
-        # Catalog entries are runtime-fetched (weights pulled on demand,
-        # not in the download manifest). The picker reads these to drive
-        # the download lifecycle. ``is_catalog_entry`` says "this entry's
-        # weights come via the catalog ensure-weights endpoint" — it is
-        # the authoritative routing signal, independent of whether a
-        # (fileless) legacy install record happens to be attached. Before
-        # this flag the picker inferred catalog-ness from "no install
-        # record", which broke for LaMa / NudeNet: both DO have a legacy
-        # feature row (with an empty file list), so they were misrouted
-        # and lost their Download action entirely.
-        "is_catalog_entry": bool(catalog_info),
-        # ``catalog_on_disk`` is the real on-disk check for catalog
-        # entries. ``False`` for non-catalog entries (they report
-        # presence via ``install.files``).
-        "catalog_on_disk": bool(catalog_info and catalog_info[0]()),
-    }
 
 
 @bp.get("/api/v1/model-registry/entries")
@@ -142,11 +96,12 @@ def api_model_registry_entries() -> tuple[Any, int]:
 
     # Build the catalog-loader map once for the whole response instead
     # of rebuilding it (with its lazy imports) inside every row.
-    loaders = _catalog_loaders()
+    loaders = catalog_loaders()
+    states = _registry_load_states()  # cached; one pass for the whole response
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for entry in iter_entries():
         key = group_for_entry(entry)
-        grouped.setdefault(key, []).append(_entry_to_picker_dict(entry, loaders))
+        grouped.setdefault(key, []).append(entry_to_picker_dict(entry, loaders, states))
     # BYOM entries appear in the picker under their own group so
     # users can distinguish their own files from registered models.
     # group_for_entry returns the permissive subtitle for BYOM
@@ -155,7 +110,7 @@ def api_model_registry_entries() -> tuple[Any, int]:
     # to render them in a separate sub-section.
     for entry in iter_byom_model_entries():
         key = group_for_entry(entry)
-        grouped.setdefault(key, []).append(_entry_to_picker_dict(entry, loaders))
+        grouped.setdefault(key, []).append(entry_to_picker_dict(entry, loaders, states))
     # Stable ordering: permissive first, restricted second. The
     # permissive group does not carry the "commercial use restricted"
     # signal so a maintainer reading the picker output sees the safe
@@ -167,6 +122,19 @@ def api_model_registry_entries() -> tuple[Any, int]:
         key=lambda g: 0 if "permissive" in g["title"].lower() else 1,
     )
     return jsonify({"groups": response_groups}), 200
+
+
+def _registry_load_states() -> dict[str, str] | None:
+    """Cached gate decisions for every registry entry (non-OK only), or
+    None if they can't be read (an unreadable acceptance log): the picker
+    then falls back to the acceptance list instead of failing to load."""
+    from bpp.web.model_filter import model_load_states
+
+    try:
+        return model_load_states()
+    except Exception:
+        log.warning("Couldn't compute model load states", exc_info=True)
+        return None
 
 
 def _find_any_entry(model_id: str) -> Any:
@@ -264,6 +232,16 @@ def api_acceptance_confirm() -> tuple[Any, int]:
     entry = _find_any_entry(model_id)
     if entry is None:
         raise ValidationError(f"Unknown model_id: {model_id!r}")
+    from bpp.registry.policy import registry_block
+
+    if registry_block(entry) is not None:
+        # Withdrawn or legally blocked: an acceptance couldn't enable it,
+        # so don't record one (or tell the user it worked). Status only —
+        # no file reads, so this can't fail.
+        raise ValidationError(
+            f"{entry.display_name} has been withdrawn or blocked in the model "
+            "registry, so it can't be enabled."
+        )
     use_context = _parse_use_context(body.get("use_context"))
     raw_checkboxes = body.get("checkbox_responses") or {}
     if not isinstance(raw_checkboxes, dict):
@@ -271,7 +249,7 @@ def api_acceptance_confirm() -> tuple[Any, int]:
             "checkbox_responses must be an object mapping checkbox id to boolean."
         )
     accepted_at = (body.get("accepted_at") or "").strip() or utc_now_iso()
-    separate_rights_asserted = bool(body.get("separate_rights_asserted", False))
+    separate_rights_asserted = body.get("separate_rights_asserted", False)  # bool checked below
     source_of_rights_note = str(body.get("source_of_rights_note") or "")
 
     draft = prepare_acceptance(entry, use_context=use_context)
@@ -283,7 +261,7 @@ def api_acceptance_confirm() -> tuple[Any, int]:
     # POST always failed missing-required-checkbox validation for any
     # non-canonical dialog.
     checkbox_responses = {
-        cb_id: bool(raw_checkboxes.get(cb_id, False)) for cb_id, _ in draft.required_checkboxes
+        cb_id: raw_checkboxes.get(cb_id, False) for cb_id, _ in draft.required_checkboxes
     }
     try:
         row = confirm_acceptance(
@@ -301,6 +279,11 @@ def api_acceptance_confirm() -> tuple[Any, int]:
         # errors, not server bugs, and shouldn't trip
         # 5xx-severity monitoring.
         raise ValidationError(str(exc)) from exc
+    # Re-arm gates / once-per-process skip notices so the new
+    # acceptance is picked up immediately.
+    from bpp.scoring import model_lifecycle
+
+    model_lifecycle.reset_runtime_for_legal_id(row.model_id)
     log.info(
         "Acceptance recorded: model=%s use_context=%s separate_rights_asserted=%s",
         row.model_id,
@@ -375,9 +358,42 @@ def api_acceptance_list() -> tuple[Any, int]:
     """Read-only view of the acceptance log. Settings → "View your
     acceptances" panel consumes this. No filtering — the list is
     typically short (a handful of restricted-model acceptances per
-    user, lifetime) so client-side rendering is fine."""
-    rows = [asdict(row) for row in list_acceptances()]
-    return jsonify({"acceptances": rows}), 200
+    user, lifetime) so client-side rendering is fine.
+
+    Each row carries ``current`` — True when it is an acceptance of the
+    entry's CURRENT acknowledgment text (the same hash check the load
+    gate uses) — and ``needs_reaccept`` — True for an acceptance of an
+    older text (e.g. after a disclaimer-version bump). The picker reads
+    these off each model's latest row so a stale acceptance shows as
+    "re-accept needed" instead of "accepted" while the gate refuses
+    the model."""
+    from bpp.registry.acceptance_log import snapshot
+
+    # One read of the log: each model's latest row is judged as the load
+    # gate sees it (an acceptance followed by a damaged line reads as
+    # withdrawn), and ``withdrawn_by_damage`` lets Settings say why.
+    snap = snapshot()
+    latest_index = {row.model_id: i for i, row in enumerate(snap.rows)}
+    entries: dict[str, Any] = {}
+    rows: list[dict[str, Any]] = []
+    for i, row in enumerate(snap.rows):
+        if row.model_id not in entries:
+            entries[row.model_id] = _find_any_entry(row.model_id)
+        judged = snap.gate_view[row.model_id] if latest_index[row.model_id] == i else row
+        rows.append({**asdict(row), **_acceptance_freshness(judged, entries[row.model_id])})
+    return jsonify(
+        {"acceptances": rows, "withdrawn_by_damage": list(snap.withdrawn_by_damage)}
+    ), 200
+
+
+def _acceptance_freshness(row: Any, entry: Any) -> dict[str, bool]:
+    """``current`` / ``needs_reaccept`` flags for one acceptance-log row
+    (see :func:`api_acceptance_list`) — the load gate's own judgement
+    (:func:`acceptance_state`), so the list can't disagree with it."""
+    from bpp.registry.acceptance import acceptance_state
+
+    st = acceptance_state(entry, row=row)
+    return {"current": st.current, "needs_reaccept": st.needs_reaccept}
 
 
 @bp.post("/api/v1/model-registry/acceptance/revoke")
@@ -401,5 +417,10 @@ def api_acceptance_revoke() -> tuple[Any, int]:
         # Nothing currently accepted to withdraw — surface as a 400 so the
         # UI can tell the user rather than silently no-op.
         raise ValidationError(f"No active acceptance to withdraw for {model_id!r}.")
-    log.info("Acceptance withdrawn: model=%s", model_id)
+    # Take effect now, not after a restart: re-arm memoized license
+    # gates + drop cached sessions for this model's files.
+    from bpp.scoring import model_lifecycle
+
+    reset_names = model_lifecycle.reset_runtime_for_legal_id(model_id)
+    log.info("Acceptance withdrawn: model=%s (reset: %s)", model_id, reset_names or "none")
     return jsonify({"revocation": asdict(row)}), 200

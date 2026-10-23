@@ -2,11 +2,11 @@
 
 Extracted from :mod:`bpp.web.state` as part of the 500-LOC cap split.
 
-During P4 the canonical storage of derived caches and the worker pool
-moved off ``WebAppState`` and onto collaborators (``self.caches``,
+The canonical storage of derived caches and the worker pool moved off
+``WebAppState`` and onto collaborators (``self.caches``,
 ``self.workers``, ``self.analysis_store``). Every legacy access site
-(blueprints, plugins, tests, the ~3,800 references the audit found
-across the tree) still works because the old attributes (``ctx._workers``,
+(blueprints, plugins, tests — ~3,800 references across the tree)
+still works because the old attributes (``ctx._workers``,
 ``ctx.clip_cache``, ``ctx._face_cluster_map``, ``ctx.phash_ready``, …)
 remain as ``@property`` delegates that read/write the new collaborators.
 
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 class _LegacyDelegateMixin:
     """Deprecated-but-supported property delegates for WebAppState.
 
-    Every property here reads/writes one of the P4 collaborators
+    Every property here reads/writes one of the collaborators
     (``self.workers``, ``self.caches``, ``self.analysis_store``). The
     concrete subclass MUST populate those attributes before any delegate
     is touched, otherwise property access raises AttributeError.
@@ -49,13 +49,13 @@ class _LegacyDelegateMixin:
     # Worker pool legacy access.
     # ------------------------------------------------------------------
     @property
-    @_deprecated_attr("ctx.workers (P4 WorkerPool)")
+    @_deprecated_attr("ctx.workers (WorkerPool)")
     def _workers(self) -> dict[str, BackgroundWorker]:
         """Legacy access path. New code should use ``self.workers``
         (the :class:`WorkerPool` collaborator) directly.
 
         Wrapped in @deprecated_attr so the first access per process
-        logs a WARNING with the new path. The other P4-relocated
+        logs a WARNING with the new path. The other relocated
         attributes (caches.*, analysis_store.*) follow the same
         pattern as their call sites migrate."""
         # Returning the inner dict means assignments like
@@ -65,13 +65,15 @@ class _LegacyDelegateMixin:
         return self.workers._workers  # type: ignore[attr-defined]
 
     # ------------------------------------------------------------------
-    # P4 ModelCache property delegates.
+    # ModelCache property delegates.
     # ------------------------------------------------------------------
     @property
+    @_deprecated_attr("ctx.caches.clip_cache")
     def clip_cache(self) -> dict[str, Any]:
         return self.caches.clip_cache  # type: ignore[attr-defined]
 
     @clip_cache.setter
+    @_deprecated_attr("ctx.caches.clip_cache")
     def clip_cache(self, value: dict[str, Any]) -> None:
         # Identity swap honors the state_compat module-level contract
         # ("property reads through, never copies"). The previous shape
@@ -89,74 +91,91 @@ class _LegacyDelegateMixin:
         self.caches.clip_cache = dict(value)  # type: ignore[attr-defined]
 
     @property
+    @_deprecated_attr("ctx.caches.face_cluster_map (FaceClusterMapCache)")
     def _face_cluster_map(self) -> dict[str, list[int]] | None:
         return self.caches.face_cluster_map._map  # type: ignore[attr-defined]
 
     @_face_cluster_map.setter
+    @_deprecated_attr("ctx.caches.face_cluster_map (FaceClusterMapCache)")
     def _face_cluster_map(self, value: dict[str, list[int]] | None) -> None:
         with self.caches.face_cluster_map._lock:  # type: ignore[attr-defined]
             self.caches.face_cluster_map._map = value  # type: ignore[attr-defined]
 
     @property
+    @_deprecated_attr("ctx.caches.face_cluster_map (it locks itself)")
     def _face_cluster_map_lock(self) -> threading.Lock:
         return self.caches.face_cluster_map._lock  # type: ignore[attr-defined]
 
     @property
+    @_deprecated_attr("ctx.caches.enhanced_ids.edited")
     def _edited_ids(self) -> set[int] | None:
         return self.caches.enhanced_ids.edited  # type: ignore[attr-defined]
 
     @_edited_ids.setter
+    @_deprecated_attr("ctx.caches.enhanced_ids.edited")
     def _edited_ids(self, value: set[int] | None) -> None:
         self.caches.enhanced_ids.edited = value  # type: ignore[attr-defined]
 
     @property
+    @_deprecated_attr("ctx.caches.enhanced_ids.auto_enhanced")
     def _auto_enhanced_ids(self) -> set[int] | None:
         return self.caches.enhanced_ids.auto_enhanced  # type: ignore[attr-defined]
 
     @_auto_enhanced_ids.setter
+    @_deprecated_attr("ctx.caches.enhanced_ids.auto_enhanced")
     def _auto_enhanced_ids(self, value: set[int] | None) -> None:
         self.caches.enhanced_ids.auto_enhanced = value  # type: ignore[attr-defined]
 
     # ------------------------------------------------------------------
-    # P4b AnalysisStore property delegates.
+    # AnalysisStore property delegates.
     # ------------------------------------------------------------------
     @property
+    @_deprecated_attr("ctx.analysis_store.phash_ready")
     def phash_ready(self) -> threading.Event:
         return self.analysis_store.phash_ready  # type: ignore[attr-defined]
 
     @phash_ready.setter
+    @_deprecated_attr("ctx.analysis_store.phash_ready")
     def phash_ready(self, value: threading.Event) -> None:
         self.analysis_store.phash_ready = value  # type: ignore[attr-defined]
 
     @property
+    @_deprecated_attr("ctx.analysis_store.phash_generation")
     def _phash_generation(self) -> int:
         return self.analysis_store.phash_generation  # type: ignore[attr-defined]
 
     @_phash_generation.setter
+    @_deprecated_attr("ctx.analysis_store.phash_generation")
     def _phash_generation(self, value: int) -> None:
         self.analysis_store.phash_generation = value  # type: ignore[attr-defined]
 
     @property
+    @_deprecated_attr("ctx.analysis_store.compute_thread")
     def _compute_thread(self) -> threading.Thread | None:
         return self.analysis_store.compute_thread  # type: ignore[attr-defined]
 
     @_compute_thread.setter
+    @_deprecated_attr("ctx.analysis_store.compute_thread")
     def _compute_thread(self, value: threading.Thread | None) -> None:
         self.analysis_store.compute_thread = value  # type: ignore[attr-defined]
 
     @property
+    @_deprecated_attr("ctx.analysis_store.warm_thread")
     def _warm_thread(self) -> threading.Thread | None:
         return self.analysis_store.warm_thread  # type: ignore[attr-defined]
 
     @_warm_thread.setter
+    @_deprecated_attr("ctx.analysis_store.warm_thread")
     def _warm_thread(self, value: threading.Thread | None) -> None:
         self.analysis_store.warm_thread = value  # type: ignore[attr-defined]
 
     @property
+    @_deprecated_attr("ctx.analysis_store.cancel_warm")
     def _cancel_warm(self) -> threading.Event:
         return self.analysis_store.cancel_warm  # type: ignore[attr-defined]
 
     @_cancel_warm.setter
+    @_deprecated_attr("ctx.analysis_store.cancel_warm")
     def _cancel_warm(self, value: threading.Event) -> None:
         self.analysis_store.cancel_warm = value  # type: ignore[attr-defined]
 
@@ -181,5 +200,5 @@ class _LegacyDelegateMixin:
 
     @property
     def export_worker(self) -> Any:
-        """L-S3: streaming export worker — see bpp/web/export_worker.py."""
+        """Streaming export worker — see bpp/web/export_worker.py."""
         return self.workers["export"]  # type: ignore[return-value,attr-defined]

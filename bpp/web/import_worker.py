@@ -14,6 +14,7 @@ from bpp.scoring.aggregate import (
     init_analysis_db,
     normalize_blur_scores,
     process_one,
+    process_one_settings,
 )
 from bpp.utils.logging import get_logger
 from bpp.web.base_worker import BackgroundWorker
@@ -21,8 +22,49 @@ from bpp.web.base_worker import BackgroundWorker
 log = get_logger(__name__)
 
 
+def _store_scored(conn: Any, valid: list[dict[str, Any]], config: dict[str, Any]) -> None:
+    """Finish the import's analysis: aggregate, write the rows, tell the
+    plugins, sync the All album and recluster near-duplicates."""
+    from bpp.db.dedupe import assign_near_duplicate_clusters
+    from bpp.db.event_hooks import dispatch_post_analyze
+    from bpp.db.photos import bulk_upsert_photos
+
+    normalize_blur_scores(valid)
+    compute_aggregate(valid, config)
+    bulk_upsert_photos(conn, valid)
+    # Imported photos are scored here, not by the analyze worker:
+    # plugins subscribed to post_analyze must hear about them too.
+    dispatch_post_analyze(conn, valid)
+    sync_all_photos_album(conn)
+    # Recompute near-duplicate clusters after each import+analyze so
+    # the Duplicates album and review flow are always up to date.
+    assign_near_duplicate_clusters(conn)
+
+
+def _store_pet_detections(conn: Any, valid: list[dict[str, Any]]) -> int:
+    """Write every scored photo's pet detections: one id lookup and one
+    bulk upsert for the batch, not a statement per photo. Returns the
+    number of detections stored."""
+    from bpp.db.pets import bulk_upsert_pet_detections
+    from bpp.db.photos import get_photo_id_map_by_paths
+
+    with_pets = [item for item in valid if item.get("pet_detections")]
+    if not with_pets:
+        return 0
+    id_map = get_photo_id_map_by_paths(conn, [item["filepath"] for item in with_pets])
+    items = [
+        (id_map[item["filepath"]], item["pet_detections"])
+        for item in with_pets
+        if item["filepath"] in id_map
+    ]
+    return bulk_upsert_pet_detections(conn, items)
+
+
 class ImportWorker(BackgroundWorker):
     """Runs photo import + analysis in a background thread, reporting progress via a queue."""
+
+    # Imports, then analyzes: the scoring models (faces, nudity, pets, CLIP).
+    loads_installable_packages = True
 
     _worker_name = "Import"
 
@@ -57,7 +99,7 @@ class ImportWorker(BackgroundWorker):
         batch_name: str | None,
         import_live_photo_sidecars: bool,
     ) -> None:
-        # Server-log breadcrumbs — same pattern as the M10/M11 + Phase 5
+        # Server-log breadcrumbs — same pattern as the face-worker + Phase 5
         # daemon bookends. Import is a 5-10 minute run on large
         # libraries; without these, an operator debugging a stuck or
         # slow run sees no anchor in server.log tying the attempt to a
@@ -152,7 +194,9 @@ class ImportWorker(BackgroundWorker):
 
         cache_db_path = os.path.join(workdir, DB_NAME)
         init_analysis_db(cache_db_path)
-        max_long_side = config.get("max_long_side", 1024)
+        # The same settings an Analyze scores with: the stored model
+        # switches and thresholds, not the scorer's defaults.
+        max_long_side, face_conf, model_toggles, thresholds = process_one_settings(config)
 
         valid: list[dict[str, Any]] = []
         total_analyze = len(result.imported_paths)
@@ -160,7 +204,9 @@ class ImportWorker(BackgroundWorker):
             if self._cancelled.is_set():
                 self._emit({"type": "cancelled"})
                 return
-            analyzed = process_one((filepath, max_long_side, cache_db_path))
+            analyzed = process_one(
+                (filepath, max_long_side, cache_db_path, face_conf, model_toggles, thresholds)
+            )
             if analyzed is not None:
                 valid.append(analyzed)
             self._emit(
@@ -173,42 +219,11 @@ class ImportWorker(BackgroundWorker):
             )
 
         if valid:
-            normalize_blur_scores(valid)
-            compute_aggregate(valid, config)
+            _store_scored(conn, valid, config)
 
-            from bpp.db.photos import bulk_upsert_photos
+            from bpp.db.pets import assign_pet_clusters
 
-            bulk_upsert_photos(conn, valid)
-            sync_all_photos_album(conn)
-            # Recompute near-duplicate clusters after each import+analyze so
-            # the Duplicates album and review flow are always up to date.
-            from bpp.db.dedupe import assign_near_duplicate_clusters
-
-            assign_near_duplicate_clusters(conn)
-
-            # Save pet detections.
-            # pre-load filepath → photo_id in ONE round-trip
-            # via the batched `get_photo_id_map_by_paths` instead of
-            # the per-item lookup that previously ran inside the
-            # loop. On a 1000-photo import that was 1000 extra DB
-            # round-trips; the dict lookup below is O(1).
-            from bpp.db.pets import (
-                assign_pet_clusters,
-                upsert_pet_detections,
-            )
-            from bpp.db.photos import get_photo_id_map_by_paths
-
-            paths_with_pets = [item["filepath"] for item in valid if item.get("pet_detections")]
-            id_map = get_photo_id_map_by_paths(conn, paths_with_pets) if paths_with_pets else {}
-
-            pet_count = 0
-            for item in valid:
-                dets = item.get("pet_detections", [])
-                if dets:
-                    photo_id = id_map.get(item["filepath"])
-                    if photo_id is not None:
-                        upsert_pet_detections(conn, photo_id, dets)
-                        pet_count += len(dets)
+            pet_count = _store_pet_detections(conn, valid)
             if pet_count > 0:
                 assign_pet_clusters(conn)
                 # refresh the pet smart album immediately so
@@ -218,11 +233,23 @@ class ImportWorker(BackgroundWorker):
                 # only triggered by other state changes).
                 from bpp.db.smart_albums import get_affected_album_types, refresh_smart_albums
 
-                refresh_smart_albums(conn, kinds=get_affected_album_types("import"))
+                # … and the Duplicates / Moments albums the clustering above
+                # feeds (the dedup domain), in the same pass.
+                refresh_smart_albums(
+                    conn,
+                    kinds={
+                        *get_affected_album_types("import"),
+                        *get_affected_album_types("dedup"),
+                    },
+                )
 
+        from bpp.web.analyze_finalize import finalize_import_in_worker
+
+        finalize_import_in_worker(self.ctx)
         self._emit(
             {
                 "type": "done",
+                "finalized": self.ctx is not None,  # the stream's backstop can skip
                 "imported": result.imported,
                 "skipped": result.skipped,
                 "analyzed": len(valid),

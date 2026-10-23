@@ -213,7 +213,7 @@ class TestUpdateCheckEndpoint:
         assert m.call_count == 2
 
 
-# ─── R9-supply-M1: response-size cap on the GitHub fetch ──────────────
+# ─── Response-size cap on the GitHub fetch ──────────────
 
 
 class _FakeResp:
@@ -299,7 +299,7 @@ class TestResponseSizeCap:
         assert result["tag_name"] == "v0.2.0"
 
 
-# ─── R9-supply-M2: endpoint must reject paired LAN devices ────────────
+# ─── Endpoint must reject paired LAN devices ────────────
 
 
 class TestUpdateCheckOwnerOnly:

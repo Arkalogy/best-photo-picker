@@ -5,7 +5,7 @@ Thin shim over :mod:`bpp.web.face_phase_pipeline` — builds the
 :func:`run_face_pipeline`, returns the ``(faces_found, n_clusters)``
 tuple the public API has always returned.
 
-P3 finish — every phase-specific control flow (journal skips,
+Every phase-specific control flow (journal skips,
 snapshot rehydration, mid-phase cancellation) lives on the phase
 classes in :mod:`face_phase_pipeline`. This module owns only the
 context wiring + the resume-vs-fresh journal id.
@@ -40,11 +40,11 @@ def extract_and_cluster_faces(
     """Extract face embeddings and cluster them.
 
     Shared logic used by both AnalyzeWorker (face phase) and FaceWorker.
-    P3 — the seven-phase pipeline lives in
+    The seven-phase pipeline lives in
     :data:`bpp.web.face_phase_pipeline.FACE_PIPELINE`; this function
     just builds the context and drives the runner.
     """
-    # Batch 3 / item 18 — fail closed if the download chokepoint is
+    # Fail closed if the download chokepoint is
     # not installed before any model work begins. Catches the case
     # where bpp.registry has not been imported by this code path,
     # which would let a transitively-imported third-party package
@@ -62,7 +62,7 @@ def extract_and_cluster_faces(
 
     enforce_chokepoint()
 
-    # Batch 5 / item 16 — hard-block restricted models at the
+    # Hard-block restricted models at the
     # orchestrator chokepoint when the user's declared use context
     # forbids them. The face-embedder default is the typical case
     # (SFace, permissive, ALLOW). A future restricted entry that
@@ -84,7 +84,11 @@ def extract_and_cluster_faces(
     # even though the implementation lives in this module.
     from bpp.web import face_worker
 
-    # Synthesize cancel_event into cancellation_check (P1 contract).
+    # This may be a spawned child: load plugins so a plugin embedder or
+    # detector the user picked is known here (see ensure_plugins_loaded).
+    face_worker.ensure_plugins_loaded()
+
+    # Synthesize cancel_event into cancellation_check (see ADR 0002).
     if cancel_event is not None:
         from bpp.utils.cancel import as_token
 

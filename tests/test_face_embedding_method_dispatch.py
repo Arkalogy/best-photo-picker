@@ -15,7 +15,7 @@ Both bugs were found while re-extracting the demo lib looking for the
   ``face_recognition.face_encodings`` returns ``float64``. Two call
   sites (``_extract_dlib`` and ``_supplement_with_scrfd``) appended the
   encoding to results without casting to ``float32``. Storage
-  serialised as 1024 bytes (128 doubles), Protection A's read-side
+  serialised as 1024 bytes (128 doubles), the embedding-size check's read-side
   decoder expects 512 bytes (128 floats), so the rows were silently
   dropped at every read. On the demo lib this lost ~3.4% of faces
   (136 / 3974) — every photo where YuNet missed and dlib found.
@@ -141,7 +141,7 @@ class TestDlibPathStoresFloat32:
     """Pre-fix ``_extract_dlib`` and ``_supplement_with_scrfd`` returned
     ``face_recognition.face_encodings`` output verbatim (float64,
     1024 bytes per 128-d vector). The storage contract is float32
-    (512 bytes), so Protection A's read-side decoder dropped every
+    (512 bytes), so the embedding-size check's read-side decoder dropped every
     such row as "wrong size 1024." 3.4% of demo lib faces vanished
     silently. Cast at the call sites makes the storage contract
     uniform across embedders."""
@@ -213,12 +213,12 @@ class TestDlibPathStoresFloat32:
         emb = results[0]["embedding"]
         assert emb.dtype == np.float32, (
             f"dlib path must cast to float32; got {emb.dtype} "
-            f"(would serialise as {emb.nbytes} bytes, breaks Protection A's "
+            f"(would serialise as {emb.nbytes} bytes, breaks the embedding-size check's "
             f"512-byte expectation and silently drops the face)"
         )
         assert emb.shape == (128,)
         # Critical regression check: serialised size matches the
-        # 512-byte contract Protection A enforces at read time.
+        # 512-byte contract the embedding-size check enforces at read time.
         assert len(emb.tobytes()) == 512
 
 
@@ -283,7 +283,7 @@ class TestMethodThreadsThroughPipeline:
 
 
 class TestProducingModelIdMapping:
-    """Bug (2026-06-17 review): buffalo_s embeddings were tagged with the
+    """Bug: buffalo_s embeddings were tagged with the
     bare method string "buffalo_s" instead of the registry id
     "insightface_buffalo_s", so the derived-data purge (which deletes
     WHERE producing_model_id = <registry id> at model-removal time) would
@@ -309,16 +309,18 @@ class TestProducingModelIdMapping:
 
         assert producing_model_id_for("byom_abc123") == "byom_abc123"
 
-    def test_every_mapped_id_is_a_real_registry_entry(self) -> None:
-        """The whole point: every method must resolve to an id the registry
-        actually knows, or the purge can never match it. Catches a new
-        embedder whose registry id drifts from its mapped value."""
+    def test_stored_id_is_each_built_in_embedders_registry_id(self) -> None:
+        """One source: the id stored with an embedding is the embedder's
+        own ``registry_id`` (the derived-data purge matches on it), and
+        it must be a real registry entry."""
+        import bpp.scoring.face_embed  # noqa: F401 — registers built-ins
         from bpp.registry.model_registry import get_entry
-        from bpp.scoring.face_embed import EMBEDDING_METHOD_TO_REGISTRY_ID
+        from bpp.scoring.face_embed import producing_model_id_for
+        from bpp.scoring.face_embed_buffalo_s import register_with_face_embedder_registry
+        from bpp.scoring.face_embedder_registry import get_embedder
 
-        for method, registry_id in EMBEDDING_METHOD_TO_REGISTRY_ID.items():
-            assert get_entry(registry_id) is not None, (
-                f"method {method!r} maps to {registry_id!r} which is not a "
-                f"registered model entry — the derived-data purge would miss "
-                f"these embeddings on removal"
-            )
+        register_with_face_embedder_registry()
+        for method in ("sface", "dlib", "buffalo_s"):
+            embedder = get_embedder(method)
+            assert producing_model_id_for(method) == embedder.registry_id
+            assert get_entry(embedder.registry_id) is not None, method

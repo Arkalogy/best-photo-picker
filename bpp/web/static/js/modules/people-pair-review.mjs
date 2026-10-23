@@ -12,7 +12,8 @@
  * Re-exported from people-review.mjs and (transitively) from people.mjs.
  */
 
-import { apiFetch, authedSrc } from "./api-client.mjs";
+import { apiFetch, authedSrc, faceCropUrl } from "./api-client.mjs";
+import { focusInto, restoreFocusFrom } from "./dialog-focus.mjs";
 import { esc, escapeAttr } from "./text-format.mjs";
 import { loadFaceClusters } from "./faces.mjs";
 import {toast, toastError} from "./toast.mjs";
@@ -83,12 +84,16 @@ export function _showPairReviewOverlay() {
   }
   overlay.classList.add("visible");
   _renderPairReviewCard();
+  focusInto(overlay);
 }
 
 export function _closePairReviewOverlay() {
   const overlay = document.getElementById("face-pair-review-overlay");
-  if (overlay) overlay.classList.remove("visible");
-  document.removeEventListener("keydown", _pairReviewKeyHandler);
+  if (overlay) {
+    overlay.classList.remove("visible");
+    restoreFocusFrom(overlay);
+  }
+  document.removeEventListener("keydown", _pairReviewKeyHandler, true);
   const s = _pairReviewStats;
   const total = s.same + s.different + s.skipped;
   if (total > 0) {
@@ -129,7 +134,7 @@ export function _renderPairReviewCard() {
   const cur = _pairReviewIndex + 1;
 
   const cropUrl = (c) => c.representative.thumb_hash
-    ? authedSrc(`/api/v1/faces/crop/${esc(c.representative.thumb_hash)}/${c.representative.face_index}`)
+    ? faceCropUrl(c.representative.thumb_hash, c.representative.face_index)
     : "";
   const fullUrl = (c) => c.representative.thumb_hash
     ? authedSrc(`/thumb/${esc(c.representative.thumb_hash)}`)
@@ -153,7 +158,7 @@ export function _renderPairReviewCard() {
   };
 
   overlay.innerHTML = `
-    <div class="pair-review-panel">
+    <div class="pair-review-panel" role="dialog" aria-modal="true" aria-label="Review face pairs">
       <div class="pair-review-header">
         <h3>Same person?</h3>
         <div class="pair-review-progress">${cur} of ${total}</div>
@@ -178,8 +183,11 @@ export function _renderPairReviewCard() {
     </div>
   `;
 
-  document.removeEventListener("keydown", _pairReviewKeyHandler);
-  document.addEventListener("keydown", _pairReviewKeyHandler);
+  // Capture phase: the lightbox's global keydown (registered at load)
+  // would otherwise see Esc (clearing the selection) and E (export)
+  // before this overlay does.
+  document.removeEventListener("keydown", _pairReviewKeyHandler, true);
+  document.addEventListener("keydown", _pairReviewKeyHandler, true);
 }
 
 export async function _pairVerdict(verdict) {
@@ -296,7 +304,7 @@ function _renderBatchDoneCard(overlay) {
   const s = _pairReviewStats;
   const total = s.same + s.different + s.skipped;
   overlay.innerHTML = `
-    <div class="pair-review-panel">
+    <div class="pair-review-panel" role="dialog" aria-modal="true" aria-label="Review face pairs">
       <div class="pair-review-header">
         <h3>Batch done</h3>
       </div>
@@ -369,7 +377,14 @@ export function _pairReviewKeyHandler(e) {
   if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
   const overlay = document.getElementById("face-pair-review-overlay");
   if (!overlay || !overlay.classList.contains("visible")) return;
-  // Batch-done card: Enter continues (when enabled), Esc closes below.
+  if (e.key === "Escape") {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    _closePairReviewOverlay();
+    return;
+  }
+  e.stopImmediatePropagation();
+  // Batch-done card: Enter continues (when enabled), Esc closes above.
   const continueBtn = /** @type {HTMLButtonElement|null} */ (
     document.getElementById("pair-review-continue-btn")
   );
@@ -394,7 +409,5 @@ export function _pairReviewKeyHandler(e) {
     }
     case "ArrowRight":
       e.preventDefault(); _pairSkip(); break;
-    case "Escape":
-      e.preventDefault(); _closePairReviewOverlay(); break;
   }
 }

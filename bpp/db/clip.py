@@ -20,9 +20,10 @@ CLIP_EMBEDDING_BYTES = CLIP_EMBEDDING_DIM * 4  # float32
 # Hard ceiling on the CLIP embedding matrix RAM allocation.
 # CLIP_EMBEDDING_BYTES * N = ~2 KB/photo. 200K photos is about
 # 400 MB per dense matrix. Peak runtime footprint is ~3x that:
-# the embedding dict, the semantic-search matrix, and one
-# semantic-dedup scratch matrix can be in memory at once
-# (~1.2 GB at the 200K cap). Above the cap the load is refused
+# the server's cached search matrix (the per-photo dict is row views
+# into it, not a copy), one semantic-dedup scratch matrix, and a
+# standalone load by Moments or a smart-album refresh can be in memory
+# at once (~1.2 GB at the 200K cap). Above the cap the load is refused
 # and CLIP semantic-dedupe is skipped rather than OOM-killing
 # the server.
 #
@@ -87,7 +88,7 @@ class ClipEmbeddingsTooLarge(_ResourceExhaustedError, RuntimeError):
     can log a helpful message + degrade gracefully (skip CLIP-based
     semantic dedupe rather than crash the server with OOM).
 
-    P7: see :class:`bpp.db.face_queries.FaceEmbeddingsTooLarge` for
+    See :class:`bpp.db.face_queries.FaceEmbeddingsTooLarge` for
     the same back-compat pattern.
     """
 
@@ -96,69 +97,128 @@ class ClipEmbeddingsTooLarge(_ResourceExhaustedError, RuntimeError):
     def __init__(self, count: int, cap: int) -> None:
         self.count = count
         self.cap = cap
-        # Peak footprint is ~3x the embedding dict: dict + cached
-        # search matrix + active dedup scratch matrix can all be live
-        # at once. Report the peak so users can size BPP_CLIP_MAX_PHOTOS
-        # against their actual RAM, not against the dict alone.
-        dict_mb = count * CLIP_EMBEDDING_BYTES / (1024 * 1024)
-        peak_mb = dict_mb * 3
+        # Peak footprint is ~3x one matrix: the cached search matrix,
+        # a dedup scratch matrix and a standalone load (Moments / smart
+        # albums) can all be live at once. Report the peak so users can
+        # size BPP_CLIP_MAX_PHOTOS against their actual RAM.
+        matrix_mb = count * CLIP_EMBEDDING_BYTES / (1024 * 1024)
+        peak_mb = matrix_mb * 3
         super().__init__(
             f"CLIP embedding table has {count} rows, above the {cap} cap. "
-            f"Peak load would be ~{peak_mb:.0f} MB (dict + search matrix + "
-            f"dedup scratch ≈ 3x {dict_mb:.0f} MB). "
+            f"Peak load would be ~{peak_mb:.0f} MB (search matrix + dedup "
+            f"scratch + a concurrent Moments/smart-album load ≈ 3x {matrix_mb:.0f} MB). "
             "Refusing to load to avoid OOM."
         )
 
     def __reduce__(self) -> tuple:
-        """T1.5: see :meth:`bpp.db.face_queries.FaceEmbeddingsTooLarge.__reduce__`.
+        """See :meth:`bpp.db.face_queries.FaceEmbeddingsTooLarge.__reduce__`.
 
         Same multi-positional-arg __init__ pickle trap; same fix.
         """
         return (self.__class__, (self.count, self.cap))
 
 
-def get_all_clip_embeddings(
+#: Rows added at a time when the table grew during a load.
+_GROW_ROWS = 1024
+
+
+def load_clip_matrix(
     conn: sqlite3.Connection,
     model_name: str = CLIP_MODEL_NAME,
-) -> dict[int, np.ndarray]:
-    """Get all CLIP embeddings as {photo_id: embedding} dict.
+) -> tuple[list[int], np.ndarray]:
+    """All CLIP embeddings as ``(photo_ids, matrix)``, float32 ``(n, 512)``.
 
-    refuses to load when the row count exceeds
-    `CLIP_EMBEDDING_MAX_ROWS`. Without the guard, a 1M-photo library
-    would allocate ~2GB just for the embedding dict, plus another
-    ~2GB for the np.stack matrix in `WebAppState.load_clip_embeddings`,
-    and the process would OOM mid-recompute. Callers should catch
-    `ClipEmbeddingsTooLarge` and degrade to skip-CLIP semantic dedupe.
+    Reads the rows one at a time straight into a preallocated matrix, so
+    the data is held once (~410 MB at the 200K cap) — no list of every
+    row, no per-photo copies, no ``np.stack``. Malformed rows are skipped
+    with a warning.
+
+    Refuses to load when the row count exceeds `CLIP_EMBEDDING_MAX_ROWS`
+    (raises `ClipEmbeddingsTooLarge`; callers degrade to skip-CLIP
+    semantic dedupe instead of running out of memory).
     """
     count = get_clip_embedding_count(conn, model_name=model_name)
     if count > CLIP_EMBEDDING_MAX_ROWS and not _clip_cap_overridden(conn):
         raise ClipEmbeddingsTooLarge(count, CLIP_EMBEDDING_MAX_ROWS)
 
-    rows = conn.execute(
+    matrix = np.empty((count, CLIP_EMBEDDING_DIM), dtype=np.float32)
+    ids: list[int] = []
+    cursor = conn.execute(
         "SELECT photo_id, embedding FROM clip_embeddings WHERE model_name = ?",
         (model_name,),
-    ).fetchall()
-    result: dict[int, np.ndarray] = {}
-    for row in rows:
+    )
+    for row in cursor:
         photo_id, blob = row[0], row[1]
-        if len(blob) != CLIP_EMBEDDING_BYTES:
-            log.warning(
-                "Skipping malformed CLIP embedding for photo_id=%s: %d bytes (expected %d)",
-                photo_id,
-                len(blob),
-                CLIP_EMBEDDING_BYTES,
-            )
+        if not _well_formed(photo_id, blob):
             continue
-        emb = np.frombuffer(blob, dtype=np.float32).copy()
-        if emb.shape != (CLIP_EMBEDDING_DIM,):
-            log.warning(
-                "Skipping malformed CLIP embedding for photo_id=%s: shape=%s",
-                photo_id,
-                emb.shape,
-            )
-            continue
-        result[photo_id] = emb
-    return result
+        if len(ids) == matrix.shape[0]:
+            # Rows added since the count (rare): grow by a small step, not
+            # by doubling, so a full-size library doesn't briefly need 3x.
+            grown = np.empty((matrix.shape[0] + _GROW_ROWS, CLIP_EMBEDDING_DIM), np.float32)
+            grown[: matrix.shape[0]] = matrix
+            matrix = grown
+        matrix[len(ids)] = np.frombuffer(blob, dtype=np.float32)
+        ids.append(photo_id)
+    if len(ids) < matrix.shape[0]:
+        # Skipped rows: drop the unused tail (a copy only in that rare case).
+        matrix = matrix[: len(ids)].copy()
+    # Shared by every search and dedupe pass (and the per-photo dict values
+    # are row views into it): read-only, so no caller can corrupt it.
+    matrix.setflags(write=False)
+    return ids, matrix
+
+
+def get_all_clip_embeddings(
+    conn: sqlite3.Connection,
+    model_name: str = CLIP_MODEL_NAME,
+) -> dict[int, np.ndarray]:
+    """Get all CLIP embeddings as a {photo_id: embedding} dict.
+
+    The values are row views into one matrix (see :func:`load_clip_matrix`)
+    — the data is held once, not copied per photo. Treat them as
+    read-only. Raises `ClipEmbeddingsTooLarge` above the row cap.
+    """
+    ids, matrix = load_clip_matrix(conn, model_name=model_name)
+    return dict(zip(ids, matrix, strict=True))
+
+
+def get_clip_embeddings_for_ids(
+    conn: sqlite3.Connection,
+    photo_ids: list[int],
+    model_name: str = CLIP_MODEL_NAME,
+) -> dict[int, np.ndarray]:
+    """``{photo_id: embedding}`` for just the given photos (batched IN).
+
+    For a per-album or per-selection pass this reads a few hundred rows
+    instead of the whole library matrix. Malformed rows are skipped.
+    """
+    from bpp.db.sql_batches import in_batches
+
+    out: dict[int, np.ndarray] = {}
+    for ph, batch in in_batches(photo_ids):
+        rows = conn.execute(
+            f"SELECT photo_id, embedding FROM clip_embeddings WHERE model_name = ? "
+            f"AND photo_id IN ({ph})",
+            (model_name, *batch),
+        ).fetchall()
+        for photo_id, blob in rows:
+            if _well_formed(photo_id, blob):
+                out[photo_id] = np.frombuffer(blob, dtype=np.float32)
+    return out
+
+
+def _well_formed(photo_id: int, blob: bytes) -> bool:
+    """Whether a stored CLIP blob has the expected byte size; a malformed
+    row is logged and skipped by every reader."""
+    if len(blob) == CLIP_EMBEDDING_BYTES:
+        return True
+    log.warning(
+        "Skipping malformed CLIP embedding for photo_id=%s: %d bytes (expected %d)",
+        photo_id,
+        len(blob),
+        CLIP_EMBEDDING_BYTES,
+    )
+    return False
 
 
 def get_clip_embedding_count(

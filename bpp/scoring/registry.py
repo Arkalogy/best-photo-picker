@@ -51,6 +51,9 @@ class ScorerDef:
     toggle_key: str | None = None
     is_available_fn: Callable[[], bool] | None = None
     score_fn: Callable[[Any, str, dict[str, Any]], dict[str, Any]] | None = None
+    #: The ``bpp.registry`` entry (license, picker row) this scorer's
+    #: model belongs to, so the picker can show the scorer's toggle.
+    registry_id: str | None = None
 
 
 _SCORER_REGISTRY: dict[str, ScorerDef] = {
@@ -185,7 +188,20 @@ def register_scorer(scorer: ScorerDef, *, replace: bool = False) -> None:
             f"Scorer {scorer.key!r} already registered with a different "
             "definition (pass replace=True if intentional)."
         )
+    if scorer.weight_key:
+        _check_plugin_weight_key(scorer.weight_key)
     _SCORER_REGISTRY[scorer.key] = scorer
+    if scorer.weight_key:
+        # Its weight is a setting like the built-ins': in DEFAULTS (so
+        # cfg_get and YAML know it) and bounded 0.0-1.0 in the schema (so
+        # Config.set and load_config validate it). The recompute override
+        # allow-list is computed when used (recompute_weight_keys in
+        # bpp/web/recompute.py), so it sees the plugin's key.
+        from bpp.config import DEFAULTS
+        from bpp.config_schema import ConfigField, register_field
+
+        DEFAULTS.setdefault(scorer.weight_key, scorer.default_weight)
+        register_field(weight_field(ConfigField, scorer.weight_key))
     log.info(
         "Registered scorer %r (weight_key=%s, default_weight=%s, fields=%s)",
         scorer.key,
@@ -195,11 +211,33 @@ def register_scorer(scorer: ScorerDef, *, replace: bool = False) -> None:
     )
 
 
+def _check_plugin_weight_key(weight_key: str) -> None:
+    """A plugin's weight key names a new setting: ``<prefix>_weight``,
+    not one of the app's own (which its schema entry would overwrite)."""
+    from bpp.config import DEFAULTS
+
+    if not weight_key.endswith("_weight"):
+        raise ValueError(f"weight_key {weight_key!r} must end in '_weight'")
+    if weight_key in DEFAULTS and weight_key not in {
+        s.weight_key for s in _SCORER_REGISTRY.values() if s.key not in _BUILTIN_SCORER_KEYS
+    }:
+        raise ValueError(
+            f"weight_key {weight_key!r} is an existing setting; pick a plugin-prefixed name"
+        )
+
+
 def _reset_plugin_scorers_for_tests() -> None:
-    """Drop every non-built-in scorer from the registry. Test-only."""
+    """Drop every non-built-in scorer from the registry, with the weight
+    setting and schema entry it registered. Test-only."""
+    from bpp.config import DEFAULTS
+    from bpp.config_schema import _SCHEMA_REGISTRY
+
     for key in list(_SCORER_REGISTRY.keys()):
         if key not in _BUILTIN_SCORER_KEYS:
-            del _SCORER_REGISTRY[key]
+            scorer = _SCORER_REGISTRY.pop(key)
+            if scorer.weight_key:
+                DEFAULTS.pop(scorer.weight_key, None)
+                _SCHEMA_REGISTRY.pop(scorer.weight_key, None)
 
 
 def _wire_optional_scorers() -> None:
@@ -214,20 +252,35 @@ def _wire_optional_scorers() -> None:
     if _SCORER_REGISTRY["nudity"].is_available_fn is not None:
         return
 
+    from bpp.scoring.model_load_gate import log_blocked_once
     from bpp.scoring.nudity import is_available as _nudity_avail
     from bpp.scoring.nudity import score_nudity as _score_nudity_raw
     from bpp.scoring.pets import detect_pets as _detect_pets
     from bpp.scoring.pets import is_available as _pets_avail
 
     def _nudity_score_fn(img: Any, filepath: str, config: dict[str, Any]) -> dict[str, Any]:
-        # NudeNet runs on the file directly (it does its own decode).
-        return {"nudity_score": _score_nudity_raw(filepath)}
+        from bpp.registry import ModelLoadBlockedError
+
+        try:
+            return {"nudity_score": _score_nudity_raw(filepath)}
+        except ModelLoadBlockedError as exc:
+            # Not accepted (or accepted under an older license text) —
+            # skip this photo, but say so once at INFO so the stop is
+            # visible; the picker shows the matching re-accept state.
+            log_blocked_once("Content filter (NudeNet)", exc)
+            return {}
 
     def _pets_score_fn(img: Any, filepath: str, config: dict[str, Any]) -> dict[str, Any]:
-        pet_conf = config.get("pet_detection_confidence", 0.2)
-        pet_size = int(config.get("pet_input_size", 1024))
+        from bpp.config import cfg_get  # (lazy: bpp.config imports this module)
+        from bpp.registry import ModelLoadBlockedError
+
+        pet_conf = cfg_get(config, "pet_detection_confidence")
+        pet_size = int(cfg_get(config, "pet_input_size"))
         try:
             r = _detect_pets(img, input_size=pet_size, conf_threshold=pet_conf)
+        except ModelLoadBlockedError as exc:
+            log_blocked_once("Pet detection (YOLO)", exc)
+            return {}
         except Exception:
             log.debug("Pet detection unavailable for %s", filepath, exc_info=True)
             return {}
@@ -294,6 +347,11 @@ def run_optional_scorers(
 # ── Derived helpers ──
 
 
+def iter_scorers() -> list[ScorerDef]:
+    """Every registered scorer, built-in and plugin, in registration order."""
+    return list(_SCORER_REGISTRY.values())
+
+
 def get_weighted_scorers() -> list[ScorerDef]:
     """Scorers that contribute to aggregate_score via weights."""
     return [s for s in _SCORER_REGISTRY.values() if s.weight_key]
@@ -302,6 +360,22 @@ def get_weighted_scorers() -> list[ScorerDef]:
 def get_weight_defaults() -> dict[str, float]:
     """Config DEFAULTS for scorer weights: {weight_key: default_weight}."""
     return {s.weight_key: s.default_weight for s in _SCORER_REGISTRY.values() if s.weight_key}
+
+
+def weight_field(ConfigField: Any, weight_key: str) -> Any:
+    """The config-schema field for a scorer weight: a 0.0-1.0 float.
+    Takes the field class so this module needn't import the schema
+    (which imports it)."""
+    return ConfigField(
+        key=weight_key,
+        type=float,
+        label=weight_key.removesuffix("_weight").replace("_", " ").capitalize() + " weight",
+        description="How much this score counts in the aggregate (0 = ignored).",
+        min=0.0,
+        max=1.0,
+        ui_type="slider",
+        category="Scoring",
+    )
 
 
 def get_score_db_columns() -> tuple[str, ...]:
@@ -332,5 +406,5 @@ def get_video_avg_keys() -> list[str]:
 
 
 def get_weight_keys() -> tuple[str, ...]:
-    """Weight config keys for RECOMPUTE_WEIGHT_KEYS."""
+    """Weight config keys, for recompute_weight_keys()."""
     return tuple(s.weight_key for s in _SCORER_REGISTRY.values() if s.weight_key)

@@ -14,7 +14,7 @@ def save_photo_edits(
     edits: dict,
 ) -> None:
     """Save or update edit parameters for a photo."""
-    redeye_points = edits.get("redeye_points")
+    redeye_points = valid_redeye_points(edits.get("redeye_points"))
     redeye_json = json.dumps(redeye_points) if redeye_points else None
 
     conn.execute(
@@ -100,6 +100,35 @@ def save_photo_edits(
     conn.commit()
 
 
+def valid_redeye_points(points: object) -> list | None:
+    """Keep only points the renderer can use: objects with x / y in
+    ``[0, 1]`` (fractions of the image) and, when set, a radius in
+    ``(0, 1]`` — ``json`` also accepts NaN, Infinity and huge numbers.
+    ``None`` stays ``None``; anything that isn't a list has no usable
+    points. The save endpoint rejects bad points; this is the backstop
+    for the database and the renderer."""
+    if points is None:
+        return None
+    if not isinstance(points, list):
+        return []
+
+    def fraction(v: object, *, allow_zero: bool = True) -> bool:
+        # Plain comparisons: NaN fails both, and a huge int compares fine
+        # (math.isfinite would overflow on it).
+        if not isinstance(v, int | float) or isinstance(v, bool):
+            return False
+        return (v >= 0 if allow_zero else v > 0) and v <= 1
+
+    return [
+        p
+        for p in points
+        if isinstance(p, dict)
+        and fraction(p.get("x"))
+        and fraction(p.get("y"))
+        and ("radius" not in p or fraction(p["radius"], allow_zero=False))
+    ]
+
+
 def get_photo_edits(conn: sqlite3.Connection, photo_id: int) -> dict | None:
     """Return edit params dict for a photo, or None if unedited."""
     row = conn.execute(
@@ -119,7 +148,9 @@ def get_photo_edits(conn: sqlite3.Connection, photo_id: int) -> dict | None:
         return None
 
     redeye_raw = row["redeye_json"]
-    redeye_points = safe_json_loads(redeye_raw, context="redeye edits")
+    redeye_points = valid_redeye_points(
+        safe_json_loads(redeye_raw, context="redeye edits", expected_type=list)
+    )
 
     return {
         "brightness": row["brightness"],

@@ -40,7 +40,7 @@ _VOCAB_DIR = _cache_dir()
 #         with — this is the file the openai/CLIP-ViT-B/32 model in
 #         clip_embed.py was trained against. A mismatched vocab
 #         silently produces wrong embeddings.
-# License: MIT (matches the CLIP model release).
+# License: see the bpp.registry entry ``openai_clip_vit_b32_onnx``.
 # To bump: only when bumping the CLIP text encoder in clip_embed.py
 #         to a different OpenAI release.
 _VOCAB_FILENAME = "bpe_simple_vocab_16e6.txt.gz"
@@ -131,9 +131,14 @@ _vocab = ModelSingleton(
 
 def _load_vocab() -> tuple[dict[tuple[str, str], int], dict[str, int], dict[int, str]]:
     """Load BPE merge rules and build encoder/decoder (thread-safe singleton)."""
-    result = _vocab.get()
+    # get_or_raise names a license refusal; None here means the model
+    # was marked unavailable (its download or copy failed).
+    result = _vocab.get_or_raise()
     if result is None:
-        raise RuntimeError("CLIP BPE vocabulary unavailable — cannot tokenize text")
+        raise RuntimeError(
+            "CLIP BPE vocabulary unavailable: its download failed — see server.log; "
+            "Settings → Models can retry it"
+        )
     return result
 
 
@@ -237,5 +242,6 @@ ModelRegistry.register(
         url=_VOCAB_URL,
         sha256=_VOCAB_SHA256,
         reset=_vocab.reset,
+        legal_id="openai_clip_vit_b32_onnx",
     )
 )

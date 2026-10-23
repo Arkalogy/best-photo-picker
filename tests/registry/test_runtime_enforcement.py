@@ -1,15 +1,15 @@
 """Runtime enforcement gate — proves the click-through dialog is
 load-bearing at inference time, not just an audit-log artifact.
 
-Until ``enforce_load_policy_for`` landed, the Batch 4 click-through
+Until ``enforce_load_policy_for`` landed, the click-through
 dialog surfaces (CLI + web UI) recorded an acceptance row but did NOT
-gate the model file from loading — a user could ``pip install
-bppicker[nudity]`` and run NudeNet without ever seeing the dialog.
+gate the model file from loading — a model whose weights were already
+on disk could run without the user ever seeing the dialog.
 
 These tests pin the gate at the three loader entry points:
 
 * ``bpp.scoring.pets._get_session``          (YOLOv11n pet detector, AGPL-3.0)
-* ``bpp.scoring.nudity._get_detector``       (NudeNet, GPL-3.0)
+* ``bpp.scoring.nudity._get_detector``       (NudeNet, AGPL-3.0)
 * ``bpp.ai.inpainting._get_model``           (LaMa, research weights)
 
 The actual model file is not touched — the tests assert the gate
@@ -68,7 +68,6 @@ def _accept(model_id: str) -> None:
         # YuNet, dlib) ALSO need acceptance now, so they belong with
         # the restricted gate-blocks-without-acceptance test below
         # rather than here.
-        "insightface_scrfd_25g",
         "openai_clip_vit_b32_onnx",
     ],
 )
@@ -76,8 +75,8 @@ def test_gate_passes_through_for_mit_entries(
     permissive_id: str,
 ) -> None:
     """MIT entries don't need an acceptance row — the gate
-    short-circuits to ALLOW immediately. Option B from the
-    legal-posture rollout draws the line at MIT: everything else
+    short-circuits to ALLOW immediately. The policy
+    draws the line at MIT: everything else
     requires explicit acknowledgment."""
     enforce_load_policy_for(permissive_id)  # must not raise
 
@@ -98,7 +97,7 @@ def test_gate_blocks_restricted_without_acceptance(
     restricted_id: str,
 ) -> None:
     """Every restricted entry must fail-closed before its loader can
-    open the model file. Adds a regression test for the legal-posture
+    open the model file. Adds a regression test for the
     paper-vs-runtime gap closed by this helper."""
     set_use_context(UseContext.PERSONAL, set_via="test")
     with pytest.raises(ModelLoadBlockedError):
@@ -147,7 +146,7 @@ class TestPetsLoaderGate:
 
         # Mock the singleton's get() so we don't actually touch the
         # ONNX file in the test environment.
-        with patch.object(pets._yolo, "get", return_value="<mock-session>"):
+        with patch.object(pets._yolo, "_get_loaded", return_value="<mock-session>"):
             assert pets._get_session() == "<mock-session>"
 
 
@@ -163,7 +162,7 @@ class TestNudityLoaderGate:
         _accept("nudenet_320n")
         from bpp.scoring import nudity
 
-        with patch.object(nudity._nudenet, "get", return_value="<mock>"):
+        with patch.object(nudity._nudenet, "_get_loaded", return_value="<mock>"):
             assert nudity._get_detector() == "<mock>"
 
 
@@ -179,7 +178,7 @@ class TestLaMaLoaderGate:
         _accept("lama_inpaint_research")
         from bpp.ai import inpainting
 
-        with patch.object(inpainting._LAMA, "get", return_value="<mock>"):
+        with patch.object(inpainting._LAMA, "_get_loaded", return_value="<mock>"):
             assert inpainting._get_model() == "<mock>"
 
 
@@ -189,8 +188,8 @@ class TestLaMaLoaderGate:
 def test_gate_blocks_commercial_mode_without_separate_rights() -> None:
     """User accepted under personal use, then switched to commercial.
     The hard-block fires until they re-accept with the
-    separate-rights box checked. This is the Item 16 gate that the
-    policy review specifically wanted enforced at inference time."""
+    separate-rights box checked. This is the commercial-mode gate,
+    enforced at inference time."""
     _accept("nudenet_320n")
     set_use_context(UseContext.COMMERCIAL, set_via="test")
     with pytest.raises(ModelLoadBlockedError) as exc_info:

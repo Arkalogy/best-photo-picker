@@ -18,7 +18,8 @@
 
 import { apiFetch } from "./api-client.mjs";
 import { appConfirm, appPrompt } from "./dialogs.mjs";
-import { esc, escapeJsAttr } from "./text-format.mjs";
+import { menuClosed, menuOpened, wireMenuActions } from "./menu-a11y.mjs";
+import { esc, escapeAttr } from "./text-format.mjs";
 import { showToast, toast, toastError } from "./toast.mjs";
 import { saveSetting } from "./settings-client.mjs";
 import { _getTimelineFilter, _setTimelineFilter } from "./timeline.mjs";
@@ -110,7 +111,7 @@ export async function loadYearMonths(detailsEl) {
       const filterVal = `${year}-${mo}`;
       const active =
         win.currentAlbumId === albumId && _getTimelineFilter() === filterVal ? " active" : "";
-      html += `<div class="nav-item nav-month-item${active}" data-action="switchToMonth" data-arg0="${albumId}" data-arg1="${filterVal}">
+      html += `<div class="nav-item nav-month-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchToMonth" data-arg0="${albumId}" data-arg1="${filterVal}">
         <span>${MONTHS_SHORT[m.month - 1]}</span>
         <span class="nav-count">${m.count}</span>
       </div>`;
@@ -154,6 +155,16 @@ export function toggleFaceSort() {
 }
 
 /**
+ * Close one of the menus built here (focus goes back to what opened it).
+ * @param {HTMLElement | null} menu
+ */
+export function _dismissAlbumMenu(menu) {
+  if (!menu) return;
+  menuClosed(menu);
+  menu.remove();
+}
+
+/**
  * @param {MouseEvent} event
  * @param {number} albumId
  */
@@ -162,7 +173,7 @@ export function showAlbumMoveMenu(event, albumId) {
   const win = window;
   event.preventDefault();
   event.stopPropagation();
-  document.getElementById("album-move-menu")?.remove();
+  _dismissAlbumMenu(document.getElementById("album-move-menu"));
 
   const albums = /** @type {any[]} */ (win.albumList || []);
   const album = albums.find((a) => a.id === albumId);
@@ -192,12 +203,18 @@ export function showAlbumMoveMenu(event, albumId) {
   menu.style.top = event.clientY + "px";
   menu.style.zIndex = "9999";
   document.body.appendChild(menu);
+  wireMenuActions(menu, { items: ".ctx-item" });
+  menuOpened(menu, {
+    trigger: event.target,
+    items: ".ctx-item",
+    onEscape: () => _dismissAlbumMenu(menu),
+  });
 
   setTimeout(() => {
     document.addEventListener(
       "click",
       function _close() {
-        menu.remove();
+        _dismissAlbumMenu(menu);
         document.removeEventListener("click", _close);
       },
       { once: true }
@@ -212,7 +229,7 @@ export function showAlbumMoveMenu(event, albumId) {
 export async function moveAlbumTo(albumId, parentId) {
   /** @type {any} */
   const win = window;
-  document.getElementById("album-move-menu")?.remove();
+  _dismissAlbumMenu(document.getElementById("album-move-menu"));
   try {
     await apiFetch(`/api/v1/albums/${albumId}`, {
       method: "PUT",
@@ -241,19 +258,25 @@ export async function moveAlbumTo(albumId, parentId) {
 export function showSmartAlbumMenu(event, albumId, albumName) {
   event.preventDefault();
   event.stopPropagation();
-  document.getElementById("smart-album-ctx")?.remove();
+  _dismissAlbumMenu(document.getElementById("smart-album-ctx"));
 
   const menu = document.createElement("div");
   menu.id = "smart-album-ctx";
   menu.className = "ctx-menu";
   menu.innerHTML =
-    `<div class="ctx-item" data-action="renameSmartAlbum" data-arg0="${albumId}" data-arg1="${escapeJsAttr(albumName)}">Rename</div>` +
-    `<div class="ctx-item ctx-item-danger" data-action="removeSmartAlbum" data-arg0="${albumId}" data-arg1="${escapeJsAttr(albumName)}">Remove</div>`;
+    `<div class="ctx-item" data-action="renameSmartAlbum" data-arg0="${albumId}" data-arg1="${escapeAttr(albumName)}">Rename</div>` +
+    `<div class="ctx-item ctx-item-danger" data-action="removeSmartAlbum" data-arg0="${albumId}" data-arg1="${escapeAttr(albumName)}">Remove</div>`;
   menu.style.position = "fixed";
   menu.style.left = event.clientX + "px";
   menu.style.top = event.clientY + "px";
   menu.style.zIndex = "9999";
   document.body.appendChild(menu);
+  wireMenuActions(menu, { items: ".ctx-item" });
+  menuOpened(menu, {
+    trigger: event.target,
+    items: ".ctx-item",
+    onEscape: () => _dismissAlbumMenu(menu),
+  });
 
   requestAnimationFrame(() => {
     const rect = menu.getBoundingClientRect();
@@ -267,7 +290,7 @@ export function showSmartAlbumMenu(event, albumId, albumName) {
     document.addEventListener(
       "click",
       function _close() {
-        menu.remove();
+        _dismissAlbumMenu(menu);
         document.removeEventListener("click", _close);
       },
       { once: true }
@@ -280,7 +303,7 @@ export function showSmartAlbumMenu(event, albumId, albumName) {
  * @param {string} currentName
  */
 export async function renameSmartAlbum(albumId, currentName) {
-  document.getElementById("smart-album-ctx")?.remove();
+  _dismissAlbumMenu(document.getElementById("smart-album-ctx"));
   const name = await appPrompt("Rename album", {
     placeholder: "Album name",
     value: currentName,
@@ -306,7 +329,7 @@ export async function renameSmartAlbum(albumId, currentName) {
 export async function removeSmartAlbum(albumId, name) {
   /** @type {any} */
   const win = window;
-  document.getElementById("smart-album-ctx")?.remove();
+  _dismissAlbumMenu(document.getElementById("smart-album-ctx"));
   const ok = await appConfirm(
     `Remove "${name}"?`,
     "This won't delete any photos. The album won't come back on re-analysis.",
@@ -336,19 +359,25 @@ export async function removeSmartAlbum(albumId, name) {
 export function showTagAlbumMenu(event, albumId, albumName, tagId) {
   event.preventDefault();
   event.stopPropagation();
-  document.getElementById("smart-album-ctx")?.remove();
+  _dismissAlbumMenu(document.getElementById("smart-album-ctx"));
 
   const menu = document.createElement("div");
   menu.id = "smart-album-ctx";
   menu.className = "ctx-menu";
   menu.innerHTML =
-    `<div class="ctx-item" data-action="renameSmartAlbum" data-arg0="${albumId}" data-arg1="${escapeJsAttr(albumName)}">Rename</div>` +
-    `<div class="ctx-item ctx-item-danger" data-action="removeTagAlbum" data-arg0="${albumId}" data-arg1="${escapeJsAttr(albumName)}" data-arg2="${tagId}">Delete tag</div>`;
+    `<div class="ctx-item" data-action="renameSmartAlbum" data-arg0="${albumId}" data-arg1="${escapeAttr(albumName)}">Rename</div>` +
+    `<div class="ctx-item ctx-item-danger" data-action="removeTagAlbum" data-arg0="${albumId}" data-arg1="${escapeAttr(albumName)}" data-arg2="${tagId}">Delete tag</div>`;
   menu.style.position = "fixed";
   menu.style.left = event.clientX + "px";
   menu.style.top = event.clientY + "px";
   menu.style.zIndex = "9999";
   document.body.appendChild(menu);
+  wireMenuActions(menu, { items: ".ctx-item" });
+  menuOpened(menu, {
+    trigger: event.target,
+    items: ".ctx-item",
+    onEscape: () => _dismissAlbumMenu(menu),
+  });
 
   requestAnimationFrame(() => {
     const rect = menu.getBoundingClientRect();
@@ -362,7 +391,7 @@ export function showTagAlbumMenu(event, albumId, albumName, tagId) {
     document.addEventListener(
       "click",
       function _close() {
-        menu.remove();
+        _dismissAlbumMenu(menu);
         document.removeEventListener("click", _close);
       },
       { once: true }
@@ -378,7 +407,7 @@ export function showTagAlbumMenu(event, albumId, albumName, tagId) {
 export async function removeTagAlbum(albumId, name, tagId) {
   /** @type {any} */
   const win = window;
-  document.getElementById("smart-album-ctx")?.remove();
+  _dismissAlbumMenu(document.getElementById("smart-album-ctx"));
   const ok = await appConfirm(
     `Delete tag "${name}"?`,
     "This will untag all photos with this label. Photos themselves are not affected.",

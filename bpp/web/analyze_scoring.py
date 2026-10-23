@@ -17,7 +17,7 @@ This module owns:
 
 Imported from ``analyze_worker.py``; not part of the public API.
 
-P2: this module's queue / sentinel / drain / join machinery moved to
+This module's queue / sentinel / drain / join machinery moved to
 ``bpp.utils.subprocess_runner``. The fields kept here are scoring-
 specific: the message reducer, the worker's per-photo loop, and the
 input shape (``list[str]`` of file paths).
@@ -55,18 +55,12 @@ def _scoring_worker(
         from bpp.scoring.aggregate import (
             init_analysis_db,
             process_one,
+            process_one_settings,
         )
+        from bpp.web.analyze_model_preflight import apply_run_download_skips
 
-        max_long_side = config.get("max_long_side", 1024)
-        face_conf = float(config.get("face_detection_confidence", 0.3))
-
-        from bpp.constants import MODEL_TOGGLE_KEYS
-
-        model_toggles = {k: config.get(k, True) for k in MODEL_TOGGLE_KEYS}
-        extra_config = {
-            "pet_detection_confidence": float(config.get("pet_detection_confidence", 0.2)),
-            "pet_input_size": int(config.get("pet_input_size", 1024)),
-        }
+        apply_run_download_skips(config)
+        max_long_side, face_conf, model_toggles, extra_config = process_one_settings(config)
 
         init_analysis_db(db_path)
 
@@ -169,7 +163,7 @@ def run_scoring_subprocess(
     results through a queue, then exits. All model memory is freed by
     the OS when the child terminates.
 
-    P2 — the queue/sentinel/drain/join machinery now lives in
+    The queue/sentinel/drain/join machinery now lives in
     :class:`bpp.utils.subprocess_runner.BoundedSubprocessRunner`. This
     function is a thin orchestrator: snapshot config, build a phase,
     delegate.
@@ -178,7 +172,7 @@ def run_scoring_subprocess(
         images: list of image file paths to score
         config: analysis config dict (max_long_side, model toggles, etc.)
         db_path: path to analysis cache DB
-        cancel_event: P1 contract — accept any of: ProcessCancellation,
+        cancel_event: unified cancellation contract — accept any of: ProcessCancellation,
             ThreadCancellation, raw multiprocessing.Event, raw
             threading.Event, or None. The runner normalizes the shape.
         progress_callback: optional callable(msg_dict) for progress updates

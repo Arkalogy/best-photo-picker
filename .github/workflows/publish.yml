@@ -25,11 +25,16 @@ jobs:
   build:
     name: Build wheel + sdist
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # No token left in .git/config for later steps to read.
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.11"
 
@@ -73,8 +78,18 @@ jobs:
             esac
           done
 
+      - name: Verify the live model registry manifest
+        # The published manifest is how a model is withdrawn after
+        # release; one this build's verifier rejects is ignored by every
+        # installed copy (with a warning on every start). Republish it
+        # (scripts/publish_registry_manifest.py) before tagging.
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true')
+        run: |
+          pip install dist/*.whl
+          python scripts/verify_live_registry.py
+
       - name: Upload distributions
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: dist
           path: dist/
@@ -105,13 +120,13 @@ jobs:
 
     steps:
       - name: Download distributions
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: dist
           path: dist/
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
           # `skip-existing` makes a re-run of a partially-published
           # release a no-op for the already-uploaded files instead of

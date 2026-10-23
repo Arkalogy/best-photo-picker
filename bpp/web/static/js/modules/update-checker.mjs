@@ -85,7 +85,8 @@ export function showUpdateBanner(data) {
   );
   if (!banner || !text || !link) return;
   text.textContent = "v" + data.latest + " is available";
-  link.href = data.url || "#";
+  // Only a GitHub release page: the URL comes from the network.
+  link.href = /^https:\/\/github\.com\//.test(data.url || "") ? data.url : "#";
   banner.classList.remove("hidden");
 }
 

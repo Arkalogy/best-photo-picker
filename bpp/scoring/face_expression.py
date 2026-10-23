@@ -19,6 +19,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from bpp.scoring.inference_log import report_inference_failure
+from bpp.scoring.install_hold import requires
 from bpp.scoring.model_base import ModelSingleton
 from bpp.utils.logging import get_logger
 from bpp.utils.paths import models_dir as _models_dir
@@ -38,7 +40,7 @@ _MODEL_DIR = str(_models_dir())
 # Where:  Google's official MediaPipe model storage bucket.
 # Why this one: float16 "latest" — Google ships this as the standard
 #         general-purpose face mesh model, no smaller variant.
-# License: Apache 2.0 (MediaPipe).
+# License: see the bpp.registry entry ``mediapipe_face_landmarker``.
 # To bump: same `/latest/` URL pattern — refresh SHA when rotated.
 #         Blendshape index ordering is stable across releases so the
 #         caller-side `_BLENDSHAPE_*` constants stay valid.
@@ -73,8 +75,8 @@ _face_landmarker = ModelSingleton(
     model_url=_LANDMARKER_URL,
     model_sha256=_LANDMARKER_SHA256,
     create_fn=_create_landmarker,
-    registry_id=None,  # ancillary mediapipe model, no licensing concern
-    import_check=lambda: __import__("mediapipe"),
+    registry_id="mediapipe_face_landmarker",
+    import_check=requires("mediapipe.tasks"),  # what create imports
 )
 # Inference lock: MediaPipe detectors are NOT thread-safe — serialize .detect() calls.
 _landmarker_lock = threading.Lock()
@@ -130,6 +132,7 @@ def _score_expression(image: np.ndarray) -> float:
         with _landmarker_lock:
             result = landmarker.detect(mp_image)
     except Exception:
+        report_inference_failure("Face expression")
         return 0.5
 
     if not result.face_blendshapes:

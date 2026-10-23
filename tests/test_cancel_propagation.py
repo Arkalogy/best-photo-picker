@@ -1,4 +1,4 @@
-"""P1.6 — cross-process cancellation: real subprocesses, real cancel.
+"""Cross-process cancellation: real subprocesses, real cancel.
 
 These tests stand opposite to the in-process unit tests in
 ``tests/test_cancel.py``. They spawn actual child processes and confirm:
@@ -6,7 +6,7 @@ These tests stand opposite to the in-process unit tests in
 1. Setting a :class:`ProcessCancellation` from the parent halts the
    scoring subprocess before it finishes a backlog of images.
 2. The same token signature halts ``run_face_extraction_subprocess`` at
-   the next chunk boundary (the audit-found gap before P1).
+   the next chunk boundary (a gap that previously existed).
 3. Passing a ``threading.Event`` (raw) still works via ``as_token`` —
    back-compat for callers that haven't migrated yet.
 4. No child PIDs survive past the parent runner returning.
@@ -139,8 +139,8 @@ class TestCancelPropagatesToScoring:
 
 
 class TestCancelPropagatesToFaceExtraction:
-    """The audit's load-bearing case: face extraction silently ignored
-    cancel before P1. These tests are the regression gate."""
+    """The load-bearing case: face extraction used to silently ignore
+    cancel. These tests are the regression gate."""
 
     def test_pre_cancelled_token_halts_at_first_chunk(self, tmp_path):
         """A pre-set cancel token must stop the chunk loop before

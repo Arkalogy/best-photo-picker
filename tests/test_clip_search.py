@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from bpp.constants import CLIP_MODEL_NAME
+from tests._models import skip_unless_on_disk
 
 # ---------------------------------------------------------------------------
 # Tokenizer tests
@@ -16,7 +17,11 @@ from bpp.constants import CLIP_MODEL_NAME
 
 
 class TestClipTokenizer:
-    """Tests for the CLIP BPE tokenizer."""
+    """Tests for the CLIP BPE tokenizer (the real vocabulary)."""
+
+    @pytest.fixture(autouse=True)
+    def _vocabulary_on_disk(self):
+        skip_unless_on_disk("CLIP vocabulary")
 
     def test_tokenize_returns_correct_shape(self):
         from bpp.scoring.clip_tokenizer import tokenize
@@ -78,7 +83,12 @@ class TestClipTokenizer:
 
 
 class TestTextEmbedding:
-    """Tests for compute_text_embedding (mocked model)."""
+    """Tests for compute_text_embedding (mocked ONNX session; the real
+    vocabulary tokenizes the text)."""
+
+    @pytest.fixture(autouse=True)
+    def _vocabulary_on_disk(self):
+        skip_unless_on_disk("CLIP vocabulary")
 
     def test_text_embedding_returns_512d(self, monkeypatch):
         from bpp.scoring import clip_embed
@@ -203,8 +213,9 @@ def _make_analysis(n: int = 5) -> list[dict]:
 
 
 @pytest.fixture
-def semantic_client(tmp_path, monkeypatch):
-    """Flask test client with CLIP embeddings seeded in DB."""
+def semantic_client(tmp_path, monkeypatch, offline_downloads):
+    """Flask test client with CLIP embeddings seeded in DB (offline: a
+    model that isn't on disk is off for the run)."""
     from bpp.db.connection import get_db
     from bpp.web.app import create_app
 

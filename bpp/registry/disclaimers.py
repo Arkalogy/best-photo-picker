@@ -1,10 +1,11 @@
 """Canonical legal disclaimers reused across every surface.
 
-Item 7 of the legal-posture plan: one canonical disclaimer string is
-authored here, and every surface (README, PyPI long description,
-Settings, click-through dialog, registry) references it from this
-module. Bespoke per-surface wording is exactly the failure mode the
-"warning parity across surfaces" rule (item 9) protects against.
+The disclaimer and posture texts are authored here. The Settings
+banner, click-through dialog, CLI, and registry read them from this
+module; the README (and the PyPI long description built from it)
+carries a copy that :mod:`tests.registry.test_surface_parity` checks. Bespoke per-surface
+wording is exactly the failure mode the "warning parity across
+surfaces" rule protects against.
 
 The version constant lets the click-through dialog snapshot which
 text the user accepted. The SHA-256 derivation lets the acceptance
@@ -13,19 +14,22 @@ showed.
 
 Why the text reads the way it does
 
-  Phrasing comes verbatim from the legal-posture rollout.
-  Specifically:
+  The core distribution statement is:
 
     "Best Photo Picker does not redistribute or bundle this model. If selected,
-    the model is downloaded by the user's local installation directly
-    from the upstream provider, subject to upstream model terms."
+    the model is downloaded by the user's local installation from a
+    third-party host (not from Arkalogy), subject to upstream model terms."
 
-  Combined with the corrected item-17 framing (which distinguishes
-  Arkalogy's monetization stance from third-party MIT rights), this
+  "Third-party host" rather than "the upstream provider" because not
+  every download URL is the original publisher's: LaMa's weights,
+  for example, come from the simple-lama-inpainting release assets.
+
+  Combined with the monetization statement (which distinguishes
+  Arkalogy's own stance from third-party MIT rights), this
   is the legally-accurate baseline used wherever a model's license
   posture must be communicated.
 
-  Compressed dialog wording (Q6 — same legal substance, fewer
+  Compressed dialog wording (same legal substance, fewer
   sentences) lives alongside the full version. Both are
   authored here so the compressed form cannot drift from the full
   form: the dialog renders the compressed text with a "Read full
@@ -36,14 +40,14 @@ Versioning
   Whenever the canonical text changes, increment
   :data:`CANONICAL_DISCLAIMER_VERSION`. Existing acceptance-log rows
   retain their snapshot of the old version (the acceptance log
-  records the version the user actually saw — see item 19).
+  records the version the user actually saw).
 
 Why the full text is built rather than a single string constant
 
   Authoring it as paragraphs joined by ``"\\n\\n"`` keeps the
-  individual sentences greppable for the editorial review (item 8 /
-  item 14). A future maintainer touching one sentence is less likely
-  to garble the surrounding text.
+  individual sentences greppable for editorial checks. A future
+  maintainer touching one sentence is less likely to garble the
+  surrounding text.
 """
 
 from __future__ import annotations
@@ -54,7 +58,10 @@ import hashlib
 #: any of :data:`CANONICAL_DISCLAIMER` paragraphs changes. The
 #: acceptance log records this string so we can later tell which
 #: version of the wording a given user agreed to.
-CANONICAL_DISCLAIMER_VERSION = "canonical-disclaimer-v2"
+#:
+#: v3: paragraph 1 says "from a third-party host (not from Arkalogy)"
+#: instead of "directly from the upstream provider".
+CANONICAL_DISCLAIMER_VERSION = "canonical-disclaimer-v3"
 
 
 #: The full canonical disclaimer text. Paragraphs separated by
@@ -62,24 +69,22 @@ CANONICAL_DISCLAIMER_VERSION = "canonical-disclaimer-v2"
 #: everywhere a model's license posture must be communicated.
 CANONICAL_DISCLAIMER = "\n\n".join(
     (
-        # Paragraph 1 — Arkalogy's distribution posture (verbatim
-        # wording recommended by the legal-posture rollout).
+        # Paragraph 1 — Arkalogy's distribution posture.
         "Best Photo Picker does not redistribute or bundle this model. If selected, "
-        "the model is downloaded by the user's local installation directly "
-        "from the upstream provider, subject to upstream model terms.",
-        # Paragraph 2 — Arkalogy's monetization stance (corrected
-        # item-17 framing — "BPP will never be commercialized" was
-        # legally inaccurate because MIT permits downstream
-        # commercial use of the code; the corrected wording
-        # distinguishes Arkalogy's choice from third-party rights).
+        "the model is downloaded by the user's local installation from a "
+        "third-party host (not from Arkalogy), subject to upstream model terms.",
+        # Paragraph 2 — Arkalogy's monetization stance ("BPP will
+        # never be commercialized" would be legally inaccurate
+        # because MIT permits downstream commercial use of the code;
+        # this wording distinguishes Arkalogy's choice from
+        # third-party rights).
         "Arkalogy will not monetize, sell, or market Best Photo Picker for commercial "
         "workflows. However, because the code is MIT-licensed, third parties "
         "may still use the code commercially. Restricted-model access is "
         "separately controlled by model-specific terms and app-level gates "
         "(commercial-use gate, hard-block, click-through acknowledgment).",
-        # Paragraph 3 — the MIT/commercial framing replacement
-        # (item 8 — replaces any "MIT and free for commercial use"
-        # phrasing with the source-vs-models distinction).
+        # Paragraph 3 — the source-vs-models distinction, instead of
+        # a blanket "MIT and free for commercial use" framing.
         "Best Photo Picker's source code is MIT-licensed. Optional third-party models "
         "may have separate licenses, including non-commercial or "
         "research-only restrictions. Commercial users must select "
@@ -89,7 +94,7 @@ CANONICAL_DISCLAIMER = "\n\n".join(
 
 
 #: Compressed two-sentence form of the disclaimer used inside the
-#: in-app click-through dialog so users actually read it (Q6).
+#: in-app click-through dialog so users actually read it.
 #: Renders alongside a "Read full terms" link expanding to
 #: :data:`CANONICAL_DISCLAIMER`. Legal substance is identical; the
 #: short form is for readability, not for swapping in a different
@@ -101,21 +106,20 @@ CANONICAL_DISCLAIMER_COMPRESSED = (
 )
 
 
-#: Surface-parity statement (Batch 9 / items 8, 9, 10, 17). Used
-#: verbatim wherever BPP's posture on its own commercial future and
-#: third-party model licensing must be stated: the README License
-#: section, the PyPI long description (rendered from README), the
-#: Settings → Models banner, and the in-app click-through dialog
-#: (via :data:`CANONICAL_DISCLAIMER`). One constant means an
-#: editorial drift between surfaces is structurally impossible: a
-#: test in :mod:`tests.registry.test_surface_parity` greps every
-#: required surface for this exact string.
+#: Surface-parity statement: BPP's posture on its own commercial
+#: future and on third-party model licensing. The Settings → Models
+#: banner renders this constant directly, and the README License
+#: section (also the PyPI long description) carries it as text.
+#: :mod:`tests.registry.test_surface_parity` checks that the README
+#: contains its opening sentence and closing clause, and that
+#: :data:`CANONICAL_DISCLAIMER` (shown in the click-through dialog)
+#: keeps its key phrases.
 #:
-#: The two sentences combine item 8 (MIT/commercial framing
-#: correction) with item 17 (Arkalogy's monetization stance) into
+#: The statement combines the MIT/commercial framing with
+#: Arkalogy's monetization stance into
 #: a paragraph short enough to fit a Settings banner without losing
-#: the legally-load-bearing distinctions. Keep the wording identical
-#: to the second + third paragraph of :data:`CANONICAL_DISCLAIMER`.
+#: the legally-load-bearing distinctions. Keep its meaning aligned
+#: with the second + third paragraph of :data:`CANONICAL_DISCLAIMER`.
 BPP_POSTURE_STATEMENT = (
     "Arkalogy will not monetize, sell, or market Best Photo Picker for "
     "commercial workflows. Because the source code is MIT-licensed, "
@@ -151,15 +155,14 @@ def canonical_disclaimer_compressed_sha256() -> str:
     return hashlib.sha256(CANONICAL_DISCLAIMER_COMPRESSED.encode("utf-8")).hexdigest()
 
 
-# ── BYOM (Bring Your Own Model) disclaimer — Batch 6 / item 11 ──
+# ── BYOM (Bring Your Own Model) disclaimer ──
 #
 # When a user points BPP at their own ONNX file, the legal posture
 # inverts: Arkalogy is not in the rights chain at all. The disclaimer
 # the user signs is shorter and shifts every responsibility onto them.
-# Wording comes verbatim from the legal-posture spec's item 11 + trap-D
-# fix ("acknowledges and agrees to comply" rather than "agrees to
-# upstream's license," because there is no upstream — there's only
-# the user's own model file).
+# The wording says "acknowledges and agrees to comply" rather than
+# "agrees to upstream's license," because there is no upstream —
+# there's only the user's own model file.
 
 #: Version identifier for the BYOM disclaimer below.
 BYOM_DISCLAIMER_VERSION = "byom-disclaimer-v2"
@@ -171,8 +174,7 @@ BYOM_DISCLAIMER_VERSION = "byom-disclaimer-v2"
 #: responsibility for ensuring they have rights to the file.
 BYOM_DISCLAIMER = "\n\n".join(
     (
-        # Paragraph 1 — user responsibility (verbatim wording
-        # recommended by the legal-posture rollout).
+        # Paragraph 1 — user responsibility.
         "You are responsible for ensuring you have rights to use this "
         "model file for your intended purpose. Best Photo Picker does not verify "
         "or grant rights to user-provided model files.",
@@ -189,7 +191,7 @@ BYOM_DISCLAIMER = "\n\n".join(
 
 
 #: Compressed BYOM disclaimer for the click-through dialog header
-#: (Q6 — same legal substance, fewer sentences). The full text is
+#: (same substance, fewer sentences). The full text is
 #: surfaced behind a "Read full terms" link.
 BYOM_DISCLAIMER_COMPRESSED = (
     "You are responsible for ensuring you have rights to use this "
@@ -224,8 +226,7 @@ def byom_disclaimer_compressed_sha256() -> str:
 # attribution obligations the user should acknowledge once before
 # the model is downloaded.
 #
-# The strictest-defensible legal posture (B from the legal-posture
-# discussion) draws the line at MIT: MIT entries pass through
+# The strictest-defensible legal posture draws the line at MIT: MIT entries pass through
 # silently; everything else requires a one-time click-through so the
 # user has explicitly seen the license name and the fact that
 # attribution duties attach when they redistribute or build a

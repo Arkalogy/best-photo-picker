@@ -26,12 +26,15 @@ export const vgrid = {
   buffer: 3,
   measured: false,
   _scrollRAF: 0,
+  /** The one card that is in the Tab order (roving focus; see photos-select.mjs). */
+  focusIdx: 0,
 
   /** @param {any[]} items */
   setItems(items) {
     this.items = items;
     this.firstRow = -1;
     this.lastRow = -1;
+    this.focusIdx = 0;
     // Drop the per-card render cache — items may have changed shape
     // (different album, refreshed scores, etc.). Re-populates on demand.
     this._cardCache = new Map();
@@ -136,6 +139,14 @@ export const vgrid = {
     );
 
     if (!force && fr === this.firstRow && lr === this.lastRow) return;
+    // Focus follows the user (a click, a context menu's return): the
+    // focused card is the grid's Tab stop. A re-render that replaces it
+    // puts focus back; one that leaves it in place leaves focus alone.
+    const focusedBefore = this._movingFocus ? null : document.activeElement;
+    const focusedCard = /** @type {HTMLElement | null} */ (
+      focusedBefore && grid.contains(focusedBefore) ? focusedBefore.closest(".card") : null
+    );
+    if (focusedCard?.dataset.idx !== undefined) this.focusIdx = +focusedCard.dataset.idx;
 
     const newStart = fr * this.cols;
     const newEnd = Math.min((lr + 1) * this.cols, this.items.length);
@@ -203,6 +214,29 @@ export const vgrid = {
     };
     _resolveLoaded();
     requestAnimationFrame(_resolveLoaded);
+
+    let tabStop = /** @type {HTMLElement | null} */ (
+      grid.querySelector(`.card[data-idx="${this.focusIdx}"]`)
+    );
+    if (!tabStop) {
+      // Scrolled away from the focused card: the first card in view is
+      // the Tab stop (not the buffer rows above it), so the grid never
+      // drops out of the Tab order and Tab lands on something visible.
+      const firstVisible = Math.floor(scrollTop / this.rowHeight) * this.cols;
+      tabStop = /** @type {HTMLElement | null} */ (
+        grid.querySelector(`.card[data-idx="${firstVisible}"]`) || grid.querySelector(".card")
+      );
+      if (tabStop?.dataset.idx !== undefined) this.focusIdx = +tabStop.dataset.idx;
+    }
+    if (tabStop) {
+      tabStop.tabIndex = 0;
+      // Only a keyboard user's focus is chased: a card the mouse focused
+      // and then scrolled away is left alone (no focus hopping while
+      // scrolling).
+      if (this._keyNav && focusedCard && focusedBefore && !document.contains(focusedBefore)) {
+        tabStop.focus({ preventScroll: true });
+      }
+    }
   },
 
   onScroll() {

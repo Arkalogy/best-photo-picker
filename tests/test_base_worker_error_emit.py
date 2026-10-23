@@ -1,4 +1,4 @@
-"""R8-H2: BackgroundWorker._safe_run() must not emit raw exception
+"""BackgroundWorker._safe_run() must not emit raw exception
 text on the SSE progress stream.
 
 `OSError.__str__` typically embeds the absolute path of whatever
@@ -8,9 +8,9 @@ file/dir the OS call was operating on:
 The progress stream is consumed by any client polling the worker —
 including paired LAN devices via the LAN-share gate. Leaking the
 owner's filesystem layout into that stream contradicts the
-LAN-shared-but-host-isolated trust model. R8-H2 changes both error
-branches in `_safe_run` to emit a generic message, with the full
-traceback logged to server.log (owner-only per R5-H2).
+LAN-shared-but-host-isolated trust model. Both error
+branches in `_safe_run` emit a generic message, with the full
+traceback logged to server.log (owner-only).
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ def emitted_events():
 
 def test_oserror_does_not_leak_path_to_progress_stream(emitted_events):
     """The exploit: OSError text → SSE progress stream → LAN client.
-    After R8-H2 the emitted message is generic and the path stays in
+    The emitted message is generic and the path stays in
     the (owner-only) server.log."""
     worker = _OSErrorWorker()
     worker._emit = emitted_events.append  # type: ignore[method-assign]
@@ -71,8 +71,8 @@ def test_oserror_does_not_leak_path_to_progress_stream(emitted_events):
 
 
 def test_generic_exception_also_does_not_leak(emitted_events):
-    """Inverse: the broader Exception branch was already generic
-    before R8-H2; lock that contract so a future refactor doesn't
+    """Inverse: the broader Exception branch was already generic;
+    lock that contract so a future refactor doesn't
     regress it."""
     worker = _GenericErrorWorker()
     worker._emit = emitted_events.append  # type: ignore[method-assign]
@@ -87,11 +87,11 @@ def test_generic_exception_also_does_not_leak(emitted_events):
 
 
 # ---------------------------------------------------------------
-# Source-vanished friendly-message branch (M5 follow-up)
+# Source-vanished friendly-message branch
 # ---------------------------------------------------------------
 #
 # The base OSError handler protects the LAN-client path-leak case
-# above. M5 adds a second responsibility: when the errno tells us the
+# above. It has a second responsibility: when the errno tells us the
 # source disappeared (SD card ejected, NAS share unmounted, file
 # deleted), the toast should tell the user what to do ("reconnect and
 # try again") instead of pointing them at server logs they can't read.

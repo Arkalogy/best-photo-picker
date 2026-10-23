@@ -1,8 +1,10 @@
-"""SCRFD face detector — primary multi-scale detector.
+"""SCRFD face detector — optional, research-only extra detector.
 
-SCRFD is the project's preferred face detector; it dramatically
-outperforms the fallbacks (YuNet + BlazeFace) on small, distant,
-and infant faces due to its 3-level FPN over strides 8/16/32.
+SCRFD's weights are licensed for non-commercial research only, so it
+is opt-in: it runs only after the user accepts it in Settings →
+Models, and is skipped otherwise (YuNet + BlazeFace are the default
+detectors). When enabled it can help with small and distant faces
+thanks to its 3-level FPN over strides 8/16/32.
 
 This module owns:
   - the ONNX model singleton + download URL
@@ -19,7 +21,6 @@ Re-exported from bpp.scoring.face so callers and tests
 
 from __future__ import annotations
 
-import os
 import threading
 from functools import lru_cache
 from pathlib import Path
@@ -28,9 +29,12 @@ from typing import Any
 import cv2
 import numpy as np
 
+from bpp.scoring.install_hold import requires
 from bpp.scoring.model_base import ModelSingleton
+from bpp.scoring.model_load_gate import MemoizedLoadGate
 from bpp.scoring.onnx_providers import get_providers
 from bpp.utils.logging import get_logger
+from bpp.utils.paths import models_dir
 
 log = get_logger(__name__)
 
@@ -60,15 +64,10 @@ _scrfd_lock = threading.Lock()
 
 # ── Model singleton + constants ──────────────────────────────────────
 
-_SCRFD_MODEL_PATH = os.path.join(
-    os.path.expanduser("~"),
-    ".cache",
-    "bpp",
-    "models",
-    "scrfd_2.5g_bnkps.onnx",
-)
+# Routed through models_dir() so BPP_CACHE_DIR / BPP_MODELS_DIR apply.
+_SCRFD_MODEL_PATH = str(models_dir() / "scrfd_2.5g_bnkps.onnx")
 # ── Model: SCRFD (2.5g_bnkps) ──────────────────────────────────────
-# What:   tertiary face detector, biased toward small / distant
+# What:   optional (research-only) face detector, biased toward small / distant
 #         faces that YuNet + BlazeFace miss in group photos and
 #         landscapes. Outputs bboxes + 5-point keypoints.
 # Where:  HuggingFace mirror (RuteNL/SCRFD-face-detection-ONNX) of
@@ -78,7 +77,7 @@ _SCRFD_MODEL_PATH = os.path.join(
 # Why this one: 2.5g is the "medium" SCRFD variant (2.5 GFLOPs);
 #         the bnkps suffix means it predicts batch-norm keypoints
 #         (the head shape this codebase's anchor decoder expects).
-# License: MIT (InsightFace project).
+# License: see the bpp.registry entry ``insightface_scrfd_25g``.
 # To bump: stay within the bnkps family — switching to non-bnkps
 #         changes the output tensor count and would break
 #         _scrfd_decode in this file.
@@ -101,8 +100,30 @@ _scrfd_model = ModelSingleton(
     model_sha256=_SCRFD_MODEL_SHA256,
     create_fn=_scrfd_create,
     registry_id="insightface_scrfd_25g",
-    import_check=lambda: __import__("onnxruntime"),
+    import_check=requires("onnxruntime"),
 )
+
+#: Load-time license gate. SCRFD is research-only, so until the user
+#: accepts it the detector is simply skipped (the chain falls back to
+#: YuNet / BlazeFace / dlib) instead of raising mid-analysis.
+_scrfd_gate = MemoizedLoadGate("insightface_scrfd_25g")
+_scrfd_block_logged = False
+
+
+def scrfd_accepted() -> bool:
+    """True once SCRFD's research-only license has been accepted."""
+    global _scrfd_block_logged
+    from bpp.registry import ModelLoadBlockedError
+
+    try:
+        _scrfd_gate.enforce()
+    except ModelLoadBlockedError as exc:
+        if not _scrfd_block_logged:
+            log.info("SCRFD not accepted; skipping it: %s", exc)
+            _scrfd_block_logged = True
+        return False
+    return True
+
 
 _SCRFD_INPUT_SIZE = 640
 _SCRFD_STRIDES = (8, 16, 32)
@@ -174,6 +195,8 @@ def detect_faces_scrfd(
     Input is letterbox-resized to 640x640 so the aspect ratio is
     preserved while the receptive field stays consistent.
     """
+    if not scrfd_accepted():
+        return []
     session = _scrfd_model.get()
     if session is None:
         return []
@@ -262,12 +285,27 @@ def detect_faces_scrfd(
 # ── Registry ───────────────────────────────────────────────────────
 from bpp.scoring.model_base import ModelEntry, ModelRegistry  # noqa: E402
 
+
+def reset_scrfd() -> None:
+    """Registry reset hook: drop the cached ONNX session AND re-arm the
+    license gate (plus its once-per-process "skipped" notice), so a
+    redownload / uninstall / revoke re-evaluates acceptance on the next
+    detection instead of riding a memoized pass. Mirrors
+    :func:`bpp.scoring.face_yunet.reset_yunet_cache`."""
+    global _scrfd_block_logged
+    _scrfd_model.reset()
+    _scrfd_gate.reset()
+    _scrfd_block_logged = False
+
+
 ModelRegistry.register(
     ModelEntry(
         name="SCRFD 2.5g",
         path=_SCRFD_MODEL_PATH,
         url=_SCRFD_MODEL_URL,
         sha256=_SCRFD_MODEL_SHA256,
-        reset=_scrfd_model.reset,
+        reset=reset_scrfd,
+        legal_id="insightface_scrfd_25g",
+        owner=_scrfd_model,
     )
 )

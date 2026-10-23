@@ -12,6 +12,7 @@ import { calendarDayClick } from "../bpp/web/static/js/modules/calendar.mjs";
 vi.mock("../bpp/web/static/js/modules/api-client.mjs", () => ({
   apiFetch: vi.fn().mockResolvedValue({ photos: [], days: [] }),
   authedSrc: (p) => p,
+  faceCropUrl: (/** @type {string} */ h, /** @type {number} */ i) => `/api/v1/faces/crop/${h}/${i}`,
 }));
 
 vi.mock("../bpp/web/static/js/modules/analysis.mjs", () => ({

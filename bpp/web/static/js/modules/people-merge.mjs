@@ -10,7 +10,7 @@
  * Re-exported from people.mjs.
  */
 
-import { apiFetch, authedSrc } from "./api-client.mjs";
+import { apiFetch, faceCropUrl } from "./api-client.mjs";
 import { state } from "./state.mjs";
 import { appConfirm } from "./dialogs.mjs";
 import { esc, escapeAttr } from "./text-format.mjs";
@@ -83,13 +83,13 @@ export async function mergeSelected(targetCid) {
     if (!c) return "";
     const rep = c.representative;
     const name = personDisplayName(cid) || `Person ${cid + 1}`;
-    const src = authedSrc(`/api/v1/faces/crop/${esc(rep.thumb_hash)}/${rep.face_index}`);
+    const src = faceCropUrl(rep.thumb_hash, rep.face_index);
     return `<div class="confirm-face-chip"><img src="${escapeAttr(src)}"><span>${esc(name)}</span></div>`;
   }).join("");
   const targetCluster = state.faceClusters.find(cl => cl.cluster_id === targetCid);
   const targetRep = targetCluster ? targetCluster.representative : null;
   const targetChip = targetRep
-    ? `<div class="confirm-face-chip confirm-face-target"><img src="${escapeAttr(authedSrc(`/api/v1/faces/crop/${esc(targetRep.thumb_hash)}/${targetRep.face_index}`))}"><span>${esc(targetName)}</span></div>`
+    ? `<div class="confirm-face-chip confirm-face-target"><img src="${escapeAttr(faceCropUrl(targetRep.thumb_hash, targetRep.face_index))}"><span>${esc(targetName)}</span></div>`
     : "";
   const bodyHTML = `<div class="confirm-face-strip">${chips}<span class="confirm-face-arrow">→</span>${targetChip}</div>`;
 
@@ -182,7 +182,7 @@ export async function doMerge(primaryId, mergeIds) {
   const win = window;
   // In-progress in the status bar (indeterminate); the completion toast
   // below keeps the merged names + photo count, which aren't visible at a
-  // glance. (Toast-noise audit item 2.)
+  // glance.
   win.showStatusProgress?.("Merging faces…", 0);
   try {
     const resp = await apiFetch("/api/v1/faces/merge", {

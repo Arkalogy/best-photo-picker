@@ -28,7 +28,7 @@ def scan_images(
     Skips symlinks unless follow_symlinks is True.
     When recursive is True, walks subdirectories as well.
 
-    M15: ``on_progress(scanned_so_far, matched_so_far)`` is invoked
+    ``on_progress(scanned_so_far, matched_so_far)`` is invoked
     every ~500 files inspected during recursive walks so callers can
     surface scan progress on libraries with tens of thousands of files
     instead of presenting a black box. Non-recursive mode is fast
@@ -55,10 +55,22 @@ def scan_images(
             log.warning("Failed to scan %s: %s", input_dir, e)
             return []
         scanned = 0
-        for dirpath, _dirnames, filenames in walker:
-            if os.path.basename(dirpath) in _SKIP_DIRS:
+        root = os.path.normpath(input_dir)
+        for dirpath, dirnames, filenames in walker:
+            # Prune bpp's own folders at the scanned root (cache/pet_crops,
+            # data/extracted, ...) so os.walk never descends into them. A
+            # user's own "data" or "cache" folder deeper in an import
+            # source is still a folder of photos.
+            if os.path.normpath(dirpath) == root:
+                dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
+            elif (
+                os.path.basename(dirpath) in _SKIP_DIRS
+                and os.path.dirname(os.path.normpath(dirpath)) == root
+            ):
                 continue
             for name in sorted(filenames):
+                if name.startswith("."):
+                    continue  # hidden: OS metadata, editors' and bpp's own temp files
                 scanned += 1
                 filepath = os.path.join(dirpath, name)
                 if not follow_symlinks and os.path.islink(filepath):
@@ -88,6 +100,8 @@ def scan_images(
         for entry in entries:
             if not entry.is_file(follow_symlinks=follow_symlinks):
                 continue
+            if entry.name.startswith("."):
+                continue  # hidden: OS metadata, editors' and bpp's own temp files
             if not follow_symlinks and entry.is_symlink():
                 log.debug("Skipping symlink: %s", entry.path)
                 continue

@@ -40,7 +40,7 @@ _PATHY = st.text(
 )
 
 
-@settings(max_examples=200, suppress_health_check=[HealthCheck.too_slow])
+@settings(max_examples=200, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(filename=_PATHY)
 def test_safe_join_either_raises_or_stays_inside_base(filename):
     """P1: safe_join either raises ValueError or returns a path inside base."""
@@ -58,7 +58,7 @@ def test_safe_join_either_raises_or_stays_inside_base(filename):
         )
 
 
-@settings(max_examples=200)
+@settings(max_examples=200, deadline=None)  # filesystem I/O: no per-example time limit
 @given(member=_PATHY)
 def test_is_safe_archive_member_rejects_path_traversal(member):
     """P2: members with .. or absolute paths must be rejected."""
@@ -74,7 +74,7 @@ def test_is_safe_archive_member_rejects_path_traversal(member):
             )
 
 
-@settings(max_examples=100)
+@settings(max_examples=100, deadline=None)  # filesystem I/O: no per-example time limit
 @given(name=_PATHY)
 def test_safe_archive_member_never_crashes(name):
     """P3: helper must always return bool, never raise on adversarial input."""

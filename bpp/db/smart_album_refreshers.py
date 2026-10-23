@@ -28,6 +28,7 @@ from bpp.utils.logging import get_logger
 log = get_logger(__name__)
 
 _ACTIVE = ACTIVE_PHOTO_SQL
+_P_ACTIVE = active_photo_sql("p")
 # Aliased active filters for self-join queries (e.g., duplicates)
 _P1_ACTIVE = active_photo_sql("p1")
 _P2_ACTIVE = active_photo_sql("p2")
@@ -79,6 +80,64 @@ def _refresh_time_albums(conn: sqlite3.Connection) -> None:
     )
 
 
+def _greedy_dissimilar(
+    rows: list[tuple[int, int | None, int | None]],
+    clip_embs: dict[int, Any],
+    limit: int,
+    threshold: float,
+) -> list[int]:
+    """Walk *rows* (best first) and keep up to *limit* photos that aren't
+    near-duplicates of an already kept one.
+
+    A candidate with a CLIP embedding is compared against every kept
+    embedding in one matrix-vector product (the kept embeddings live in
+    one preallocated buffer); one without falls back to hash distance.
+    """
+    import numpy as np
+
+    from bpp.selection.diversity import _hamming_many
+
+    accepted_ids: list[int] = []
+    # Kept hashes as uint64 buffers: one vectorised Hamming pass per
+    # candidate instead of a Python loop over every kept photo (200k
+    # photos: 60k candidates x 20k kept calls).
+    kept_ph = np.empty(limit, dtype=np.uint64)
+    kept_ah = np.empty(limit, dtype=np.uint64)
+    kept_has_ah = np.empty(limit, dtype=bool)
+    n_hashes = 0
+    first = next(iter(clip_embs.values()), None)
+    kept = np.empty((limit, first.shape[0]), dtype=first.dtype) if first is not None else None
+    n_kept = 0
+
+    for photo_id, phash, ahash in rows:
+        if len(accepted_ids) >= limit:
+            break
+        emb = clip_embs.get(photo_id)
+        if emb is not None and n_kept and threshold > 0:
+            if float(np.max(kept[:n_kept] @ emb)) >= threshold:
+                continue
+        elif phash is not None and n_hashes and threshold > 0:
+            dist = _hamming_many(phash, kept_ph[:n_hashes])
+            if ahash is not None:
+                # dual-hash distance: the smaller of the two, where the
+                # kept photo has an aHash too
+                a_dist = _hamming_many(ahash, kept_ah[:n_hashes])
+                dist = np.where(kept_has_ah[:n_hashes], np.minimum(dist, a_dist), dist)
+            if int(dist.min()) <= 16:
+                continue
+
+        accepted_ids.append(photo_id)
+        if emb is not None and kept is not None:
+            kept[n_kept] = emb
+            n_kept += 1
+        if phash is not None:
+            kept_ph[n_hashes] = np.uint64(phash & 0xFFFFFFFFFFFFFFFF)
+            kept_ah[n_hashes] = np.uint64((ahash or 0) & 0xFFFFFFFFFFFFFFFF)
+            kept_has_ah[n_hashes] = ahash is not None
+            n_hashes += 1
+    return accepted_ids
+
+
 def _refresh_score_album(conn: sqlite3.Connection) -> None:
     """Create a 'Top Rated' smart album with the highest-scoring photos.
 
@@ -114,58 +173,16 @@ def _refresh_score_album(conn: sqlite3.Connection) -> None:
         )
         return
 
-    # Try loading CLIP embeddings for better similarity checking
+    # CLIP embeddings for the candidates only (not the library matrix).
     clip_embs: dict[int, Any] = {}
     try:
-        from bpp.db.clip import get_all_clip_embeddings
+        from bpp.db.clip import get_clip_embeddings_for_ids
 
-        clip_embs = get_all_clip_embeddings(conn)
+        clip_embs = get_clip_embeddings_for_ids(conn, [r[0] for r in rows])
     except Exception:
         log.warning("CLIP embeddings unavailable for Top Rated album", exc_info=True)
 
-    # Greedy similarity filter
-    import numpy as np
-
-    from bpp.dedupe.phash import dual_hash_distance, hamming_distance
-
-    accepted_ids: list[int] = []
-    accepted_clip: list[np.ndarray] = []
-    accepted_hashes: list[tuple[int | None, int | None]] = []
-
-    for photo_id, phash, ahash in rows:
-        if len(accepted_ids) >= limit:
-            break
-
-        # CLIP similarity check
-        emb = clip_embs.get(photo_id)
-        if emb is not None and accepted_clip and threshold > 0:
-            too_similar = False
-            for acc_emb in accepted_clip:
-                if float(np.dot(emb, acc_emb)) >= threshold:
-                    too_similar = True
-                    break
-            if too_similar:
-                continue
-        elif phash is not None and accepted_hashes and threshold > 0:
-            # Hash fallback
-            too_similar = False
-            for acc_ph, acc_ah in accepted_hashes:
-                if acc_ph is None:
-                    continue
-                if acc_ah is not None and ahash is not None:
-                    dist = dual_hash_distance(phash, ahash, acc_ph, acc_ah)
-                else:
-                    dist = hamming_distance(phash, acc_ph)
-                if dist <= 16:
-                    too_similar = True
-                    break
-            if too_similar:
-                continue
-
-        accepted_ids.append(photo_id)
-        if emb is not None:
-            accepted_clip.append(emb)
-        accepted_hashes.append((phash, ahash))
+    accepted_ids = _greedy_dissimilar(rows, clip_embs, limit, threshold)
 
     _ensure_smart_album(
         conn,
@@ -185,7 +202,7 @@ def _refresh_unsorted_album(conn: sqlite3.Connection) -> None:
         rule={"unsorted": True},
         photo_query=(
             "SELECT p.id FROM photos p "
-            f"WHERE p.{_ACTIVE} "
+            f"WHERE {_P_ACTIVE} "
             "AND p.id NOT IN ("
             "  SELECT ap.photo_id FROM album_photos ap "
             "  JOIN albums a ON a.id = ap.album_id "
@@ -379,7 +396,7 @@ from bpp.db.smart_album_document import _refresh_document_album  # noqa: E402, F
 def _refresh_recently_edited_album(conn: sqlite3.Connection) -> None:
     """Create or remove a 'Recently Edited' smart album for photos with edits."""
     row = conn.execute(
-        f"SELECT COUNT(*) FROM photo_edits pe JOIN photos p ON p.id = pe.photo_id WHERE p.{_ACTIVE}"
+        f"SELECT COUNT(*) FROM photo_edits pe JOIN photos p ON p.id = pe.photo_id WHERE {_P_ACTIVE}"
     ).fetchone()
     count = row[0] if row else 0
 
@@ -392,7 +409,7 @@ def _refresh_recently_edited_album(conn: sqlite3.Connection) -> None:
             photo_query=(
                 f"SELECT pe.photo_id FROM photo_edits pe "
                 f"JOIN photos p ON p.id = pe.photo_id "
-                f"WHERE p.{_ACTIVE} ORDER BY pe.modified_at DESC",
+                f"WHERE {_P_ACTIVE} ORDER BY pe.modified_at DESC",
                 (),
             ),
         )
@@ -404,7 +421,7 @@ def _get_enhanced_ids(conn: sqlite3.Connection) -> set[int]:
     rows = conn.execute(
         f"SELECT pe.photo_id FROM photo_edits pe "
         f"JOIN photos p ON p.id = pe.photo_id "
-        f"WHERE pe.auto_enhanced = 1 AND p.{_ACTIVE}"
+        f"WHERE pe.auto_enhanced = 1 AND {_P_ACTIVE}"
     ).fetchall()
     return {r[0] for r in rows}
 
@@ -413,7 +430,7 @@ def _refresh_enhanced_album(conn: sqlite3.Connection) -> None:
     """Create or remove the 'Enhanced' smart album (auto-enhanced photos only)."""
     count = conn.execute(
         f"SELECT COUNT(*) FROM photo_edits pe JOIN photos p ON p.id = pe.photo_id "
-        f"WHERE pe.auto_enhanced = 1 AND p.{_ACTIVE}"
+        f"WHERE pe.auto_enhanced = 1 AND {_P_ACTIVE}"
     ).fetchone()[0]
 
     if count > 0:
@@ -425,7 +442,7 @@ def _refresh_enhanced_album(conn: sqlite3.Connection) -> None:
             photo_query=(
                 f"SELECT pe.photo_id FROM photo_edits pe "
                 f"JOIN photos p ON p.id = pe.photo_id "
-                f"WHERE pe.auto_enhanced = 1 AND p.{_ACTIVE} ORDER BY pe.modified_at DESC",
+                f"WHERE pe.auto_enhanced = 1 AND {_P_ACTIVE} ORDER BY pe.modified_at DESC",
                 (),
             ),
         )

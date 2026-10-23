@@ -10,7 +10,9 @@ the CLI and tests.
 from __future__ import annotations
 
 import argparse
+import logging
 import os
+from typing import Any
 
 from bpp.utils.logging import get_logger, setup_logging
 
@@ -39,16 +41,20 @@ def do_web(args: argparse.Namespace) -> int:
 
     port = args.port
     app = create_app(input_dir=input_dir, workdir=workdir, config_path=config_path)
+    _launch_url = _configure_loopback_boot(app.extensions["bpp"], port, args)
 
     if not args.no_browser:
         import threading
         import webbrowser
 
-        threading.Timer(1.0, webbrowser.open, args=[f"http://127.0.0.1:{port}"]).start()
+        threading.Timer(1.0, webbrowser.open, args=[_launch_url]).start()
 
     host = getattr(args, "host", None) or "127.0.0.1"
-    log.info("Starting web UI at http://%s:%d", host, port)
-    app.run(host=host, port=port, debug=getattr(args, "debug", False), threaded=True)
+    log.info("Starting web UI on %s:%d", host, port)
+    # ``--debug`` means verbose logging (setup_logging above), never
+    # Werkzeug's interactive debugger: that would hand a traceback page
+    # and a code console to anyone who can reach the port.
+    app.run(host=host, port=port, debug=False, threaded=True)
     return 0
 
 
@@ -63,33 +69,8 @@ def do_serve(args: argparse.Namespace) -> int:
         log.error("Flask is not installed. Install with: pip install bppicker[web]")
         return 1
 
-    from bpp.db.library import ensure_library_dirs, get_library_path
-    from bpp.db.registry import add_library, get_active_library, set_active_library
-
-    config_path = getattr(args, "config", None)
-    library_path = getattr(args, "library", None)
-    if not library_path:
-        # Try the registry's active library, fall back to default
-        library_path = get_active_library() or get_library_path()
-    library_path = os.path.abspath(library_path)
-
-    dirs = ensure_library_dirs(library_path)
+    library_path, dirs = _resolve_library(args)
     workdir = dirs["data"]  # DB and caches live in data/ subdir
-
-    try:
-        if os.stat(library_path).st_mode & 0o002:
-            log.warning(
-                "Library path %s is world-writable — any local user can read or "
-                "modify your photo collection. Consider tightening permissions.",
-                library_path,
-            )
-    except OSError:
-        pass  # non-fatal; proceed even if stat fails
-
-    # Auto-register library in the registry
-    add_library(library_path)
-    set_active_library(library_path)
-
     port = args.port
 
     # Attach the file-log handler BEFORE create_app. create_app
@@ -105,19 +86,112 @@ def do_serve(args: argparse.Namespace) -> int:
 
     add_file_handler(os.path.join(dirs["logs"], "server.log"))
 
-    # Protection C: full integrity check + auto-restore + auto-prune
-    # BEFORE create_app touches the DB. If the previous shutdown was
-    # ungraceful (SIGKILL mid-write — Jun-2 incident), the WAL may be
-    # in a state where quick_check passes but the full integrity check
-    # finds "never used pages" debris. Auto-restore from .backup when
-    # we have a clean one; raise a clear actionable error if not.
-    # See bpp/db/connection.py:restore_from_backup_if_corrupt.
+    _startup_integrity_gate(os.path.join(workdir, "photopicker.db"))
+
+    app = create_app(
+        workdir=workdir,
+        config_path=getattr(args, "config", None),
+        library_path=library_path,
+    )
+
+    ctx = app.extensions["bpp"]
+    _launch_url = _configure_loopback_boot(ctx, port, args)
+
+    if not args.no_browser:
+        import threading
+        import webbrowser
+
+        threading.Timer(1.0, webbrowser.open, args=[_launch_url]).start()
+
+    _install_shutdown_handlers()
+
+    ctx.port = port
+
+    # If LAN sharing is enabled (DB-persisted toggle), surface the share URL
+    # in the log on startup so users can grab it without opening Settings.
+    from bpp.web.share import is_lan_sharing_enabled
+
+    sharing_enabled = is_lan_sharing_enabled(ctx.get_conn())
+    host = _bind_host(getattr(args, "host", None), sharing_enabled)
+
+    # surface the resolved bind host on the ctx so the
+    # /api/v1/share/toggle handler can refuse to enable LAN sharing
+    # while the server is bound loopback-only — without this, a user
+    # toggling sharing ON via Settings would persist the flag, the UI
+    # would show a LAN URL, but no phone could actually connect
+    # because the process never opened the LAN interface.
+    ctx.bound_host = host
+
+    log.info("Library: %s", library_path)
+    log.info("Starting server on %s:%d", host, port)
+    _log_share_advisories(host, port, sharing_enabled)
+
+    if (ctx.config or {}).get("behind_proxy"):
+        _enable_gated_proxy_fix(app)
+
+    # ``--debug`` means verbose logging (setup_logging above), never
+    # Werkzeug's interactive debugger: with sharing on the server binds the
+    # LAN, and the debugger's traceback pages and console would be reachable
+    # by any device that can send a loopback Host header.
+    app.run(
+        host=host,
+        port=port,
+        debug=False,
+        threaded=True,
+        ssl_context=_ssl_context(ctx.config or {}),
+    )
+    return 0
+
+
+def _resolve_library(args: argparse.Namespace) -> tuple[str, dict[str, str]]:
+    """The library to serve (``--library``, else the registry's active
+    one, else the default) and its ensured directories; registers it
+    as active."""
+    from bpp.db.library import ensure_library_dirs, get_library_path
+    from bpp.db.registry import add_library, get_active_library, set_active_library
+
+    log = get_logger(__name__)
+    library_path = getattr(args, "library", None)
+    if not library_path:
+        # Try the registry's active library, fall back to default
+        library_path = get_active_library() or get_library_path()
+    library_path = os.path.abspath(library_path)
+
+    dirs = ensure_library_dirs(library_path)
+
+    try:
+        if os.stat(library_path).st_mode & 0o002:
+            log.warning(
+                "Library path %s is world-writable — any local user can read or "
+                "modify your photo collection. Consider tightening permissions.",
+                library_path,
+            )
+    except OSError:
+        pass  # non-fatal; proceed even if stat fails
+
+    # Auto-register library in the registry
+    add_library(library_path)
+    set_active_library(library_path)
+    return library_path, dirs
+
+
+def _startup_integrity_gate(db_path: str) -> None:
+    """Full integrity check + auto-restore + auto-prune BEFORE create_app
+    touches the DB.
+
+    If the previous shutdown was ungraceful (SIGKILL mid-write — Jun-2
+    incident), the WAL may be in a state where quick_check passes but
+    the full integrity check finds "never used pages" debris.
+    Auto-restore from .backup when we have a clean one; raise a clear
+    actionable error if not. See
+    bpp/db/connection.py:restore_from_backup_if_corrupt.
+    """
     from bpp.db.connection import (
         prune_corrupt_face_embeddings,
         restore_from_backup_if_corrupt,
     )
 
-    db_path = os.path.join(workdir, "photopicker.db")
+    log = get_logger(__name__)
     try:
         restored_from = restore_from_backup_if_corrupt(db_path)
         if restored_from is not None:
@@ -146,23 +220,15 @@ def do_serve(args: argparse.Namespace) -> int:
             pruned,
         )
 
-    app = create_app(
-        workdir=workdir,
-        config_path=config_path,
-        library_path=library_path,
-    )
 
-    if not args.no_browser:
-        import threading
-        import webbrowser
-
-        threading.Timer(1.0, webbrowser.open, args=[f"http://127.0.0.1:{port}"]).start()
-
-    # Ensure SQLite connections are closed on shutdown (prevents UNE zombies)
+def _install_shutdown_handlers() -> None:
+    """Ensure SQLite connections are closed on shutdown (prevents UNE zombies)."""
     import atexit
     import signal
 
     from bpp.db.connection import close_all_connections
+
+    log = get_logger(__name__)
 
     def _shutdown(*_args: object) -> None:
         close_all_connections()
@@ -187,47 +253,96 @@ def do_serve(args: argparse.Namespace) -> int:
     signal.signal(signal.SIGTERM, _graceful_shutdown)
     signal.signal(signal.SIGINT, _graceful_shutdown)
 
-    ctx = app.extensions["bpp"]
-    ctx.port = port
 
-    # If LAN sharing is enabled (DB-persisted toggle), surface the share URL
-    # in the log on startup so users can grab it without opening Settings.
-    from bpp.web.share import (
-        detect_lan_ip,
-        format_share_banner,
-        is_lan_sharing_enabled,
-    )
+def _configure_loopback_boot(ctx: Any, port: int, args: argparse.Namespace) -> str:
+    """Set the loopback boot secret and return the URL to open.
 
-    sharing_enabled = is_lan_sharing_enabled(ctx.get_conn())
+    Any local process can reach 127.0.0.1:port; without a secret the
+    index page would hand it the owner token (other OS users, sandboxed
+    apps). The desktop shell passes ``BPP_BOOT_SECRET``; ``bpp serve``
+    makes one and prints the tokenized URL, as notebooks do.
+    ``--open-loopback`` / ``BPP_OPEN_LOOPBACK=1`` keep the old open
+    behaviour (the e2e runner, a dev reloading the page by hand).
+    """
+    import secrets
 
-    # default the bind address based on the share toggle so
-    # `bpp serve` on a coffee-shop Wi-Fi doesn't make the service
-    # visible to a port scan when the user hasn't opted into LAN
-    # sharing. Defense-in-depth — the auth layer's `authorize_request`
-    # already blocks non-loopback when sharing is off, but binding
-    # loopback-only keeps the service off the LAN entirely. An
-    # explicit `--host` override (loopback or LAN) wins regardless,
-    # for users who run the server behind a reverse proxy or want
-    # 0.0.0.0 unconditionally.
-    user_host = getattr(args, "host", None)
-    if user_host:
-        host = user_host
-    elif sharing_enabled:
-        host = "0.0.0.0"
+    log = get_logger(__name__)
+    base = f"http://127.0.0.1:{port}"
+    if getattr(args, "open_loopback", False) or os.environ.get("BPP_OPEN_LOOPBACK") == "1":
+        ctx.boot_secret = None
+        get_logger(__name__).info("Loopback open: no boot key (--open-loopback)")
+        return base
+    secret = os.environ.get("BPP_BOOT_SECRET")
+    ctx.boot_secret = secret or secrets.token_urlsafe(24)
+    url = f"{base}/?_boot={ctx.boot_secret}"
+    if secret:  # the desktop shell made it: it already knows
+        _replace_bare_url_banner(None)
+        log.info("Loopback boot key supplied by the launcher")
     else:
-        host = "127.0.0.1"
+        # To the terminal only: server.log is on disk for the run's
+        # lifetime, and the key is what keeps other local users out.
+        # Printed when Werkzeug reports the bind (its "Running on" line),
+        # so a failed bind prints no link and the keyed link is the
+        # last, most visible thing in the terminal.
+        _replace_bare_url_banner(url)
+        log.info("Loopback boot key generated; the URL to open is printed when the port is bound")
+    return url
 
-    # surface the resolved bind host on the ctx so the
-    # /api/v1/share/toggle handler can refuse to enable LAN sharing
-    # while the server is bound loopback-only — without this, a user
-    # toggling sharing ON via Settings would persist the flag, the UI
-    # would show a LAN URL, but no phone could actually connect
-    # because the process never opened the LAN interface.
-    ctx.bound_host = host
 
-    log.info("Library: %s", library_path)
-    log.info("Starting server at http://%s:%d", host, port)
+class _KeyedUrlBanner(logging.Filter):
+    """Swap Werkzeug's "Running on http://127.0.0.1:5001" lines for the
+    keyed link: with a boot key in force the bare URL leads to the
+    locked page, and the README tells the user to click the link the
+    terminal prints. ``url`` None (the launcher knows the key) drops
+    the lines without printing anything."""
 
+    def __init__(self, url: str | None) -> None:
+        super().__init__()
+        self.url = url
+        self.printed = False
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        if "Running on" in msg:
+            if self.url and not self.printed:
+                self.printed = True
+                print(
+                    f"\nOpen Best Photo Picker at {self.url}\n"
+                    "(the key is for this run only; the page without it is locked)",
+                    flush=True,
+                )
+            return False
+        return "Press CTRL+C" not in msg
+
+
+def _replace_bare_url_banner(url: str | None) -> None:
+    werkzeug = logging.getLogger("werkzeug")
+    for f in list(werkzeug.filters):
+        if isinstance(f, _KeyedUrlBanner):
+            werkzeug.removeFilter(f)
+    werkzeug.addFilter(_KeyedUrlBanner(url))
+
+
+def _bind_host(user_host: str | None, sharing_enabled: bool) -> str:
+    """Default the bind address based on the share toggle so `bpp serve`
+    on a coffee-shop Wi-Fi doesn't make the service visible to a port
+    scan when the user hasn't opted into LAN sharing.
+
+    Defense-in-depth — the auth layer's `authorize_request` already
+    blocks non-loopback when sharing is off, but binding loopback-only
+    keeps the service off the LAN entirely. An explicit `--host`
+    override (loopback or LAN) wins regardless, for users who run the
+    server behind a reverse proxy or want 0.0.0.0 unconditionally.
+    """
+    if user_host:
+        return user_host
+    return "0.0.0.0" if sharing_enabled else "127.0.0.1"
+
+
+def _log_share_advisories(host: str, port: int, sharing_enabled: bool) -> None:
+    from bpp.web.share import detect_lan_ip, format_share_banner
+
+    log = get_logger(__name__)
     if sharing_enabled:
         lan_ip = detect_lan_ip()
         if lan_ip:
@@ -246,84 +361,92 @@ def do_serve(args: argparse.Namespace) -> int:
             "match). Toggle Settings -> Share to enable LAN access."
         )
 
-    # Reverse-proxy support (off by default). enabling
-    # `behind_proxy` without also configuring BPP_TRUSTED_PROXIES is a
-    # privilege-escalation primitive — vanilla ProxyFix(x_for=1)
-    # honours X-Forwarded-For from ANY peer, so a public-internet
-    # client could spoof loopback and unlock the owner SPA. The fix
-    # is two-part: (1) require BPP_TRUSTED_PROXIES non-empty before
-    # any rewriting, and (2) gate the ProxyFix rewrite at the WSGI
-    # layer so it only fires when the RAW upstream peer is in the
-    # trusted set. Without (2), ProxyFix rewrites `REMOTE_ADDR` to
-    # whatever XFF claims before the app sees the original peer, so
-    # the post-ProxyFix `_is_trusted_peer` check is checking the
-    # spoofed address.
-    if (ctx.config or {}).get("behind_proxy"):
-        from bpp.web.share import _trusted_peer_networks
 
-        nets = _trusted_peer_networks()
-        if not nets:
-            log.error(
-                "behind_proxy is set but BPP_TRUSTED_PROXIES is empty/unsafe; "
-                "refusing to enable ProxyFix. Set BPP_TRUSTED_PROXIES to a "
-                "loopback / RFC1918 / link-local CIDR matching your reverse "
-                "proxy's address (e.g. 127.0.0.1/32 for nginx on the same "
-                "host). See docs/security.md."
-            )
-        else:
-            import ipaddress as _ip
+def _enable_gated_proxy_fix(app: Any) -> None:
+    """Reverse-proxy support (off by default).
 
-            from werkzeug.middleware.proxy_fix import ProxyFix
+    Enabling `behind_proxy` without also configuring BPP_TRUSTED_PROXIES
+    is a privilege-escalation primitive — vanilla ProxyFix(x_for=1)
+    honours X-Forwarded-For from ANY peer, so a public-internet client
+    could spoof loopback and unlock the owner SPA. The fix is two-part:
+    (1) require BPP_TRUSTED_PROXIES non-empty before any rewriting, and
+    (2) gate the ProxyFix rewrite at the WSGI layer so it only fires
+    when the RAW upstream peer is in the trusted set. Without (2),
+    ProxyFix rewrites `REMOTE_ADDR` to whatever XFF claims before the
+    app sees the original peer, so the post-ProxyFix `_is_trusted_peer`
+    check is checking the spoofed address.
+    """
+    from bpp.web.share import _trusted_peer_networks
 
-            _proxy_fixed = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
-            _bare_app = app.wsgi_app
-            _trusted_nets = nets
+    log = get_logger(__name__)
+    from bpp.web.host_allowlist import ENV_TRUSTED_HOSTS, configured_hosts
 
-            def _gated_proxy_fix(environ, start_response):
-                """Apply ProxyFix only when the raw upstream peer is trusted."""
-                raw_remote = environ.get("REMOTE_ADDR", "")
-                try:
-                    raw_ip = _ip.ip_address(raw_remote)
-                except ValueError:
-                    return _bare_app(environ, start_response)
-                if any(raw_ip in net for net in _trusted_nets):
-                    return _proxy_fixed(environ, start_response)
-                return _bare_app(environ, start_response)
-
-            app.wsgi_app = _gated_proxy_fix
-            log.info(
-                "ProxyFix enabled — X-Forwarded-For honoured ONLY from %d trusted CIDR(s)",
-                len(nets),
-            )
-
-    # HTTPS support (off by default). Provide an `ssl_context` config
-    # entry as a (cert_path, key_path) tuple for TLS termination at
-    # the Flask layer. Most deployments will instead run bpp behind
-    # nginx / Caddy and leave this unset. See docs/security.md.
-    ssl_context = (ctx.config or {}).get("ssl_context")
-
-    # YAML loads sequences as Python lists, but Werkzeug's
-    # `BaseWSGIServer` requires `isinstance(ssl_context, tuple)` to
-    # call `load_ssl_context(*ctx)` — with a list it falls through
-    # to `wrap_socket` and raises AttributeError on the first
-    # connection (server boots, dies on first hit). Normalize lists
-    # of length 2 (the documented `[cert, key]` shape) to tuples.
-    # Other values (None, "adhoc", an actual SSLContext) pass through.
-    if isinstance(ssl_context, list) and len(ssl_context) == 2:
-        ssl_context = tuple(ssl_context)
-    elif isinstance(ssl_context, list):
+    if not configured_hosts():
+        log.warning(
+            "behind_proxy is on but %s is empty: requests that arrive with the proxy's "
+            "host name are refused (421). Set %s to that name.",
+            ENV_TRUSTED_HOSTS,
+            ENV_TRUSTED_HOSTS,
+        )
+    nets = _trusted_peer_networks()
+    if not nets:
         log.error(
+            "behind_proxy is set but BPP_TRUSTED_PROXIES is empty/unsafe; "
+            "refusing to enable ProxyFix. Set BPP_TRUSTED_PROXIES to a "
+            "loopback / RFC1918 / link-local CIDR matching your reverse "
+            "proxy's address (e.g. 127.0.0.1/32 for nginx on the same "
+            "host). See docs/security.md."
+        )
+        return
+
+    import ipaddress as _ip
+
+    from werkzeug.middleware.proxy_fix import ProxyFix
+
+    _proxy_fixed = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+    _bare_app = app.wsgi_app
+    _trusted_nets = nets
+
+    def _gated_proxy_fix(environ, start_response):
+        """Apply ProxyFix only when the raw upstream peer is trusted."""
+        raw_remote = environ.get("REMOTE_ADDR", "")
+        try:
+            raw_ip = _ip.ip_address(raw_remote)
+        except ValueError:
+            return _bare_app(environ, start_response)
+        if any(raw_ip in net for net in _trusted_nets):
+            return _proxy_fixed(environ, start_response)
+        return _bare_app(environ, start_response)
+
+    app.wsgi_app = _gated_proxy_fix
+    log.info(
+        "ProxyFix enabled — X-Forwarded-For honoured ONLY from %d trusted CIDR(s)",
+        len(nets),
+    )
+
+
+def _ssl_context(config: dict[str, Any]) -> Any:
+    """HTTPS support (off by default). Provide an `ssl_context` config
+    entry as a (cert_path, key_path) tuple for TLS termination at the
+    Flask layer. Most deployments will instead run bpp behind nginx /
+    Caddy and leave this unset. See docs/security.md.
+
+    YAML loads sequences as Python lists, but Werkzeug's
+    `BaseWSGIServer` requires `isinstance(ssl_context, tuple)` to call
+    `load_ssl_context(*ctx)` — with a list it falls through to
+    `wrap_socket` and raises AttributeError on the first connection
+    (server boots, dies on first hit). Normalize lists of length 2 (the
+    documented `[cert, key]` shape) to tuples. Other values (None,
+    "adhoc", an actual SSLContext) pass through.
+    """
+    ssl_context = config.get("ssl_context")
+    if isinstance(ssl_context, list) and len(ssl_context) == 2:
+        return tuple(ssl_context)
+    if isinstance(ssl_context, list):
+        get_logger(__name__).error(
             "config.ssl_context is a list of length %d; expected [cert_path, "
             "key_path]. Disabling SSL.",
             len(ssl_context),
         )
-        ssl_context = None
-
-    app.run(
-        host=host,
-        port=port,
-        debug=getattr(args, "debug", False),
-        threaded=True,
-        ssl_context=ssl_context,
-    )
-    return 0
+        return None
+    return ssl_context

@@ -1,4 +1,4 @@
-"""M5 regression: face cluster map must be cached on WebAppState.
+"""Regression: face cluster map must be cached on WebAppState.
 
 Before the fix, every call to /api/v1/photos/select with selected_faces
 rebuilt the filepath→[cluster_ids] map from scratch via a JOIN query.
@@ -120,7 +120,7 @@ class TestFaceWorkerInvalidatesCache:
     """Source scan: face_worker must call invalidate_face_cluster_map after clustering."""
 
     def test_face_worker_calls_invalidate(self):
-        # P3 — the invalidation call moved into the phase-7
+        # The invalidation call moved into the phase-7
         # (reconstruct_identities) function of face_extraction_phases.
         # Scan both files so the contract stays load-bearing.
         from pathlib import Path

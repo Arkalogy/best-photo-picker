@@ -1,4 +1,4 @@
-"""TDD tests for C-3: MediaPipe detector thread safety.
+"""TDD tests for MediaPipe detector thread safety.
 
 MediaPipe detectors are NOT thread-safe — concurrent .detect() calls corrupt
 internal state. All MediaPipe .detect() calls must be serialized with a lock.

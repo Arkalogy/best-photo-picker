@@ -1,9 +1,9 @@
-"""Batch 5 policy + use-context-store tests.
+"""Policy + use-context-store tests.
 
 Pins every rule in :func:`check_model_load_allowed`, the
-file-backed use-context store, and the trap-T7 reclassification
-lock. Together with the Batch-4 acceptance tests, these tests are
-the spec for the legal-posture hard-block: what loads, what
+file-backed use-context store, and the reclassification
+lock. Together with the acceptance tests, these tests are
+the spec for the commercial-mode hard-block: what loads, what
 doesn't, and why.
 """
 
@@ -62,7 +62,7 @@ def _make_restricted_entry(entry_id: str = "test_restricted") -> ModelEntry:
         kind="face_embedder",
         source_url="https://example.invalid/r.onnx",
         terms_url="https://example.invalid/LICENSE",
-        # Permalink required for restricted entries (item 19); see
+        # Permalink required for restricted entries; see
         # TestPermalinkValidation in test_acceptance.py.
         terms_permalink_url="https://example.invalid/abc123/LICENSE",
         terms_retrieved_at="2026-06-02",
@@ -286,7 +286,7 @@ class TestUseContextStore:
         assert get_use_context() is UseContext.UNSPECIFIED
 
 
-# ── Trap T7: reclassification lock ──
+# ── Reclassification lock ──
 
 
 class TestReclassificationLock:

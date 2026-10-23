@@ -1,4 +1,4 @@
-"""TDD tests for H-8: batch_name path traversal sanitization."""
+"""TDD tests for batch_name path traversal sanitization."""
 
 from __future__ import annotations
 

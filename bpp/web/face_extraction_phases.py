@@ -1,13 +1,13 @@
-"""P3 — face extraction decomposed into 7 explicit phases.
+"""Face extraction decomposed into 7 explicit phases.
 
-Until P3, ``extract_and_cluster_faces`` was one 530-line function with
+Originally ``extract_and_cluster_faces`` was one 530-line function with
 implicit cross-phase state: ``dismissed_slots`` captured halfway through
 and consumed near the end; ``old_cluster_photos`` captured in one of
 two branches depending on whether stale embeddings existed; the
 clustering branch reaching for state set by the extraction branch.
 
-The audit flagged this as the module's main correctness risk — the
-"either path" branches were the bug door for the next maintainer.
+That was the module's main correctness risk — the "either path"
+branches were the bug door for the next maintainer.
 
 This module makes the snapshot typed and explicit
 (:class:`PreExtractSnapshot`) and splits the function into seven
@@ -62,6 +62,7 @@ from bpp.constants import (
     CLUSTER_DISMISSED,
 )
 from bpp.db.face_embedding_safety import decode_embedding
+from bpp.db.sql_batches import in_batches
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -82,7 +83,7 @@ class PreExtractSnapshot:
     extraction phase mutates ``face_embeddings`` in flight, so a
     later phase reading "what was the dismissed status of slot
     (photo_id, face_index)" via SELECT would see the *new* state,
-    not the pre-extract state. The audit's main bug door.
+    not the pre-extract state — the main bug door.
     """
 
     stored_method: str | None
@@ -125,51 +126,6 @@ def _snapshot_cluster_photos(conn: sqlite3.Connection) -> dict[int, set[int]]:
     return out
 
 
-def reconcile_method(
-    conn: sqlite3.Connection,
-    current_method: str,
-) -> tuple[str | None, bool, dict[int, set[int]] | None]:
-    """Phase 1: detect sface ↔ dlib method change and wipe if needed.
-
-    Returns ``(stored_method, method_changed, old_cluster_photos)``.
-    ``old_cluster_photos`` is captured only when the method changed (the
-    only case in which the wipe destroys the cluster→photo mapping that
-    the identity-writer phase needs to remap names against). The
-    preloader phase also captures it conditionally on stale-photo
-    presence; the orchestrator merges the two.
-
-    Side effects: ``DELETE FROM face_embeddings`` if method changed;
-    ``INSERT OR REPLACE INTO settings`` for the current method.
-    """
-    try:
-        row = conn.execute(
-            "SELECT value FROM settings WHERE key='face_embedding_method'"
-        ).fetchone()
-        stored_method = row[0] if row else None
-    except Exception:
-        log.warning("Failed to read stored face embedding method", exc_info=True)
-        stored_method = None
-
-    old_cluster_photos: dict[int, set[int]] | None = None
-    method_changed = bool(stored_method) and stored_method != current_method
-    if method_changed:
-        log.info(
-            "Embedding method changed (%s → %s) — clearing old embeddings",
-            stored_method,
-            current_method,
-        )
-        old_cluster_photos = _snapshot_cluster_photos(conn)
-        conn.execute("DELETE FROM face_embeddings")
-        conn.commit()
-
-    conn.execute(
-        "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
-        ("face_embedding_method", current_method),
-    )
-    conn.commit()
-    return stored_method, method_changed, old_cluster_photos
-
-
 # ── Phase 2: preload cached embeddings ──
 
 
@@ -198,9 +154,7 @@ def preload_cached_embeddings(
             seen_pids.add(pid)
 
     cached_by_pid: dict[int, list[tuple[int, bytes]]] = {}
-    for start in range(0, len(candidate_pids), 500):
-        chunk = candidate_pids[start : start + 500]
-        placeholders = ",".join("?" * len(chunk))
+    for placeholders, chunk in in_batches(candidate_pids):
         rows = conn.execute(
             "SELECT photo_id, face_index, embedding FROM face_embeddings "
             f"WHERE photo_id IN ({placeholders}) "
@@ -233,6 +187,7 @@ def partition_cached_vs_extract(
     photo_map: dict[str, int],
     cached_by_pid: dict[int, list[tuple[int, bytes]]],
     stale_photo_ids: frozenset[int],
+    dim: int | None = None,
 ) -> ExtractionPartition:
     """Phase 3: pure-function split between cached emissions and to-extract.
 
@@ -249,18 +204,24 @@ def partition_cached_vs_extract(
             continue
         cached = cached_by_pid.get(photo_id)
         if cached and photo_id not in stale_photo_ids:
+            kept = 0
             for face_idx, emb_blob in cached:
-                # Protection A: skip corrupt BLOBs — propagating a
-                # bad embedding into the phase pipeline crashes
-                # downstream np.stack callers. A skipped row simply
-                # gets re-extracted from source by phase 5.
+                # Skip corrupt BLOBs — propagating a bad embedding into
+                # the phase pipeline crashes downstream np.stack callers.
+                # A photo left with no usable rows is re-extracted.
                 emb = decode_embedding(
                     emb_blob,
                     where="face_extraction_phases.cached_partition",
+                    dim=dim,
                 )
                 if emb is None:
                     continue
                 cached_records.append((fp, photo_id, face_idx, emb))
+                kept += 1
+            if not kept:
+                # Nothing usable cached (corrupt, or another embedder's
+                # rows) — extract the photo again.
+                need_extract.append((i, fp, photo_id))
         else:
             need_extract.append((i, fp, photo_id))
     return ExtractionPartition(cached_records=cached_records, need_extract=need_extract)
@@ -284,9 +245,7 @@ def delete_stale_embeddings(
     stale_to_extract = [pid for _i, _fp, pid in need_extract if pid in stale_photo_ids]
     if not stale_to_extract:
         return 0
-    for start in range(0, len(stale_to_extract), 500):
-        chunk = stale_to_extract[start : start + 500]
-        placeholders = ",".join("?" * len(chunk))
+    for placeholders, chunk in in_batches(stale_to_extract):
         conn.execute(
             f"DELETE FROM face_embeddings WHERE photo_id IN ({placeholders}) "
             f"AND cluster_id != {CLUSTER_DISMISSED}",
@@ -347,6 +306,10 @@ from bpp.web.face_extraction_phase5 import (  # noqa: E402, F401
 # bpp.web.face_extraction_phase6. Re-exported here for callers that
 # import via the original phases module.
 from bpp.web.face_extraction_phase6 import cluster_faces  # noqa: E402, F401
+from bpp.web.face_method_reconcile import (  # noqa: E402, F401
+    EXTRACTED_METHOD_KEY,
+    reconcile_method,
+)
 
 # ── Phase 7: reconstruct identities + refresh albums ──
 
@@ -373,10 +336,10 @@ def reconstruct_identities(
     on background album-state correctness, which we'd rather log and
     recover from than crash.
 
-    T1.4: ``reconstruct_identities_fn`` + ``remap_names_and_tags_fn``
+    ``reconstruct_identities_fn`` + ``remap_names_and_tags_fn``
     are wrapped in a SAVEPOINT so that a mid-loop failure rolls back
-    any UPDATEs they issued before the exception. Pre-T1.4 the partial
-    writes sat in the conn's implicit transaction — correct in the
+    any UPDATEs they issued before the exception. Without it the partial
+    writes would sit in the conn's implicit transaction — correct in the
     subprocess-worker path because process teardown discards them, but
     fragile for any future caller that runs phase 7 inline (test code,
     plugin hook, recovery retry on a long-lived conn). The SAVEPOINT
@@ -418,7 +381,10 @@ def reconstruct_identities(
 
         refresh_smart_albums(
             conn,
-            kinds=get_affected_album_types("face_cluster"),
+            kinds={
+                *get_affected_album_types("face_extract"),
+                *get_affected_album_types("face_cluster"),
+            },
         )
     except Exception:
         log.warning(
@@ -426,11 +392,7 @@ def reconstruct_identities(
             exc_info=True,
         )
 
-    try:
-        from bpp.web.state import get_ctx_or_none
-
-        ctx = get_ctx_or_none()
-        if ctx is not None:
-            ctx.invalidate_face_cluster_map()
-    except Exception:
-        log.debug("face cluster map invalidation skipped", exc_info=True)
+    # The filepath -> cluster map is invalidated by whoever owns the app
+    # state (the analyze worker, the face worker, the resume thread):
+    # this phase runs on worker threads and in subprocesses, where the
+    # request-bound lookup finds nothing.

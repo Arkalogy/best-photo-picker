@@ -23,10 +23,15 @@
 
 import { apiFetch } from "./api-client.mjs";
 import { toast, toastError } from "./toast.mjs";
-import { loadAlbumList } from "./albums.mjs";
-import { loadFaceClusters } from "./faces.mjs";
-import { CLUSTER_DISMISSED, CLUSTER_UNASSIGNED } from "./constants.mjs";
 import { _lbGetFaceContainer, _lbShowFaceAssignPicker, updateLightboxFaces } from "./lightbox.mjs";
+import {
+  announceCommittedBbox,
+  applyCommittedBbox,
+  bboxChangeRequest,
+  finishPlaceholder,
+  refreshOpenLightboxFaces,
+  revertBboxOnError,
+} from "./lightbox-face-commit.mjs";
 
 /** @type {any} */
 export let _lbEdit = null;
@@ -270,6 +275,11 @@ async function _lbOnDragEnd(_e) {
  */
 export async function _lbCommitBboxUpdate(bboxPct) {
   if (!_lbEdit) return;
+  // The session this save belongs to. Navigation ends the edit and the
+  // user may have started another one before the response lands; only
+  // this session may be torn down by it, and its toast action must not
+  // open a picker on whatever photo is open by then.
+  const session = _lbEdit;
   const face = _lbEdit.face;
   const box = _lbEdit.box;
   const thumbHash = _lbEdit.thumbHash;
@@ -285,158 +295,48 @@ export async function _lbCommitBboxUpdate(bboxPct) {
   /** @type {any} */
   let resp;
   try {
-    if (isPlaceholder) {
-      // New-person mode sends `new_person_name` and lets the server
-      // allocate cluster_id + create the album atomically. Existing-
-      // person mode sends `cluster_id`.
-      const body = face._isNewPerson
-        ? {
-            path_hash: thumbHash,
-            new_person_name: face._newPersonName,
-            bbox_pct: bboxPct,
-          }
-        : {
-            path_hash: thumbHash,
-            cluster_id: face.cluster_id,
-            bbox_pct: bboxPct,
-          };
-      resp = await apiFetch("/api/v1/faces/create", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-    } else {
-      resp = await apiFetch("/api/v1/faces/update-bbox", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ face_id: face.face_id, bbox_pct: bboxPct }),
-      });
-    }
+    const { url, body } = bboxChangeRequest(face, thumbHash, bboxPct);
+    resp = await apiFetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
   } catch (err) {
     box.classList.remove("lb-face-overlay-busy");
     const e = /** @type {Error & {status?: number}} */ (err);
-    if (isPlaceholder) {
-      // Placeholder POST failed — discard the synthetic overlay
-      // entirely. The user can retry "Add face…" from the menu.
-      box.remove();
-      _lbEndFaceEdit();
-      // Server explains 422 (YuNet couldn't confirm a face) and 409
-      // (duplicate guard tripped — message names the existing person).
-      // Show those verbatim; treat everything else as transport noise.
-      const serverExplained = e.status === 422 || e.status === 409;
-      toast(
-        serverExplained ? e.message : "Failed to add face: " + (e.message || "unknown"),
-        true,
-      );
-      return;
-    }
-    // Update-bbox failure: snap the visual bbox back to its pre-drag
-    // position so the user can see the update was rejected.
-    if (face.bbox_pct) {
-      box.style.left = face.bbox_pct.x + "%";
-      box.style.top = face.bbox_pct.y + "%";
-      box.style.width = face.bbox_pct.w + "%";
-      box.style.height = face.bbox_pct.h + "%";
-    }
-    // 422 = server explained the rejection (e.g. "No face detected…"),
-    // show verbatim. Anything else = transport/server failure.
-    if (e.status === 422) {
-      toast(e.message, true);
-    } else {
-      toastError("update the face", e);
-    }
-    _lbEndFaceEdit();
+    revertBboxOnError(face, box);
+    // The server explains a 422 (YuNet couldn't confirm a face) and, for
+    // an add, a 409 (duplicate guard: the message names the existing
+    // person) — show those verbatim; anything else is transport noise.
+    const explained = e.status === 422 || (isPlaceholder && e.status === 409);
+    if (explained) toast(e.message, true);
+    else toastError(isPlaceholder ? "add the face" : "update the face", e);
+    if (_lbEdit === session) _lbEndFaceEdit();
     return;
   }
-
   box.classList.remove("lb-face-overlay-busy");
 
   if (isPlaceholder) {
     // Drop the synthetic placeholder; updateLightboxFaces will fetch
     // the new face from the server and render a real overlay.
     box.remove();
-    _lbEndFaceEdit();
-    /** @type {any} */
-    const win = window;
-    if (face._isNewPerson) {
-      // Server already minted the cluster + album; refresh local copies
-      // so the new person shows up in pickers and the sidebar.
-      await loadAlbumList();
-      await loadFaceClusters();
-      toast("Face added — created person “" + (resp.person_name || face._newPersonName) + "”.");
-    } else {
-      toast("Face added — " + (resp.person_name || face.name || "tagged"));
-    }
-    const items = /** @type {any[]} */ (win.currentGridItems || []);
-    if (win.lightboxIdx >= 0 && win.lightboxIdx < items.length) {
-      updateLightboxFaces(items[win.lightboxIdx]);
-    }
+    if (_lbEdit === session) _lbEndFaceEdit();
+    await finishPlaceholder(face, resp);
     return;
   }
 
-  // Apply server-corrected bbox (YuNet may have shifted it).
-  if (resp.bbox_pct) {
-    face.bbox_pct = resp.bbox_pct;
-    box.style.left = resp.bbox_pct.x + "%";
-    box.style.top = resp.bbox_pct.y + "%";
-    box.style.width = resp.bbox_pct.w + "%";
-    box.style.height = resp.bbox_pct.h + "%";
-  }
-  face.cluster_id = resp.cluster_id;
-  face.name = resp.person_name || null;
-  box.dataset.clusterId = String(resp.cluster_id ?? CLUSTER_UNASSIGNED);
+  applyCommittedBbox(face, box, resp);
+  if (_lbEdit === session) _lbEndFaceEdit();
+  if (_lbStillShowing(thumbHash)) announceCommittedBbox(resp, face, thumbHash);
+  refreshOpenLightboxFaces();
+}
 
+/** Whether the lightbox still shows the photo a save was made on. */
+function _lbStillShowing(thumbHash) {
   /** @type {any} */
   const win = window;
-  const personDisplayName = win.personDisplayName || (() => null);
-  const label = box.querySelector(".lb-face-overlay-label");
-  if (label) {
-    if (resp.matched) {
-      label.textContent =
-        resp.person_name ||
-        personDisplayName(resp.cluster_id) ||
-        "Person " + (resp.cluster_id + 1);
-    } else {
-      label.textContent = "Unknown";
-    }
-  }
-  if (resp.matched) {
-    box.classList.add("lb-face-overlay-assigned");
-  } else {
-    box.classList.remove("lb-face-overlay-assigned");
-  }
-
-  _lbEndFaceEdit();
-
-  if (resp.matched) {
-    const who =
-      resp.person_name ||
-      personDisplayName(resp.cluster_id) ||
-      "Person " + (resp.cluster_id + 1);
-    toast(`Face outline updated — still tagged as ${who}.`);
-  } else {
-    // Unassigned face — surface the Label action so the user can claim
-    // identity in one click. Identity is never auto-assigned by this
-    // endpoint; use Label or the Reassign ctx-menu action explicitly.
-    toast("Face outline updated — still unidentified.", null, {
-      action: {
-        label: "Label",
-        fn: () => {
-          const syntheticEvent = /** @type {any} */ ({
-            stopPropagation: () => {},
-            preventDefault: () => {},
-          });
-          _lbShowFaceAssignPicker(syntheticEvent, face, thumbHash);
-        },
-      },
-    });
-  }
-
-  // Refresh the faces strip below the image — counts/labels may have changed.
-  const items = /** @type {any[]} */ (win.currentGridItems || []);
-  if (win.lightboxIdx >= 0 && win.lightboxIdx < items.length) {
-    updateLightboxFaces(items[win.lightboxIdx]);
-  }
+  const open = (win.currentGridItems || [])[win.lightboxIdx];
+  return !open || !open.thumb_hash || open.thumb_hash === thumbHash;
 }
 
 export function _lbEndFaceEdit() {

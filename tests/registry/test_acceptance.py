@@ -1,24 +1,7 @@
-"""Batch 4 acceptance-flow tests.
+"""Acceptance-flow tests — part 1 of 2."""
 
-These pin the contracts every consumer (HTML dialog, CLI prompt,
-Flask endpoint, Batch-5 hard-block gate) relies on:
-
-* The :class:`AcceptanceDraft` carries every string the dialog
-  must render and every checkbox the user must answer.
-* :func:`confirm_acceptance` enforces the legal-review-mandated
-  four-checkbox gate (all required, all true) and persists every
-  evidentiary field.
-* :func:`is_acceptance_valid_for` returns ``True`` only when the
-  user accepted the exact wording currently active. A wording
-  change invalidates older acceptances and re-prompts.
-* The acceptance-log file lives outside the library directory and
-  honors ``BPP_ACCEPTANCE_LOG_PATH``.
-* Trap T6: separate-rights assertion is per-model.
-* Trap T5: commercial-use definition is rendered inside the
-  acceptance flow.
-* Item 13: biometric-responsibility text is part of the dialog
-  payload.
-"""
+# Shared fixtures are imported by name and re-bound as test parameters.
+# ruff: noqa: F811
 
 from __future__ import annotations
 
@@ -29,12 +12,7 @@ import pytest
 
 from bpp.registry import (
     AcceptanceError,
-    LicenseClass,
-    ModelEntry,
-    ModelStatus,
     UseContext,
-    append_revocation,
-    canonical_disclaimer_sha256,
     confirm_acceptance,
     find_latest_for_model,
     has_accepted,
@@ -42,7 +20,6 @@ from bpp.registry import (
     list_acceptances,
     prepare_acceptance,
     use_context_text_sha256,
-    utc_now_iso,
 )
 from bpp.registry.acceptance_log import (
     SCHEMA_VERSION,
@@ -58,76 +35,19 @@ from bpp.registry.use_context import (
     USE_CONTEXT_TEXT_VERSION,
     required_checkbox_ids,
 )
-
-
-@pytest.fixture
-def isolated_log_path(tmp_path: Path, monkeypatch) -> Path:
-    """Force the acceptance log into a tempdir for every test using
-    this fixture."""
-    target = tmp_path / "model-acceptance.jsonl"
-    monkeypatch.setenv("BPP_ACCEPTANCE_LOG_PATH", str(target))
-    return target
-
-
-def _make_restricted_entry(entry_id: str = "test_restricted") -> ModelEntry:
-    return ModelEntry(
-        id=entry_id,
-        display_name="Restricted Test Model v1",
-        kind="face_embedder",
-        source_url="https://example.invalid/model.onnx",
-        terms_url="https://example.invalid/LICENSE",
-        # Restricted entries must have a permalink — see the
-        # TestPermalinkValidation suite. Using a valid placeholder
-        # so the rest of this fixture matches a real builtin.
-        terms_permalink_url="https://example.invalid/abc123/LICENSE",
-        terms_retrieved_at="2026-06-02",
-        license_summary="Test restricted entry — non-commercial only",
-        requires_explicit_ack=True,
-        ack_text_version="canonical-disclaimer-v2",
-        ack_text_sha256=canonical_disclaimer_sha256(),
-        upstream_claimed_license_class=LicenseClass.RESEARCH_NON_COMMERCIAL,
-        commercial_use_restriction_known=True,
-        bppicker_commercial_default_allowed=False,
-        commercial_unlock_requires_rights_assertion=True,
-        status=ModelStatus.AVAILABLE,
-        training_data="synthetic test corpus",
-        weight_sha256="a" * 64,
-        default_for_kind=False,
-    )
-
-
-def _make_permissive_entry(entry_id: str = "test_permissive") -> ModelEntry:
-    return ModelEntry(
-        id=entry_id,
-        display_name="Permissive Test Model",
-        kind="face_embedder",
-        source_url="https://example.invalid/permissive.onnx",
-        terms_url="https://example.invalid/PERMISSIVE",
-        terms_permalink_url=None,
-        terms_retrieved_at="2026-06-02",
-        license_summary="Test permissive entry",
-        requires_explicit_ack=False,
-        ack_text_version="canonical-disclaimer-v2",
-        ack_text_sha256=canonical_disclaimer_sha256(),
-        upstream_claimed_license_class=LicenseClass.APACHE_2_0,
-        commercial_use_restriction_known=False,
-        bppicker_commercial_default_allowed=True,
-        commercial_unlock_requires_rights_assertion=False,
-        status=ModelStatus.AVAILABLE,
-        training_data="synthetic test corpus",
-        weight_sha256="b" * 64,
-        default_for_kind=False,
-    )
-
+from tests.registry._acceptance_shared import (
+    _make_permissive_entry,
+    _make_restricted_entry,
+    isolated_log_path,  # noqa: F401
+)
 
 # ── AcceptanceDraft shape ──
 
 
 class TestAcceptanceDraft:
-    """The dialog payload carries every legally-required text. Trap
-    T5 (commercial-use definition), item 13 (biometric
-    responsibility), and trap T6 (per-model rights assertion) all
-    appear on the draft."""
+    """The dialog payload carries every required text: the
+    commercial-use definition, the biometric-responsibility text,
+    and the per-model rights assertion all appear on the draft."""
 
     def test_draft_contains_required_checkboxes(self) -> None:
         entry = _make_restricted_entry()
@@ -164,9 +84,6 @@ class TestAcceptanceDraft:
         draft = prepare_acceptance(_make_restricted_entry(), use_context=UseContext.PERSONAL)
         assert draft.use_context_text_version == USE_CONTEXT_TEXT_VERSION
         assert draft.use_context_text_sha256 == use_context_text_sha256()
-
-
-# ── confirm_acceptance ──
 
 
 class TestConfirmAcceptance:
@@ -243,7 +160,7 @@ class TestConfirmAcceptance:
     def test_per_checkbox_responses_persist_on_acceptance_row(
         self, isolated_log_path: Path
     ) -> None:
-        """Item 5 evidentiary chain: each required checkbox the user
+        """Audit trail: each required checkbox the user
         engaged with must be recorded individually so a future audit
         can prove "user clicked checkbox #3" not just "user submitted
         a valid form"."""
@@ -324,7 +241,7 @@ class TestConfirmAcceptance:
         assert rows[0].checkbox_responses == {}
 
 
-# ── terms_permalink_url evidentiary chain ──
+# ── terms_permalink_url audit trail ──
 
 
 class TestPermalinkValidation:
@@ -412,7 +329,7 @@ class TestPermalinkValidation:
             "These restricted-license builtins lack a "
             "terms_permalink_url: " + ", ".join(missing) + ". "
             "Pin the upstream LICENSE URL to a specific commit SHA "
-            "so acceptance rows record a stable evidentiary URL."
+            "so acceptance rows record a stable audit URL."
         )
 
 
@@ -420,7 +337,7 @@ class TestPermalinkValidation:
 
 
 class TestIsAcceptanceValidFor:
-    """The Batch-5 hard-block gate uses this to decide whether to let
+    """The commercial-mode hard-block gate uses this to decide whether to let
     a restricted model load. Wording change invalidates older
     acceptances; permissive models trivially pass."""
 
@@ -559,167 +476,3 @@ class TestHasAccepted:
         latest = find_latest_for_model(entry.id)
         assert latest is not None
         assert latest.source_of_rights_note == "later acceptance"
-
-
-# ── Withdrawal (append-only revocation) ──
-
-
-class TestRevocation:
-    def _accept(self, entry) -> None:
-        draft = prepare_acceptance(entry, use_context=UseContext.PERSONAL)
-        confirm_acceptance(
-            draft,
-            checkbox_responses={cb_id: True for cb_id, _ in REQUIRED_ACK_CHECKBOXES},
-            accepted_at="2026-06-02T12:00:00+00:00",
-        )
-
-    def test_revoke_regate_model_and_preserves_audit_trail(self, isolated_log_path: Path) -> None:
-        entry = _make_restricted_entry()
-        self._accept(entry)
-        assert is_acceptance_valid_for(entry) is True
-        assert has_accepted(entry.id) is True
-
-        row = append_revocation(entry.id)
-        assert row is not None
-        assert row.event == "revoke"
-
-        # Re-gated: the load policy will block until re-acceptance.
-        assert is_acceptance_valid_for(entry) is False
-        assert has_accepted(entry.id) is False
-
-        # Append-only: the original acceptance row is STILL on disk (legal
-        # audit trail), now followed by the revocation.
-        rows = list(iter_rows())
-        assert len(rows) == 2, rows
-        assert rows[0].event == "accept"
-        assert rows[1].event == "revoke"
-
-    def test_revoke_with_nothing_to_withdraw_is_noop(self, isolated_log_path: Path) -> None:
-        assert append_revocation("never_accepted") is None
-
-    def test_double_revoke_is_noop(self, isolated_log_path: Path) -> None:
-        entry = _make_restricted_entry()
-        self._accept(entry)
-        assert append_revocation(entry.id) is not None
-        # Latest row is already a revocation — nothing to withdraw again.
-        assert append_revocation(entry.id) is None
-
-    def test_reaccept_after_revoke_restores_validity(self, isolated_log_path: Path) -> None:
-        entry = _make_restricted_entry()
-        self._accept(entry)
-        append_revocation(entry.id)
-        assert is_acceptance_valid_for(entry) is False
-        # Accept again — latest row is an acceptance, so it's valid.
-        self._accept(entry)
-        assert is_acceptance_valid_for(entry) is True
-        assert has_accepted(entry.id) is True
-
-    def test_revoked_row_round_trips_through_log(self, isolated_log_path: Path) -> None:
-        entry = _make_restricted_entry()
-        self._accept(entry)
-        append_revocation(entry.id)
-        # Re-read from disk: the event discriminator survives serialisation.
-        latest = find_latest_for_model(entry.id)
-        assert latest is not None
-        assert latest.event == "revoke"
-
-
-# ── utc_now_iso shape (so caller-supplied stamps look the same) ──
-
-
-class TestUtcNowIso:
-    def test_returns_iso_format(self) -> None:
-        stamp = utc_now_iso()
-        # YYYY-MM-DDTHH:MM:SS at minimum, with +00:00 suffix.
-        assert "T" in stamp
-        assert stamp.endswith("+00:00")
-
-
-# ── File-system privacy (item 6 + privacy-by-design) ──
-
-
-import os  # noqa: E402  (deferred to keep import section clean)
-import stat  # noqa: E402
-import sys  # noqa: E402
-
-
-@pytest.mark.skipif(
-    sys.platform.startswith("win"),
-    reason=(
-        "POSIX-only: Windows ACLs don't map to the same st_mode bits, "
-        "and BPP's primary distribution targets macOS + Linux."
-    ),
-)
-class TestAcceptanceLogPermissions:
-    """The acceptance log records sensitive metadata — which
-    restricted models the user agreed to, their declared use context,
-    and free-text source-of-rights notes. On shared machines the
-    default umask makes the file world-readable, leaking this
-    history to any other local user. The acceptance-log writer must
-    create the file with ``0o600`` (owner read/write only) and the
-    parent directory with ``0o700``."""
-
-    def test_log_file_mode_is_0o600_when_created(self, isolated_log_path: Path) -> None:
-        entry = _make_restricted_entry()
-        draft = prepare_acceptance(entry, use_context=UseContext.PERSONAL)
-        confirm_acceptance(
-            draft,
-            checkbox_responses={cb_id: True for cb_id, _ in REQUIRED_ACK_CHECKBOXES},
-            accepted_at="2026-06-02T12:34:56+00:00",
-        )
-        assert isolated_log_path.exists()
-        mode = stat.S_IMODE(os.stat(isolated_log_path).st_mode)
-        assert mode == 0o600, (
-            f"acceptance log mode is {oct(mode)} — should be 0o600 so "
-            "no other local user can read which restricted models "
-            "the user accepted"
-        )
-
-    def test_log_parent_dir_mode_is_0o700_when_created(self, tmp_path: Path, monkeypatch) -> None:
-        """When BPP creates a fresh ``XDG_CONFIG_HOME/bpp/`` directory
-        the mode should be ``0o700``. We point the env var at a
-        non-existent subdirectory so the writer has to create it."""
-        target = tmp_path / "fresh-config" / "bpp" / "model-acceptance.jsonl"
-        monkeypatch.setenv("BPP_ACCEPTANCE_LOG_PATH", str(target))
-        entry = _make_restricted_entry("test_dir_perms")
-        draft = prepare_acceptance(entry, use_context=UseContext.PERSONAL)
-        confirm_acceptance(
-            draft,
-            checkbox_responses={cb_id: True for cb_id, _ in REQUIRED_ACK_CHECKBOXES},
-            accepted_at="2026-06-02T12:34:56+00:00",
-        )
-        assert target.parent.exists()
-        mode = stat.S_IMODE(os.stat(target.parent).st_mode)
-        assert mode == 0o700, (
-            f"acceptance-log directory mode is {oct(mode)} — should be "
-            "0o700 so no other local user can list the directory"
-        )
-
-    def test_pre_existing_loose_perms_get_tightened_on_next_write(
-        self, isolated_log_path: Path
-    ) -> None:
-        """If a previous BPP version created the log with default
-        (world-readable) permissions, the next acceptance write must
-        tighten them. This keeps existing installs from staying
-        leaky after the upgrade."""
-        # First write — gives us a real log file.
-        entry = _make_restricted_entry()
-        draft = prepare_acceptance(entry, use_context=UseContext.PERSONAL)
-        confirm_acceptance(
-            draft,
-            checkbox_responses={cb_id: True for cb_id, _ in REQUIRED_ACK_CHECKBOXES},
-            accepted_at="2026-06-02T12:34:56+00:00",
-        )
-        # Simulate "previous BPP version wrote it loosely".
-        os.chmod(isolated_log_path, 0o644)
-        # Second write should re-tighten.
-        confirm_acceptance(
-            draft,
-            checkbox_responses={cb_id: True for cb_id, _ in REQUIRED_ACK_CHECKBOXES},
-            accepted_at="2026-06-02T13:00:00+00:00",
-        )
-        mode = stat.S_IMODE(os.stat(isolated_log_path).st_mode)
-        assert mode == 0o600, (
-            f"acceptance log mode after second write is {oct(mode)} — "
-            "should have been tightened to 0o600 by the writer"
-        )

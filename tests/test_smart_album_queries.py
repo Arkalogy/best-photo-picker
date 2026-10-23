@@ -7,7 +7,7 @@ matching attributes, calls the resolver, and asserts the right IDs
 come back.
 
 This file backfills coverage on the resolvers extracted from
-smart_albums.py in commit `458c750` (M11.c refactor). The original
+smart_albums.py in commit `458c750` (a refactor). The original
 tests stayed on the integration-level refresh path; the resolvers
 themselves were under-tested.
 """

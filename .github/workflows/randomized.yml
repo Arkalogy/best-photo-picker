@@ -15,6 +15,9 @@
 
 name: Randomized tests
 
+permissions:
+  contents: read
+
 on:
   schedule:
     # Sundays at 06:00 UTC — well outside busy hours, doesn't block any
@@ -30,22 +33,25 @@ jobs:
   randomized:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # No token left in .git/config for later steps to read.
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.11"
 
       - name: Cache pip packages
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/pip
           key: pip-3.11-${{ hashFiles('pyproject.toml') }}
           restore-keys: pip-3.11-
 
       - name: Cache ML models
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/bpp
           key: bpp-models-${{ hashFiles('bpp/scoring/face*.py', 'bpp/scoring/clip*.py') }}
@@ -60,7 +66,7 @@ jobs:
         run: |
           pip install --upgrade pip "setuptools<82"
           pip install git+https://github.com/ageitgey/face_recognition_models
-          pip install -e ".[dev,web,faces,nudity,heic,raw]"
+          pip install -e ".[dev,web,faces,heic,raw]"
           pip install pytest-randomly
 
       # The project's pyproject.toml sets `-p no:randomly` so day-to-day
@@ -71,4 +77,6 @@ jobs:
       # Drop `-p no:cacheprovider` too — we want to see what fails first
       # and `--randomly-seed=last` works for re-runs.
       - name: Run tests with randomized order
+        env:
+          BPP_TEST_ALLOW_DOWNLOADS: "1"  # tests never download; CI keeps a model cache and opts in
         run: pytest -p randomly --tb=short -m "not slow"

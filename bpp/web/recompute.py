@@ -9,15 +9,13 @@ from typing import Any
 
 import numpy as np
 
-from bpp.config import DEFAULTS
+from bpp.config import DEFAULTS, cfg_get
 from bpp.constants import (
     OPTIMIZE_FACE_COVERAGE_W,
     OPTIMIZE_MAX_FACE_OVERLAP,
     OPTIMIZE_QUALITY_W,
 )
-from bpp.dedupe.cluster import deduplicate
-from bpp.dedupe.semantic import semantic_deduplicate
-from bpp.dedupe.strategy import resolve_strategy
+from bpp.dedupe.select import dedupe_candidates
 from bpp.scoring.aggregate import compute_aggregate, normalize_blur_scores
 from bpp.scoring.registry import get_weight_keys
 from bpp.selection.choose import choose
@@ -36,9 +34,9 @@ _log = get_logger(__name__)
 # bp_albums.py — duplicated locals drift.
 RECOMPUTE_FULL_PAYLOAD_LIMIT = 5000
 
-# Config keys that accept weight-clamped float values from the UI.
-RECOMPUTE_WEIGHT_KEYS = (
-    *get_weight_keys(),  # blur_weight, exposure_weight, face_weight, composition_weight
+#: The non-weight keys a recompute may override, next to every scorer's
+#: weight key.
+_RECOMPUTE_TUNING_KEYS = (
     "hash_distance_threshold",
     "time_window_seconds",
     "max_per_day",
@@ -50,6 +48,14 @@ RECOMPUTE_WEIGHT_KEYS = (
 )
 
 
+def recompute_weight_keys() -> tuple[str, ...]:
+    """Config keys that accept weight-clamped float values from the UI:
+    every registered scorer's weight (a plugin's included, whenever it
+    registered) plus the selection tuning keys. Asked at use time, not
+    frozen at import."""
+    return (*get_weight_keys(), *_RECOMPUTE_TUNING_KEYS)
+
+
 @dataclass
 class RecomputeOptions:
     """Options for the recompute pipeline."""
@@ -57,7 +63,6 @@ class RecomputeOptions:
     analysis: list[dict[str, Any]]
     config: dict[str, Any]
     k: int = DEFAULTS["default_selection_k"]
-    seed: int = DEFAULTS["default_selection_seed"]
     force_include: list[str] = field(default_factory=list)
     force_exclude: list[str] = field(default_factory=list)
     selected_faces: list[int] = field(default_factory=list)
@@ -65,6 +70,118 @@ class RecomputeOptions:
     skip_dedupe: bool = False
     clip_embeddings: dict[int, np.ndarray] | None = None
     clip_threshold: float | None = None
+
+
+_DEDUPE_CACHE: dict[str, Any] = {}
+_NOT_DEDUPE_KEYS = ("default_selection_k",)
+#: Fields the dedupe pass rewrites on dicts that already carry them.
+_DEDUPE_REWRITTEN = ("cluster_size", "similar_photos")
+
+
+def _dedupe_cache_clear() -> None:
+    _DEDUPE_CACHE.clear()
+
+
+def dedupe_cache_clear() -> None:
+    """Forget the last dedupe outcome: on a library switch and whenever
+    the CLIP cache is reset (its identity is part of the key)."""
+    _DEDUPE_CACHE.clear()
+
+
+def dedupe_cache_stats() -> dict[str, int]:
+    """For /api/v1/debug/memory: what the single-entry cache holds."""
+    entry = _DEDUPE_CACHE.get("entry")
+    if not entry:
+        return {"entries": 0, "candidates": 0}
+    _key, (outcome, _mode) = entry
+    return {"entries": 1, "candidates": len(outcome)}
+
+
+def _dedupe_key(items: list[dict[str, Any]], config: dict[str, Any], opts: RecomputeOptions):
+    """What the dedupe result depends on: the candidates (path, score and
+    both hashes, so a re-analysis invalidates), the dedupe-relevant
+    config, and the CLIP inputs. Weights and k are left out."""
+    rows = tuple(
+        (
+            d["filepath"],
+            d.get("aggregate_score"),
+            d.get("phash"),
+            d.get("ahash"),
+            d.get("date"),
+        )
+        for d in items
+    )
+    cfg = tuple(
+        sorted(
+            (k, v)
+            for k, v in config.items()
+            if isinstance(v, (int, float, str, bool, type(None)))
+            and not k.endswith("_weight")
+            and k not in _NOT_DEDUPE_KEYS
+        )
+    )
+    clip = opts.clip_embeddings
+    clip_len = len(clip) if clip else 0
+    # The CLIP dict by identity, not by reference: holding it would pin
+    # the whole embedding matrix (410 MB at the cap) after a reload. A
+    # reload also calls ``dedupe_cache_clear``, so a reused address
+    # can't produce a stale hit.
+    return (
+        hash(rows),
+        len(rows),
+        cfg,
+        clip_len,
+        id(clip) if clip is not None else 0,
+        opts.skip_dedupe,
+        opts.clip_threshold,
+    )
+
+
+def _dedupe_cached(
+    items: list[dict[str, Any]], config: dict[str, Any], opts: RecomputeOptions
+) -> tuple[list[dict[str, Any]], str]:
+    key = _dedupe_key(items, config, opts)
+    hit = _DEDUPE_CACHE.get("entry")
+    if hit is not None and hit[0] == key:
+        outcome, mode = hit[1]
+        # recompute copies the analysis per call: the dedupe's fields
+        # (cluster_size, similar_photos) must land on THIS call's dicts,
+        # and the candidates returned must be those dicts.
+        by_path = {d["filepath"]: d for d in items}
+        candidates = []
+        for filepath, added in outcome:
+            cur = by_path.get(filepath)
+            if cur is None:
+                continue
+            cur.update(added)
+            candidates.append(cur)
+        return candidates, mode
+    # The pass only adds keys. Items share one column set, so remember
+    # that set once and, per item, only the odd extra key (none at the
+    # cap: ~450 MB of per-item key sets otherwise).
+    base_keys = frozenset(items[0]) if items else frozenset()
+    before = {d["filepath"]: (frozenset(d) - base_keys) or None for d in items}
+    candidates, mode = dedupe_candidates(
+        items,
+        config,
+        clip_embeddings=opts.clip_embeddings,
+        skip_dedupe=opts.skip_dedupe,
+        clip_threshold=opts.clip_threshold,
+    )
+    # Only what the next call has to replay: the fields the pass added
+    # or rewrote (cluster_size, similar_photos, a hash it computed, a
+    # plugin strategy's annotations), not the 50-key dicts (~300 MB at
+    # the cap).
+    outcome = []
+    for c in candidates:
+        extra = before.get(c["filepath"]) or ()
+        keep = {k: v for k, v in c.items() if k not in base_keys and k not in extra}
+        for k in _DEDUPE_REWRITTEN:
+            if k in c:
+                keep[k] = c[k]
+        outcome.append((c["filepath"], keep))
+    _DEDUPE_CACHE["entry"] = (key, (outcome, mode))
+    return list(candidates), mode
 
 
 def recompute(opts: RecomputeOptions) -> dict[str, Any]:
@@ -102,7 +219,7 @@ def recompute(opts: RecomputeOptions) -> dict[str, Any]:
     # Apply face selection boost
     if opts.selected_faces and opts.face_cluster_map:
         selected_set = set(opts.selected_faces)
-        face_boost = config.get("face_selection_boost", 0.15)
+        face_boost = cfg_get(config, "face_selection_boost")
         for item in data:
             fp = item["filepath"]
             item_clusters = set(opts.face_cluster_map.get(fp, []))
@@ -129,49 +246,18 @@ def recompute(opts: RecomputeOptions) -> dict[str, Any]:
     # pool. Force-included sensitive photos are NOT filtered (they were
     # split into `forced_in` above) — manual include always wins. In the
     # default "allow" mode sensitive photos compete normally.
-    if config.get("sensitive_in_picks", "allow") == "exclude":
-        from bpp.constants import SENSITIVE_NUDITY_THRESHOLD
-
-        sens_threshold = config.get("sensitive_nudity_threshold", SENSITIVE_NUDITY_THRESHOLD)
+    if cfg_get(config, "sensitive_in_picks") == "exclude":
+        sens_threshold = cfg_get(config, "sensitive_nudity_threshold")
         normal_for_dedupe = [
             d for d in normal_for_dedupe if not is_sensitive_item(d, sens_threshold)
         ]
 
-    # Deduplicate only normal candidates.
-    #
-    # Plugin override: if the user (or YAML config) sets
-    # `dedupe_strategy` to a registered strategy name, the registry
-    # picks it up. resolve_strategy() falls back to None on unknown
-    # / clip-required-but-missing-embeddings cases so we never crash
-    # the recompute path; the auto-pick below covers those.
-    have_clip = bool(opts.clip_embeddings)
-    plugin_strategy = resolve_strategy(
-        config.get("dedupe_strategy"), have_clip_embeddings=have_clip
-    )
-    if plugin_strategy is not None:
-        candidates = plugin_strategy.dedupe_fn(
-            normal_for_dedupe,
-            config,
-            clip_embeddings=opts.clip_embeddings,
-        )
-        dedup_mode = plugin_strategy.name
-        _log.info(
-            "Recompute using dedup strategy %r (%s)",
-            plugin_strategy.name,
-            "plugin" if not plugin_strategy.is_builtin else "built-in",
-        )
-    elif opts.clip_embeddings:
-        threshold = opts.clip_threshold or config.get("clip_similarity_threshold", 0.92)
-        candidates = semantic_deduplicate(
-            normal_for_dedupe, opts.clip_embeddings, threshold=threshold, config=config
-        )
-        dedup_mode = "clip"
-    elif opts.skip_dedupe:
-        candidates = normal_for_dedupe
-        dedup_mode = "skipped"
-    else:
-        candidates = deduplicate(normal_for_dedupe, config=config)
-        dedup_mode = "hash"
+    # Deduplicate only normal candidates, through the one shared path
+    # (a strategy named in config wins; else CLIP; else skip; else hash).
+    # The result is kept while its inputs are unchanged: a k change
+    # (every slider nudge) must not redo the O(N²) pass, which
+    # takes minutes at 200k photos.
+    candidates, dedup_mode = _dedupe_cached(normal_for_dedupe, config, opts)
 
     # Reduce k budget by number of force-includes
     remaining_k = max(0, opts.k - len(forced_in))
@@ -181,7 +267,6 @@ def recompute(opts: RecomputeOptions) -> dict[str, Any]:
         candidates,
         k=remaining_k,
         config=config,
-        seed=opts.seed,
         clip_embeddings=opts.clip_embeddings,
     )
 
@@ -234,8 +319,12 @@ def optimize(
             item["ahash"] = ah
     normalize_blur_scores(base)
 
-    # Pre-deduplicate once (dedup params stay fixed)
-    deduped = base if opts.skip_dedupe else deduplicate(copy.deepcopy(base), config=config)
+    # Pre-deduplicate once (dedup params stay fixed), through the shared path
+    deduped, _mode = (
+        (base, "skipped")
+        if opts.skip_dedupe
+        else dedupe_candidates(copy.deepcopy(base), config)  # the hash pass writes in place
+    )
 
     # Weight grid — coarse sweep
     blur_weights = [0.15, 0.25, 0.35]
@@ -286,7 +375,6 @@ def optimize(
             candidates,
             k=opts.k,
             config=trial_cfg,
-            seed=opts.seed,
             clip_embeddings=opts.clip_embeddings,
         )
         avg_quality = sum(s["aggregate_score"] for s in selected) / max(len(selected), 1)

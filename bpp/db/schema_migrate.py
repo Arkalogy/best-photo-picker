@@ -13,9 +13,11 @@ only entry point ``create_tables`` calls from schema.py.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sqlite3
+from typing import Any
 
 from bpp.db.dialect import dialect
 from bpp.utils.logging import get_logger
@@ -83,7 +85,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
 
     initial_version = dialect.get_user_version(conn)
 
-    # P2: refuse a DB at a NEWER schema version than this binary
+    # Refuse a DB at a NEWER schema version than this binary
     # could migrate to. Without this, the migration loop silently
     # no-ops (every step's `version >= target` short-circuit) and
     # the binary opens the DB as if it understood the schema.
@@ -139,23 +141,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
     for target, fn in MIGRATIONS:
         if version >= target:
             continue
-        sp = f"migrate_v{target}"
-        conn.execute(f"SAVEPOINT {sp}")
-        try:
-            fn(conn)
-            conn.execute(f"RELEASE SAVEPOINT {sp}")
-            dialect.set_user_version(conn, target)
-            conn.commit()
-            version = target
-            # per-step success breadcrumb. Pairs with the
-            # existing error-path log; together they let on-call
-            # tell whether a migration step ran cleanly or rolled
-            # back, just from server.log.
-            log.info("Migration step v%d committed", target)
-        except Exception:
-            conn.execute(f"ROLLBACK TO SAVEPOINT {sp}")
-            log.error("Migration to v%d failed — rolled back", target, exc_info=True)
-            raise
+        _run_migration_step(conn, target, fn)
+        version = target
 
         # Roll the .backup snapshot forward. Skipped on fresh inits
         # (no data) and in-memory DBs (no path). Backup failure is
@@ -181,6 +168,40 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # cleanly without re-deriving it from the per-step lines.
     if version != initial_version:
         log.info("DB schema migration complete: v%d -> v%d", initial_version, version)
+
+
+def _run_migration_step(conn: sqlite3.Connection, target: int, fn: Any) -> None:
+    """One migration step as one transaction: the step and the version
+    bump inside a savepoint, released together (``PRAGMA user_version``
+    is transactional, and releasing the outermost savepoint is the
+    commit). Any failure rolls the whole step back and propagates as
+    itself — nothing runs after RELEASE that could fail and leave a
+    committed step without its version."""
+    sp = f"migrate_v{target}"
+    conn.execute(f"SAVEPOINT {sp}")
+    released = False
+    try:
+        fn(conn)
+        dialect.set_user_version(conn, target)
+        conn.execute(f"RELEASE SAVEPOINT {sp}")
+        released = True
+        conn.commit()
+        # per-step success breadcrumb. Pairs with the error-path log;
+        # together they let on-call tell whether a migration step ran
+        # cleanly or rolled back, just from server.log.
+        log.info("Migration step v%d committed", target)
+    except Exception:
+        with contextlib.suppress(sqlite3.Error):
+            if released:
+                # The savepoint was nested in a caller's transaction and
+                # that commit failed: the step is part of it, so the
+                # whole transaction goes.
+                conn.rollback()
+            else:
+                conn.execute(f"ROLLBACK TO SAVEPOINT {sp}")
+                conn.execute(f"RELEASE SAVEPOINT {sp}")
+        log.error("Migration to v%d failed — rolled back", target, exc_info=True)
+        raise
 
 
 def _backfill_exif_json(conn: sqlite3.Connection) -> None:

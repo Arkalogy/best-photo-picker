@@ -1,6 +1,6 @@
 """Build the /api/models response — one feature dict per ML model group.
 
-M12: extracted from bp_core.api_models so the route handler is a thin
+Extracted from bp_core.api_models so the route handler is a thin
 wrapper and each feature group is independently testable. The schema
 each entry follows is intentionally redundant (same keys repeated)
 to keep the JSON response shape uniform for the JS consumer.
@@ -29,15 +29,6 @@ def _file_info(name: str, path: str) -> dict[str, Any]:
     }
 
 
-def _ort_available() -> bool:
-    try:
-        import onnxruntime  # noqa: F401
-
-        return True
-    except ImportError:
-        return False
-
-
 # ── Per-group builders ──────────────────────────────────────────────
 
 
@@ -46,8 +37,9 @@ def _build_scrfd(scrfd_path: str, enabled: bool) -> dict[str, Any]:
     return {
         "label": "SCRFD face detection",
         "description": (
-            "InsightFace SCRFD 2.5GF — best multi-scale detector"
-            " for babies, small and distant faces."
+            "InsightFace SCRFD 2.5GF — optional extra detector. Off until"
+            " you accept its license; YuNet + BlazeFace stay the default"
+            " detectors."
         ),
         "toggle_key": "model_scrfd",
         "enabled": enabled,
@@ -55,7 +47,7 @@ def _build_scrfd(scrfd_path: str, enabled: bool) -> dict[str, Any]:
         "size_bytes": os.path.getsize(scrfd_path) if ok else 0,
         "files": [_file_info("SCRFD 2.5g", scrfd_path)],
         "speed_impact": "low",
-        "quality_impact": "Dramatically improves detection of small, distant, and baby faces",
+        "quality_impact": "Can help find small or distant faces the default detectors miss",
     }
 
 
@@ -67,8 +59,8 @@ def _build_face_detect_fallback(yunet_path: str, blazeface_path: str) -> dict[st
     yunet_ok = os.path.exists(yunet_path)
     blaze_ok = os.path.exists(blazeface_path)
     return {
-        "label": "Face detection (fallback)",
-        "description": "OpenCV YuNet + MediaPipe BlazeFace — used when SCRFD is unavailable",
+        "label": "Face detection",
+        "description": "OpenCV YuNet + MediaPipe BlazeFace — the default detectors",
         "status": "ready" if yunet_ok or blaze_ok else "missing",
         "size_bytes": sum(f["size_bytes"] for f in files),
         "bundled": True,
@@ -126,7 +118,7 @@ def _build_face_recognition(sface_path: str, face_embed_ok: bool) -> dict[str, A
     return {
         "label": "Face recognition",
         "description": (
-            "OpenCV SFace 128-d (primary, BSD)" + (" + dlib fallback" if face_embed_ok else "")
+            "OpenCV SFace 128-d (primary)" + (" + dlib fallback" if face_embed_ok else "")
         ),
         "status": "ready" if sface_ok else ("fallback" if face_embed_ok else "missing"),
         "size_bytes": os.path.getsize(sface_path) if sface_ok else 0,
@@ -199,19 +191,25 @@ def _build_clip(clip_dir: str, enabled: bool, ort_ok: bool) -> dict[str, Any]:
     }
 
 
-def _build_nudity(enabled: bool, available: bool) -> dict[str, Any]:
+def _build_nudity(model_path: str, enabled: bool, available: bool) -> dict[str, Any]:
+    file_ok = os.path.exists(model_path)
+    if file_ok and available:
+        status = "ready"
+    elif file_ok:
+        status = "no_library"
+    else:
+        status = "missing"
     return {
         "label": "Content filter",
-        "description": "NudeNet ML classifier — detects sensitive content.",
+        "description": "NudeNet 320n — downloaded only after you accept its license.",
         "toggle_key": "model_nudity",
         "enabled": enabled,
-        "status": "ready" if available else "no_library",
-        "size_bytes": 0,
-        "lib_only": True,
+        "status": status,
+        "size_bytes": os.path.getsize(model_path) if file_ok else 0,
         "lib_available": available,
-        "install_hint": "pip install nudenet",
-        "install_key": "nudity",
-        "files": [],
+        "install_hint": "pip install onnxruntime",
+        "install_key": "onnxruntime",
+        "files": [_file_info("NudeNet 320n", model_path)],
         "speed_impact": "low",
         "quality_impact": "Detects and flags sensitive/NSFW content",
     }
@@ -279,6 +277,7 @@ def build_model_features(ctx: Any) -> list[dict[str, Any]]:
     from bpp.scoring.face_hand_filter import _HAND_MODEL_PATH
     from bpp.scoring.face_scrfd import _SCRFD_MODEL_PATH
     from bpp.scoring.nudity import is_available as nudenet_available
+    from bpp.scoring.nudity import model_file as _nudenet_model_path
     from bpp.scoring.pets import _get_model_path as _pets_model_path
     from bpp.scoring.pets import is_available as pets_available
     from bpp.scoring.pose import _POSE_MODEL_PATH
@@ -289,21 +288,94 @@ def build_model_features(ctx: Any) -> list[dict[str, Any]]:
     pets_path = _pets_model_path()
     face_embed_ok = face_recognition_available()
     pets_lib_ok = pets_available()
-    ort_ok = _ort_available()
+    from bpp.scoring.clip_embed import can_install as ort_usable
+    from bpp.scoring.install_hold import held_keys
+
+    # Installed: importable now — or just installed from the app, loading
+    # after the restart the banner asks for (not "missing": installing it
+    # again would only be refused).
+    ort_ok = ort_usable() or "onnxruntime" in held_keys()
 
     toggles = {key: bool(ctx.config.get(key, True)) for key in MODEL_TOGGLE_KEYS}
 
     return [
-        _build_scrfd(_SCRFD_MODEL_PATH, toggles["model_scrfd"]),
+        # Default detectors first; research-only SCRFD is an opt-in extra.
         _build_face_detect_fallback(_YUNET_MODEL_PATH, _MODEL_PATH),
         _build_blazeface_fr(_FR_MODEL_PATH, toggles["model_blazeface_fr"]),
+        _build_scrfd(_SCRFD_MODEL_PATH, toggles["model_scrfd"]),
         _build_landmarker(_LANDMARKER_PATH, toggles["model_face_landmarker"]),
         _build_hand(_HAND_MODEL_PATH, toggles["model_hand_landmarker"]),
         _build_face_recognition(_SFACE_MODEL_PATH, face_embed_ok),
         _build_segmentation(_SEGMENTER_PATH, toggles["model_segmentation"]),
         _build_pose(_POSE_MODEL_PATH, toggles["model_pose"]),
         _build_clip(str(clip_dir), toggles["model_clip"], ort_ok),
-        _build_nudity(toggles["model_nudity"], nudenet_available()),
+        _build_nudity(str(_nudenet_model_path()), toggles["model_nudity"], nudenet_available()),
         _build_inpaint(_inpaint_available()),
         _build_pets(pets_path, toggles["model_pets"], pets_lib_ok),
+        *_build_plugin_models(ctx),
     ]
+
+
+def _plugin_toggle_key(entry: Any) -> str | None:
+    """The switch of the detector or scorer a plugin registered for this
+    model file (matched through the file's legal entry), if it has one."""
+    from bpp.scoring.face_detector_registry import list_detectors
+    from bpp.scoring.model_lifecycle import fetchable_legal_id
+    from bpp.scoring.registry import iter_scorers
+
+    legal_id = fetchable_legal_id(entry)
+    if legal_id is None:
+        return None
+    for det in list_detectors():
+        if det.registry_id == legal_id and det.toggle_key:
+            return det.toggle_key
+    for scorer in iter_scorers():
+        if getattr(scorer, "registry_id", None) == legal_id and scorer.toggle_key:
+            return scorer.toggle_key
+    return None
+
+
+def _build_plugin_models(ctx: Any) -> list[dict[str, Any]]:
+    """One row per model file a plugin registered, so it gets the same
+    on-disk status and Redownload / Uninstall buttons as the built-ins
+    (the endpoints look files up by name in the ModelRegistry). A file
+    bpp can't fetch, or whose license isn't accepted yet, has no
+    Download button but keeps Uninstall."""
+    from bpp.registry.model_registry import get_entry, status_behavior
+    from bpp.scoring.model_lifecycle import (
+        bundled_path_of,
+        fetchable_legal_id,
+        file_present,
+        plugin_model_entries,
+    )
+    from bpp.web.model_filter import license_state
+
+    rows = []
+    for e in plugin_model_entries():
+        info = _file_info(e.name, os.path.expanduser(e.path))
+        bundled = bundled_path_of(e)
+        row: dict[str, Any] = {
+            "label": f"Plugin model: {e.name}",
+            "description": "Registered by a plugin.",
+            "status": "ready" if file_present(e.path, bundled) else "missing",
+            "size_bytes": info["size_bytes"],
+            "files": [info],
+        }
+        if bundled:
+            row["bundled"] = True
+        toggle = _plugin_toggle_key(e)
+        if toggle:
+            row["toggle_key"] = toggle
+            row["enabled"] = bool(ctx.config.get(toggle, True))
+        legal_id = fetchable_legal_id(e)
+        if legal_id is None:
+            row["no_download"] = True
+            row["download_hint"] = "managed by its plugin"
+        elif not status_behavior(get_entry(legal_id).status).new_download_allowed:
+            row["no_download"] = True
+            row["download_hint"] = "no longer offered for download"
+        elif license_state(get_entry(legal_id)) != "ok":
+            row["no_download"] = True
+            row["download_hint"] = "accept its license in Settings → Models first"
+        rows.append(row)
+    return rows

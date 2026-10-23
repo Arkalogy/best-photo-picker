@@ -11,6 +11,7 @@ See ``bpp.db.migrations`` for the contributor guide.
 from __future__ import annotations
 
 import sqlite3
+from typing import Any
 
 from bpp.db.dialect import dialect
 from bpp.utils.logging import get_logger
@@ -54,9 +55,9 @@ def _migrate_v26(conn: sqlite3.Connection) -> None:
                 continue
             # Use safe_json_loads — a corrupt rule_json row must not
             # crash startup migrations.
-            rule = safe_json_loads(rule_json, {}, context="album rule_json v26 migration")
-            if not isinstance(rule, dict):
-                continue
+            rule = safe_json_loads(
+                rule_json, {}, context="album rule_json v26 migration", expected_type=dict
+            )
             cid = rule.get("cluster_id")
             if cid is None:
                 continue
@@ -186,23 +187,18 @@ def _migrate_v30(conn: sqlite3.Connection) -> None:
     # otherwise carry corrupt EXIF onto the map view forever.
     from bpp.db.photos import _valid_gps_pair
 
-    backfilled = 0
+    updates: list[tuple[Any, Any, int]] = []
     for row in rows:
-        data = safe_json_loads(row[1], default=None)
-        if not isinstance(data, dict):
-            continue
+        data = safe_json_loads(row[1], {}, expected_type=dict)
         lat = data.get("gps_lat")
         lon = data.get("gps_lon")
         if _valid_gps_pair(lat, lon):
-            conn.execute(
-                "UPDATE photos SET gps_lat = ?, gps_lon = ? WHERE id = ?",
-                (lat, lon, row[0]),
-            )
-            backfilled += 1
-    if backfilled:
+            updates.append((lat, lon, row[0]))
+    if updates:
+        conn.executemany("UPDATE photos SET gps_lat = ?, gps_lon = ? WHERE id = ?", updates)
         log.info(
             "Migration v30: backfilled gps_lat/gps_lon for %d photos from exif_json",
-            backfilled,
+            len(updates),
         )
 
 
@@ -234,7 +230,7 @@ def _migrate_v31(conn: sqlite3.Connection) -> None:
     ).fetchall()
     updates: list[tuple[str | None, int]] = []
     for album_id, config_json in rows:
-        cfg = safe_json_loads(config_json, context="v31 migration")
+        cfg = safe_json_loads(config_json, context="v31 migration", expected_type=dict)
         if not cfg:
             continue
         cleaned = {k: v for k, v in cfg.items() if k not in _LEGACY_KEYS}
@@ -312,15 +308,21 @@ def _migrate_v35(conn: sqlite3.Connection) -> None:
         log.info("Migration v35: face_embeddings is empty — nothing to re-encode")
         return
 
-    cursor = conn.execute("SELECT id, embedding FROM face_embeddings")
     converted = 0
     skipped_already_f32 = 0
     skipped_bad_size = 0
     batch: list[tuple[bytes, int]] = []
+    last_id = 0
     while True:
-        rows = cursor.fetchmany(BATCH_SIZE)
+        # One page by id at a time, fully read before its UPDATEs run:
+        # an UPDATE under a still-open SELECT is undefined in SQLite.
+        rows = conn.execute(
+            "SELECT id, embedding FROM face_embeddings WHERE id > ? ORDER BY id LIMIT ?",
+            (last_id, BATCH_SIZE),
+        ).fetchall()
         if not rows:
             break
+        last_id = rows[-1][0]
         for row_id, blob in rows:
             n = len(blob) if blob else 0
             if n == EXPECTED_F32_BYTES:

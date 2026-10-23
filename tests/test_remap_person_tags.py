@@ -1,4 +1,4 @@
-"""TDD tests for H-1: _remap_names_and_tags UNIQUE constraint on photo_person_tags."""
+"""TDD tests for _remap_names_and_tags UNIQUE constraint on photo_person_tags."""
 
 from __future__ import annotations
 

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import atexit
 import os
+import threading
 from typing import TYPE_CHECKING, Any
 
 from bpp.db.albums import sync_all_photos_album
@@ -93,6 +94,17 @@ def backup_or_refuse_corrupt(db_p: str, wd: str) -> None:
 
     backup_result = backup_db(db_p)
     if backup_result is None and os.path.isfile(db_p) and os.path.getsize(db_p) > 0:
+        from bpp.db.integrity import check_integrity
+
+        log.info(
+            "Backup failed; checking the database before opening it (a large library takes a while)"
+        )
+        if check_integrity(db_p):
+            # The database is fine; the copy failed (disk full, a
+            # permission, a bad copy). Never tell the owner to restore an
+            # older backup over a healthy database for that.
+            log.warning("Could not write a fresh backup of %s; continuing without one", db_p)
+            return
         backup_path = db_p + ".backup"
         if os.path.isfile(backup_path):
             raise RuntimeError(
@@ -214,7 +226,9 @@ def import_from_legacy_caches(conn: Any, wd: str, lib_root: str, photo_count: in
             import_presets_from_json(conn, presets_json)
 
 
-def backfill_dup_clusters_and_refresh(conn: Any, force_refresh: bool) -> None:
+def backfill_dup_clusters_and_refresh(
+    conn: Any, force_refresh: bool, cancel: threading.Event | None = None
+) -> None:
     """Phase 5 — near-duplicate cluster backfill + final smart-album refresh.
 
     Libraries with phash data but no ``dup_cluster_id`` assignment
@@ -224,8 +238,16 @@ def backfill_dup_clusters_and_refresh(conn: Any, force_refresh: bool) -> None:
     The ``force_refresh`` flag flows in from Phase 4a — when sidecars
     were linked, the smart-album refresh must run regardless of whether
     new clusters were assigned.
+
+    Either step failing raises after the other has had its turn, so the
+    caller's health flag (``phase5_failed``) says so instead of a clean
+    "ok" over stale counts.
     """
     _needs_smart_refresh = force_refresh
+    backfill_error: Exception | None = None
+    if cancel is not None and cancel.is_set():
+        log.info("Phase 5 skipped: the library is being switched or cleared")
+        return
     try:
         unclust = conn.execute(
             "SELECT 1 FROM photos "
@@ -237,14 +259,22 @@ def backfill_dup_clusters_and_refresh(conn: Any, force_refresh: bool) -> None:
 
             assign_near_duplicate_clusters(conn)
             _needs_smart_refresh = True
-    except Exception:
+    except Exception as exc:
         log.warning("Near-duplicate cluster backfill failed", exc_info=True)
+        backfill_error = exc
 
+    if cancel is not None and cancel.is_set():
+        log.info("Phase 5 stopped before the smart-album refresh: library switched or cleared")
+        return
     if _needs_smart_refresh:
-        try:
-            from bpp.db.smart_albums import refresh_smart_albums
+        from bpp.db.smart_albums import refresh_smart_albums
 
+        try:
             refresh_smart_albums(conn)
-            log.info("Smart albums refreshed after startup backfill")
-        except Exception:
-            log.warning("Smart album refresh after backfill failed", exc_info=True)
+        except Exception as exc:
+            if backfill_error is not None:
+                raise exc from backfill_error  # both causes in the traceback
+            raise
+        log.info("Smart albums refreshed after startup backfill")
+    if backfill_error is not None:
+        raise backfill_error

@@ -1,4 +1,4 @@
-"""TDD tests for H-10: library rename path traversal prevention."""
+"""TDD tests for library rename path traversal prevention."""
 
 from __future__ import annotations
 
@@ -68,7 +68,7 @@ class TestLibraryRenameTraversal:
 
 
 class TestActiveRenameUpdatesWorkdirCorrectly:
-    """R4-M3: when renaming the ACTIVE library folder, the server's
+    """When renaming the ACTIVE library folder, the server's
     in-memory state must point at <new_root>/data, not <new_root>.
     The previous code set workdir = new_path (the library root),
     which made every subsequent DB path computation wrong — DB
@@ -98,7 +98,7 @@ class TestActiveRenameUpdatesWorkdirCorrectly:
         # workdir is the new data subdir, not the new root
         expected_data = os.path.join(new_path, "data")
         assert ctx.state["workdir"] == expected_data, (
-            f"R4-M3: workdir should be {expected_data!r} (library/data) "
+            f"Workdir should be {expected_data!r} (library/data) "
             f"but is {ctx.state['workdir']!r} (library root). DB writes "
             "will land in the wrong place."
         )

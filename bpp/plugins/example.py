@@ -1,7 +1,7 @@
 """Reference plugin — exercises every registry + every lifecycle hook.
 
 This is a runnable, importable sample plugin that demonstrates the
-complete plugin API surface that closed P5 of refactor-plan.md.
+complete plugin API surface.
 
 Out of the box it does nothing useful — every handler is a no-op that
 records a marker into a public ``_calls`` list so test code can verify
@@ -71,6 +71,7 @@ EXAMPLE_ALBUM_DOMAIN = "example_demo"
 EXAMPLE_EXPORT_MODE = "example_metadata_only"
 EXAMPLE_DEDUPE_STRATEGY = "example_noop"
 EXAMPLE_WORKER_NAME = "example_worker"
+EXAMPLE_MODEL_ID = "example_plugin_noop_model"
 
 
 def _record(event: str) -> None:
@@ -107,8 +108,10 @@ def _example_embed(image: np.ndarray, bbox: tuple[int, int, int, int]) -> np.nda
 
 
 def _example_album_refresh(conn: Any) -> None:
-    """Sample smart-album refresher — does nothing. Real plugins
-    would query the photos table and call :func:`_ensure_smart_album`."""
+    """Sample smart-album refresher (``refresh_fn(conn)``) — does nothing.
+    A real one queries the photos table and calls
+    :func:`bpp.db.smart_albums.ensure_smart_album` with the album's name,
+    type, rule and photo ids: core never creates the row itself."""
     _record("album_refresh_called")
 
 
@@ -144,6 +147,33 @@ class _ExampleWorker:
         _record("worker_joined")
 
 
+def _example_model_entry() -> Any:
+    """The legal-registry entry for the example's no-op model (MIT)."""
+    from bpp.registry import LicenseClass, ModelEntry, ModelStatus
+
+    return ModelEntry(
+        id=EXAMPLE_MODEL_ID,
+        display_name="Example plugin model (no-op)",
+        kind="example_plugin",
+        source_url="https://github.com/Arkalogy/best-photo-picker",
+        terms_url="https://github.com/Arkalogy/best-photo-picker/blob/main/LICENSE",
+        terms_permalink_url=None,
+        terms_retrieved_at="2026-10-14",
+        license_summary="Example code under MIT; it runs no real weights.",
+        requires_explicit_ack=False,
+        ack_text_version="",
+        ack_text_sha256="",
+        upstream_claimed_license_class=LicenseClass.MIT,
+        commercial_use_restriction_known=False,
+        bppicker_commercial_default_allowed=True,
+        commercial_unlock_requires_rights_assertion=False,
+        status=ModelStatus.AVAILABLE,
+        training_data="none",
+        weight_sha256="",
+        default_for_kind=False,
+    )
+
+
 def _do_registry_registrations() -> None:
     """Register an entry against each plugin-target registry.
 
@@ -156,6 +186,17 @@ def _do_registry_registrations() -> None:
     long-lived test process. Errors are recorded as markers so a
     failed registration is still visible.
     """
+    # 0. The legal registry: one entry for the (no-op) model the example
+    #    detector and embedder run. A plugin's detectors and embedders
+    #    name this entry by id; their license is read from it.
+    try:
+        from bpp.registry import register_entry
+
+        register_entry(_example_model_entry())
+        _record("registered:model_entry")
+    except Exception:
+        _record("registered:model_entry:skipped")
+
     # 1. FaceDetectorRegistry.
     try:
         from bpp.scoring.face_detector_registry import FaceDetector, register_detector
@@ -164,8 +205,8 @@ def _do_registry_registrations() -> None:
             FaceDetector(
                 name=EXAMPLE_DETECTOR_NAME,
                 detect=_example_detect,
+                registry_id=EXAMPLE_MODEL_ID,
                 toggle_key=None,
-                license_id="MIT",
                 description="Example plugin detector (no-op)",
             )
         )
@@ -182,7 +223,7 @@ def _do_registry_registrations() -> None:
                 name=EXAMPLE_EMBEDDER_NAME,
                 embed=_example_embed,
                 embedding_dim=128,
-                license_id="MIT",
+                registry_id=EXAMPLE_MODEL_ID,
                 description="Example plugin embedder (zeros)",
             )
         )

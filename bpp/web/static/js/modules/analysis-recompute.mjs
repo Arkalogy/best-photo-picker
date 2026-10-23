@@ -10,9 +10,10 @@
  * Re-exported from analysis.mjs.
  */
 
-import { apiFetch } from "./api-client.mjs";
+import { apiFetch, LONG_OP_TIMEOUT_MS } from "./api-client.mjs";
 import { state } from "./state.mjs";
 import { toast, toastError } from "./toast.mjs";
+import { hideStatusProgress, showStatusProgress } from "./analysis-status.mjs";
 import { loadAlbumList } from "./albums.mjs";
 import { _resetAnalysisState, updateStatusSummary } from "./analysis.mjs";
 import { syncToolbarK, updateShowPicksChip } from "./toolbar.mjs";
@@ -51,7 +52,6 @@ export function getParams(opts) {
   params.sensitive_in_picks = getSensitiveMode();
   const kInput = /** @type {HTMLInputElement | null} */ (document.getElementById("param-k"));
   params.k = parseInt(kInput?.value || "0") || 50;
-  params.seed = 42;
   const selectedFaceIds = /** @type {Set<number>} */ (win.selectedFaceIds || new Set());
   if (selectedFaceIds.size > 0) {
     params.selected_faces = [...selectedFaceIds];
@@ -85,16 +85,30 @@ export async function doRecompute(opts) {
     : "/api/v1/recompute";
   // Responses can land out of order: on a cold load the Library recompute is
   // still in flight when the user opens an album, and its late answer (the
-  // library-wide picks) used to overwrite the album's selection (BPP-27).
+  // library-wide picks) used to overwrite the album's selection.
   // Only the newest request for the scope that's still on screen may apply.
   const _seq = (win._recomputeSeq = (win._recomputeSeq || 0) + 1);
   const _scope = win.currentAlbumId ?? null;
   const _recomputeT0 = performance.now();
+  // A first recompute on a large library runs for minutes: after a
+  // second with no answer, say so in the status bar (analyze owns the
+  // bar while it runs).
+  let _progressShown = false;
+  const _slowTimer = setTimeout(() => {
+    if (win.activeOperation !== "analyze") {
+      showStatusProgress("Choosing your best photos…", 0);
+      _progressShown = true;
+    }
+  }, 1000);
   try {
     const data = await apiFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
+      // A first recompute on a large library runs the dedupe pass for
+      // minutes; the default 30 s abort would leave the server working
+      // while the user retries.
+      signal: AbortSignal.timeout(LONG_OP_TIMEOUT_MS),
     });
     if (_seq !== win._recomputeSeq || (win.currentAlbumId ?? null) !== _scope) return;
     // Surface slow recomputes so the user knows what they're waiting on.
@@ -105,7 +119,7 @@ export async function doRecompute(opts) {
     const _serverMs = data?.stats?.elapsed_ms;
     const _shown = typeof _serverMs === "number" ? _serverMs : _wallMs;
     if (_shown >= 300) {
-      toast(`Recomputed in ${(_shown / 1000).toFixed(2)}s`);
+      toast(`Picks updated in ${(_shown / 1000).toFixed(1)} s`);
     }
 
     const isDelta = !data.photos && !!data.scores;
@@ -135,6 +149,9 @@ export async function doRecompute(opts) {
     if (win.currentAlbumId) win.loadAlbumList?.();
   } catch (e) {
     toastError("recompute the selection", e);
+  } finally {
+    clearTimeout(_slowTimer);
+    if (_progressShown && win.activeOperation !== "analyze") hideStatusProgress();
   }
 }
 
@@ -146,13 +163,18 @@ export function updateStats(s) {
   updateDedupStats(s);
 }
 
+/** The most skeleton cards worth drawing (about two screens). */
+export const SKELETON_MAX = 48;
+
 /**
  * @param {number} [count]
  */
 export function showSkeletonGrid(count) {
   const grid = document.getElementById("photo-grid");
   if (!grid) return;
-  const n = count || 12;
+  // A screen shows a few dozen cards; an import of 200k must not build
+  // a million placeholder elements.
+  const n = Math.min(count || 12, SKELETON_MAX);
   grid.innerHTML = Array.from(
     { length: n },
     () =>
@@ -187,7 +209,7 @@ async function _loadAllPhotosPaginated() {
   // page so the real cap is 500k. Either bump the limit by raising one
   // of the multipliers, or surface a clear error when truncation would
   // happen — the worst outcome is a partially-loaded grid that the
-  // user can't tell is partial. D-06.
+  // user can't tell is partial.
   const MAX_PAGES = 100;
   let offset = 0;
   let truncated = false;

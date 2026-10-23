@@ -98,8 +98,8 @@ SENSITIVE_NUDITY_THRESHOLD = 0.7
 
 # Minimum detector confidence for a pet detection to surface in any
 # user-facing view (lightbox chips, Pets view, pet smart albums). The
-# DETECTION threshold stays low (0.2 — recall for clustering), but on a
-# real library the 0.2-0.5 band was almost entirely fur-texture false
+# DETECTION threshold stays low (0.2 — recall for clustering), but in
+# testing the 0.2-0.5 band was almost entirely fur-texture false
 # positives: fur-like textures such as rugs and plush toys read as
 # "dog 43%", and most detections in that band were wrong. Stored rows are kept —
 # this floor applies at read time, so tuning it never needs a rescan.
@@ -145,11 +145,9 @@ PET_CROP_PADDING = 0.15  # fraction of bbox added as margin
 HASH_PREFIX_LEN = 32  # characters of sha256 hex used for path hashes (128-bit)
 
 # ── Photo cache suffixes (single source of truth for all cleanup paths) ──
-# Cleanup in `ThumbnailCache.remove_for_hash` is glob-based so any
-# future suffix gets swept automatically — the registry below is
-# kept as DOCUMENTATION + a single-source-of-truth for create
-# sites (so adding a variant is one new constant + one tuple entry,
-# not grep-and-edit across blueprints).
+# Cleanup (`photo_cache.cached_variant_paths`) removes exactly these
+# names, so a variant missing here leaks files; adding one is one
+# constant + one tuple entry, checked by tests/test_cache_suffix_registry.py.
 PHOTO_CACHE_SUFFIX_FULL = "_full"
 PHOTO_CACHE_SUFFIX_EDITED = "_edited"
 PHOTO_CACHE_SUFFIX_EDITED_THUMB = "_edited_thumb"
@@ -205,12 +203,12 @@ CLUSTER_DISMISSED = -2  # face dismissed (not a real face / ignored)
 FACE_MIN_PHOTOS = 4
 
 # ── Face clustering threshold ──
-# Empirical default for the dlib-128 distance metric: same person typically
-# clusters under ~0.55, different people above ~0.9. The user-tunable
-# `face_cluster_threshold` config key seeds from this when a fresh DB is
-# initialized; `Config.get(..., FACE_CLUSTER_THRESHOLD_FALLBACK)` callers
-# use it when DEFAULTS / YAML / DB are all silent.
-FACE_CLUSTER_THRESHOLD_FALLBACK = 0.55
+# The default for the user-tunable `face_cluster_threshold` config key
+# (DEFAULTS reads it from here — the one copy): clustering distance on the
+# scaled embedding metric, lower = stricter (schema range 0.3-1.2).
+# `config.get(..., FACE_CLUSTER_THRESHOLD_FALLBACK)` callers given a partial
+# config get the same value the app's own config would give.
+FACE_CLUSTER_THRESHOLD_FALLBACK = 0.80
 
 # ── Scoring (face) ──
 FACE_AREA_MULTIPLIER = 10.0  # ~10% of frame area = perfect score
@@ -266,3 +264,7 @@ MODEL_TOGGLE_KEYS = (
     "model_pets",
     "model_clip",
 )
+#: Switches a scoring run honors: the Settings toggles plus ones the
+#: analysis preflight sets for a single run (``model_yunet`` has no
+#: Settings switch; it's turned off when its download failed).
+RUN_TOGGLE_KEYS = (*MODEL_TOGGLE_KEYS, "model_yunet")

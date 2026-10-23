@@ -59,7 +59,7 @@ done
 # ── 3. Private paths ──
 py_files=$(echo "$staged_files" | grep -E '\.(py|html|js|json|yaml|yml|toml|cfg|md)$' || true)
 if [ -n "$py_files" ]; then
-    private_paths=$(echo "$py_files" | xargs grep -n '/Users/\|/home/\|C:\\Users\\' 2>/dev/null | grep -v '.gitignore\|CLAUDE.md' || true)
+    private_paths=$(echo "$py_files" | xargs grep -n '/Users/\|/home/\|C:\\Users\\' 2>/dev/null | grep -v '.gitignore' || true)
     if [ -n "$private_paths" ]; then
         echo -e "${YELLOW}WARN${NC} Private paths found in staged files:"
         echo "$private_paths" | head -5 | while read -r line; do echo "  $line"; done

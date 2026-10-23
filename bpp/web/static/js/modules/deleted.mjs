@@ -18,6 +18,7 @@
  */
 
 import { apiFetch, authedSrc } from "./api-client.mjs";
+import { fetchAllPages } from "./paging.mjs";
 import { appConfirm } from "./dialogs.mjs";
 import { esc, escapeAttr, escapeJsAttr } from "./text-format.mjs";
 import { toast, toastError } from "./toast.mjs";
@@ -176,8 +177,8 @@ export async function loadDeletedPhotos() {
           ${thumbSrc ? `<img src="${thumbSrc}" alt="${escapeAttr(p.filename)}">` : '<div style="height:var(--thumb-height,220px);background:var(--surface-hover)"></div>'}
           <div class="deleted-countdown-badge">${countdownText}</div>
           <div class="deleted-hover-actions">
-            <button class="deleted-hover-btn restore" data-stop-propagation="true" data-action="restorePhotos" data-arg0="['${escapeJsAttr(p.filepath)}']">Restore</button>
-            <button class="deleted-hover-btn remove" data-stop-propagation="true" data-action="permanentDeletePhotos" data-arg0="['${escapeJsAttr(p.filepath)}']">Delete</button>
+            <button class="deleted-hover-btn restore" data-stop-propagation="true" data-action="restoreOne" data-arg0="${escapeAttr(p.filepath)}">Restore</button>
+            <button class="deleted-hover-btn remove" data-stop-propagation="true" data-action="permanentDeleteOne" data-arg0="${escapeAttr(p.filepath)}">Delete</button>
           </div>
         </div>
         <div class="card-info">
@@ -197,11 +198,15 @@ export async function loadDeletedPhotos() {
  */
 export async function restorePhotos(filepaths) {
   try {
-    await apiFetch("/api/v1/photos/restore", {
+    const resp = await apiFetch("/api/v1/photos/restore", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ filepaths }),
     });
+    if (typeof resp?.count === "number" && resp.count === 0) {
+      await loadDeletedPhotos(); // the card was stale: show what is there
+      throw new Error("no photo matched; the list was out of date");
+    }
     toast(`Restored ${filepaths.length} photo${filepaths.length > 1 ? "s" : ""}`);
     await loadDeletedPhotos();
   } catch (e) {
@@ -220,36 +225,79 @@ export async function permanentDeletePhotos(filepaths) {
   );
   if (!ok) return;
   try {
-    await apiFetch("/api/v1/photos/delete-permanent", {
+    const result = await apiFetch("/api/v1/photos/delete-permanent", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ filepaths, confirmation: "delete" }),
     });
-    toast(`Permanently deleted ${filepaths.length} photo${filepaths.length > 1 ? "s" : ""}`);
+    const failed = Array.isArray(result?.files_failed) ? result.files_failed.length : 0;
+    const removed = typeof result?.count === "number" ? result.count : filepaths.length;
+    if (removed === 0 && failed === 0) {
+      await loadDeletedPhotos();
+      throw new Error("no photo matched; the list was out of date");
+    }
+    if (failed > 0) {
+      toast(
+        `Removed ${removed - failed} of ${removed} photos; ${failed} file${failed > 1 ? "s" : ""} couldn't be removed from disk (read-only or in use) — retried at the next start`,
+        "warning"
+      );
+    } else {
+      toast(`Permanently deleted ${removed} photo${removed > 1 ? "s" : ""}`);
+    }
     await loadDeletedPhotos();
   } catch (e) {
     toastError("delete the photo", e);
   }
 }
 
+/** The hover button on one card. @param {string} filepath */
+export function restoreOne(filepath) {
+  return restorePhotos([String(filepath)]);
+}
+
+/** The hover button on one card. @param {string} filepath */
+export function permanentDeleteOne(filepath) {
+  return permanentDeletePhotos([String(filepath)]);
+}
+
+/** The hover button on one card. @param {string} filepath */
+export function unhideOne(filepath) {
+  return unhidePhotos([String(filepath)]);
+}
+
+/**
+ * Every filepath of a paginated listing, page by page (the views show
+ * the first page; "All" actions must reach the rest).
+ * @param {string} url
+ * @returns {Promise<string[]>}
+ */
+export async function allListedPaths(url) {
+  const photos = await fetchAllPages(url, { pageSize: 200 });
+  return photos.map((p) => p && p.filepath).filter(Boolean);
+}
+
 export async function restoreAllDeleted() {
-  const grid = document.getElementById("photo-grid");
-  if (!grid) return;
-  const cards = /** @type {NodeListOf<HTMLElement>} */ (
-    grid.querySelectorAll(".deleted-card[data-filepath]")
-  );
-  const filepaths = [...cards].map((c) => c.dataset.filepath || "").filter(Boolean);
+  /** @type {string[]} */
+  let filepaths;
+  try {
+    filepaths = await allListedPaths("/api/v1/photos/deleted");
+  } catch (e) {
+    toastError("list the deleted photos", e);
+    return;
+  }
   if (filepaths.length === 0) return;
   await restorePhotos(filepaths);
 }
 
 export async function permanentDeleteAll() {
-  const grid = document.getElementById("photo-grid");
-  if (!grid) return;
-  const cards = /** @type {NodeListOf<HTMLElement>} */ (
-    grid.querySelectorAll(".deleted-card[data-filepath]")
-  );
-  const filepaths = [...cards].map((c) => c.dataset.filepath || "").filter(Boolean);
+  /** @type {string[]} */
+  let filepaths;
+  try {
+    filepaths = await allListedPaths("/api/v1/photos/deleted");
+  } catch (e) {
+    toastError("list the deleted photos", e);
+    return;
+  }
   if (filepaths.length === 0) return;
   await permanentDeletePhotos(filepaths);
 }
@@ -382,7 +430,7 @@ export async function loadHiddenPhotos() {
         <div class="card-image">
           ${thumbSrc ? `<img src="${thumbSrc}" alt="${escapeAttr(p.filename)}">` : '<div style="height:var(--thumb-height,220px);background:var(--surface-hover)"></div>'}
           <div class="deleted-hover-actions">
-            <button class="deleted-hover-btn restore" data-stop-propagation="true" data-action="unhidePhotos" data-arg0="['${escapeJsAttr(p.filepath)}']">Unhide</button>
+            <button class="deleted-hover-btn restore" data-stop-propagation="true" data-action="unhideOne" data-arg0="${escapeAttr(p.filepath)}">Unhide</button>
           </div>
         </div>
         <div class="card-info">
@@ -398,12 +446,14 @@ export async function loadHiddenPhotos() {
 }
 
 export async function unhideAllHidden() {
-  const grid = document.getElementById("photo-grid");
-  if (!grid) return;
-  const cards = /** @type {NodeListOf<HTMLElement>} */ (
-    grid.querySelectorAll(".deleted-card[data-filepath]")
-  );
-  const filepaths = [...cards].map((c) => c.dataset.filepath || "").filter(Boolean);
+  /** @type {string[]} */
+  let filepaths;
+  try {
+    filepaths = await allListedPaths("/api/v1/photos/hidden");
+  } catch (e) {
+    toastError("list the hidden photos", e);
+    return;
+  }
   if (filepaths.length === 0) return;
   await unhidePhotos(filepaths);
 }

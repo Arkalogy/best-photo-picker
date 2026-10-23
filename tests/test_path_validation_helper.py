@@ -1,4 +1,4 @@
-"""R8-M5: shared `is_path_under_any` / `build_library_allowlist` helpers.
+"""Shared `is_path_under_any` / `build_library_allowlist` helpers.
 
 Five blueprints/modules used to spell the "path is inside one of
 these allowed roots?" check independently. They disagreed on edge

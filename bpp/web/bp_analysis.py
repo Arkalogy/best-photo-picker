@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 import contextlib
-import json
 import os
+from typing import Any
 
 from flask import Blueprint, Response, jsonify, request
 
-from bpp.constants import PROGRESS_QUEUE_TIMEOUT_S, WORKER_JOIN_TIMEOUT_S
+from bpp.constants import WORKER_JOIN_TIMEOUT_S
 from bpp.db.library import clear_library
 from bpp.db.settings import get_all_settings
+from bpp.db.smart_albums import get_affected_album_types, refresh_smart_albums
 from bpp.errors import ConflictError, ValidationError
 from bpp.utils.logging import get_logger
 from bpp.web.share import requires_local_app
-from bpp.web.state import get_ctx
+from bpp.web.sse import captured_device_fingerprint, stream_worker_progress
+from bpp.web.state import get_ctx, refuse_while_face_recovery
 
 log = get_logger(__name__)
 
@@ -52,30 +54,16 @@ def api_analyze() -> tuple[Response, int]:
             input_dir=input_dir,
         )
 
+    # Could the analysis start (no install running or waiting for a
+    # restart)? Asked before the session is pointed at the new folder.
+    from bpp.web.base_worker import raise_if_blocked
+
+    raise_if_blocked(ctx.worker)
     ctx.input_dir = os.path.abspath(input_dir)
     wd = ctx.ensure_workdir()
 
-    # Merge DB settings into analysis config so user tuning takes effect
     conn = ctx.get_conn()
-    db_settings = get_all_settings(conn)
-    merged_config = dict(ctx.config)
-
-    for key in ("face_detection_confidence", "face_embedding_confidence", "max_long_side"):
-        if key in db_settings:
-            with contextlib.suppress(ValueError, TypeError):
-                merged_config[key] = float(db_settings[key])
-
-    # Model toggle settings (stored as "true"/"false" strings in DB)
-    from bpp.constants import MODEL_TOGGLE_KEYS
-
-    for key in MODEL_TOGGLE_KEYS:
-        if key in db_settings:
-            merged_config[key] = db_settings[key].lower() in ("true", "1", "yes")
-
-    # Tell the worker whether face extraction is available
-    from bpp.scoring.face_embed import is_available as _face_avail
-
-    merged_config["face_recognition_available"] = _face_avail()
+    merged_config = run_config_for_analyze(ctx, conn)
 
     if ctx.import_worker.is_alive:
         raise ConflictError(
@@ -87,6 +75,7 @@ def api_analyze() -> tuple[Response, int]:
             "Face extraction in progress — wait for it to finish",
             blocker="face_extraction",
         )
+    refuse_while_face_recovery(ctx)
 
     started = ctx.worker.start(
         input_dir=ctx.input_dir,
@@ -103,6 +92,27 @@ def api_analyze() -> tuple[Response, int]:
     return jsonify({"status": "started", "workdir": wd}), 202
 
 
+def run_config_for_analyze(ctx: Any, conn: Any) -> dict[str, Any]:
+    """The analysis worker's config: the app config with the library's
+    stored tuning and every model switch (built-in and plugin) merged in,
+    plus whether face recognition is installed."""
+    from bpp.scoring.face_embed import is_available as _face_avail
+    from bpp.scoring.toggles import all_toggle_keys
+
+    db_settings = get_all_settings(conn)
+    merged_config = dict(ctx.config)
+    for key in ("face_detection_confidence", "face_embedding_confidence", "max_long_side"):
+        if key in db_settings:
+            with contextlib.suppress(ValueError, TypeError):
+                merged_config[key] = float(db_settings[key])
+    # Model toggle settings (stored as "true"/"false" strings in DB)
+    for key in all_toggle_keys():
+        if key in db_settings:
+            merged_config[key] = db_settings[key].lower() in ("true", "1", "yes")
+    merged_config["face_recognition_available"] = _face_avail()
+    return merged_config
+
+
 @bp.get("/api/v1/analyze/progress")
 def api_analyze_progress() -> Response:
     """Stream analysis-worker progress as Server-Sent Events.
@@ -111,83 +121,15 @@ def api_analyze_progress() -> Response:
     worker finishes. For LAN devices the stream re-checks pairing
     trust periodically and emits ``auth_revoked`` on revocation."""
     ctx = get_ctx()
-
-    # Capture the LAN device fingerprint at handshake — auth was just
-    # verified by the @before_request middleware. While the generator
-    # runs, the owner can revoke the device. We re-check every ~5s so
-    # a revoke takes effect promptly mid-stream instead of waiting for
-    # the client's next reconnect.
-    fp = _captured_lan_fingerprint()
-
-    def generate():
-        yield from _stream_with_revoke_check(
-            ctx.worker.progress_queue,
+    return Response(
+        stream_worker_progress(
             ctx.worker,
-            fp,
-            ctx,
-            on_done=_finalize_analyze,
-        )
-
-    return Response(generate(), mimetype="text/event-stream")
-
-
-def _captured_lan_fingerprint() -> str | None:
-    """Return the bpp_share_fp cookie value if the request principal is
-    a LAN device; None for LOCAL_APP (loopback / app token). LAN
-    devices are the ones subject to revoke; loopback is bound to the
-    server process and doesn't need re-checking."""
-    from flask import g
-
-    from bpp.web.share import PRINCIPAL_LAN_DEVICE
-
-    principal = getattr(g, "bpp_principal", None)
-    if principal is None or principal.kind != PRINCIPAL_LAN_DEVICE:
-        return None
-    return principal.fingerprint
-
-
-def _stream_with_revoke_check(progress_queue, worker, fp, ctx, *, on_done):
-    """Yield SSE messages from `progress_queue` until done/error.
-
-    Periodically re-verifies that `fp` (the LAN-device fingerprint
-    captured at handshake) is still trusted. On revoke, yields an
-    auth_revoked error message and breaks the loop.
-
-    `worker` is the BaseWorker driving the queue — used for the
-    worker-death keepalive escape.
-    `on_done(msg, ctx)` runs after a successful "done" message.
-    """
-    from bpp.web.share import is_device_trusted
-
-    msgs_since_recheck = 0
-    while True:
-        try:
-            msg = progress_queue.get(timeout=PROGRESS_QUEUE_TIMEOUT_S)
-            yield f"data: {json.dumps(msg)}\n\n"
-            if msg.get("type") in ("done", "error"):
-                if msg.get("type") == "done":
-                    on_done(msg, ctx)
-                break
-            msgs_since_recheck += 1
-            # Re-auth gate: every ~5 messages, verify the LAN device
-            # is still trusted. LOCAL_APP (fp=None) skips the check.
-            if fp is not None and msgs_since_recheck >= 5:
-                msgs_since_recheck = 0
-                if not is_device_trusted(ctx.get_conn(), fp):
-                    yield f"data: {json.dumps({'type': 'error', 'message': 'auth_revoked'})}\n\n"
-                    break
-        except Exception as exc:
-            log.debug("SSE keepalive after %s: %s", type(exc).__name__, exc)
-            yield f"data: {json.dumps({'type': 'keepalive'})}\n\n"
-            # On keepalive (queue starvation), recheck auth too — the
-            # owner may have revoked while no progress was streaming.
-            if fp is not None and not is_device_trusted(ctx.get_conn(), fp):
-                yield f"data: {json.dumps({'type': 'error', 'message': 'auth_revoked'})}\n\n"
-                break
-            if not worker.is_alive:
-                err = {"type": "error", "message": "Worker stopped unexpectedly"}
-                yield f"data: {json.dumps(err)}\n\n"
-                break
+            on_done=lambda msg: _finalize_analyze(msg, ctx),
+            ctx=ctx,
+            device_fp=captured_device_fingerprint(),
+        ),
+        mimetype="text/event-stream",
+    )
 
 
 def _finalize_analyze(msg, ctx):
@@ -285,6 +227,8 @@ def api_compute_hashes() -> tuple[Response, int]:
         return jsonify({"status": "started", "missing": missing}), 200
     clustered = assign_near_duplicate_clusters(conn)
     moments = assign_moment_clusters(conn)
+    # Both albums read the cluster columns: refresh after both passes.
+    refresh_smart_albums(conn, kinds=get_affected_album_types("dedup"))
     return (
         jsonify({"status": "done", "missing": missing, "clustered": clustered, "moments": moments}),
         200,
@@ -307,10 +251,37 @@ def api_clear_library() -> tuple[Response, int]:
             "Must send confirmation: 'delete'",
             field="confirmation",
         )
-    if ctx.worker.is_alive or ctx.import_worker.is_alive:
+    busy = [name for name, w in ctx.workers.items() if getattr(w, "is_alive", False)]
+    if busy:
+        labels = {
+            "analyze": "analysis",
+            "import": "an import",
+            "face": "face extraction",
+            "clip": "CLIP extraction",
+            "export": "an export",
+        }
         raise ConflictError(
-            "Cannot clear while analysis or import is running",
-            blocker="analysis_or_import",
+            f"Cannot clear the library while {labels.get(busy[0], busy[0])} is running; "
+            "wait for it to finish",
+            blocker=busy[0],
+        )
+    # Background recovery threads (hashes, clustering) write too: let
+    # them finish before the rows and folders go, then re-arm them (the
+    # join sets the cancel flag the next backfill would otherwise honour).
+    # Within the request's own budget (the page gives up at 30 s).
+    ctx.analysis_store.join_threads(timeout=20.0)
+    # An import or analysis may have started in another tab while we
+    # waited: look again before anything is deleted.
+    busy_now = [name for name, w in ctx.workers.items() if getattr(w, "is_alive", False)]
+    straggler = busy_now + ctx.analysis_store.threads_alive()
+    # Re-armed on both paths: the join set the cancel token, and the
+    # next backfill must not start cancelled.
+    ctx.analysis_store.rearm_phash()
+    if straggler:
+        raise ConflictError(
+            "Cannot clear the library while background processing is still finishing; "
+            "try again in a moment",
+            blocker=straggler[0],
         )
     conn = ctx.get_conn()
     library_path = ctx.library_path
@@ -320,8 +291,12 @@ def api_clear_library() -> tuple[Response, int]:
     ctx.invalidate_analysis()
     with ctx.lock:
         ctx.thumbs = None
-        ctx.caches.clip_cache["embeddings"] = {}
-        ctx.caches.clip_cache["ready"] = False
+        from bpp.web.recompute import dedupe_cache_clear
+
+        # The whole cache, matrix and ids included (410 MB at the cap):
+        # nothing of the cleared library stays referenced.
+        ctx.caches.clip_cache = {"embeddings": {}, "ready": False}
+        dedupe_cache_clear()
     return jsonify({"status": "cleared", **result}), 200
 
 
@@ -355,6 +330,7 @@ def api_import() -> tuple[Response, int]:
             "Face extraction in progress — wait for it to finish",
             blocker="face_extraction",
         )
+    refuse_while_face_recovery(ctx)
 
     source_dir = os.path.abspath(source_dir)
     batch_name = data.get("batch_name")
@@ -362,15 +338,21 @@ def api_import() -> tuple[Response, int]:
     # Default False — sidecars are filtered at scan time when the parent
     # exists in the same source directory.  See bpp/db/live_photo.py.
     import_live_photo_sidecars = bool(data.get("import_live_photo_sidecars", False))
+    from bpp.web.base_worker import raise_if_blocked
+
+    raise_if_blocked(ctx.import_worker)  # before preparing the library
     wd = ctx.ensure_workdir()
     lib = ctx.library_path
     os.makedirs(lib, exist_ok=True)
+    # Imported photos are scored by this worker: with the stored model
+    # switches and thresholds merged in, as an Analyze would score them.
+    merged_config = run_config_for_analyze(ctx, ctx.get_conn())
 
     started = ctx.import_worker.start(
         source_dir=source_dir,
         library_path=lib,
         workdir=wd,
-        config=ctx.config,
+        config=merged_config,
         extensions=ctx.state["extensions"],
         batch_name=batch_name,
         import_live_photo_sidecars=import_live_photo_sidecars,
@@ -387,22 +369,23 @@ def api_import_progress() -> Response:
     """Stream import-worker progress as Server-Sent Events. Same
     revoke-aware streaming envelope as the analyze progress route."""
     ctx = get_ctx()
-    fp = _captured_lan_fingerprint()
-
-    def generate():
-        yield from _stream_with_revoke_check(
-            ctx.import_worker.progress_queue,
+    return Response(
+        stream_worker_progress(
             ctx.import_worker,
-            fp,
-            ctx,
-            on_done=_finalize_import,
-        )
-
-    return Response(generate(), mimetype="text/event-stream")
+            on_done=lambda msg: _finalize_import(msg, ctx),
+            ctx=ctx,
+            device_fp=captured_device_fingerprint(),
+        ),
+        mimetype="text/event-stream",
+    )
 
 
 def _finalize_import(msg, ctx):
-    """Post-completion bookkeeping for /api/import/progress."""
+    """Post-completion bookkeeping for /api/import/progress. The worker
+    finalizes in its own thread (``finalized`` on the done message); this
+    is the backstop for a worker that couldn't."""
+    if msg.get("finalized"):
+        return
     ctx.invalidate_analysis()
     ctx.load_analysis_if_needed()
     try:
@@ -418,7 +401,7 @@ def api_library_status() -> tuple[Response, int]:
     """Return library presence + import worker state.
 
     LOCAL_APP gets the absolute library_path + batch folder names.
-    LAN clients get the boolean fields only — D-05: don't leak the
+    LAN clients get the boolean fields only — don't leak the
     owner's filesystem layout (username, drive name, library
     location) to a paired phone."""
     # predicate moved from bp_core to share.py. The

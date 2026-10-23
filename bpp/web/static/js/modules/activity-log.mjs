@@ -308,7 +308,7 @@ export function _fetchActivityEntries() {
           const newCount = _activityBadgeCount();
           if (newCount > prevCount && !_activityDropdownOpen) {
             const diff = newCount - prevCount;
-            // Bug #8 (UAT 2026-06-01): the legacy showToast(msg, ms, cb)
+            // The legacy showToast(msg, ms, cb)
             // shape labels the action button 'Undo' regardless of what
             // the callback actually does — clicking it OPENED the
             // activity log, which looked nonsensical next to a warning.
@@ -339,8 +339,7 @@ export function startActivityPolling() {
 export function showActivityLog() {
   /** @type {any} */
   const win = window;
-  win.showSettings?.();
-  win.switchSettingsTab?.("activity");
+  win.showSettings?.("activity");
   _renderActivityTab();
 }
 

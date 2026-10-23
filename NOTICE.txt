@@ -8,17 +8,28 @@ by *how they reach the user* so the license obligations are explicit.
 Trust model summary
 -------------------
 - **Bundled** (ships inside the wheel / repo): permissive only
-  (Apache-2.0, MIT, HPND). No copyleft code is checked into the
-  repository or shipped in the package.
-- **Required runtime**: permissive only (Apache-2.0, MIT, HPND, BSD,
-  MPL-2.0). `pip install bppicker` pulls these in by default.
-- **Optional runtime**: includes LGPL and GPL components. Each is an
-  opt-in `pip` extra that the user installs separately, accepting the
-  terms of the relevant license at install time.
-- **Downloaded at first-use**: ML model weights fetched on demand from
-  upstream hosts. Some weights are AGPL-licensed (Ultralytics YOLOv11n).
-  Only the ONNX-exported weights are loaded — no AGPL Python code runs
-  in the user's process.
+  (Apache-2.0, BSD-2-Clause, MIT). No copyleft code is checked into
+  the repository or shipped in the package.
+- **Required runtime**: the Python packages `pip install bppicker`
+  pulls in declare permissive licenses (Apache-2.0, MIT, BSD,
+  MIT-CMU), plus tqdm (MPL-2.0 AND MIT). Some of their binary wheels
+  bundle native libraries under other licenses — notably FFmpeg
+  (LGPL-2.1) inside the OpenCV wheel, which on macOS also includes
+  libx265 (GPL-2.0). See the OpenCV entry below.
+- **Optional runtime**: includes LGPL and GPL components. For
+  pip installs, each is an opt-in extra that the user installs
+  separately, accepting the terms of the relevant license at install
+  time.
+- **Desktop app (.app / DMG)**: built with the optional extras
+  installed, so it DOES contain those LGPL / GPL components.
+  See "Desktop app (.app / DMG)" below.
+- **Downloaded at first-use**: ML model weights fetched on demand,
+  some from the original publisher and some from third-party
+  re-hosts (listed per model below), never from Arkalogy. Some
+  weights carry restrictive terms: Ultralytics YOLOv11n is AGPL-3.0,
+  NudeNet is AGPL-3.0, and bpp's registry classifies the LaMa and
+  insightface buffalo_s weights as research / non-commercial. No
+  Ultralytics Python code runs in the user's process.
 
 ================================================================
 Bundled (ships in the bpp package)
@@ -78,22 +89,33 @@ Bundled (ships in the bpp package)
 Required runtime (pulled in by `pip install bppicker`)
 ================================================================
 
+These are bpp's direct dependencies (pyproject `dependencies`); their
+own transitive dependencies are not listed here.
+
+- NumPy — BSD-3-Clause (the wheel also includes code under 0BSD, MIT,
+  Zlib and CC0-1.0)
+  https://github.com/numpy/numpy/blob/main/LICENSE.txt
 - OpenCV (opencv-python-headless) — Apache License 2.0
   https://github.com/opencv/opencv/blob/master/LICENSE
-- Pillow — Historical Permission Notice and Disclaimer (HPND)
+  Note: the binary wheels bundle third-party native libraries,
+  including FFmpeg (LGPL-2.1) on every platform; the full list and
+  license texts ship in the wheel as
+  `opencv_python_headless-*.dist-info/LICENSE-3RD-PARTY.txt`. The
+  macOS arm64 wheel (checked: 4.13.0.92) also ships
+  `cv2/.dylibs/libx265.*.dylib` (x265, GPL-2.0), which that file does
+  not list; the Linux x86_64 wheel does not include x265.
+- Pillow — MIT-CMU (an HPND-style permissive license)
   https://github.com/python-pillow/Pillow/blob/main/LICENSE
 - PyYAML — MIT License
   https://github.com/yaml/pyyaml/blob/main/LICENSE
-- tqdm — MPL-2.0 / MIT License
+- tqdm — MPL-2.0 AND MIT (parts of the code are under each; both apply)
   https://github.com/tqdm/tqdm/blob/master/LICENCE
-- Flask — BSD 3-Clause License
-  https://github.com/pallets/flask/blob/main/LICENSE.txt
 - ONNX Runtime — MIT License
   https://github.com/microsoft/onnxruntime/blob/main/LICENSE
-- SciPy — BSD 3-Clause License
-  https://github.com/scipy/scipy/blob/main/LICENSE.txt
 - qrcode — BSD License
   https://github.com/lincolnloop/python-qrcode/blob/main/LICENSE
+- cryptography — Apache-2.0 OR BSD-3-Clause
+  https://github.com/pyca/cryptography/blob/main/LICENSE
 
 ================================================================
 Optional runtime (opt-in via pip extras)
@@ -104,22 +126,40 @@ explicitly request the corresponding extra and thereby accept its
 license terms:
 
 - pillow-heif — GPLv2 (binary wheel bundles x265 which is GPLv2;
-  Python source is BSD-3-Clause; libheif is LGPL-3.0)
+  Python source is BSD-3-Clause; libheif and libde265 are LGPL-3.0 —
+  see LICENSES_bundled.txt in the wheel)
   Extra: `bppicker[heic]`
   https://github.com/bigcat88/pillow_heif/blob/master/LICENSE.txt
+- Flask — BSD 3-Clause License
+  Extra: `bppicker[web]` (the web UI)
+  https://github.com/pallets/flask/blob/main/LICENSE.txt
 - face_recognition — MIT License
   Extra: `bppicker[faces]`
   https://github.com/ageitgey/face_recognition/blob/master/LICENSE
+  Its dependency face_recognition_models carries dlib's pretrained
+  weights. Its PyPI metadata says MIT; the LICENSE file inside the
+  package is CC0-1.0, and the models' author released them into the
+  public domain. One of them, the 68-point landmark model
+  (shape_predictor_68_face_landmarks.dat), was trained on the iBUG
+  300-W dataset; dlib's model notes record that the dataset's license
+  excludes commercial use and that its creators ask that the model not
+  be used in a commercial product
+  (https://github.com/davisking/dlib-models#shape_predictor_68_face_landmarksdatbz2).
+  pip fetches this package from PyPI; Arkalogy does not redistribute
+  it, and the desktop app leaves it out (see below).
+- mediapipe — Apache License 2.0
+  Extra: `bppicker[faces]`
+  https://github.com/google/mediapipe/blob/master/LICENSE
+- ai-edge-litert — Apache License 2.0 (runs the BlazeFace full-range
+  face detector; not installed on Intel Macs, which have no wheel)
+  Extra: `bppicker[faces]`
+  https://github.com/google-ai-edge/LiteRT/blob/main/LICENSE
+- SciPy — BSD 3-Clause License
+  Extra: `bppicker[faces]`
+  https://github.com/scipy/scipy/blob/main/LICENSE.txt
 - dlib — Boost Software License 1.0
   Extra: `bppicker[faces]`
   https://github.com/davisking/dlib/blob/master/LICENSE.txt
-- NudeNet — GPL-3.0 (optional NSFW filter)
-  Extra: `bppicker[nudity]`
-  https://github.com/notAI-tech/NudeNet/blob/main/LICENSE
-  Note: NudeNet is GPL-3.0. Distributing a derived work that bundles
-  NudeNet would trigger GPL obligations on the whole work — that is
-  the reason we ship it strictly as an optional pip extra rather than
-  vendoring or default-installing it.
 - rawpy — MIT (links to LibRaw, which is LGPL-2.1)
   Extra: `bppicker[raw]`
   https://github.com/letmaik/rawpy/blob/master/LICENSE
@@ -131,11 +171,14 @@ license terms:
   underlying LaMa model weights, fetched by bpp's verified-
   download path before the wrapper sees them, have their own
   license terms — see https://github.com/advimman/lama for the
-  original research project. We pin to `==0.1.0` because that
+  original research project. The weights file itself is downloaded
+  from a third-party re-host, the simple-lama-inpainting project's
+  GitHub release
+  (github.com/enesmsahin/simple-lama-inpainting/releases/download/v0.1.0/big-lama.pt). We pin to `==0.1.0` because that
   release does not pin pillow<10 (later releases do, which would
   break HEIC support).
 
-  Integrity (R8-M16, closed): bpp pre-fetches `big-lama.pt` via
+  Integrity: bpp pre-fetches `big-lama.pt` via
   the SHA-256-pinned + 120s-timeout `download_file()` helper that
   every other bpp ML model uses, then points
   `simple_lama_inpainting` at the verified file via its documented
@@ -145,11 +188,108 @@ license terms:
   and the loader that hands the verified path to `SimpleLama`.
 
 ================================================================
-Desktop app (.app) build toolchain
+Desktop app (.app / DMG)
 ================================================================
 
-The optional desktop app bundles the bpp server as a sidecar binary
-built with PyInstaller in CI. PyInstaller is a build-time tool: it is
+The macOS desktop app is built in CI with
+`pip install ".[web,heic,faces,raw,inpaint]"` and then frozen
+with PyInstaller, so — unlike a plain `pip install bppicker` — it
+contains the optional runtime components listed above, together with
+the native libraries their wheels bundle and the Python runtime
+itself. Checked against the v0.1.2 release DMG and the v0.2.0 build
+changes, the app's bpp server includes among others:
+
+- the CPython 3.11 runtime (PSF-2.0), with the libraries its build
+  links, such as OpenSSL (Apache-2.0), SQLite (public domain), zlib
+  and expat
+- pillow-heif with libx265 (GPL-2.0), libheif and libde265 (LGPL-3.0)
+- rawpy with LibRaw (LGPL-2.1)
+- FFmpeg libraries from the OpenCV wheels (LGPL-2.1), including a
+  second copy of libx265 (GPL-2.0), plus roughly a hundred other
+  native libraries the OpenCV macOS wheel bundles (for example GnuTLS,
+  libass, libbluray, dav1d, aom), several of them GPL or LGPL
+- PyTorch and torchvision (BSD-3-Clause), simple-lama-inpainting
+  (Apache-2.0), mediapipe including its native Tasks library
+  (Apache-2.0), SciPy (BSD-3-Clause)
+- the bundled BlazeFace short-range model (Apache-2.0)
+- OpenCV's frontal-face Haar cascade
+  (`cv2/data/haarcascade_frontalface_default.xml`, from the OpenCV
+  wheel), used as the last-resort face detector, under the Intel
+  License Agreement for Open Source Computer Vision Library:
+
+    Copyright (C) 2000, Intel Corporation, all rights reserved.
+    Third party copyrights are property of their respective owners.
+
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the following conditions
+    are met:
+      * Redistribution's of source code must retain the above copyright
+        notice, this list of conditions and the following disclaimer.
+      * Redistribution's in binary form must reproduce the above
+        copyright notice, this list of conditions and the following
+        disclaimer in the documentation and/or other materials provided
+        with the distribution.
+      * The name of Intel Corporation may not be used to endorse or
+        promote products derived from this software without specific
+        prior written permission.
+
+    This software is provided by the copyright holders and contributors
+    "as is" and any express or implied warranties, including, but not
+    limited to, the implied warranties of merchantability and fitness
+    for a particular purpose are disclaimed. In no event shall the Intel
+    Corporation or contributors be liable for any direct, indirect,
+    incidental, special, exemplary, or consequential damages (including,
+    but not limited to, procurement of substitute goods or services;
+    loss of use, data, or profits; or business interruption) however
+    caused and on any theory of liability, whether in contract, strict
+    liability, or tort (including negligence or otherwise) arising in
+    any way out of the use of this software, even if advised of the
+    possibility of such damage.
+
+Not included, from v0.2.0 onward: NudeNet's Python package, and dlib,
+face_recognition and face_recognition_models. Those last three are
+the optional dlib face path; face_recognition loads all of
+face_recognition_models' weights when it is imported, including the
+68-point landmark model described above, which Arkalogy does not
+redistribute. (The v0.1.2 app contained the dlib and face_recognition
+code but none of those weight files.) The app's face features use
+YuNet, MediaPipe BlazeFace, the Haar cascade and SFace (plus the
+opt-in models), not dlib.
+
+No other model weights are bundled; they are downloaded at first use
+exactly as for a pip install. Each component keeps its own license
+inside the app.
+
+Inventory and corresponding source (v0.2.0 onward). Every desktop
+release on GitHub carries two extra files:
+
+- `bppicker-third-party-inventory.json` — for the app's Python side
+  (its bpp server): every Python package in the dependency closure of
+  `bppicker[web,heic,faces,raw,inpaint]`, with version, declared
+  license and every shared library (.dylib / .so) the package
+  installs; the Python runtime and the PyInstaller bootloader; and a
+  list of every file PyInstaller actually packed into the server,
+  attributed to the package it came from. A package that is installed
+  for the build but not packed into the app (such as dlib) is marked
+  as such. The app's native window shell (Tauri, written in Rust) is
+  not part of this inventory.
+- `bppicker-third-party-sources.tar.gz` — the exact sources the HEIC
+  and RAW components were compiled from: the x265, libde265 and
+  libheif archives named in pillow-heif's build recipe, that recipe,
+  every patch it applies and the workflow that runs it; and the
+  LibRaw commits rawpy pins, with rawpy's build scripts.
+
+Written offer. For at least three years after each desktop release,
+Arkalogy will provide, to anyone who asks, the complete corresponding
+source code for any GPL- or LGPL-licensed component listed in that
+release's inventory, for no more than the cost of providing it. Email
+support@arkalogy.com with the release version and the component name.
+
+Build toolchain
+---------------
+
+The app's bpp server runs as a sidecar binary built with PyInstaller
+in CI. PyInstaller is a build-time tool: it is
 never a runtime dependency, never listed in pyproject, and never
 distributed itself. What its build embeds in the sidecar binary:
 
@@ -180,13 +320,22 @@ Standing constraints that keep the exception valid for us:
 How this notice is kept honest
 ================================================================
 
-The required-runtime list above is exactly the set of packages a fresh
-`pip install bppicker` pulls in (no extras). Each opt-in extra has its
-own permitted copyleft list; the recipes below let any auditor (your
-legal team, a security reviewer, future-you) re-prove every install
-path mechanically. Run each recipe in a fresh venv and compare the
-grep output against the expected line below. Anything not in the
-expected list is a drift signal — open an issue.
+The required-runtime list above is bpp's direct dependencies (no
+extras). The recipes below let any auditor (a security reviewer,
+future-you) re-check every install path mechanically. Run each recipe
+in a fresh venv and compare the grep output against the expected line
+below. Anything else is a drift signal — open an issue.
+
+Limits of this check: pip-licenses reports the license each package
+DECLARES in its metadata. It cannot see native libraries bundled
+inside wheels (FFmpeg / x265 in OpenCV, x265 / libheif in
+pillow-heif, LibRaw in rawpy), and it repeats metadata that can
+disagree with a project's LICENSE file (face_recognition_models
+declares MIT but its LICENSE file is CC0-1.0). Those known cases are
+documented above; the expected outputs below reflect what pip-licenses
+actually prints for them. For the desktop app, the per-release
+inventory described above does list the native libraries each
+package installs.
 
 # Base install (must be empty)
     python -m venv /tmp/bpp-license-audit
@@ -211,16 +360,10 @@ expected list is a drift signal — open an issue.
     /tmp/bpp-license-audit-heic/bin/pip install pip-licenses
     /tmp/bpp-license-audit-heic/bin/pip-licenses --from=mixed --order=license \
         --format=plain | grep -iE 'GPL|LGPL|AGPL'
-# Expected: pillow-heif (GPLv2 binary wheel because of bundled x265)
-# plus libheif (LGPL-3.0). Anything else is drift.
-
-# [nudity] (must be exactly NudeNet)
-    python -m venv /tmp/bpp-license-audit-nudity
-    /tmp/bpp-license-audit-nudity/bin/pip install "bppicker[nudity]"
-    /tmp/bpp-license-audit-nudity/bin/pip install pip-licenses
-    /tmp/bpp-license-audit-nudity/bin/pip-licenses --from=mixed --order=license \
-        --format=plain | grep -iE 'GPL|LGPL|AGPL'
-# Expected: NudeNet (GPL-3.0). Anything else is drift.
+# Expected: empty with current pillow-heif releases, whose metadata
+# declares BSD-3-Clause (older releases carried a GPLv2 classifier and
+# show up here). The binary wheel is GPLv2 regardless — see
+# LICENSES_bundled.txt inside it.
 
 # [raw] (must be exactly LibRaw)
     python -m venv /tmp/bpp-license-audit-raw
@@ -228,7 +371,8 @@ expected list is a drift signal — open an issue.
     /tmp/bpp-license-audit-raw/bin/pip install pip-licenses
     /tmp/bpp-license-audit-raw/bin/pip-licenses --from=mixed --order=license \
         --format=plain | grep -iE 'GPL|LGPL|AGPL'
-# Expected: LibRaw (LGPL-2.1; rawpy itself is MIT). Anything else is drift.
+# Expected: empty — rawpy declares MIT; the LibRaw (LGPL-2.1) it
+# bundles is not a separate Python package, so it doesn't appear.
 
 # [inpaint] (must be empty)
     python -m venv /tmp/bpp-license-audit-inpaint
@@ -250,17 +394,31 @@ Downloaded at first-use (model weights only)
 ================================================================
 
 These are fetched over HTTPS the first time a feature is used and
-stored in the user's cache directory. Only ONNX-exported weights are
-loaded — no copyleft Python code runs in the host process.
+stored in the user's cache directory, after a SHA-256 check. They are
+downloaded by the user's installation from the hosts named below —
+some are the original publisher, some are third-party re-hosts —
+never from Arkalogy. Formats vary (ONNX, TFLite / MediaPipe task
+files, a TorchScript .pt for LaMa); no Ultralytics Python code runs
+in the host process.
 
 - MediaPipe model weights — Apache License 2.0
   https://github.com/google/mediapipe/blob/master/LICENSE
-  Includes face landmark detection, hand detection, pose detection,
-  and selfie segmentation models.
+  Includes BlazeFace full-range face detection, face landmark
+  detection, hand detection, pose detection, and selfie segmentation
+  models.
+  Downloaded from storage.googleapis.com (mediapipe-models /
+  mediapipe-assets buckets, Google).
 - YuNet face detector ONNX weights — Apache License 2.0
   https://github.com/opencv/opencv_zoo (models/face_detection_yunet)
   Downloaded at runtime from media.githubusercontent.com/media/opencv/opencv_zoo
-- SCRFD face detector ONNX weights — MIT License (upstream insightface)
+- SCRFD face detector ONNX weights — research / non-commercial.
+  insightface's code is MIT, but its README states that models
+  trained on its annotated data, including models downloaded from
+  its repository, are for non-commercial research purposes only.
+  bpp's registry treats SCRFD as restricted: it is downloaded and
+  used only after you accept it, and is blocked when your use context
+  is "Commercial" unless you state in the click-through that you hold
+  separate rights to it.
   Upstream: https://github.com/deepinsight/insightface
   Runtime download source: a third-party HuggingFace mirror at
   https://huggingface.co/RuteNL/SCRFD-face-detection-ONNX
@@ -269,13 +427,35 @@ loaded — no copyleft Python code runs in the host process.
   mirror can't substitute different bytes)
 - SFace face embedding ONNX weights — Apache License 2.0
   https://github.com/opencv/opencv_zoo
-- CLIP ViT-B/32 ONNX weights — MIT License
+  Downloaded at runtime from media.githubusercontent.com/media/opencv/opencv_zoo
+- CLIP ViT-B/32 ONNX weights (visual + text encoders) — MIT License
   https://github.com/openai/CLIP/blob/main/LICENSE
+  Runtime download source: a third-party Hugging Face re-host of an
+  ONNX conversion, https://huggingface.co/deepghs/clip_onnx
+  (SHA-256 pinned in `bpp/scoring/clip_embed.py`)
+- CLIP BPE tokenizer vocabulary — MIT License (OpenAI CLIP)
+  Downloaded from openaipublic.azureedge.net (OpenAI)
 - YOLOv11n (Ultralytics) ONNX weights — AGPL-3.0
   https://github.com/ultralytics/ultralytics/blob/main/LICENSE
+  Downloaded from github.com/ultralytics/assets releases
   Note: Only the exported ONNX weights are downloaded at runtime for
   local inference. The Ultralytics Python package is NOT installed
   and no AGPL Python code runs in the user's process. The ONNX-graph
   format is interpreted by ONNX Runtime (MIT). If the user redistributes
   these weights in their own derived work, AGPL terms attach to that
   redistribution.
+- NudeNet 320n ONNX weights — AGPL-3.0 (downloaded only after a
+  license click-through; BPP runs them with its own ONNX Runtime code
+  and does not install or bundle the NudeNet Python package)
+  Downloaded from raw.githubusercontent.com/notAI-tech/NudeNet at a
+  pinned commit (see `bpp/scoring/nudity.py`)
+- insightface buffalo_s face-analysis bundle — non-commercial research
+  use per insightface (opt-in face embedder behind a license
+  click-through; blocked for a "Commercial" use context unless you
+  state in the click-through that you hold separate rights to it)
+  Downloaded from github.com/deepinsight/insightface releases
+- LaMa inpainting weights (big-lama.pt) — see the
+  simple-lama-inpainting entry above; registry-classified as research
+  / non-commercial, behind a license click-through
+  Downloaded from the third-party re-host
+  github.com/enesmsahin/simple-lama-inpainting (release v0.1.0)

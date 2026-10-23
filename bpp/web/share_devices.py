@@ -49,7 +49,10 @@ def find_or_create_pending_device(
       trusted / revoked) is preserved as-is; revoked rows stay revoked.
       Re-requesting access after revoke is an explicit user action via
       `request_access()`, not a side-effect of page loads.
+    - A pending request older than the TTL is dropped first, so a
+      re-scan after it expired is a fresh request with a fresh age.
     """
+    prune_expired_pending(conn)
     existing = conn.execute(
         "SELECT * FROM share_devices WHERE fingerprint = ?", (fingerprint,)
     ).fetchone()
@@ -87,6 +90,12 @@ def find_or_create_pending_device(
     return _row_to_device(row)
 
 
+def touch_device(conn: sqlite3.Connection, device_id: int) -> None:
+    """Bump ``last_seen`` for a device the caller has already loaded."""
+    conn.execute("UPDATE share_devices SET last_seen=? WHERE id=?", (int(time.time()), device_id))
+    conn.commit()
+
+
 def request_access(conn: sqlite3.Connection, fingerprint: str) -> dict[str, object] | None:
     """Explicit re-request after a revoke (or no-op for non-revoked).
 
@@ -106,12 +115,14 @@ def request_access(conn: sqlite3.Connection, fingerprint: str) -> dict[str, obje
 
     now = int(time.time())
     if existing["revoked_at"] is not None:
+        # A fresh request: its age (first_seen) starts now, so the
+        # pending TTL counts from the tap, not from the first pairing.
         conn.execute(
             "UPDATE share_devices SET"
             " trusted_at = NULL, revoked_at = NULL,"
-            " prev_revoked = 1, last_seen = ?"
+            " prev_revoked = 1, first_seen = ?, last_seen = ?"
             " WHERE id = ?",
-            (now, existing["id"]),
+            (now, now, existing["id"]),
         )
         conn.commit()
 
@@ -220,8 +231,11 @@ def list_devices(conn: sqlite3.Connection) -> dict[str, list[dict[str, object]]]
     """Return {pending: [...], trusted: [...]} for the Mac UI.
 
     Revoked devices are hidden — they only resurface if the phone
-    reconnects, which moves them back into pending.
+    reconnects, which moves them back into pending. Requests older than
+    the pending TTL are dropped first, so the list is the one place the
+    expiry runs (the owner opens it to decide).
     """
+    prune_expired_pending(conn)
     rows = conn.execute(
         "SELECT * FROM share_devices WHERE revoked_at IS NULL ORDER BY last_seen DESC"
     ).fetchall()
@@ -236,14 +250,22 @@ def list_devices(conn: sqlite3.Connection) -> dict[str, list[dict[str, object]]]
     return {"pending": pending, "trusted": trusted}
 
 
-def prune_expired_pending(conn: sqlite3.Connection, *, ttl_seconds: int = 24 * 3600) -> int:
-    """Delete pending devices whose last_seen is older than the TTL.
+#: A pairing request nobody approves is dropped after this long.
+PENDING_TTL_SECONDS = 24 * 3600
 
-    Trusted devices are never pruned. Returns the row count removed.
+
+def prune_expired_pending(conn: sqlite3.Connection, *, ttl_seconds: int | None = None) -> int:
+    """Delete pending devices whose request is older than the TTL.
+
+    Keyed on ``first_seen`` (when the phone first asked), so a phone
+    that keeps polling the pairing page can't hold a request open past
+    the TTL; the owner sees a fresh request if it comes back. Trusted
+    devices are never pruned. Returns the row count removed.
     """
-    cutoff = int(time.time()) - ttl_seconds
+    cutoff = int(time.time()) - (PENDING_TTL_SECONDS if ttl_seconds is None else ttl_seconds)
     cur = conn.execute(
-        "DELETE FROM share_devices WHERE trusted_at IS NULL AND last_seen < ?",
+        "DELETE FROM share_devices "
+        "WHERE trusted_at IS NULL AND revoked_at IS NULL AND first_seen < ?",
         (cutoff,),
     )
     conn.commit()

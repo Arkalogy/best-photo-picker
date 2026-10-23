@@ -17,15 +17,13 @@ Why it's a package rather than a flat module:
   registry can use precise non-warranty field names without
   surfacing them in the picker).
 
-The registry replaces the earlier ad-hoc license_id field on
-:class:`bpp.scoring.face_embedder_registry.FaceEmbedder` (kept for
-back-compat). Embedder registration eventually plumbs through here
-so the legal posture is enforced at the data-model layer rather than
-per UI surface.
+The registry is the only place a model's license is written. Face
+detectors, embedders and every ``ModelSingleton`` name their entry by
+``registry_id``, and every license label is derived from the entry
+(:func:`bpp.registry.labels.license_label_for`).
 
-Established by Batch 1 of the face-embedder legal-posture rollout —
-see ``pm-face-embedder-spike.md`` for the 24-item plan this
-implements.
+The policy this package enforces is described in ``MODEL_POLICY.md``
+and ``docs/adr/0005-legal-posture-and-model-registry.md``.
 """
 
 from __future__ import annotations
@@ -33,6 +31,8 @@ from __future__ import annotations
 from bpp.registry.acceptance import (
     AcceptanceDraft,
     AcceptanceError,
+    AcceptanceState,
+    acceptance_state,
     confirm_acceptance,
     is_acceptance_valid_for,
     prepare_acceptance,
@@ -97,6 +97,7 @@ from bpp.registry.labels import (
     plain_english_status_label,
     ui_label_for_entry,
 )
+from bpp.registry.manifest_rollback import record_applied_version, rollback_reason
 from bpp.registry.model_registry import (
     LicenseClass,
     ModelEntry,
@@ -126,6 +127,7 @@ from bpp.registry.policy import (
 from bpp.registry.remote_registry import (
     ALLOWED_HOSTS,
     DEFAULT_REMOTE_REGISTRY_URL,
+    _resolve_effective_url,
     fetch_remote_manifest,
 )
 from bpp.registry.removal import (
@@ -169,7 +171,7 @@ from bpp.registry.use_context_store import (
 
 register_builtins()
 
-# Install the Batch 3 download chokepoint as soon as the registry
+# Install the download chokepoint as soon as the registry
 # package loads. Any package already imported by this point gets
 # patched; later imports of known auto-downloaders are caught by the
 # meta-path post-import hook. Re-imports of bpp.registry are no-ops.
@@ -177,8 +179,7 @@ install_third_party_interceptions()
 
 
 def _try_apply_remote_overlay() -> None:
-    """Batch 8 / item 12 + 23 — attempt to fetch + verify + apply
-    the remote registry manifest.
+    """Attempt to fetch + verify + apply the remote registry manifest.
 
     Best-effort: every failure (network, verification, decoder)
     logs at WARNING and falls back to the bundled baseline. The
@@ -187,11 +188,14 @@ def _try_apply_remote_overlay() -> None:
     for tests, CI runs, and air-gapped environments where the
     fetch attempt would just be wasted time.
     """
-    import json
     import os
+
+    from bpp.utils.json_utils import safe_json_loads
+    from bpp.utils.logging import get_logger
 
     if os.environ.get("BPP_DISABLE_REMOTE_REGISTRY"):
         return
+    log = get_logger(__name__)
     # If the bundled trust set is still all placeholders (i.e. this
     # checkout has not yet been re-keyed for a real release), the
     # verifier could never accept a remote manifest anyway — every
@@ -207,37 +211,37 @@ def _try_apply_remote_overlay() -> None:
         # caught and returns None. This catch handles the
         # genuinely-unexpected path (programming error) without
         # taking down BPP startup.
-        from bpp.utils.logging import get_logger as _get_logger
-
-        _get_logger(__name__).warning(
+        log.warning(
             "Unexpected error fetching remote registry; using bundled baseline only",
             exc_info=True,
         )
         return
     if data is None:
         return
-    try:
-        manifest = json.loads(data.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        from bpp.utils.logging import get_logger as _get_logger
-
-        _get_logger(__name__).warning(
-            "Remote registry response is not valid JSON: %s (using bundled baseline)",
-            exc,
-        )
+    manifest = safe_json_loads(data, expected_type=dict, context="remote registry manifest")
+    if manifest is None:
+        log.warning("Remote registry response is not a JSON object (using bundled baseline)")
         return
+    source_url = _resolve_effective_url()
     result = verify_manifest(manifest, trusted_keys=trusted_key_list())
     if not result.is_valid:
-        from bpp.utils.logging import get_logger as _get_logger
-
-        _get_logger(__name__).warning(
+        log.warning(
             "Remote registry manifest failed verification; using bundled baseline only. Errors: %s",
             result.errors,
         )
         return
+    rollback = rollback_reason(result.manifest_version, source_url=source_url)
+    if rollback:
+        log.warning("Remote registry manifest refused; using bundled baseline only. %s", rollback)
+        return
     apply_overlay(
         list(result.entries),
         valid_signature_count=len(result.valid_signatures),
+    )
+    record_applied_version(
+        result.manifest_version,
+        source_url=source_url,
+        generated_at=manifest.get("generated_at"),
     )
 
 
@@ -269,6 +273,7 @@ __all__ = [
     "AcceptanceDraft",
     "AcceptanceError",
     "AcceptanceRow",
+    "AcceptanceState",
     "BYOMEntry",
     "BlockedAutoDownloadError",
     "DerivedDataSummary",
@@ -288,6 +293,7 @@ __all__ = [
     "TrustedKey",
     "UseContext",
     "UseContextRecord",
+    "acceptance_state",
     "add_byom_entry",
     "append_revocation",
     "apply_overlay",

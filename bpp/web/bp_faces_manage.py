@@ -118,6 +118,14 @@ def api_untag_person() -> tuple[Response, int]:
     return jsonify({"status": "untagged"}), 200
 
 
+def _centroid(conn, blobs: list[bytes]) -> np.ndarray | None:
+    """Mean of the usable embeddings in ``blobs`` (None if none are)."""
+    from bpp.db.face_embedding_safety import decode_rows
+
+    embs = decode_rows(conn, ((0, b) for b in blobs), where="bp_faces_manage.centroid")
+    return np.stack([e for _, e in embs]).mean(axis=0) if embs else None
+
+
 @bp.post("/api/v1/faces/reassign")
 @requires_local_app
 @with_face_lock
@@ -150,8 +158,15 @@ def api_faces_reassign() -> tuple[Response, int]:
         face_row = conn.execute(
             "SELECT embedding FROM face_embeddings WHERE id=?", (face_id,)
         ).fetchone()
-        if face_row and face_row["embedding"]:
-            face_emb = np.frombuffer(face_row["embedding"], dtype=np.float32)
+        from bpp.db.face_embedding_safety import decode_rows
+
+        face_decoded = (
+            decode_rows(conn, [(face_id, face_row["embedding"])], where="bp_faces_manage.face")
+            if face_row and face_row["embedding"]
+            else []
+        )
+        if face_decoded:
+            face_emb = face_decoded[0][1]
             # One round trip covers both centroids — was two separate
             # SELECTs that fetched roughly the same data shape from the
             # same table back-to-back. On heavy reassign sessions this
@@ -173,10 +188,12 @@ def api_faces_reassign() -> tuple[Response, int]:
                         rows_by_cid[r["cluster_id"]].append(r["embedding"])
 
             # "different" signal: face didn't belong in old cluster
-            if old_cluster_id >= 0 and rows_by_cid.get(old_cluster_id):
-                old_centroid = np.stack(
-                    [np.frombuffer(b, dtype=np.float32) for b in rows_by_cid[old_cluster_id]]
-                ).mean(axis=0)
+            old_centroid = (
+                _centroid(conn, rows_by_cid[old_cluster_id])
+                if old_cluster_id >= 0 and rows_by_cid.get(old_cluster_id)
+                else None
+            )
+            if old_centroid is not None:
                 dist_old = float(np.linalg.norm(face_emb - old_centroid))
                 store_face_feedback(
                     conn,
@@ -185,10 +202,12 @@ def api_faces_reassign() -> tuple[Response, int]:
                     distance=dist_old,
                 )
             # "same" signal: face belongs in new cluster
-            if cluster_id >= 0 and rows_by_cid.get(cluster_id):
-                new_centroid = np.stack(
-                    [np.frombuffer(b, dtype=np.float32) for b in rows_by_cid[cluster_id]]
-                ).mean(axis=0)
+            new_centroid = (
+                _centroid(conn, rows_by_cid[cluster_id])
+                if cluster_id >= 0 and rows_by_cid.get(cluster_id)
+                else None
+            )
+            if new_centroid is not None:
                 dist_new = float(np.linalg.norm(face_emb - new_centroid))
                 store_face_feedback(
                     conn,

@@ -19,13 +19,19 @@ class TestIsTransient:
         assert is_transient(OSError(errno.EIO, "I/O error"))
 
     def test_estale(self):
-        assert is_transient(OSError(116, "Stale file handle"))
+        assert is_transient(OSError(errno.ESTALE, "Stale file handle"))
 
     def test_etimedout(self):
-        assert is_transient(OSError(110, "Connection timed out"))
+        assert is_transient(OSError(errno.ETIMEDOUT, "Connection timed out"))
 
     def test_ehostdown(self):
-        assert is_transient(OSError(112, "Host is down"))
+        assert is_transient(OSError(errno.EHOSTDOWN, "Host is down"))
+
+    def test_macos_nfs_wording_and_connection_reset(self):
+        e = OSError("Stale NFS file handle")
+        e.errno = None
+        assert is_transient(e)
+        assert is_transient(OSError(errno.ECONNRESET, "Connection reset by peer"))
 
     def test_normal_enoent_not_transient(self):
         assert not is_transient(OSError(errno.ENOENT, "No such file"))

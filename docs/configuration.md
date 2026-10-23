@@ -20,16 +20,22 @@ peer) is consulted for the loopback / LAN gate. No proxy hop.
 Caddy, Traefik) on the same host, the direct peer is the proxy
 itself (typically `127.0.0.1` or a Docker bridge gateway like
 `172.17.0.1`). With this var set, requests whose `request.remote_addr`
-matches any listed CIDR have their `X-Forwarded-For` header trusted,
-and the *original* client IP is used for the loopback / LAN auth gate
-instead.
+matches any listed CIDR are treated as loopback (owner) by the LAN
+gate. If you also set `behind_proxy: true` in the YAML config, bpp
+additionally honors `X-Forwarded-For`/`-Proto`/`-Host` from those
+peers only, and the original client IP is used for the gate instead.
+The bundled `Dockerfile` sets this variable to the Docker bridge
+ranges (`172.16.0.0/12,192.168.65.0/24`).
 
-**Safety filter:** `_is_safe_proxy_network()` (in `bpp/web/share.py`)
-**rejects** any CIDR that contains public addresses — `0.0.0.0/0`,
-`::/0`, or arbitrary public ranges. The only ranges that pass:
-loopback (`127/8`, `::1`), RFC1918 private (`10/8`, `172.16/12`,
-`192.168/16`), link-local (`169.254/16`, `fe80::/10`), and the
-Docker-Desktop alias range. A misconfigured `0.0.0.0/0` would
+**Safety filter:** `_is_safe_proxy_network()` (in `bpp/web/share_proxy.py`,
+re-exported from `bpp/web/share.py`) **rejects** `0.0.0.0/0`, `::/0`,
+and any range Python doesn't classify as private, loopback or
+link-local. What passes: loopback (`127/8`, `::1`), RFC1918 private
+(`10/8`, `172.16/12`, `192.168/16` — which covers Docker Desktop's
+`192.168.65.0/24`), link-local (`169.254/16`, `fe80::/10`), the
+RFC 6598 carrier-grade NAT block (`100.64.0.0/10`, used by AWS ECS /
+Fargate), and the other special-purpose ranges Python marks private.
+A misconfigured `0.0.0.0/0` would
 otherwise hand the owner SPA (with the per-boot app token) to any
 remote — that's why parse-time rejection logs a warning and drops
 the entry rather than honoring it. See `tests/test_trust_proxy.py`
@@ -68,7 +74,10 @@ convention; falls back to `~/.cache/bpp` if `XDG_CACHE_HOME` unset).
 
 **What it does:** roots the directory tree where bpp stores
 downloaded ML weights, CLIP image embeddings, tokenizer vocab files,
-and other per-host caches. Useful for:
+and other per-host caches, including the remote-registry state file
+(registry-overlay-state.json: the highest signed-manifest version this
+machine has applied from each registry URL, which the anti-rollback
+check in `bpp/registry/manifest_rollback.py` compares against). Useful for:
 
 - **Docker volumes:** mount a single named volume at a stable path
   (`-v bpp-cache:/var/lib/bpp/cache`) and point `BPP_CACHE_DIR` at it.
@@ -89,14 +98,54 @@ cache root.
 moving the rest of the cache. Useful when:
 
 - The host has a small SSD for the cache but a large HDD for the
-  500MB+ ML weights.
+  ML weights (up to ~660 MB for the default set, more with opt-in
+  models).
 - A site-shared model directory is mounted read-only across multiple
   bpp instances (and the cache stays per-instance for write-heavy
   CLIP embeddings).
+- **Offline installs:** model files already present in this directory
+  are used instead of being downloaded again, so copying a populated
+  models directory onto an offline machine is the way to avoid model
+  downloads — bpp has no switch that disables them.
 
 If both `BPP_CACHE_DIR` and `BPP_MODELS_DIR` are set, models go to
 `BPP_MODELS_DIR` and everything else goes under `BPP_CACHE_DIR`.
 Resolution lives in `models_dir()` (`bpp/utils/paths.py`).
+
+## `BPP_TRUSTED_HOSTS`
+
+**Optional.** Comma-separated host names the server answers to, in
+addition to `localhost` and IP literals. Any other `Host` header is
+refused (HTTP 421) so a web page can't rebind its own domain to the
+app's address and read it as same-origin. Set it when bpp sits behind
+a reverse proxy with a name of its own, e.g.
+`BPP_TRUSTED_HOSTS=photos.home.lan`; a leading dot covers subdomains
+(`.example.net` allows `example.net` and `photos.example.net`).
+
+## `BPP_SKIP_DOWNLOADS`
+
+**Internal — set by bpp, not by you.** Don't set it yourself.
+
+**What it does:** during an analysis, the model check before scoring
+may find that a model can't be downloaded (for example, no internet
+connection). bpp then sets this variable, a comma-separated list of
+model registry ids, inside that run's own background processes. Those
+processes don't silently try the same download again; they work
+without that model and the run's warning names it. It never affects
+the server process or later runs (see `skip_downloads_in_this_process()`
+in `bpp/utils/download.py`).
+
+## `BPP_INSTALL_HELD_FILE`
+
+**Internal — set by bpp, not by you.** Don't set it yourself.
+
+**What it does:** once the in-app installer runs pip for a feature (face
+recognition, AI removal, the ONNX runtime), what pip writes isn't loaded
+into the running app: the feature works after a restart. The app names a
+file here at startup (under the cache folder, `install-held/`) and lists
+the held packages in it, so the background processes it starts for an
+analysis hold them too. The file is removed when the app exits; a
+restarted app starts with nothing held (see `bpp/scoring/install_hold.py`).
 
 ## `BPP_ENABLE_PLUGINS`
 
@@ -158,7 +207,7 @@ some ONNX Runtime versions returns subtly different embeddings than CPU
 for the same inputs — face clusters generated under one provider may not
 match the other. CUDA can crash session construction if the runtime/driver
 combo is wrong. **The accelerated paths are not exercised in upstream CI**
-(we run CPU only on every push). Reports of working configurations are
+(CI runs CPU only, on pull requests to `main`). Reports of working configurations are
 welcome via GitHub issues; treat anything you opt into as your own
 verification surface until it lands in the README's "Tested in CI" matrix.
 
@@ -210,9 +259,9 @@ SFace embedding is 128 × float32 ≈ 512 bytes. Peak memory is matrix + dict
 500K cap costs ~750 MB peak; bumping to `BPP_FACE_MAX_PHOTOS=1000000` is
 reasonable on 32 GB.
 
-Per-library bypass: users can also opt out per library via Settings → Faces
-(the DB-level `face_max_override = "bypass"` setting). Tauri users get that
-path; CLI / dev users get the env var.
+Per-library bypass: the DB-level `face_max_override = "bypass"` setting
+(no UI writes it yet; set it with `bpp db` tooling or the env var above —
+desktop users can put the variable in the app's launch environment).
 
 **Trust / safety implications:** memory safety knob, not a security
 boundary. Setting it above what the host can hold OOM-kills the server
@@ -237,7 +286,7 @@ schema version). The log is local-only and never transmitted; the
 override exists so tests and dev workflows can isolate their writes
 without touching the real user config directory.
 
-**Trust / safety implications:** evidentiary record. Moving the path is
+**Trust / safety implications:** audit record. Moving the path is
 fine; deleting it loses the ability to prove which model acknowledgments
 the user accepted. Don't point it at a multi-user-writable location.
 
@@ -281,7 +330,7 @@ and never transmitted; the override exists so tests and dev workflows
 can isolate their writes without touching the real user config
 directory.
 
-**Trust / safety implications:** evidentiary record for which local
+**Trust / safety implications:** audit record for which local
 files the user pointed BPP at. The store does not contain the user's
 weights — just paths and hashes. Moving the path is fine; pointing it at
 a multi-user-writable location lets another user on the same machine
@@ -292,15 +341,22 @@ The reader lives in `bpp/registry/byom.py`.
 ## `BPP_DISABLE_REMOTE_REGISTRY`
 
 **Default:** *(unset)* — the remote-registry overlay fetch runs at
-import time of `bpp.registry`.
+import time of `bpp.registry`, which `import bpp` loads. In practice
+that means one HTTPS GET to
+`https://arkalogy.github.io/bppicker-registry/registry.json` in every
+bpp process: each CLI command (including `bpp --version`), each
+server start (the desktop app's included), and — on macOS and
+Windows, where Python starts worker processes fresh — each worker
+process the server spawns. The response isn't cached on disk.
 
-**Type:** any truthy string (`"1"`, `"true"`, etc.) disables the fetch;
-unset or empty leaves it on.
+**Type:** any non-empty value disables the fetch — including `0` or
+`false`, because the code only checks that the variable is set to
+something. Unset or empty leaves it on.
 
-**What it does:** turns off the Batch-8 remote-registry overlay
+**What it does:** turns off the signed remote-registry overlay
 mechanism entirely. With the variable set, BPP only sees the bundled
-baseline registered by `bpp.registry.builtins`; no HTTPS call is made
-on startup. Useful for CI runs (deterministic), air-gapped deployments
+baseline registered by `bpp.registry.builtins`; no registry request
+is made at all. Useful for CI runs (deterministic), air-gapped deployments
 (no network), and unit tests that need a stable in-process registry.
 
 **Trust / safety implications:** the overlay is BPP's mechanism for
@@ -340,18 +396,23 @@ The reader lives in `bpp/registry/remote_registry.py`.
 `BPP_REMOTE_REGISTRY_INSECURE=1` is also set).
 
 **What it does:** overrides the URL the overlay fetch reads from.
-Used for local mocking (see `scripts/run_mock_registry.py`) and for
-air-gapped deployments that mirror the manifest on an internal host.
-The HTTPS-only + host-allowlist rules still apply unless the insecure
-escape hatch is also set — and the signature check stays mandatory
-regardless of where the manifest comes from.
+Used for local mocking (see `scripts/run_mock_registry.py`). The
+HTTPS-only + host-allowlist rules still apply unless the insecure
+escape hatch is also set, and the allowlist contains only
+`arkalogy.github.io` — so a manifest mirrored on any other host (for
+example an internal one in an air-gapped deployment) is refused
+unless `BPP_REMOTE_REGISTRY_INSECURE` is set as well. The signature
+check stays mandatory regardless of where the manifest comes from.
 
 **Trust / safety implications:** the override moves the source of the
 manifest. A misconfigured URL pointing at an attacker-controlled host
 still cannot inject malicious entries — every manifest must verify
 against the bundled trusted-key set, which the override does NOT
 change. The cryptographic boundary holds; the URL override only
-changes the transport.
+changes the transport. The anti-rollback check also still applies,
+per URL: a mock registry never shares a mark with the real one, but
+serving the same URL again with a lower `manifest_version` is refused
+until you delete registry-overlay-state.json under `BPP_CACHE_DIR`.
 
 The reader lives in `bpp/registry/remote_registry.py`.
 
@@ -378,3 +439,41 @@ up a mock registry on `http://127.0.0.1:9088/registry.json` without
 provisioning a TLS cert.
 
 The reader lives in `bpp/registry/remote_registry.py`.
+
+## `BPP_BOOT_SECRET`
+
+**Default:** *(unset)* — `bpp serve` / `bpp web` generate a random key per
+run and print the tokenized URL to open.
+
+**Type:** string (a URL-safe token).
+
+**What it does:** sets the one-time boot key the loopback index page
+expects. Any local process can reach `127.0.0.1:5001`, and the page
+carries the owner token, so the page is rendered only to a caller that
+presents the key (`/?_boot=<key>`; the page then keeps it in that tab's
+`sessionStorage`, so a reload works but a new tab or a new browser
+session needs the link again — restart `bpp serve` for a fresh one). The desktop app passes its own key to the server sidecar this way
+and checks `/boot-check` before navigating.
+
+**Trust / safety implications:** keep it unguessable; it is as sensitive
+as the owner token for the duration of the run. Prefer leaving it unset
+and using the URL the server prints.
+
+The reader lives in `bpp/commands/serve.py`.
+
+## `BPP_OPEN_LOOPBACK`
+
+**Default:** *(unset)* — the boot key above is required.
+
+**Type:** `1` to enable (the `--open-loopback` flag does the same).
+
+**What it does:** serves the app to any local process without the boot
+key, as versions before 0.2.0 did. Use it when opening the page by hand
+or from a test runner that navigates to `/` in fresh browser contexts
+(`scripts/run_e2e.sh` sets it).
+
+**Trust / safety implications:** every process on the machine, including
+other OS users and sandboxed apps, can then read the owner token from
+the index page. Not for shared machines.
+
+The reader lives in `bpp/commands/serve.py`.

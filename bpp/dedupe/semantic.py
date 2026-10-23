@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 
+from bpp.config import cfg_get
 from bpp.scoring.clip_embed import cosine_similarity
 from bpp.utils.logging import get_logger
 
@@ -162,7 +163,7 @@ def semantic_deduplicate(
         threshold,
     )
 
-    time_window = config.get("time_window_seconds", 30)
+    time_window = cfg_get(config, "time_window_seconds")
 
     # Build filepath -> photo_id lookup for embedding access
     # analysis items may have "id" (from DB) or not
@@ -237,6 +238,22 @@ def semantic_deduplicate(
     return selected
 
 
+#: Candidates scored per matrix product in pass 2, and the most bytes one
+#: block's (candidates x reps) similarity matrix may take: as the rep
+#: count grows toward the CLIP cap the block shrinks, so the product is
+#: never a 200 MB allocation on top of the matrix itself.
+_PASS2_BLOCK = 256
+_PASS2_BLOCK_BYTES = 32 * 1024 * 1024
+
+
+def _pass2_block_rows(n_reps: int) -> int:
+    """Candidates per block so the block's similarity matrix stays
+    under ``_PASS2_BLOCK_BYTES`` (float32)."""
+    if n_reps <= 0:
+        return _PASS2_BLOCK
+    return max(1, min(_PASS2_BLOCK, _PASS2_BLOCK_BYTES // (4 * n_reps)))
+
+
 def _global_semantic_dedup(
     items: list[dict[str, Any]],
     fp_to_emb: dict[str, np.ndarray],
@@ -273,50 +290,79 @@ def _global_semantic_dedup(
     rep_index_for_emb_row: list[int] = []
     n_emb = 0
 
-    for item in sorted_items:
-        emb = fp_to_emb.get(item["filepath"])
-        if emb is None:
-            # No embedding — emit as a unique rep, don't add to the
-            # similarity index (future items can't match against it).
-            representatives.append(item)
-            continue
+    def _absorb(rep_item: dict[str, Any], item: dict[str, Any], sim: float) -> None:
+        rep_item.setdefault("similar_photos", []).append(
+            {
+                "filepath": item["filepath"],
+                "similarity": round(sim, 3),
+                "aggregate_score": item.get("aggregate_score", 0),
+                "blur_score": item.get("blur_score", 0),
+                "exposure_score": item.get("exposure_score", 0),
+                "face_score": item.get("face_score", 0),
+                "composition_score": item.get("composition_score", 0),
+                "date_day": item.get("date_day", ""),
+                "filename": os.path.basename(item["filepath"]),
+            }
+        )
+        rep_item["cluster_size"] = rep_item.get("cluster_size", 1) + 1
 
-        matched_rep_idx: int | None = None
-        matched_sim: float = 0.0
-        if n_emb > 0:
-            sims = rep_emb_buf[:n_emb] @ emb  # one BLAS call, shape (n_emb,)
-            best_row = int(np.argmax(sims))
-            best_sim = float(sims[best_row])
-            if best_sim >= threshold:
+    # Candidates are scored a block at a time: one matrix product per
+    # block against the reps that existed before the block, plus small
+    # dot products against the reps created inside the block. Same result
+    # as the one-candidate-at-a-time pass; a fraction of the memory
+    # traffic, because the rep matrix is streamed once per block, not
+    # once per candidate.
+    start = 0
+    while start < len(sorted_items):
+        block = sorted_items[start : start + _pass2_block_rows(n_emb)]
+        start += len(block)
+        with_emb = [
+            (i, fp_to_emb[it["filepath"]])
+            for i, it in enumerate(block)
+            if it["filepath"] in fp_to_emb
+        ]
+        block_sims = None
+        if with_emb and n_emb > 0:
+            block_mat = np.stack([e for _i, e in with_emb])
+            block_sims = block_mat @ rep_emb_buf[:n_emb].T  # (len(with_emb), n_emb)
+        col = {i: k for k, (i, _e) in enumerate(with_emb)}
+        n_before = n_emb
+
+        for i, item in enumerate(block):
+            emb = fp_to_emb.get(item["filepath"])
+            if emb is None:
+                # No embedding — emit as a unique rep, don't add to the
+                # similarity index (future items can't match against it).
+                representatives.append(item)
+                continue
+
+            matched_rep_idx: int | None = None
+            matched_sim: float = 0.0
+            best_sim = -1.0
+            best_row = -1
+            if block_sims is not None:
+                sims = block_sims[col[i]]
+                best_row = int(np.argmax(sims))
+                best_sim = float(sims[best_row])
+            if n_emb > n_before:
+                new_sims = rep_emb_buf[n_before:n_emb] @ emb
+                r = int(np.argmax(new_sims))
+                if float(new_sims[r]) > best_sim:
+                    best_sim = float(new_sims[r])
+                    best_row = n_before + r
+            if best_row >= 0 and best_sim >= threshold:
                 matched_rep_idx = rep_index_for_emb_row[best_row]
                 matched_sim = best_sim
 
-        if matched_rep_idx is not None:
-            rep_item = representatives[matched_rep_idx]
-            if "similar_photos" not in rep_item:
-                rep_item["similar_photos"] = []
-            rep_item["similar_photos"].append(
-                {
-                    "filepath": item["filepath"],
-                    "similarity": round(matched_sim, 3),
-                    "aggregate_score": item.get("aggregate_score", 0),
-                    "blur_score": item.get("blur_score", 0),
-                    "exposure_score": item.get("exposure_score", 0),
-                    "face_score": item.get("face_score", 0),
-                    "composition_score": item.get("composition_score", 0),
-                    "date_day": item.get("date_day", ""),
-                    "filename": os.path.basename(item["filepath"]),
-                }
-            )
-            rep_item["cluster_size"] = rep_item.get("cluster_size", 1) + 1
-            continue
+            if matched_rep_idx is not None:
+                _absorb(representatives[matched_rep_idx], item, matched_sim)
+                continue
 
-        # New rep — record it and index its embedding for future matching.
-        new_rep_idx = len(representatives)
-        representatives.append(item)
-        rep_emb_buf[n_emb] = emb
-        rep_index_for_emb_row.append(new_rep_idx)
-        n_emb += 1
+            # New rep — record it and index its embedding for future matching.
+            representatives.append(item)
+            rep_emb_buf[n_emb] = emb
+            rep_index_for_emb_row.append(len(representatives) - 1)
+            n_emb += 1
 
     if len(representatives) < len(items):
         log.info(

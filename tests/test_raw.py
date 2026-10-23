@@ -1,4 +1,4 @@
-"""TDD tests for P0-7: RAW format support — detection, import, conversion."""
+"""TDD tests for RAW format support — detection, import, conversion."""
 
 from __future__ import annotations
 
@@ -223,8 +223,14 @@ class TestRawMediaServing:
     def client(self, app):
         return app.test_client()
 
-    def test_raw_photo_endpoint_returns_error_for_unconvertible(self, client, app, tmp_path):
-        """RAW files that can't be converted should return an appropriate error."""
+    def test_raw_photo_endpoint_returns_error_for_unconvertible(
+        self, client, app, tmp_path, monkeypatch
+    ):
+        """A RAW file that can't be converted returns the reason and the fix
+        (the viewer toasts both)."""
+        from bpp.utils import raw
+
+        monkeypatch.setattr(raw, "RAWPY_AVAILABLE", False)
         with app.app_context():
             from bpp.db.photos import upsert_photo
             from bpp.web.state import get_ctx
@@ -239,6 +245,31 @@ class TestRawMediaServing:
             ctx.thumbs.build_map([{"filepath": path, "id": pid}])
             thumb_hash = ctx.thumbs.get_hash(path)
         resp = client.get(f"/photo/{thumb_hash}")
-        # Should either serve a converted JPEG or return 500
-        assert resp.status_code in (200, 500)
+        assert resp.status_code == 500
+        body = resp.get_json()
+        assert body["error"] == "RAW support isn't available in this install"
+        assert "desktop app" in body["context"]["recovery"]
+        assert "`" not in body["context"]["recovery"]  # shown as plain text
         os.unlink(path)
+
+    def test_a_missing_photo_file_says_what_to_check_and_hides_its_path(
+        self, client, app, tmp_path
+    ):
+        with app.app_context():
+            from bpp.db.photos import upsert_photo
+            from bpp.web.state import get_ctx
+            from bpp.web.thumbnails import ThumbnailCache
+
+            ctx = get_ctx()
+            conn = ctx.get_conn()
+            path = str(tmp_path / "gone.jpg")
+            pid = upsert_photo(conn, {"filepath": path})
+            if ctx.thumbs is None:
+                ctx.thumbs = ThumbnailCache(os.path.join(ctx.ensure_workdir(), "web_thumbs"))
+            ctx.thumbs.build_map([{"filepath": path, "id": pid}])
+            thumb_hash = ctx.thumbs.get_hash(path)
+        resp = client.get(f"/photo/{thumb_hash}")
+        assert resp.status_code == 404
+        body = resp.get_json()
+        assert "drive is connected" in body["context"]["recovery"]
+        assert str(tmp_path) not in resp.get_data(as_text=True)

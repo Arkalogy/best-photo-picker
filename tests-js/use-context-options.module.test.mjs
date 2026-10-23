@@ -18,7 +18,7 @@ describe("USE_CONTEXT_OPTIONS — single source of truth", () => {
     }
   });
 
-  test("Commercial option warns about hard-block (item 16)", () => {
+  test("Commercial option warns about hard-block", () => {
     const commercial = USE_CONTEXT_OPTIONS.find((o) => o.value === "commercial");
     expect(commercial).toBeDefined();
     expect(commercial?.desc.toLowerCase()).toMatch(/hard-?block/);

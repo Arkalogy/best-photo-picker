@@ -187,7 +187,7 @@ class TestAcquireLock:
             assert f.read().strip() == str(os.getpid())
 
     def test_missing_workdir_raises_servinglock_error(self, tmp_path):
-        """R4-M4 inversion of the previous test: missing workdir was
+        """Inversion of the previous test: missing workdir was
         a silent return None (caller proceeded WITHOUT a lock). Now
         it's a ServingLockError so startup refuses."""
         from bpp.utils.serving_lock import ServingLockError, acquire_lock
@@ -211,7 +211,7 @@ class TestAcquireLock:
             acquire_lock("")
 
     def test_os_error_on_open_raises(self, tmp_path, monkeypatch):
-        """R4-M4: a non-FileExistsError OSError on os.open (read-only
+        """A non-FileExistsError OSError on os.open (read-only
         FS, EACCES, etc.) used to silently return None and let the
         caller proceed without a lock. Now must raise ServingLockError
         so startup refuses."""
@@ -228,7 +228,7 @@ class TestAcquireLock:
             acquire_lock(wd)
 
     def test_stale_recovery_loser_does_not_double_acquire(self, tmp_path, monkeypatch):
-        """D-03: the actual race Codex caught. Two contenders both
+        """The actual race: two contenders both
         see the same stale lockfile; both write their tmp; both call
         os.replace (which can't fail in this scenario — it just
         overwrites). With the old code, both returned success.

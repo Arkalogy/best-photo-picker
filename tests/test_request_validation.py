@@ -1,11 +1,11 @@
-"""R8-M6: @validate_json decorator behavior.
+"""@validate_json decorator behavior.
 
 Lock the contract so future changes to the decorator can't quietly
 break the dozens of endpoints that may opt in over time.
 
-This commit ships the decorator + migrates `api_photos_delete`
-and `api_photos_restore` as worked examples. The unified
-response envelope (the second half of M6) is deliberately NOT
+The decorator ships with `api_photos_delete`
+and `api_photos_restore` migrated as worked examples. The unified
+response envelope is deliberately NOT
 shipped — that requires a coordinated frontend change. The
 decorator is a one-way infrastructure addition: existing
 endpoints keep working unchanged, new code can opt in.
@@ -114,7 +114,7 @@ class TestTypeCoercion:
 
 
 class TestContainerCoercion:
-    """R9-extensibility-M2: container target types refuse non-matching
+    """Container target types refuse non-matching
     inputs up front. Pre-fix, ``type=list`` accepted a JSON string
     and silently produced ``['h','e','l','l','o']`` because Python's
     ``list("hello")`` is "list of characters." The decorator now
@@ -213,7 +213,7 @@ class TestKeywordInjection:
 
 
 class TestValidationLogging:
-    """R9-supportability-M1: a 400 from `@validate_json` must leave a
+    """A 400 from `@validate_json` must leave a
     log breadcrumb so an operator debugging "user got 400" can find
     which route + which rule fired without re-running the request.
     The body is NOT logged — payloads can carry filepaths or

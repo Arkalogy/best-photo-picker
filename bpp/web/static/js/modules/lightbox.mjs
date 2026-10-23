@@ -234,83 +234,102 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   if (_libPickerOpen) return;
-  if (e.key === "Escape") {
-    // The model-terms acceptance dialog (Settings → Models → Review &
-    // accept) stacks ON TOP of the settings overlay and owns ESC while
-    // it's up. This handler runs before the dialog's own ESC handler, so
-    // without this guard it would close the settings overlay underneath —
-    // dropping the user all the way to the home grid instead of back to
-    // Settings. Yield and let the dialog's handler close just the dialog.
-    if (
-      document
-        .getElementById("fe-acceptance-overlay")
-        ?.classList.contains("visible")
-    ) {
-      return;
-    }
-    const cardMenu = document.getElementById("card-ctx-menu");
-    if (cardMenu && !cardMenu.classList.contains("hidden")) {
-      win.hideCardCtxMenu?.();
-      return;
-    }
-    if (document.getElementById("album-picker-overlay")?.classList.contains("visible")) {
-      hideAlbumPicker();
-      return;
-    }
-    const multiSelected = /** @type {Set<string>} */ (win.multiSelected || new Set());
-    if (multiSelected.size > 0) {
-      clearMultiSelect();
-      return;
-    }
-    if (document.getElementById("settings-overlay")?.classList.contains("visible")) {
-      hideSettings();
-      return;
-    }
-    if (document.getElementById("export-modal-overlay")?.classList.contains("visible")) {
-      hideExportModal();
-      return;
-    }
-    if (document.getElementById("import-modal-overlay")?.classList.contains("visible")) {
-      hideImportModal();
-      return;
-    }
-    if (document.getElementById("modal-overlay")?.classList.contains("visible")) {
-      resolveModal(false);
-      return;
-    }
-    if (document.getElementById("wizard-overlay")?.classList.contains("visible")) {
-      closeWizard();
-      return;
-    }
-    const renameEl = document.getElementById("rename-overlay");
-    if (renameEl && !renameEl.classList.contains("hidden")) {
-      hideBatchRenameModal();
-      return;
-    }
-  }
+  if (e.key === "Escape" && _closeTopmostOverlay(win)) return;
   const items = /** @type {any[]} */ (win.currentGridItems || []);
   if (win.lightboxIdx < 0) {
-    const target = /** @type {HTMLElement} */ (e.target);
-    if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
-    if (e.key === "e" || e.key === "E") {
-      showExportModal();
-      return;
-    }
-    if (e.key === "c" || e.key === "C") {
-      const ms = /** @type {Set<string>} */ (win.multiSelected || new Set());
-      if (ms.size >= 2) {
-        e.preventDefault();
-        openCompareFromSelection();
-        return;
-      }
-    }
-    if (e.key === "/") {
-      e.preventDefault();
-      showSearch();
-      return;
-    }
+    _gridKeydown(e, win);
     return;
   }
+  _lightboxKeydown(e, win, items);
+});
+
+/**
+ * Escape with no lightbox-level target: close what is open over the
+ * page, topmost first. True when something was closed (or cleared).
+ * @param {any} win
+ */
+function _closeTopmostOverlay(win) {
+  // The model picker's dialog, ⋯ menus and ⓘ popovers handle their own
+  // ESC in the capture phase (face-embedders-popover.mjs) and stop it,
+  // so ESC only reaches this handler when none of them is open.
+  const cardMenu = document.getElementById("card-ctx-menu");
+  if (cardMenu && !cardMenu.classList.contains("hidden")) {
+    win.hideCardCtxMenu?.();
+    return true;
+  }
+  if (document.getElementById("album-picker-overlay")?.classList.contains("visible")) {
+    hideAlbumPicker();
+    return true;
+  }
+  if (document.getElementById("settings-overlay")?.classList.contains("visible")) {
+    hideSettings();
+    return true;
+  }
+  if (document.getElementById("export-modal-overlay")?.classList.contains("visible")) {
+    hideExportModal();
+    return true;
+  }
+  if (document.getElementById("import-modal-overlay")?.classList.contains("visible")) {
+    hideImportModal();
+    return true;
+  }
+  if (document.getElementById("modal-overlay")?.classList.contains("visible")) {
+    resolveModal(false);
+    return true;
+  }
+  if (document.getElementById("wizard-overlay")?.classList.contains("visible")) {
+    closeWizard();
+    return true;
+  }
+  const renameEl = document.getElementById("rename-overlay");
+  if (renameEl && !renameEl.classList.contains("hidden")) {
+    hideBatchRenameModal();
+    return true;
+  }
+  // Last: the photo selection — with nothing open over it (an open
+  // lightbox closes first, below; the selection is kept).
+  const multiSelected = /** @type {Set<string>} */ (win.multiSelected || new Set());
+  if (multiSelected.size > 0 && win.lightboxIdx < 0) {
+    clearMultiSelect();
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Keys while the grid (not the lightbox) has focus.
+ * @param {KeyboardEvent} e
+ * @param {any} win
+ */
+function _gridKeydown(e, win) {
+  const target = /** @type {HTMLElement} */ (e.target);
+  if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
+  if (e.key === "e" || e.key === "E") {
+    showExportModal();
+    return;
+  }
+  if (e.key === "c" || e.key === "C") {
+    const ms = /** @type {Set<string>} */ (win.multiSelected || new Set());
+    if (ms.size >= 2) {
+      e.preventDefault();
+      openCompareFromSelection();
+      return;
+    }
+  }
+  if (e.key === "/") {
+    e.preventDefault();
+    showSearch();
+    return;
+  }
+}
+
+/**
+ * Keys while the lightbox is open.
+ * @param {KeyboardEvent} e
+ * @param {any} win
+ * @param {any[]} items
+ */
+function _lightboxKeydown(e, win, items) {
   if (e.key === "Escape") {
     const ctxMenu = document.getElementById("lb-ctx-menu");
     if (ctxMenu && !ctxMenu.classList.contains("hidden")) {
@@ -400,7 +419,7 @@ document.addEventListener("keydown", (e) => {
     /** @type {any} */ (window).lbToggleSensitive?.();
     return;
   }
-});
+}
 
 // ── Mouse zoom/pan ──
 

@@ -63,7 +63,7 @@ class TestAlbumTypeConstants:
 
 
 class TestRegisterAlbumDomain:
-    """T3: open the domain → album_types mapping to plugins via
+    """Open the domain → album_types mapping to plugins via
     ``register_album_domain``. A plugin that adds a new smart-album
     type should be able to opt into existing domain refreshes (or
     introduce its own domain key) without editing core code.

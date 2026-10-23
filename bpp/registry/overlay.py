@@ -1,6 +1,6 @@
 """Merge a verified remote manifest into the bundled baseline.
 
-Batch 8 / item 12 + 23 of the legal-posture rollout. The fetcher
+The fetcher
 (:mod:`bpp.registry.remote_registry`) brings the bytes, the
 verifier (:mod:`bpp.registry.signed_manifest`) confirms a known
 key signed them, and this module decides what changes from the
@@ -9,29 +9,38 @@ built-in registry.
 
 What the merger enforces
 
-1. **Dual-signature for restriction-class downgrades** (Q9). Any
-   entry whose ``commercial_use_restriction_known`` was ``True``
-   in the bundled baseline (or whose ``requires_explicit_ack``
-   was ``True``) and whose remote update would relax that flag
-   to ``False`` MUST carry signatures from two distinct trusted
-   keys. A single-signature manifest can only TIGHTEN restriction
-   class, never RELAX it. This is the trap-T7 guard at the merge
-   layer, complementing the runtime guard in
-   :func:`bpp.registry.policy.assert_no_silent_reclassification`.
-2. **No silent introduction of new restricted entries by single
-   sig.** A remote manifest signed by one key can add a new
-   permissive entry but cannot add a new restricted entry. The
-   restricted variants must come with two signatures so a single
-   compromised key cannot land buffalo_s into the registry.
-3. **Status transitions are always allowed.** A registered
-   entry can be flipped to ``deprecated``,
-   ``withdrawn_no_new_downloads``, or ``legally_blocked`` by a
-   single signature — making models *less* available is always
-   safe.
-4. **Entries unknown to the bundled baseline that fail the dual-
-   sig check are skipped.** The merger logs them and applies the
-   rest of the overlay; partial application is better than
-   refusing the whole manifest.
+1. **Signature quorum for restriction-class relaxations.** An
+   update that relaxes an existing entry's
+   ``commercial_use_restriction_known`` (True → False),
+   ``requires_explicit_ack`` (True → False), or
+   ``bppicker_commercial_default_allowed`` (False → True) is applied
+   only when the manifest carries valid signatures from at least
+   :data:`DUAL_SIG_REQUIREMENT` distinct trusted keys.
+2. **Same quorum for new restricted entries.** A manifest may add
+   a new permissive entry with any valid signature; a new entry
+   with either restriction flag set needs the quorum.
+3. **Status changes are not quorum-gated.** ``status`` is applied
+   from any manifest that verifies. Tightening (``deprecated``,
+   ``withdrawn_no_new_downloads``, ``legally_blocked``) is the
+   intended use; note that the merger does not compare status
+   against the baseline, so a verified manifest can also move an
+   entry back to ``available`` — a newer one, that is: the startup
+   path refuses a manifest older than the last one applied
+   (:mod:`bpp.registry.manifest_rollback`), so a replay cannot.
+4. **Failing entries are skipped, not fatal.** An entry that
+   misses the quorum (or trips the runtime reclassification lock)
+   is logged and skipped; the rest of the overlay still applies.
+
+Current quorum
+
+:data:`DUAL_SIG_REQUIREMENT` is ``1`` because one signing key is
+trusted today (see :mod:`bpp.registry.trusted_keys`). Every
+manifest that passes :func:`bpp.registry.signed_manifest.verify_manifest`
+already carries one valid signature, so in practice the single
+trusted key can authorize every change listed above, including
+relaxations and new restricted entries. The mechanism counts
+distinct keys, so the quorum can be raised to 2 once a second key
+is added; raising it is a manual code change in a release.
 """
 
 from __future__ import annotations
@@ -52,12 +61,12 @@ _log = get_logger(__name__)
 
 
 #: Minimum number of DISTINCT trusted keys required to apply a
-#: restriction-class downgrade or to introduce a new restricted entry.
-#: The design target is two (a single key compromise can't authorize a
-#: downgrade). Set to 1 while BPP is operated by a single founder/operator
-#: with a single signing key — bump back to 2 once a second, cold-stored
-#: key exists to hold. The count is deduplicated by key in verify_manifest,
-#: so one key signing twice can never satisfy a >1 requirement.
+#: restriction-class relaxation or to introduce a new restricted entry.
+#: It is 1 today because exactly one key is trusted, so that key alone
+#: can authorize those changes. Raise it to 2 (by editing this constant
+#: in a release) once a second trusted key is added. The count is
+#: deduplicated by key in verify_manifest, so one key signing twice
+#: can never satisfy a requirement above 1.
 DUAL_SIG_REQUIREMENT = 1
 
 
@@ -68,10 +77,11 @@ class OverlayApplicationResult:
     ``applied_ids`` — entries from the remote manifest that landed
         in the in-process registry.
     ``skipped_ids`` — entries the merger refused to apply (because
-        they would silently downgrade restriction class or
-        introduce a new restricted entry under a single
-        signature). Each id appears alongside a short reason in
-        ``warnings``.
+        they would relax restriction class or introduce a new
+        restricted entry with fewer than
+        :data:`DUAL_SIG_REQUIREMENT` distinct valid signatures, or
+        because the runtime reclassification lock fired). Each id
+        appears alongside a short reason in ``warnings``.
     ``warnings`` — human-readable explanations for every skip.
     """
 
@@ -129,30 +139,28 @@ def _decode_entry(raw: dict) -> ModelEntry | None:
 def _entry_is_restricted(entry: ModelEntry) -> bool:
     """An entry counts as "restricted" if its commercial-use
     restriction flag is True OR it requires explicit ack. Either
-    flag makes the entry one a single compromised key must not be
-    able to introduce or silently relax."""
+    flag makes introducing or relaxing the entry subject to the
+    :data:`DUAL_SIG_REQUIREMENT` quorum."""
     return entry.commercial_use_restriction_known or entry.requires_explicit_ack
 
 
 def _needs_dual_sig(remote_entry: ModelEntry, baseline: ModelEntry | None) -> tuple[bool, str]:
-    """Decide whether ``remote_entry`` requires the dual-signature
-    rule against ``baseline`` (the existing in-process entry, or
+    """Decide whether ``remote_entry`` is subject to the signature
+    quorum (:data:`DUAL_SIG_REQUIREMENT`) against ``baseline`` (the existing in-process entry, or
     ``None`` if the id is new).
 
     Returns ``(needed, reason)``.
     """
     if baseline is None:
-        # New entry. Single sig may introduce permissive entries;
-        # restricted entries need two signatures so a single key
-        # cannot land a restricted model into the registry.
+        # New entry. Any valid signature may introduce a permissive
+        # entry; a restricted entry needs the quorum.
         if _entry_is_restricted(remote_entry):
             return True, (
                 "new restricted entry (commercial restriction known "
-                "or explicit-ack required); a single signature cannot "
-                "introduce a restricted model"
+                "or explicit-ack required) needs the signature quorum"
             )
         return False, ""
-    # Existing entry — only relaxation needs two signatures.
+    # Existing entry — only relaxation needs the quorum.
     if (
         baseline.commercial_use_restriction_known
         and not remote_entry.commercial_use_restriction_known
@@ -178,14 +186,14 @@ def apply_overlay(
     ``valid_signature_count`` is the number of distinct trusted
     keys whose signatures verified on the manifest (returned by
     :func:`bpp.registry.signed_manifest.verify_manifest`). The
-    merger uses this to enforce the dual-sig rule on restriction
-    downgrades and new restricted entries.
+    merger compares it with :data:`DUAL_SIG_REQUIREMENT` for
+    restriction relaxations and new restricted entries.
 
     The function calls :func:`register_entry` for every applied
     entry, which replaces an existing entry with the same id (the
     bundled baseline's registration intentionally happens first
-    so the overlay can supersede). Entries that fail the dual-sig
-    check are skipped with a warning; the rest of the overlay
+    so the overlay can supersede). Entries that miss the quorum
+    are skipped with a warning; the rest of the overlay
     still applies (partial application is better than refusing the
     whole manifest).
     """
@@ -214,12 +222,12 @@ def apply_overlay(
             skipped.append(entry.id)
             continue
 
-        # Trap-T7 guard at the runtime layer fires too — even with
-        # adequate signatures, the global ever-restricted set
-        # enforces an additional process-wide check. This is
-        # belt-and-suspenders for the case where a maintainer
-        # accidentally relaxes a restriction at the manifest level
-        # but the bundled baseline still considered it restricted.
+        # Runtime reclassification lock (policy.py). It remembers ids
+        # that were applied as restricted earlier in this process and
+        # refuses a later permissive version of the same id. Built-in
+        # entries are not seeded into that set, so on its own it does
+        # not stop a quorum-meeting manifest from relaxing a built-in
+        # entry; the quorum check above is the gate for that.
         try:
             assert_no_silent_reclassification(entry)
         except RuntimeError as exc:

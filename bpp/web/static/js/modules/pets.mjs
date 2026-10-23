@@ -12,8 +12,9 @@
  * `loadAlbumList`, `refreshSmartAlbums` (also imported), `navigateTo`).
  */
 
-import { apiFetch, authedSrc } from "./api-client.mjs";
+import { apiFetch, petCropUrl } from "./api-client.mjs";
 import { appConfirm } from "./dialogs.mjs";
+import { menuClosed, menuOpened } from "./menu-a11y.mjs";
 import { esc } from "./text-format.mjs";
 import { refreshSmartAlbums } from "./faces.mjs";
 import { show } from "./utils.mjs";
@@ -23,7 +24,7 @@ import { updateToolbarTitle } from "./core.mjs";
 /**
  * Refresh `petClusters` from the server.
  *
- * Protection B: routed through wrapSectionLoader so a /api/v1/pets
+ * Routed through wrapSectionLoader so a /api/v1/pets
  * failure surfaces as a retry pill in the Pets sidebar section
  * instead of silently leaving the cluster list empty. The wrapper
  * never throws; if the call fails, `petClusters` is set to the
@@ -229,9 +230,10 @@ export function showPetsView() {
       const cid = c.cluster_id;
       const cropSrc =
         rep && rep.thumb_hash
-          ? authedSrc(`/api/v1/pets/crop/${esc(rep.thumb_hash)}/${rep.detection_index}`)
+          ? petCropUrl(rep.thumb_hash, rep.detection_index)
           : "";
       return `<div class="person-card pet-card" data-cluster-id="${cid}"
+      tabindex="0" role="button" data-key-activate
       data-action="navigateToPetAlbum" data-arg0="${cid}"
       data-oncontextmenu="showPetCtxMenu" data-arg0="${cid}">
       <div class="person-avatar pet-avatar">
@@ -297,10 +299,13 @@ export function showPetCtxMenu(e, clusterId) {
     if (rect.bottom > window.innerHeight)
       menu.style.top = window.innerHeight - rect.height - 8 + "px";
   });
+  menuOpened(menu, { trigger: e.target });
 }
 
 export function hidePetCtxMenu() {
-  document.getElementById("pet-ctx-menu")?.classList.add("hidden");
+  const menu = document.getElementById("pet-ctx-menu");
+  menu?.classList.add("hidden");
+  menuClosed(menu);
   petCtxClusterId = null;
 }
 

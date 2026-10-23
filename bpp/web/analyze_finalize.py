@@ -11,6 +11,7 @@ next restart.
 from __future__ import annotations
 
 import sqlite3
+from typing import Any
 
 from bpp.utils.logging import get_logger
 
@@ -51,18 +52,40 @@ def count_sensitive_alert(pp_conn: sqlite3.Connection) -> tuple[int, int]:
     return sensitive_flagged, sensitive_new
 
 
-def finalize_in_worker(clip_computed: int) -> None:
+def finalize_import_in_worker(ctx: Any) -> None:
+    """After an import: reload the analysis cache and end first-run, in
+    the worker thread itself. An import can run ten minutes; if the tab
+    that started it is gone by then, nobody consumes the progress stream
+    and the SSE finalizer never runs. That finalizer stays as an
+    idempotent backstop."""
+    if ctx is None:
+        return
+    try:
+        from bpp.db.settings import delete_setting
+        from bpp.web.state_init import load_analysis_if_needed
+
+        ctx.invalidate_analysis()
+        # Unlike analyze, the import ran no derived pipeline of its own:
+        # the new batch still needs hashes, sidecar tags and smart albums.
+        load_analysis_if_needed(ctx, kick_recovery=True)
+        delete_setting(ctx.get_conn(), "first_run")
+    except Exception:
+        log.warning("Post-import finalize failed", exc_info=True)
+
+
+def finalize_in_worker(clip_computed: int, ctx: Any = None) -> None:
     """Invalidate + reload the analysis cache (and CLIP when it changed).
 
     Runs in the worker thread itself so a headless analyze finalizes
     without anyone consuming the progress stream. The SSE on_done hook
-    stays as an idempotent backstop.
+    stays as an idempotent backstop. ``ctx`` is the worker's own app
+    state (worker threads have no Flask context to look it up from).
     """
     try:
         from bpp.web.state import get_ctx_or_none
         from bpp.web.state_init import load_analysis_if_needed
 
-        ctx = get_ctx_or_none()
+        ctx = ctx or get_ctx_or_none()
         if ctx is None:
             return
         ctx.invalidate_analysis()
@@ -71,7 +94,10 @@ def finalize_in_worker(clip_computed: int) -> None:
         load_analysis_if_needed(ctx, kick_recovery=False)
         if clip_computed > 0:
             with ctx.lock:
+                from bpp.web.recompute import dedupe_cache_clear
+
                 ctx.caches.clip_cache["ready"] = False
+                dedupe_cache_clear()
             ctx.load_clip_embeddings()
     except Exception:
         log.warning("Post-analyze finalize failed", exc_info=True)

@@ -28,7 +28,7 @@ import { expect, test } from "@playwright/test";
 
 import { api, openApp } from "./_helpers.mjs";
 
-const PERMISSIVE_ENTRY_ID = "insightface_scrfd_25g";
+const PERMISSIVE_ENTRY_ID = "openai_clip_vit_b32_onnx";
 const RESTRICTED_NON_FACE_ENTRY_ID = "ultralytics_yolov11n_pets";
 
 /**
@@ -66,25 +66,33 @@ async function openAcceptance(page, nameText) {
 }
 
 test.describe("11 — Model registry picker + acceptance dialog", () => {
-  test("Picker renders 9 rows grouped by kind with the right markers", async ({ page }) => {
+  test("Picker renders every registry entry grouped by kind with the right markers", async ({
+    page,
+  }) => {
     const errors = await openApp(page);
     await openModelsTab(page);
 
     const rows = page.locator("#face-embedder-picker tr.fe-row");
-    // 9 entries: 3 face_embedder, 2 face_detector, 1 each of the rest.
-    await expect(rows).toHaveCount(9);
+    // The picker is the one list of every registry entry: the nine downloadable
+    // models (3 face embedders, 2 face detectors, CLIP, pets, content filter,
+    // inpainting) plus the seven bundled MediaPipe tasks.
+    await expect(rows).toHaveCount(16);
     // Grouped by kind — at least the face-embedder section heading shows.
     await expect(page.locator(".fe-kind-title", { hasText: "Face embedders" })).toBeVisible();
 
-    // SFace: the default face embedder. It's restricted-for-attribution
-    // (Apache-2.0 ack) under the strictest-defensible-posture, so it shows
-    // the Restricted marker, not Permissive.
+    // SFace: the default face embedder. Its Apache-2.0 terms need a one-time
+    // attribution click-through but carry no commercial restriction, so it
+    // shows the Attribution marker.
     const sface = rowByName(page, "SFace");
     await expect(sface).toBeVisible();
     await expect(sface.locator(".fe-name-default")).toBeVisible();
-    await expect(sface.locator(".fe-license-restricted")).toBeVisible();
-    // A genuinely permissive entry (SCRFD, MIT) shows the Permissive marker.
-    await expect(rowByName(page, "SCRFD").locator(".fe-license-permissive")).toBeVisible();
+    await expect(sface.locator(".fe-license-attribution")).toBeVisible();
+    // The genuinely permissive entry (CLIP, MIT) shows the Permissive marker.
+    await expect(rowByName(page, "CLIP").locator(".fe-license-permissive")).toBeVisible();
+    // SCRFD is research-only: restricted, with the acceptance action.
+    const scrfdRow = rowByName(page, "SCRFD");
+    await expect(scrfdRow.locator(".fe-license-restricted")).toBeVisible();
+    await expect(scrfdRow.locator("[data-action='openFaceEmbedderAcceptance']")).toHaveCount(1);
 
     // buffalo_s: restricted, and its ⋯ menu carries the acceptance action
     // (present in the DOM, hidden until the menu opens).
@@ -200,19 +208,19 @@ test.describe("11 — Model registry picker + acceptance dialog", () => {
 });
 
 test.describe("11b — Permissive entry has no acceptance action", () => {
-  test("SCRFD (permissive) exposes no Review-and-accept item", async ({ page }) => {
+  test("CLIP (permissive) exposes no Review-and-accept item", async ({ page }) => {
     await openApp(page);
     await openModelsTab(page);
 
-    // SCRFD is one of the only two genuinely permissive entries
-    // (requires_explicit_ack=false); SFace/dlib/YuNet carry an
-    // attribution ack, so they're NOT the permissive case to test here.
-    const scrfd = rowByName(page, "SCRFD");
-    await expect(scrfd).toBeVisible();
-    await expect(scrfd.locator(".fe-license-permissive")).toBeVisible();
+    // CLIP is the only entry with requires_explicit_ack=false;
+    // SFace/dlib/YuNet carry an attribution ack and SCRFD is
+    // research-only, so they're NOT the permissive case to test here.
+    const clip = rowByName(page, "CLIP");
+    await expect(clip).toBeVisible();
+    await expect(clip.locator(".fe-license-permissive")).toBeVisible();
     // Permissive entries never carry the acceptance action (not even
     // hidden in the ⋯ menu).
-    await expect(scrfd.locator("[data-action='openFaceEmbedderAcceptance']")).toHaveCount(0);
-    expect(PERMISSIVE_ENTRY_ID).toBe("insightface_scrfd_25g");
+    await expect(clip.locator("[data-action='openFaceEmbedderAcceptance']")).toHaveCount(0);
+    expect(PERMISSIVE_ENTRY_ID).toBe("openai_clip_vit_b32_onnx");
   });
 });

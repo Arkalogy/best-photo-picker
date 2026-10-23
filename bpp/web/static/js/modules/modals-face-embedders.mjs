@@ -45,6 +45,7 @@ import {
   setFaceEmbedderUseContext,
   uninstallFaceEmbedderEntry,
 } from "./face-embedders-actions.mjs";
+import { KIND_LABELS, KIND_ORDER, LEGACY_FEATURE_MAP } from "./face-embedders-catalog.mjs";
 import {
   _feInstallGlobalHandlers,
   _feLicenseInfoToggle,
@@ -56,18 +57,20 @@ import {
   _buildMenuFromState,
   _deriveRowState,
   _renderMenuItem,
-  _sizeCell,
-  _statusCell,
 } from "./face-embedders-rowstate.mjs";
+import { _sizeCell, _statusCell, licenseBadge } from "./face-embedders-cells.mjs";
 import {
   _collectAcceptedIds,
-  _collectCatalogEntryIds,
-  _collectRequiresAckIds,
+  _collectReacceptIds,
+  damagedLogNoticeHTML,
+  loadFailureNoticeHTML,
   _resetFaceEmbedderStateForTests,
   _seedFaceEmbedderStateForTests,
   feState,
 } from "./face-embedders-state.mjs";
+import { _clearRowBusy, _setRowStatusBusy, busyFallbackHTML } from "./face-embedders-busy.mjs";
 import { _formatBytes } from "./format-helpers.mjs";
+import { MODELS_CHANGED_EVENT } from "./models-changed.mjs";
 import { escapeAttr, esc } from "./text-format.mjs";
 import { toast } from "./toast.mjs";
 import { USE_CONTEXT_OPTIONS } from "./use-context-options.mjs";
@@ -75,6 +78,8 @@ import { USE_CONTEXT_OPTIONS } from "./use-context-options.mjs";
 // Re-export so the existing test/import path (modals-face-embedders.mjs)
 // keeps working after the state + acceptance + actions + rowstate split.
 export {
+  _clearRowBusy,
+  _setRowStatusBusy,
   _resetFaceEmbedderStateForTests,
   _seedFaceEmbedderStateForTests,
   _acceptanceGateSatisfied,
@@ -94,114 +99,116 @@ export {
 };
 
 /**
- * Join table: registry id → legacy feature label and per-feature
- * toggle key (when applicable). Used to overlay install state on the
- * registry picker. Transitional — when each model's file-install
- * logic lands in the registry layer this mapping goes away.
- *
- * Keys NOT in this map render without install controls (registry-
- * catalog-only entries). Values without a ``toggle_key`` render
- * without an enable toggle.
- */
-const _LEGACY_FEATURE_MAP = {
-  // Face embedders
-  sface_yunet: { legacy_label: "Face recognition", toggle_key: null },
-  dlib_face_recognition_resnet_v1: {
-    legacy_label: "Face recognition",
-    toggle_key: null,
-  },
-  insightface_buffalo_s: { legacy_label: null, toggle_key: null },
-  // Face detectors
-  insightface_scrfd_25g: {
-    legacy_label: "SCRFD face detection",
-    toggle_key: "model_scrfd",
-  },
-  opencv_yunet: {
-    legacy_label: "Face detection (fallback)",
-    toggle_key: null,
-  },
-  // Semantic search
-  openai_clip_vit_b32_onnx: {
-    legacy_label: "Smart search & dedup",
-    toggle_key: null,
-  },
-  // Pet detection
-  ultralytics_yolov11n_pets: {
-    legacy_label: "Pet detection",
-    toggle_key: null,
-  },
-  // Nudity classifier
-  nudenet_320n: { legacy_label: "Content filter", toggle_key: null },
-  // Inpainting
-  lama_inpaint_research: {
-    legacy_label: "AI object removal",
-    toggle_key: null,
-  },
-};
-
-const _KIND_LABELS = {
-  face_embedder: "Face embedders",
-  face_detector: "Face detectors",
-  semantic_search: "Semantic search",
-  pet_detector: "Pet detection",
-  nudity_classifier: "Content filter",
-  inpainter: "AI object removal",
-};
-
-/**
  * Fetch + render the unified picker into ``#face-embedder-picker``.
- * Called from ``loadModelsList`` whenever Settings → Models opens.
+ * Called whenever Settings → Models shows: the tab switch, which
+ * ``showSettings`` also goes through.
  */
 export async function loadFaceEmbedderPicker() {
   const container = document.getElementById("face-embedder-picker");
   if (!container) return;
   _feInstallGlobalHandlers();
-  container.innerHTML = '<p class="setting-muted">Loading…</p>';
+  const load = ++_loadCount; // a newer load (another click) wins
+  // A reload keeps the rows on screen (locked) until the new ones arrive:
+  // emptying the list first would collapse it and lose the user's place.
+  if (container.querySelector("tr[data-entry-id]")) container.setAttribute("aria-busy", "true");
+  else container.innerHTML = '<p class="setting-muted">Loading…</p>' + busyFallbackHTML();
   try {
-    const [registry, useCtx, legacy, settings, acceptances] =
-      await Promise.all([
-        apiFetch("/api/v1/model-registry/entries"),
-        apiFetch("/api/v1/model-registry/use-context"),
-        apiFetch("/api/v1/models").catch(() => null),
-        apiFetch("/api/v1/settings").catch(() => null),
-        apiFetch("/api/v1/model-registry/acceptance/list").catch(
-          () => null,
-        ),
-      ]);
+    // These three only refine the rows: if one fails the picker still
+    // draws, says what it couldn't load, and marks the rows that needed
+    // it "Unknown" (not a confident "needs license" / "not downloaded").
+    const [registry, useCtx, [install, method, license]] = await Promise.all([
+      apiFetch("/api/v1/model-registry/entries"),
+      apiFetch("/api/v1/model-registry/use-context"),
+      Promise.allSettled([
+        apiFetch("/api/v1/models"),
+        apiFetch("/api/v1/settings"),
+        apiFetch("/api/v1/model-registry/acceptance/list"),
+      ]),
+    ]);
+    if (load !== _loadCount) return; // out of date: the newer load draws
+    /** @type {(r: PromiseSettledResult<any>) => any} */
+    const value = (r) => (r.status === "fulfilled" ? r.value : null);
+    const [legacy, settings, acceptances] = [value(install), value(method), value(license)];
+    /** @type {(r: PromiseSettledResult<any>) => string} */
+    const why = (r) => (r.status === "rejected" ? r.reason?.message || String(r.reason) : "");
+    /** @type {Array<[string, PromiseSettledResult<any>]>} */
+    const named = [
+      ["install status", install],
+      ["the face model in use", method],
+      ["your accepted licenses", license],
+    ];
+    const failures = named.flatMap(([what, r]) => (why(r) ? [{ what, why: why(r) }] : []));
+    feState.unknown = { install: why(install), method: why(method), license: why(license) };
     feState.currentUseContext = useCtx?.use_context || "unspecified";
-    feState.activeFaceMethod = settings?.face_embedding_method || "sface";
-    feState.installState = _buildInstallStateMap(legacy);
-    feState.requiresAckIds = _collectRequiresAckIds(registry.groups || []);
+    // (Settings didn't load: no guess — embedder rows read "Unknown".)
+    feState.activeFaceMethod = settings ? settings.face_embedding_method || "sface" : null;
     feState.acceptedIds = _collectAcceptedIds(acceptances);
-    feState.catalogEntryIds = _collectCatalogEntryIds(registry.groups || []);
-    // The reload reflects post-operation truth; clear the busy gate so
-    // freshly-completed operations don't keep their row locked out.
-    feState.busyRowIds = new Set();
-    container.innerHTML = _renderUnifiedPickerHTML(registry.groups || []);
+    // The list is the truth once it loads; until then, what was accepted
+    // or withdrawn on this page stands.
+    if (acceptances) feState.decided = new Map();
+    for (const [id, ok] of feState.decided) if (ok) feState.acceptedIds.add(id);
+    // The entries by id: the one source for click-through, catalog
+    // routing and the server's load-gate decision (which picks the
+    // acceptance dialog's mode, e.g. ask for commercial-use rights).
+    feState.entries = new Map();
+    for (const group of registry.groups || []) {
+      for (const e of group.entries || []) if (e && e.id) feState.entries.set(e.id, e);
+    }
+    feState.installState = _buildInstallStateMap(legacy, feState.entries);
+    feState.reacceptIds = _collectReacceptIds(acceptances);
+    container.innerHTML =
+      loadFailureNoticeHTML(failures) +
+      damagedLogNoticeHTML(acceptances) +
+      _renderUnifiedPickerHTML(registry.groups || []);
+    // Rows still mid-operation (a reload from elsewhere: another row's
+    // change, Retry) stay locked and keep showing their progress; each
+    // operation unlocks its own row when it ends (_clearRowBusy).
+    // (One the new list doesn't draw keeps a line of its own.)
+    const undrawn = [...feState.busyRowIds].filter(
+      (id) => !_setRowStatusBusy(id, feState.busyText.get(id) || "Working…"),
+    );
+    container.insertAdjacentHTML("beforeend", busyFallbackHTML(undrawn));
   } catch (err) {
-    container.innerHTML = `<p class="setting-muted">Could not load model registry: ${esc(err.message || String(err))}</p>`;
+    if (load !== _loadCount) return;
+    // An operation still running is said, not hidden (its progress comes
+    // back with the list).
+    const busy = feState.busyRowIds.size
+      ? " A model download or removal is still running (below)."
+      : "";
+    const reason = String(err.message || err).replace(/\.+$/, "");
+    container.innerHTML =
+      `<p class="setting-muted">Couldn't load the model list: ${esc(reason)}.${busy} ` +
+      `<button class="modal-btn modal-btn-secondary" data-action="loadFaceEmbedderPicker">Retry</button></p>` +
+      busyFallbackHTML();
+  } finally {
+    if (load === _loadCount) container.removeAttribute("aria-busy");
   }
 }
 
+/** Counts picker loads: only the newest draws. */
+let _loadCount = 0;
+
 /**
  * Build registry-id → install-state map by joining the legacy
- * /api/v1/models feature list against ``_LEGACY_FEATURE_MAP``.
+ * /api/v1/models feature list against each entry's server-sent ``legacy_label``.
  *
  * @param {Array<object> | null} legacyFeatures
  * @returns {Map<string, object>}
  */
-function _buildInstallStateMap(legacyFeatures) {
+function _buildInstallStateMap(legacyFeatures, entries) {
   const map = new Map();
   if (!Array.isArray(legacyFeatures)) return map;
-  // Index legacy features by label for the join.
+  // Index legacy features by label for the join; each entry says
+  // (legacy_label, from the server) which feature row is its install state.
   const byLabel = new Map();
   for (const f of legacyFeatures) {
     if (f && f.label) byLabel.set(f.label, f);
   }
-  for (const [registryId, link] of Object.entries(_LEGACY_FEATURE_MAP)) {
-    if (link.legacy_label && byLabel.has(link.legacy_label)) {
-      map.set(registryId, byLabel.get(link.legacy_label));
-    }
+  const ids = new Set([...(entries ? entries.keys() : []), ...Object.keys(LEGACY_FEATURE_MAP)]);
+  for (const registryId of ids) {
+    const entry = /** @type {any} */ (entries?.get(registryId));
+    const label = entry?.legacy_label ?? LEGACY_FEATURE_MAP[registryId]?.legacy_label;
+    if (label && byLabel.has(label)) map.set(registryId, byLabel.get(label));
   }
   return map;
 }
@@ -251,24 +258,15 @@ function _renderUnifiedPickerHTML(groups) {
       <strong>active</strong> model (highlighted) is chosen per library.
     </p>`;
 
-  // Stable kind ordering for the UI.
-  const kindOrder = [
-    "face_embedder",
-    "face_detector",
-    "semantic_search",
-    "pet_detector",
-    "nudity_classifier",
-    "inpainter",
-  ];
   const orderedKinds = [
-    ...kindOrder.filter((k) => byKind.has(k)),
-    ...[...byKind.keys()].filter((k) => !kindOrder.includes(k)),
+    ...KIND_ORDER.filter((k) => byKind.has(k)),
+    ...[...byKind.keys()].filter((k) => !KIND_ORDER.includes(k)),
   ];
 
   for (const kind of orderedKinds) {
     const bucket = byKind.get(kind);
     if (!bucket) continue;
-    const label = _KIND_LABELS[kind] || kind;
+    const label = KIND_LABELS[kind] || kind;
     const rows = [...bucket.permissive, ...bucket.restricted]
       .map((e) => _renderRow(e))
       .join("");
@@ -297,7 +295,6 @@ function _renderUnifiedPickerHTML(groups) {
  * @param {object} entry
  */
 function _renderRow(entry) {
-  const isRestricted = entry.requires_explicit_ack === true;
   const isDefault = entry.default_for_kind === true;
   const install = feState.installState.get(entry.id);
 
@@ -307,8 +304,7 @@ function _renderRow(entry) {
   // per cell, no chance of the halves disagreeing.
   const state = _deriveRowState(entry, install);
 
-  const licenseText = isRestricted ? "Restricted" : "Permissive";
-  const licenseClass = isRestricted ? "fe-license-restricted" : "fe-license-permissive";
+  const { text: licenseText, cls: licenseClass, tip: licenseTip } = licenseBadge(entry);
   const licenseDetail = entry.license_summary
     ? `<button class="fe-license-tip"
               data-action="_feLicenseInfoToggle"
@@ -342,7 +338,7 @@ function _renderRow(entry) {
       </div>
     </td>
     <td class="fe-cell-license">
-      <span class="${licenseClass}">${licenseText}</span>
+      <span class="${licenseClass}" title="${escapeAttr(licenseTip)}">${licenseText}</span>
       ${licenseDetail}
     </td>
     <td class="fe-cell-status">${_statusCell(state)}</td>
@@ -351,39 +347,6 @@ function _renderRow(entry) {
   </tr>`;
 }
 
-/**
- * Replace a row's status cell with a transient busy indicator while a
- * long operation (download) is in flight. The picker reload at the end
- * of the operation restores the real status. Honors the "nothing should
- * be silent" rule — a multi-second download must show progress in-row,
- * not just a fire-and-forget toast.
- *
- * @param {string} registryId
- * @param {string} text  e.g. "Downloading…"
- */
-export function _setRowStatusBusy(registryId, text) {
-  // Marks the row as in-flight so subsequent ⋯ opens and action
-  // clicks bounce off the busy gate until ``loadFaceEmbedderPicker``
-  // clears it. Without this, the bug screenshot showed an open menu
-  // mid-download offering Redownload + Uninstall + Use this model
-  // simultaneously — any of which would corrupt the operation.
-  feState.busyRowIds.add(registryId);
-  // Registry ids are simple slugs (e.g. "opencv_yunet"); CSS.escape is the
-  // correct guard but is absent under jsdom, so fall back to a quote-strip.
-  const safeId =
-    typeof CSS !== "undefined" && CSS.escape
-      ? CSS.escape(registryId)
-      : String(registryId).replace(/["\\]/g, "");
-  const cell = document.querySelector(
-    `tr[data-entry-id="${safeId}"] .fe-cell-status`,
-  );
-  if (cell) {
-    cell.innerHTML = `<span class="fe-status fe-status-busy"><span class="fe-spinner"></span>${esc(text)}</span>`;
-  }
-  // Close the menu if it was open when the busy state started.
-  const openMenu = document.getElementById("fe-ovr-" + registryId);
-  if (openMenu) openMenu.classList.remove("open", "fe-overflow-menu--up");
-}
 
 /**
  * Render the install-state pill (Ready / Not downloaded / Fallback / …).
@@ -494,3 +457,13 @@ registerAction("setFaceEmbedderUseContext", setFaceEmbedderUseContext);
 registerAction("setActiveFaceEmbedder", setActiveFaceEmbedder);
 registerAction("_feOverflowToggle", _feOverflowToggle);
 registerAction("_feLicenseInfoToggle", _feLicenseInfoToggle);
+
+if (typeof document !== "undefined") {
+  // A license, use context or model file changed: re-render the picker
+  // if it's on screen (it reloads anyway each time Settings opens).
+  document.addEventListener(MODELS_CHANGED_EVENT, () => {
+    if (document.getElementById("settings-overlay")?.classList.contains("visible")) {
+      void loadFaceEmbedderPicker();
+    }
+  });
+}

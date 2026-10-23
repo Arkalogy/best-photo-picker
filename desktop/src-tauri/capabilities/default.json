@@ -1,9 +1,20 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions for Best Photo Picker desktop app. core:default is Tauri v2's documented minimum baseline — it carries the IPC permissions that custom commands like set_app_theme and exit_app need. Webview-side surface: tauri.core.invoke('set_app_theme', ...) from theme.mjs, plus window.__TAURI__.core.invoke('exit_app') from the disconnect/fatal-error overlays injected by main.rs. Rust-side menu/tray APIs are server-side and not webview-callable.",
-  "windows": ["main"],
+  "description": "Permissions for Best Photo Picker desktop app. core:default is Tauri v2's documented minimum baseline. The page the shell loads comes from the sidecar at http://127.0.0.1:5001, a remote origin to Tauri, so that origin is named here and the four custom commands (set_app_theme, exit_app, restart_app, open_url) are granted to it explicitly; their allow-* permissions are generated from build.rs.",
+  "windows": [
+    "main"
+  ],
   "permissions": [
-    "core:default"
-  ]
+    "core:default",
+    "allow-set-app-theme",
+    "allow-exit-app",
+    "allow-restart-app",
+    "allow-open-url"
+  ],
+  "remote": {
+    "urls": [
+      "http://127.0.0.1:5001/*"
+    ]
+  }
 }

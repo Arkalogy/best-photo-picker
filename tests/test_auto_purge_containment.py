@@ -1,4 +1,4 @@
-"""TDD tests for M-1: auto_purge must check library path containment."""
+"""TDD tests: auto_purge must check library path containment."""
 
 from __future__ import annotations
 

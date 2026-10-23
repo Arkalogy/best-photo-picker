@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import json
 import os
 import sqlite3
-from typing import Any
 
 from bpp.db.dialect import dialect
 from bpp.db.photos import bulk_upsert_photos
 from bpp.db.presets import save_preset
 from bpp.db.schema import SCHEMA_VERSION
+from bpp.utils.json_utils import load_json_file
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -47,14 +46,11 @@ def import_from_analysis_json(conn: sqlite3.Connection, json_path: str) -> int:
         log.warning("analysis.json not found at %s", json_path)
         return 0
 
-    try:
-        with open(json_path) as f:
-            data: list[dict[str, Any]] = json.load(f)
-    except (json.JSONDecodeError, ValueError):
-        log.warning("Corrupt JSON in %s, skipping import", json_path)
+    data = load_json_file(json_path, None, expected_type=list, context=json_path)
+    if data is None:  # load_json_file already logged why
         return 0
 
-    count = bulk_upsert_photos(conn, data)
+    count = bulk_upsert_photos(conn, [d for d in data if isinstance(d, dict)])
     log.info("Imported %d photos from %s", count, json_path)
     return count
 
@@ -64,11 +60,8 @@ def import_presets_from_json(conn: sqlite3.Connection, json_path: str) -> int:
     if not os.path.exists(json_path):
         return 0
 
-    try:
-        with open(json_path) as f:
-            presets: dict[str, Any] = json.load(f)
-    except (json.JSONDecodeError, ValueError):
-        log.warning("Corrupt JSON in %s, skipping import", json_path)
+    presets = load_json_file(json_path, None, expected_type=dict, context=json_path)
+    if presets is None:  # load_json_file already logged why
         return 0
 
     count = 0

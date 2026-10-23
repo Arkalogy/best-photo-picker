@@ -1,7 +1,7 @@
-"""P4 — WorkerPool collaborator unit tests.
+"""WorkerPool collaborator unit tests.
 
 The pool is the smallest of the four collaborators
-(see refactor-plan.md) so it lands first. Tests cover construction
+so it landed first. Tests cover construction
 from the registry, dict-like access for back-compat, and the
 :meth:`cancel_and_join_all` lifecycle path used by switch_library and
 shutdown.

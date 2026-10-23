@@ -30,14 +30,16 @@ from typing import Any
 
 import numpy as np
 
+from bpp.config import cfg_get
 from bpp.constants import CLUSTER_DISMISSED
 from bpp.scoring.face_embed import producing_model_id_for
+from bpp.scoring.toggles import toggles_from_config
 from bpp.utils.logging import get_logger
 from bpp.web.face_extraction_phases import ExtractionPartition, PreExtractSnapshot
 
 log = get_logger(__name__)
 
-# Protection E: how often to checkpoint the WAL during a long
+# How often to checkpoint the WAL during a long
 # extraction run. Every N completed photos. Smaller values bound the
 # SIGKILL-corruption window more tightly but cost more wall clock;
 # 100 balances both — at ~250 photos / 20s observed during the Jun-2
@@ -81,7 +83,7 @@ def extract_new_embeddings(
     config: dict[str, Any],
     extract_one_fn: Callable[..., list[dict] | None],
     validate_bbox_fn: Callable[..., tuple[int, int, int, int] | None],
-    validate_embedding_fn: Callable[[np.ndarray], bool],
+    validate_embedding_fn: Callable[..., bool],
     progress_callback: Callable[[dict[str, Any]], None] | None,
     cancellation_check: Callable[[], bool] | None,
     progress_total: int,
@@ -90,8 +92,8 @@ def extract_new_embeddings(
     """Phase 5: drive the per-photo extractor pool + INSERT/UPSERT.
 
     Heavy. Same pool-selection logic and per-photo committing as the
-    pre-P3 monolith — the win here is the cleanly-defined boundary
-    (everything before is read-only / pure; everything after sees a
+    original single-function implementation — the win here is the
+    cleanly-defined boundary (everything before is read-only / pure; everything after sees a
     consistent post-extract DB state).
 
     The callbacks (``extract_one_fn`` etc.) are injected so the phase
@@ -117,33 +119,27 @@ def extract_new_embeddings(
             extracted_count=0,
         )
 
-    try:
-        n_workers = int(config.get("_face_extract_workers") or 1)
-    except (TypeError, ValueError):
-        n_workers = 1
-    pool_kind = (
-        config.get("_face_extract_pool") or ("process" if n_workers > 1 else "thread")
-    ).lower()
-    embed_conf = float(config.get("face_embedding_confidence", 0.65))
-    min_eq = float(config.get("min_embedding_quality", 0.25))
+    Pool, n_workers = _pool_for(config)
+    embed_conf = float(cfg_get(config, "face_embedding_confidence"))
+    min_eq = float(cfg_get(config, "min_embedding_quality"))
 
-    Pool = ProcessPoolExecutor if pool_kind == "process" and n_workers > 1 else ThreadPoolExecutor
     log.info(
         "Face extract: %s pool, workers=%d, %d photos to extract",
         Pool.__name__,
         n_workers,
         len(need_extract),
     )
-    # Bounded in-flight submission. Pre-T4 the loop submitted every
-    # need_extract item up front, building a dict of N pending futures
-    # and queuing every input in the pool's _work_queue. At the
-    # documented 50K-photo import scale that retains 50K (idx, fp, pid)
+    # Bounded in-flight submission. Submitting every need_extract item
+    # up front would build a dict of N pending futures and queue every
+    # input in the pool's _work_queue. At the documented 50K-photo
+    # import scale that would retain 50K (idx, fp, pid)
     # tuples + their pickled extractor args in memory until
     # as_completed drains them. ``MAX_INFLIGHT = n_workers * 4`` keeps
     # the workers saturated without holding the whole queue resident.
     needs_iter = iter(need_extract)
     inflight: dict[Any, tuple[int, str, int]] = {}
     max_inflight_cap = max(1, n_workers * 4)
+    toggles = toggles_from_config(config)  # Settings' detector switches apply here too
 
     with Pool(max_workers=n_workers) as pool:
 
@@ -162,6 +158,7 @@ def extract_new_embeddings(
                 embed_conf,
                 min_eq,
                 method,
+                model_toggles=toggles,
             )
             inflight[fut] = (idx, fp_, pid)
             return True
@@ -194,114 +191,19 @@ def extract_new_embeddings(
                     )
                     faces = None
                 if faces:
-                    for fi, face in enumerate(faces):
-                        if "bbox" not in face or "embedding" not in face:
-                            log.warning(
-                                "Malformed face dict at face_index=%d "
-                                "for photo_id=%s (%s), skipping",
-                                fi,
-                                photo_id,
-                                fp,
-                            )
-                            continue
-                        try:
-                            bx, by, bw, bh = face["bbox"]
-                        except (ValueError, TypeError):
-                            log.warning(
-                                "Face bbox unpack failed at face_index=%d "
-                                "for photo_id=%s (%s), skipping",
-                                fi,
-                                photo_id,
-                                fp,
-                            )
-                            continue
-                        emb = face["embedding"]
-                        bbox = validate_bbox_fn(bx, by, bw, bh)
-                        if bbox is None:
-                            continue
-                        if not validate_embedding_fn(emb):
-                            continue
-                        bx, by, bw, bh = bbox
-                        quality = face.get("quality")
-                        # v40 (Bug #9 hardening): record the detector
-                        # input size so the read path can reconstruct
-                        # the exact dimensions regardless of current
-                        # settings. Without this, a config change to
-                        # max_long_side silently invalidates every
-                        # stored bbox.
-                        # Batch 7 / item 21: tag every row with the
-                        # registry id of the model that produced it
-                        # so the derived-data-purge flow at model-
-                        # removal time can find them. Map the short
-                        # ``method`` string (sface / dlib) to the
-                        # canonical registry entry id; BYOM
-                        # extractions can pass their byom_<hash> id
-                        # through ``method`` directly.
-                        producing_model_id = producing_model_id_for(method)
-                        conn.execute(
-                            "INSERT INTO face_embeddings "
-                            "(photo_id, face_index, "
-                            " bbox_x, bbox_y, bbox_w, bbox_h, embedding, quality,"
-                            " extraction_max_long_side, producing_model_id) "
-                            "VALUES (?,?,?,?,?,?,?,?,?,?) "
-                            "ON CONFLICT(photo_id, face_index) DO UPDATE SET "
-                            " bbox_x=excluded.bbox_x, bbox_y=excluded.bbox_y,"
-                            " bbox_w=excluded.bbox_w, bbox_h=excluded.bbox_h,"
-                            " embedding=excluded.embedding, quality=excluded.quality,"
-                            " extraction_max_long_side=excluded.extraction_max_long_side,"
-                            " producing_model_id=excluded.producing_model_id",
-                            (
-                                photo_id,
-                                fi,
-                                bx,
-                                by,
-                                bw,
-                                bh,
-                                emb.tobytes(),
-                                quality,
-                                max_long_side,
-                                producing_model_id,
-                            ),
-                        )
-                        all_records.append((fp, photo_id, fi, emb))
-                        extracted_count += 1
-                done_count += 1
-                # Commit in bounded batches (see _FACE_COMMIT_EVERY) instead
-                # of once per photo — the WAL checkpoint just below runs on
-                # the same cadence, so each batch commits then truncates the
-                # WAL in one aligned step. A final commit after the loop
-                # flushes the tail batch (see below).
-                if done_count % _FACE_COMMIT_EVERY == 0:
-                    conn.commit()
-                # Protection E: periodic WAL checkpoint during long
-                # extraction runs. Without this, the WAL grows for the
-                # whole multi-minute run; a SIGKILL anywhere in that
-                # window can leave a corrupt WAL that's hard to
-                # recover (Jun-1 demo lib incident). Checkpointing
-                # every 100 photos caps the worst-case loss to ~one
-                # chunk and keeps the WAL file small. TRUNCATE mode
-                # so the WAL doesn't bloat through the run.
-                if done_count % _WAL_CHECKPOINT_EVERY == 0:
-                    try:
-                        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                    except sqlite3.OperationalError:
-                        # WAL not enabled (dialect without WAL, or
-                        # checkpoint blocked by a concurrent reader)
-                        # — neither case warrants aborting extraction.
-                        log.debug(
-                            "Periodic WAL checkpoint at %d photos failed; continuing extraction",
-                            done_count,
-                            exc_info=True,
-                        )
-                if progress_callback:
-                    progress_callback(
-                        {
-                            "type": "face_progress",
-                            "current": done_count,
-                            "total": total,
-                            "filepath": os.path.basename(fp),
-                        }
+                    extracted_count += _store_faces(
+                        conn,
+                        faces,
+                        photo_id,
+                        fp,
+                        all_records,
+                        method=method,
+                        max_long_side=max_long_side,
+                        validate_bbox_fn=validate_bbox_fn,
+                        validate_embedding_fn=validate_embedding_fn,
                     )
+                done_count += 1
+                _commit_and_report(conn, done_count, total, fp, progress_callback)
                 # Free slot → top up one more submission.
                 _submit_next()
 
@@ -317,6 +219,156 @@ def extract_new_embeddings(
         cancelled_early=cancelled_early,
         extracted_count=extracted_count,
     )
+
+
+def _pool_for(config: dict[str, Any]) -> tuple[type, int]:
+    """The executor class and worker count the config asks for."""
+    try:
+        n_workers = int(config.get("_face_extract_workers") or 1)
+    except (TypeError, ValueError):
+        n_workers = 1
+    pool_kind = (
+        config.get("_face_extract_pool") or ("process" if n_workers > 1 else "thread")
+    ).lower()
+    pool = ProcessPoolExecutor if pool_kind == "process" and n_workers > 1 else ThreadPoolExecutor
+    return pool, n_workers
+
+
+def _store_faces(
+    conn: sqlite3.Connection,
+    faces: list[dict],
+    photo_id: int,
+    fp: str,
+    all_records: list[tuple[str, int, int, np.ndarray]],
+    *,
+    method: str | None,
+    max_long_side: int,
+    validate_bbox_fn: Callable[..., tuple[int, int, int, int] | None],
+    validate_embedding_fn: Callable[..., bool],
+) -> int:
+    """Validate and upsert one photo's faces; returns how many were stored
+    (each also appended to ``all_records``)."""
+    stored = 0
+    for fi, face in enumerate(faces):
+        if "bbox" not in face or "embedding" not in face:
+            log.warning(
+                "Malformed face dict at face_index=%d for photo_id=%s (%s), skipping",
+                fi,
+                photo_id,
+                fp,
+            )
+            continue
+        try:
+            bx, by, bw, bh = face["bbox"]
+        except (ValueError, TypeError):
+            log.warning(
+                "Face bbox unpack failed at face_index=%d for photo_id=%s (%s), skipping",
+                fi,
+                photo_id,
+                fp,
+            )
+            continue
+        # float32 is the storage contract; a float64 vector
+        # stored as-is is twice the size and reads back as
+        # corrupt (or as another embedder's rows).
+        emb = np.asarray(face["embedding"], dtype=np.float32)
+        bbox = validate_bbox_fn(bx, by, bw, bh)
+        if bbox is None:
+            continue
+        if not validate_embedding_fn(emb, method=method):
+            continue
+        bx, by, bw, bh = bbox
+        quality = face.get("quality")
+        # v40 (coordinate-space hardening): record the detector
+        # input size so the read path can reconstruct
+        # the exact dimensions regardless of current
+        # settings. Without this, a config change to
+        # max_long_side silently invalidates every
+        # stored bbox.
+        # Tag every row with the
+        # registry id of the model that produced it
+        # so the derived-data-purge flow at model-
+        # removal time can find them. Map the short
+        # ``method`` string (sface / dlib) to the
+        # canonical registry entry id; BYOM
+        # extractions can pass their byom_<hash> id
+        # through ``method`` directly.
+        producing_model_id = producing_model_id_for(method)
+        conn.execute(
+            "INSERT INTO face_embeddings "
+            "(photo_id, face_index, "
+            " bbox_x, bbox_y, bbox_w, bbox_h, embedding, quality,"
+            " extraction_max_long_side, producing_model_id) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(photo_id, face_index) DO UPDATE SET "
+            " bbox_x=excluded.bbox_x, bbox_y=excluded.bbox_y,"
+            " bbox_w=excluded.bbox_w, bbox_h=excluded.bbox_h,"
+            " embedding=excluded.embedding, quality=excluded.quality,"
+            " extraction_max_long_side=excluded.extraction_max_long_side,"
+            " producing_model_id=excluded.producing_model_id",
+            (
+                photo_id,
+                fi,
+                bx,
+                by,
+                bw,
+                bh,
+                emb.tobytes(),
+                quality,
+                max_long_side,
+                producing_model_id,
+            ),
+        )
+        all_records.append((fp, photo_id, fi, emb))
+        stored += 1
+    return stored
+
+
+def _commit_and_report(
+    conn: sqlite3.Connection,
+    done_count: int,
+    total: int,
+    fp: str,
+    progress_callback: Callable[[dict[str, Any]], None] | None,
+) -> None:
+    """After each photo: the batched commit, the periodic WAL checkpoint,
+    and the progress event."""
+    # Commit in bounded batches (see _FACE_COMMIT_EVERY) instead
+    # of once per photo — the WAL checkpoint just below runs on
+    # the same cadence, so each batch commits then truncates the
+    # WAL in one aligned step. A final commit after the loop
+    # flushes the tail batch (see extract_new_embeddings).
+    if done_count % _FACE_COMMIT_EVERY == 0:
+        conn.commit()
+    # Periodic WAL checkpoint during long
+    # extraction runs. Without this, the WAL grows for the
+    # whole multi-minute run; a SIGKILL anywhere in that
+    # window can leave a corrupt WAL that's hard to
+    # recover (Jun-1 demo lib incident). Checkpointing
+    # every 100 photos caps the worst-case loss to ~one
+    # chunk and keeps the WAL file small. TRUNCATE mode
+    # so the WAL doesn't bloat through the run.
+    if done_count % _WAL_CHECKPOINT_EVERY == 0:
+        try:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except sqlite3.OperationalError:
+            # WAL not enabled (dialect without WAL, or
+            # checkpoint blocked by a concurrent reader)
+            # — neither case warrants aborting extraction.
+            log.debug(
+                "Periodic WAL checkpoint at %d photos failed; continuing extraction",
+                done_count,
+                exc_info=True,
+            )
+    if progress_callback:
+        progress_callback(
+            {
+                "type": "face_progress",
+                "current": done_count,
+                "total": total,
+                "filepath": os.path.basename(fp),
+            }
+        )
 
 
 def _restore_dismissed_and_filter(

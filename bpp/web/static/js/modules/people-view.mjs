@@ -9,7 +9,7 @@
  * people.mjs.
  */
 
-import { authedSrc } from "./api-client.mjs";
+import { faceCropUrl } from "./api-client.mjs";
 import { state } from "./state.mjs";
 import { esc, escapeAttr } from "./text-format.mjs";
 import { hide, show } from "./utils.mjs";
@@ -25,6 +25,44 @@ import {
   refreshAmbiguousPairCount,
 } from "./people-review.mjs";
 import { FACE_MIN_PHOTOS } from "./constants.mjs";
+
+/** Person cards rendered per page of the People view. */
+const PEOPLE_PAGE = 150;
+
+/**
+ * Append the next page of cards when the sentinel scrolls into view.
+ * Without IntersectionObserver (jsdom) everything renders at once.
+ * @param {HTMLElement} view
+ * @param {any[]} cards
+ */
+function _watchPeopleSentinel(view, cards) {
+  // A re-render replaces the sentinel: drop the previous observer so it
+  // doesn't keep the old card array alive.
+  /** @type {any} */ (view)._peopleIo?.disconnect();
+  /** @type {any} */ (view)._peopleIo = null;
+  const sentinel = view.querySelector("#people-more-sentinel");
+  if (!sentinel) return;
+  let shown = PEOPLE_PAGE;
+  const more = () => {
+    const next = cards.slice(shown, shown + PEOPLE_PAGE);
+    shown += next.length;
+    sentinel.insertAdjacentHTML("beforebegin", next.map(_personCardHTML).join(""));
+    if (shown >= cards.length) sentinel.remove();
+  };
+  if (typeof IntersectionObserver === "undefined") {
+    while (shown < cards.length) more();
+    return;
+  }
+  const io = new IntersectionObserver((entries) => {
+    if (entries.some((e) => e.isIntersecting)) {
+      more();
+      if (!sentinel.isConnected) io.disconnect();
+    }
+  });
+  io.observe(sentinel);
+  /** @type {any} */ (view)._peopleIo = io;
+}
+
 
 export function personLabelHTML(clusterId, photoCount) {
   const name = personDisplayName(clusterId);
@@ -53,6 +91,127 @@ export function setPeopleSort(s) {
 }
 
 /**
+ * The empty state. An empty in-memory list might just be stale (tab
+ * opened before extraction/clustering finished) — NOT a faceless
+ * library. Fetch once before declaring "No Faces Found"; otherwise the
+ * view shows a misleading empty state even though the server has
+ * thousands of faces.
+ * @param {HTMLElement} view
+ * @param {boolean} [afterLoad]
+ */
+function _showNoFaces(view, afterLoad) {
+  if (afterLoad !== true && state.faceRecognitionAvailable) {
+    view.innerHTML = `<div class="empty-state people-empty">
+        <div class="icon">⏳</div>
+        <div class="title">Loading faces…</div>
+      </div>`;
+    import("./faces.mjs")
+      .then((m) => m.loadFaceClusters())
+      .then(() => {
+        const v = document.getElementById("people-view");
+        if (v && !v.classList.contains("hidden")) showPeopleView(true);
+      })
+      .catch(() => showPeopleView(true));
+    return;
+  }
+  const msg = !state.faceRecognitionAvailable
+    ? `Face recognition is not installed.<br><code class="install-hint">pip install bppicker[faces]</code>`
+    : "Import and analyze photos to detect faces.";
+  view.innerHTML = `<div class="empty-state people-empty">
+      <div class="icon">\u{1F464}</div>
+      <div class="title">No Faces Found</div>
+      <div class="desc">${msg}</div>
+    </div>`;
+}
+
+const _isSignificant = c => (c.photo_count || 0) >= FACE_MIN_PHOTOS || personDisplayName(c.cluster_id);
+
+/** Included / other (minor) / excluded clusters, each sorted by the current sort. */
+function _partitionClusters() {
+  const mainIncluded = [], minor = [], excluded = [];
+  for (const c of state.faceClusters) {
+    if (isClusterExcluded(c)) excluded.push(c);
+    else if (_isSignificant(c)) mainIncluded.push(c);
+    else minor.push(c);
+  }
+  const sortFn = state.peopleSort === "name"
+    ? (a, b) => (personDisplayName(a.cluster_id) || `Person ${a.cluster_id+1}`).localeCompare(personDisplayName(b.cluster_id) || `Person ${b.cluster_id+1}`)
+    : (a, b) => b.photo_count - a.photo_count;
+  mainIncluded.sort(sortFn);
+  minor.sort(sortFn);
+  excluded.sort(sortFn);
+  return { mainIncluded, minor, excluded };
+}
+
+/** The filter pills, selection bar, sort pills and review buttons. */
+function _filterBarHTML(mainIncluded, minor, excluded) {
+  const pillTips = {
+    included: "People with enough photos to be significant",
+    minor: "People with only a few photos — passers-by, background faces",
+    excluded: "People you chose to exclude from photo selection",
+    ignored: "Faces you dismissed as not real people",
+  };
+  const pill = (val, label, count) =>
+    `<span class="people-filter-pill${state.peopleFilter === val ? ' active' : ''}${count === 0 ? ' disabled' : ''}" title="${escapeAttr(pillTips[val] || '')}" ${count > 0 ? `data-action="setPeopleFilter" data-arg0="${escapeAttr(val)}"` : ''}>${label} (${count})</span>`;
+  const sortPill = (val, label) =>
+    `<span class="people-filter-pill${state.peopleSort === val ? ' active' : ''}" data-action="setPeopleSort" data-arg0="${val}">${label}</span>`;
+  const unnamedIncluded = mainIncluded.filter(c => !personDisplayName(c.cluster_id));
+  const showDismiss = state.peopleFilter === "included" && unnamedIncluded.length > 0;
+  const dismissBtn = showDismiss
+    ? `<button class="people-dismiss-btn" data-action="dismissAllUnnamed">Hide unnamed (${unnamedIncluded.length})</button>`
+    : '';
+  const showSort = state.peopleFilter !== "ignored";
+  const reviewCount = unnamedIncluded.length
+    + minor.filter(c => !personDisplayName(c.cluster_id)).length;
+  const reviewBtn = reviewCount > 0
+    ? `<button class="people-review-btn" data-action="startFaceReview">Review (${reviewCount})</button>`
+    : '';
+  const pairCount = getAmbiguousPairCount();
+  const pairLabel = pairCount === null ? "Review pairs (…)" : `Review pairs (${pairCount})`;
+  const pairDisabled = pairCount === 0 ? " disabled" : "";
+  const reviewPairsBtn = `<button class="people-review-btn" id="btn-review-pairs" data-action="startFacePairReview" title="Find ambiguous cluster pairs and mark same/different to teach the adaptive threshold"${pairDisabled}>${pairLabel}</button>`;
+  return `<div class="people-filter-bar">
+    ${pill("included", "Included", mainIncluded.length)}
+    ${pill("minor", "Other", minor.length)}
+    ${pill("excluded", "Excluded", excluded.length)}
+    ${pill("ignored", "Ignored", state._dismissedCount)}
+    <span id="people-selection-bar" class="people-selection-bar" style="display:${_selectedPeople.size > 0 ? 'inline-flex' : 'none'}"
+      title="Ctrl+click to select more, then right-click a target to merge">
+      <span class="selection-count">${_selectedPeople.size} selected</span>
+      <button class="people-selection-clear" data-action="clearPersonSelection" title="Clear selection" aria-label="Clear selection">&times;</button>
+    </span>
+    ${showSort ? `<span class="people-sort-label">Sort:</span>
+    ${sortPill("count", "Photos")}
+    ${sortPill("name", "Name")}` : ''}
+    ${dismissBtn}
+    ${reviewBtn}
+    ${reviewPairsBtn}
+  </div>`;
+}
+
+/** One person card. */
+function _personCardHTML(c) {
+  const rep = c.representative;
+  const cid = c.cluster_id;
+  const exc = isClusterExcluded(c);
+  const cardCls = exc ? ' person-card-excluded' : '';
+  const cardTitle = exc ? ' title="Excluded from selection"' : '';
+  const cls = _isSignificant(c) ? "person-card" : "person-card person-card-minor";
+  const selCls = _selectedPeople.has(cid) ? " person-card-selected" : "";
+  const boostCls = /** @type {any} */ (window).selectedFaceIds?.has(cid) ? " person-card-boosted" : "";
+  return `<div class="${cls}${cardCls}${selCls}${boostCls}" data-cluster-id="${cid}"${cardTitle}
+        tabindex="0" role="button" data-key-activate
+        data-action="_personCardClick" data-pass-event="true" data-arg0="${cid}"
+        data-oncontextmenu="_personCtxMenuDispatch" data-arg0="${cid}"
+        data-onpointerdown="_personPointerDownDispatch" data-arg0="${cid}">
+        <div class="person-avatar">
+          <img src="${faceCropUrl(rep.thumb_hash, rep.face_index)}" loading="lazy" draggable="false">
+        </div>
+        <div class="person-label" id="person-label-${cid}">${personLabelHTML(cid, c.photo_count)}</div>
+      </div>`;
+}
+
+/**
  * @param {boolean} [afterLoad] Internal: set when re-rendering after a fetch,
  *   so a genuinely-empty library shows "No Faces Found" instead of looping.
  */
@@ -77,49 +236,11 @@ export function showPeopleView(afterLoad) {
   show("status-bar");
 
   if (state.faceClusters.length === 0) {
-    // An empty in-memory list might just be stale (tab opened before
-    // extraction/clustering finished) — NOT a faceless library. Fetch once
-    // before declaring "No Faces Found"; otherwise the view shows a
-    // misleading empty state even though the server has thousands of faces.
-    if (afterLoad !== true && state.faceRecognitionAvailable) {
-      view.innerHTML = `<div class="empty-state people-empty">
-        <div class="icon">⏳</div>
-        <div class="title">Loading faces…</div>
-      </div>`;
-      import("./faces.mjs")
-        .then((m) => m.loadFaceClusters())
-        .then(() => {
-          const v = document.getElementById("people-view");
-          if (v && !v.classList.contains("hidden")) showPeopleView(true);
-        })
-        .catch(() => showPeopleView(true));
-      return;
-    }
-    const msg = !state.faceRecognitionAvailable
-      ? `Face recognition is not installed.<br><code class="install-hint">pip install bppicker[faces]</code>`
-      : "Import and analyze photos to detect faces.";
-    view.innerHTML = `<div class="empty-state people-empty">
-      <div class="icon">\u{1F464}</div>
-      <div class="title">No Faces Found</div>
-      <div class="desc">${msg}</div>
-    </div>`;
+    _showNoFaces(view, afterLoad);
     return;
   }
 
-  const isSignificant = c => (c.photo_count || 0) >= FACE_MIN_PHOTOS || personDisplayName(c.cluster_id);
-  const mainIncluded = [], minor = [], excluded = [];
-  for (const c of state.faceClusters) {
-    if (isClusterExcluded(c)) excluded.push(c);
-    else if (isSignificant(c)) mainIncluded.push(c);
-    else minor.push(c);
-  }
-
-  const sortFn = state.peopleSort === "name"
-    ? (a, b) => (personDisplayName(a.cluster_id) || `Person ${a.cluster_id+1}`).localeCompare(personDisplayName(b.cluster_id) || `Person ${b.cluster_id+1}`)
-    : (a, b) => b.photo_count - a.photo_count;
-  mainIncluded.sort(sortFn);
-  minor.sort(sortFn);
-  excluded.sort(sortFn);
+  const { mainIncluded, minor, excluded } = _partitionClusters();
 
   let displayCards = [];
   let isMinorView = false;
@@ -128,48 +249,7 @@ export function showPeopleView(afterLoad) {
   else if (state.peopleFilter === "all") displayCards = [...mainIncluded, ...minor, ...excluded];
   else displayCards = mainIncluded;
 
-  const pillTips = {
-    included: "People with enough photos to be significant",
-    minor: "People with only a few photos — passers-by, background faces",
-    excluded: "People you chose to exclude from photo selection",
-    ignored: "Faces you dismissed as not real people",
-  };
-  const pill = (val, label, count) =>
-    `<span class="people-filter-pill${state.peopleFilter === val ? ' active' : ''}${count === 0 ? ' disabled' : ''}" title="${escapeAttr(pillTips[val] || '')}" ${count > 0 ? `data-action="setPeopleFilter" data-arg0="${escapeAttr(val)}"` : ''}>${label} (${count})</span>`;
-  const sortPill = (val, label) =>
-    `<span class="people-filter-pill${state.peopleSort === val ? ' active' : ''}" data-action="setPeopleSort" data-arg0="${val}">${label}</span>`;
-  const unnamedIncluded = mainIncluded.filter(c => !personDisplayName(c.cluster_id));
-  const showDismiss = state.peopleFilter === "included" && unnamedIncluded.length > 0;
-  const dismissBtn = showDismiss
-    ? `<button class="people-dismiss-btn" data-action="dismissAllUnnamed">Hide unnamed (${unnamedIncluded.length})</button>`
-    : '';
-  const showSort = state.peopleFilter !== "ignored";
-  const reviewCount = mainIncluded.filter(c => !personDisplayName(c.cluster_id)).length
-    + minor.filter(c => !personDisplayName(c.cluster_id)).length;
-  const reviewBtn = reviewCount > 0
-    ? `<button class="people-review-btn" data-action="startFaceReview">Review (${reviewCount})</button>`
-    : '';
-  const pairCount = getAmbiguousPairCount();
-  const pairLabel = pairCount === null ? "Review pairs (…)" : `Review pairs (${pairCount})`;
-  const pairDisabled = pairCount === 0 ? " disabled" : "";
-  const reviewPairsBtn = `<button class="people-review-btn" id="btn-review-pairs" data-action="startFacePairReview" title="Find ambiguous cluster pairs and mark same/different to teach the adaptive threshold"${pairDisabled}>${pairLabel}</button>`;
-  const filterBar = `<div class="people-filter-bar">
-    ${pill("included", "Included", mainIncluded.length)}
-    ${pill("minor", "Other", minor.length)}
-    ${pill("excluded", "Excluded", excluded.length)}
-    ${pill("ignored", "Ignored", state._dismissedCount)}
-    <span id="people-selection-bar" class="people-selection-bar" style="display:${_selectedPeople.size > 0 ? 'inline-flex' : 'none'}"
-      title="Ctrl+click to select more, then right-click a target to merge">
-      <span class="selection-count">${_selectedPeople.size} selected</span>
-      <button class="people-selection-clear" data-action="clearPersonSelection" title="Clear selection" aria-label="Clear selection">&times;</button>
-    </span>
-    ${showSort ? `<span class="people-sort-label">Sort:</span>
-    ${sortPill("count", "Photos")}
-    ${sortPill("name", "Name")}` : ''}
-    ${dismissBtn}
-    ${reviewBtn}
-    ${reviewPairsBtn}
-  </div>`;
+  const filterBar = _filterBarHTML(mainIncluded, minor, excluded);
 
   let bodyHTML = "";
 
@@ -183,26 +263,11 @@ export function showPeopleView(afterLoad) {
       </div>
     </div>`;
   } else {
-    const cards = displayCards.map(c => {
-      const rep = c.representative;
-      const cid = c.cluster_id;
-      const exc = isClusterExcluded(c);
-      const cardCls = exc ? ' person-card-excluded' : '';
-      const cardTitle = exc ? ' title="Excluded from selection"' : '';
-      const cls = isSignificant(c) ? "person-card" : "person-card person-card-minor";
-      const selCls = _selectedPeople.has(cid) ? " person-card-selected" : "";
-      const boostCls = /** @type {any} */ (window).selectedFaceIds?.has(cid) ? " person-card-boosted" : "";
-      return `<div class="${cls}${cardCls}${selCls}${boostCls}" data-cluster-id="${cid}"${cardTitle}
-        data-action="_personCardClick" data-pass-event="true" data-arg0="${cid}"
-        data-oncontextmenu="_personCtxMenuDispatch" data-arg0="${cid}"
-        data-onpointerdown="_personPointerDownDispatch" data-arg0="${cid}">
-        <div class="person-avatar">
-          <img src="${authedSrc(`/api/v1/faces/crop/${esc(rep.thumb_hash)}/${rep.face_index}`)}" loading="lazy" draggable="false">
-        </div>
-        <div class="person-label" id="person-label-${cid}">${personLabelHTML(cid, c.photo_count)}</div>
-      </div>`;
-    }).join("");
-    bodyHTML = cards;
+    // A library can hold tens of thousands of clusters (background
+    // singletons): render a page of cards and append the rest as the
+    // user scrolls, instead of one DOM subtree per cluster at once.
+    bodyHTML = displayCards.slice(0, PEOPLE_PAGE).map(_personCardHTML).join("");
+    if (displayCards.length > PEOPLE_PAGE) bodyHTML += '<div id="people-more-sentinel"></div>';
 
     if (displayCards.length === 0) {
       const emptyMsg = state.peopleFilter === "excluded" ? "No excluded people"
@@ -212,6 +277,7 @@ export function showPeopleView(afterLoad) {
   }
 
   view.innerHTML = filterBar + bodyHTML;
+  _watchPeopleSentinel(view, displayCards);
 
   if (state.peopleFilter === "ignored") expandDismissedSection();
 

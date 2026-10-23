@@ -29,7 +29,7 @@ def load_preset(conn: sqlite3.Connection, name: str) -> dict[str, Any] | None:
     row = conn.execute("SELECT settings_json FROM presets WHERE name=?", (name,)).fetchone()
     if row is None:
         return None
-    return safe_json_loads(row[0], default={}, context="preset")
+    return safe_json_loads(row[0], default={}, context="preset", expected_type=dict)
 
 
 def list_presets(conn: sqlite3.Connection) -> list[dict[str, Any]]:
@@ -44,7 +44,7 @@ def list_presets(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return [
         {
             "name": r[0],
-            "settings": safe_json_loads(r[1], default={}, context="preset"),
+            "settings": safe_json_loads(r[1], default={}, context="preset", expected_type=dict),
             "created_at": r[2],
         }
         for r in rows

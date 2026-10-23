@@ -11,8 +11,8 @@ from flask import Blueprint, Response, jsonify, request
 from bpp.constants import (
     ACTIVE_PHOTO_SQL,
     CLUSTER_DISMISSED,
+    active_photo_sql,
 )
-from bpp.db.face_embedding_safety import decode_embedding
 from bpp.db.settings import delete_setting, set_setting
 from bpp.errors import ValidationError
 from bpp.utils.json_utils import safe_json_loads
@@ -29,6 +29,7 @@ log = get_logger(__name__)
 bp = Blueprint("faces", __name__)
 
 _ACTIVE = ACTIVE_PHOTO_SQL
+_P_ACTIVE = active_photo_sql("p")
 
 # Upper bound on rows pulled into RAM for the sampled face grids
 # (dismissed faces, cluster/avatar picker). The endpoints render a sampled
@@ -65,10 +66,12 @@ def api_faces_clusters() -> tuple[Response, int]:
         for row in override_rows:
             try:
                 cid = int(row["key"].removeprefix("person_avatar_"))
-                avatar_overrides[cid] = safe_json_loads(row["value"], {})
-            except (ValueError, json.JSONDecodeError):
-                # Malformed settings row (non-numeric suffix, corrupted
-                # value). User would otherwise see their avatar silently
+                avatar_overrides[cid] = safe_json_loads(
+                    row["value"], {}, expected_type=dict, context=f"settings {row['key']}"
+                )
+            except ValueError:  # a non-numeric key suffix
+                # Malformed settings row (a corrupted value reads as {}
+                # above). User would otherwise see their avatar silently
                 # revert to auto-pick — log so support can diagnose.
                 log.warning(
                     "Skipping malformed avatar override: key=%r value=%r",
@@ -111,7 +114,7 @@ def api_faces_clusters() -> tuple[Response, int]:
                 rep["face_index"] = ov_fi
             else:
                 # Stale override — clear it so it doesn't keep failing.
-                # Protection D: best-effort lazy cleanup write inside a
+                # Best-effort lazy cleanup write inside a
                 # GET handler. If the write fails (disk I/O error, etc.)
                 # the read MUST still return its data — letting a stale
                 # cosmetic-cleanup failure 500 the People panel is the
@@ -121,7 +124,7 @@ def api_faces_clusters() -> tuple[Response, int]:
                     delete_setting(conn, f"person_avatar_{cid}")
                     log.info("Cleared stale avatar override for cluster %d", cid)
                 except (sqlite3.Error, OSError):
-                    # Narrow on purpose: Protection D was added for
+                    # Narrow on purpose: this guard exists for
                     # disk / DB write failures during the cosmetic
                     # cleanup, not for arbitrary bugs. A blanket
                     # ``except Exception`` would also swallow a
@@ -165,9 +168,11 @@ def api_faces_review() -> tuple[Response, int]:
     For each unreviewed cluster, computes distance to all named clusters
     and returns the best match (if within suggestion threshold).
     """
-    import re
-
-    import numpy as np
+    from bpp.web.faces_review_match import (
+        cluster_centroids,
+        named_cluster_names,
+        suggested_match,
+    )
 
     ctx = get_ctx()
     conn = ctx.get_conn()
@@ -176,75 +181,20 @@ def api_faces_review() -> tuple[Response, int]:
         return jsonify({"unreviewed": [], "total": 0, "reviewed": 0}), 200
 
     # Find which cluster_ids have a named smart_person album.
-    # P5b: indexed lookup via get_smart_person_cluster_name_map (uses
-    # the v36 smart_person_cluster_id shadow column).
-    named_cids: dict[int, str] = {}  # cid -> name
-    person_n_re = re.compile(r"^Person \d+$")
-    try:
-        from bpp.db.albums import get_smart_person_cluster_name_map
-
-        for cid, name in get_smart_person_cluster_name_map(conn).items():
-            if not person_n_re.match(name):
-                named_cids[cid] = name
-    except Exception:
-        # Don't fail the whole face-review endpoint on a named-cluster
-        # query glitch — fall through with empty named_cids so the
-        # response is still useful. But surface the failure so the
-        # operator sees it — never swallow silently.
-        log.warning(
-            "Failed to load named smart_person albums for face review",
-            exc_info=True,
-        )
+    named_cids = named_cluster_names(conn)
 
     total = len(clusters)
     unreviewed = [c for c in clusters if c["cluster_id"] not in named_cids]
     reviewed = total - len(unreviewed)
 
-    # Compute centroids for named clusters from DB embeddings
-    named_centroids: dict[int, np.ndarray] = {}
-    if named_cids:
-        placeholders = ",".join(["?"] * len(named_cids))
-        emb_rows = conn.execute(
-            f"SELECT cluster_id, embedding FROM face_embeddings "
-            f"WHERE cluster_id IN ({placeholders})",
-            list(named_cids.keys()),
-        ).fetchall()
-        # Protection A: route through decode_embedding so a corrupt
-        # row can't crash the People-review screen the way the
-        # Jun-2 incident crashed /faces/clusters. Bad rows are
-        # skipped; the centroid is computed from whatever remains.
-        cluster_embs: dict[int, list[np.ndarray]] = {}
-        for r in emb_rows:
-            cid = r["cluster_id"]
-            emb = decode_embedding(r["embedding"], where="bp_faces.review.named_centroids")
-            if emb is None:
-                continue
-            cluster_embs.setdefault(cid, []).append(emb)
-        for cid, embs in cluster_embs.items():
-            named_centroids[cid] = np.mean(embs, axis=0)
-
-    # Compute centroids for unreviewed clusters
-    unreviewed_cids = [c["cluster_id"] for c in unreviewed]
-    unreviewed_centroids: dict[int, np.ndarray] = {}
-    if unreviewed_cids:
-        placeholders = ",".join(["?"] * len(unreviewed_cids))
-        emb_rows = conn.execute(
-            f"SELECT cluster_id, embedding FROM face_embeddings "
-            f"WHERE cluster_id IN ({placeholders})",
-            unreviewed_cids,
-        ).fetchall()
-        # Protection A: same defense as the named-centroids loop above.
-        # A single bad row used to crash this whole endpoint; now bad
-        # rows are skipped and the centroid is built from what's left.
-        cluster_embs2: dict[int, list[np.ndarray]] = {}
-        for r in emb_rows:
-            cid = r["cluster_id"]
-            emb = decode_embedding(r["embedding"], where="bp_faces.review.unreviewed_centroids")
-            if emb is None:
-                continue
-            cluster_embs2.setdefault(cid, []).append(emb)
-        for cid, embs in cluster_embs2.items():
-            unreviewed_centroids[cid] = np.mean(embs, axis=0)
+    named_centroids = cluster_centroids(
+        conn, list(named_cids.keys()), where="bp_faces.review.named_centroids"
+    )
+    unreviewed_centroids = cluster_centroids(
+        conn,
+        [c["cluster_id"] for c in unreviewed],
+        where="bp_faces.review.unreviewed_centroids",
+    )
 
     # Add thumb hashes + suggested match for each unreviewed cluster.
     # Each crop the user judges ("is this Kai?") carries its source photo's
@@ -270,40 +220,14 @@ def api_faces_review() -> tuple[Response, int]:
         meta_fps.extend(sample_fps)
 
         # Find best match among named clusters
-        c["suggested_match"] = None
-        centroid = unreviewed_centroids.get(cid)
-        if centroid is not None and named_centroids:
-            best_cid, best_dist = None, float("inf")
-            for ncid, ncentroid in named_centroids.items():
-                dist = float(np.linalg.norm(centroid - ncentroid))
-                if dist < best_dist:
-                    best_dist = dist
-                    best_cid = ncid
-            if best_cid is not None:
-                # Convert distance to confidence %
-                # Map distance to confidence: 0 dist = 100%, max_dist (2.0) = 0%
-                max_dist = 2.0
-                confidence = max(0, min(100, int((1 - best_dist / max_dist) * 100)))
-                # Find representative for the suggested person (O(1) lookup)
-                match_rep = None
-                mc = clusters_by_cid.get(best_cid)
-                if mc is not None:
-                    mr = mc["representative"]
-                    if ctx.thumbs:
-                        mr["thumb_hash"] = ctx.thumbs.get_hash(mr["filepath"])
-                    match_rep = {
-                        "thumb_hash": mr.get("thumb_hash", ""),
-                        "face_index": mr["face_index"],
-                        "filepath": mr.get("filepath", ""),
-                    }
-                    meta_fps.append(mr.get("filepath", ""))
-                c["suggested_match"] = {
-                    "cluster_id": best_cid,
-                    "name": named_cids[best_cid],
-                    "distance": round(best_dist, 3),
-                    "confidence": confidence,
-                    "representative": match_rep,
-                }
+        c["suggested_match"] = suggested_match(
+            unreviewed_centroids.get(cid),
+            named_centroids,
+            named_cids,
+            clusters_by_cid,
+            ctx,
+            meta_fps,
+        )
 
     # Batched metadata lookup, then attach to every representative + sample.
     meta = photo_meta_by_filepaths(conn, meta_fps)
@@ -339,14 +263,14 @@ def api_faces_dismissed() -> tuple[Response, int]:
     # is drawn from the highest-quality rows.
     total = conn.execute(
         "SELECT COUNT(*) FROM face_embeddings fe JOIN photos p ON p.id = fe.photo_id "
-        f"WHERE fe.cluster_id = {CLUSTER_DISMISSED} AND p.{_ACTIVE}"
+        f"WHERE fe.cluster_id = {CLUSTER_DISMISSED} AND {_P_ACTIVE}"
     ).fetchone()[0]
     rows = conn.execute(
         "SELECT fe.id, fe.face_index, p.filepath, fe.quality, "
         "p.original_filename, p.date, p.aggregate_score "
         "FROM face_embeddings fe "
         "JOIN photos p ON p.id = fe.photo_id "
-        f"WHERE fe.cluster_id = {CLUSTER_DISMISSED} AND p.{_ACTIVE} "
+        f"WHERE fe.cluster_id = {CLUSTER_DISMISSED} AND {_P_ACTIVE} "
         "ORDER BY COALESCE(fe.quality, 0) DESC, p.filepath, fe.face_index "
         "LIMIT ?",
         (_FACE_SCAN_CAP,),
@@ -418,14 +342,14 @@ def api_faces_cluster_detail(cluster_id: int) -> tuple[Response, int]:
     # subject with thousands of faces) doesn't fetch every row to sample 80.
     total = conn.execute(
         f"SELECT COUNT(*) FROM face_embeddings fe JOIN photos p ON p.id = fe.photo_id "
-        f"WHERE fe.cluster_id = ? AND p.{_ACTIVE}",
+        f"WHERE fe.cluster_id = ? AND {_P_ACTIVE}",
         (cluster_id,),
     ).fetchone()[0]
     rows = conn.execute(
         "SELECT fe.id, fe.face_index, p.filepath, fe.quality "
         "FROM face_embeddings fe "
         "JOIN photos p ON p.id = fe.photo_id "
-        f"WHERE fe.cluster_id = ? AND p.{_ACTIVE} "
+        f"WHERE fe.cluster_id = ? AND {_P_ACTIVE} "
         "ORDER BY COALESCE(fe.quality, 0) DESC, p.filepath, fe.face_index "
         "LIMIT ?",
         (cluster_id, _FACE_SCAN_CAP),

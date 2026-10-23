@@ -4,7 +4,7 @@ Extracted from bp_photos.py during the v0.1 cleanup. Both endpoints
 drive scoring re-runs over the analyzed photo set:
 
 * ``/api/v1/recompute`` — re-run global selection with optional
-  weight, k, seed, face-filter, force-include/exclude, and
+  weight, k, face-filter, force-include/exclude, and
   date-range overrides. Persists the selection on All Photos.
 * ``/api/v1/optimize`` — weight-tuning optimizer that suggests
   scoring weights maximizing coverage of selected_faces at a given k.
@@ -20,6 +20,7 @@ from typing import Any
 
 from flask import Blueprint, Response, jsonify, request
 
+from bpp.config import cfg_get
 from bpp.db.albums import (
     ensure_all_photos_album,
     get_album,
@@ -28,17 +29,18 @@ from bpp.db.albums import (
     update_album,
 )
 from bpp.db.clip import compute_adaptive_threshold
-from bpp.errors import NotFoundError, ValidationError
+from bpp.errors import NotFoundError, PayloadTooLargeError, ValidationError
 from bpp.utils.logging import get_logger
 from bpp.web.recompute import (
     RECOMPUTE_FULL_PAYLOAD_LIMIT,
-    RECOMPUTE_WEIGHT_KEYS,
     RecomputeOptions,
     optimize,
     recompute,
+    recompute_weight_keys,
 )
 from bpp.web.share import requires_local_app
-from bpp.web.state import clamp_k, clamp_weight, get_ctx
+from bpp.web.state import clamp_k, get_ctx
+from bpp.web.state_helpers import clamp_override
 
 log = get_logger(__name__)
 
@@ -49,7 +51,7 @@ bp = Blueprint("recompute", __name__)
 @requires_local_app
 def api_recompute() -> tuple[Response, int]:
     """Re-run global selection over all analyzed photos with optional
-    weight, k, seed, face filter, force-include/exclude, and date-range
+    weight, k, face filter, force-include/exclude, and date-range
     overrides. Persists the selection on All Photos. ``delta: true``
     returns only paths and per-photo scores.
 
@@ -66,17 +68,9 @@ def api_recompute() -> tuple[Response, int]:
         raise NotFoundError("No analysis data")
 
     params = request.get_json(silent=True) or {}
+    cfg = _config_with_overrides(ctx.config, params)
 
-    cfg = dict(ctx.config)
-    for key in RECOMPUTE_WEIGHT_KEYS:
-        if key in params:
-            cfg[key] = clamp_weight(params[key])
-    # Sensitive-photo policy is a string enum, not a clampable weight.
-    if params.get("sensitive_in_picks") in ("allow", "exclude"):
-        cfg["sensitive_in_picks"] = params["sensitive_in_picks"]
-
-    k = clamp_k(params.get("k", cfg.get("default_selection_k", 50)))
-    seed = int(params.get("seed", cfg.get("default_selection_seed", 42)))
+    k = clamp_k(params.get("k", cfg_get(cfg, "default_selection_k")))
     selected_faces = params.get("selected_faces", [])
 
     conn = ctx.get_conn()
@@ -93,30 +87,7 @@ def api_recompute() -> tuple[Response, int]:
     for p in analysis:
         (deleted if p.get("deleted_at") else active).append(p)
 
-    # Optional date-range filter (used by calendar "Pick best" flow)
-    start_date = params.get("start_date")
-    end_date = params.get("end_date")
-    if start_date and end_date:
-        import datetime as _dt
-
-        try:
-            _dt.date.fromisoformat(start_date)
-            _dt.date.fromisoformat(end_date)
-        except (ValueError, TypeError) as e:
-            raise ValidationError(
-                "Invalid date format, use YYYY-MM-DD",
-                start_date=start_date,
-                end_date=end_date,
-            ) from e
-        if start_date > end_date:
-            raise ValidationError(
-                "start_date must be <= end_date",
-                start_date=start_date,
-                end_date=end_date,
-            )
-        before = len(active)
-        active = [p for p in active if start_date <= (p.get("date") or "")[:10] <= end_date]
-        log.info("Date range %s to %s: %d -> %d photos", start_date, end_date, before, len(active))
+    active = _filter_date_range(active, params)
 
     # refuse oversized non-delta payloads BEFORE running
     # recompute() and the (expensive) CLIP embedding load. Previously
@@ -125,20 +96,7 @@ def api_recompute() -> tuple[Response, int]:
     # has no path to "send some photos but not all" — clients above
     # the cap must reissue with `delta: true`.
     if not params.get("delta"):
-        photo_count = len(active) + len(deleted)
-        if photo_count > RECOMPUTE_FULL_PAYLOAD_LIMIT:
-            return jsonify(
-                {
-                    "error": (
-                        f"Library has {photo_count} photos; full-payload "
-                        f"recompute is capped at {RECOMPUTE_FULL_PAYLOAD_LIMIT}. "
-                        'Re-issue with {"delta": true} and load photos via '
-                        "/api/v1/photos."
-                    ),
-                    "delta_required": True,
-                    "photo_count": photo_count,
-                }
-            ), 413
+        _refuse_full_payload_over_cap(len(active) + len(deleted))
 
     face_cluster_map = None
     if selected_faces:
@@ -150,7 +108,7 @@ def api_recompute() -> tuple[Response, int]:
     if clip_embs:
         conn2 = ctx.get_conn()
         clip_threshold, threshold_info = compute_adaptive_threshold(
-            conn2, default=cfg.get("clip_similarity_threshold", 0.92)
+            conn2, default=cfg_get(cfg, "clip_similarity_threshold")
         )
 
     result = recompute(
@@ -158,7 +116,6 @@ def api_recompute() -> tuple[Response, int]:
             analysis=active,
             config=cfg,
             k=k,
-            seed=seed,
             force_include=force_include,
             force_exclude=force_exclude,
             selected_faces=selected_faces,
@@ -216,6 +173,75 @@ def api_recompute() -> tuple[Response, int]:
     ), 200
 
 
+def _config_with_overrides(config: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+    """A copy of the config with the request's weight overrides (clamped
+    to the schema) and the sensitive-photo policy applied."""
+    cfg = dict(config)
+    for key in recompute_weight_keys():
+        if key in params:
+            cfg[key] = clamp_override(key, params[key])
+    # Sensitive-photo policy is a string enum, not a clampable weight.
+    if params.get("sensitive_in_picks") in ("allow", "exclude"):
+        cfg["sensitive_in_picks"] = params["sensitive_in_picks"]
+    return cfg
+
+
+def _filter_date_range(
+    active: list[dict[str, Any]], params: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Optional date-range filter (used by the calendar "Pick best" flow)."""
+    start_date = params.get("start_date")
+    end_date = params.get("end_date")
+    if not (start_date and end_date):
+        return active
+    import datetime as _dt
+
+    try:
+        _dt.date.fromisoformat(start_date)
+        _dt.date.fromisoformat(end_date)
+    except (ValueError, TypeError) as e:
+        raise ValidationError(
+            "Invalid date format, use YYYY-MM-DD",
+            start_date=start_date,
+            end_date=end_date,
+        ) from e
+    if start_date > end_date:
+        raise ValidationError(
+            "start_date must be <= end_date",
+            start_date=start_date,
+            end_date=end_date,
+        )
+    before = len(active)
+    active = [p for p in active if start_date <= (p.get("date") or "")[:10] <= end_date]
+    log.info("Date range %s to %s: %d -> %d photos", start_date, end_date, before, len(active))
+    return active
+
+
+class _DeltaRequiredError(PayloadTooLargeError):
+    """The recompute cap's 413: re-issue with ``{"delta": true}``."""
+
+    code = "delta_required"
+
+
+def _refuse_full_payload_over_cap(
+    photo_count: int, *, what: str = "Library", photos_at: str = "/api/v1/photos"
+) -> None:
+    """A full-payload recompute over the cap is a 413 with
+    ``code: delta_required`` (the central handler shapes it)."""
+    if photo_count <= RECOMPUTE_FULL_PAYLOAD_LIMIT:
+        return
+    raise _DeltaRequiredError(
+        "Full-payload recompute over the cap",
+        user_message=(
+            f"{what} has {photo_count} photos; full-payload "
+            f"recompute is capped at {RECOMPUTE_FULL_PAYLOAD_LIMIT}. "
+            f'Re-issue with {{"delta": true}} and load photos via {photos_at}.'
+        ),
+        photo_count=photo_count,
+        limit=RECOMPUTE_FULL_PAYLOAD_LIMIT,
+    )
+
+
 @bp.post("/api/v1/optimize")
 @requires_local_app
 def api_optimize() -> tuple[Response, int]:
@@ -230,7 +256,7 @@ def api_optimize() -> tuple[Response, int]:
     params = request.get_json(silent=True) or {}
     selected_faces = params.get("selected_faces", [])
     cfg = dict(ctx.config)
-    k = clamp_k(params.get("k", cfg.get("default_selection_k", 50)))
+    k = clamp_k(params.get("k", cfg_get(cfg, "default_selection_k")))
 
     face_cluster_map = None
     face_filepaths = None
@@ -283,13 +309,9 @@ def api_album_recompute(album_id: int) -> tuple[Response, int]:
     cfg = dict(ctx.config)
     if album.get("config"):
         cfg.update(album["config"])
-    for key in RECOMPUTE_WEIGHT_KEYS:
-        if key in params:
-            cfg[key] = clamp_weight(params[key])
-    # Sensitive-photo policy is a string enum, not a clampable weight.
-    # Persisted with the album config via update_album() below.
-    if params.get("sensitive_in_picks") in ("allow", "exclude"):
-        cfg["sensitive_in_picks"] = params["sensitive_in_picks"]
+    # (The sensitive-photo policy is persisted with the album config via
+    # update_album() below.)
+    cfg = _config_with_overrides(cfg, params)
 
     k = clamp_k(params.get("k", album.get("k", 50)))
 
@@ -304,20 +326,9 @@ def api_album_recompute(album_id: int) -> tuple[Response, int]:
     # all" — clients above the cap must reissue with `delta: true`
     # and load photos via /api/v1/albums/<id>/photos.
     if not params.get("delta"):
-        photo_count = len(active) + len(deleted)
-        if photo_count > RECOMPUTE_FULL_PAYLOAD_LIMIT:
-            return jsonify(
-                {
-                    "error": (
-                        f"Album has {photo_count} photos; full-payload "
-                        f"recompute is capped at {RECOMPUTE_FULL_PAYLOAD_LIMIT}. "
-                        'Re-issue with {"delta": true} and load photos via '
-                        "/api/v1/albums/<id>/photos."
-                    ),
-                    "delta_required": True,
-                    "photo_count": photo_count,
-                }
-            ), 413
+        _refuse_full_payload_over_cap(
+            len(active) + len(deleted), what="Album", photos_at="/api/v1/albums/<id>/photos"
+        )
 
     clip_embs = ctx.load_clip_embeddings() or None
     clip_threshold = None
@@ -325,7 +336,7 @@ def api_album_recompute(album_id: int) -> tuple[Response, int]:
         conn_t = ctx.get_conn()
         clip_threshold, _ = compute_adaptive_threshold(
             conn_t,
-            default=cfg.get("clip_similarity_threshold", 0.92),
+            default=cfg_get(cfg, "clip_similarity_threshold"),
             album_id=album_id,
         )
 

@@ -2,7 +2,7 @@
 
 The "Server failed to start" (boot timeout) and "Server could not
 restart" (respawn exhausted) overlays are injected as raw HTML strings
-via window.eval() in src-tauri/src/main.rs. There's no webview in CI
+via window.eval() in src-tauri/src/screens.rs. There's no webview in CI
 to click them, so we pin the required button labels + the exit_app
 invocation here. A refactor that drops one of the three buttons will
 fail this test rather than silently shipping a dead-end error screen.
@@ -12,11 +12,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-MAIN_RS = Path(__file__).resolve().parent.parent / "desktop" / "src-tauri" / "src" / "main.rs"
+SRC_DIR = Path(__file__).resolve().parent.parent / "desktop" / "src-tauri" / "src"
 
 
 def _source() -> str:
-    return MAIN_RS.read_text(encoding="utf-8")
+    """Every Rust file of the shell crate, in one string."""
+    return "\n".join(p.read_text(encoding="utf-8") for p in sorted(SRC_DIR.glob("*.rs")))
 
 
 class TestServerFailedToStartScreen:
@@ -28,8 +29,8 @@ class TestServerFailedToStartScreen:
         # Anchor on the eprintln that immediately follows the failed wait — the
         # function *definition* of wait_for_server appears much earlier and
         # must not be used as the search start.
-        start = src.find('eprintln!("Server failed to start within 30 seconds")')
-        assert start != -1, "Anchor line not found in main.rs"
+        start = src.find("fn show_start_failure(")
+        assert start != -1, "Anchor line not found in screens.rs"
         return src[start : start + 3000]
 
     def test_has_quit_button(self):
@@ -70,7 +71,7 @@ class TestServerCouldNotRestartScreen:
         start = src.find("show_fatal_error")
         block = src[start : start + 2000]
         assert "Try Again" in block, (
-            "Fatal-error screen must offer Try Again — reloading the webview "
+            "Fatal-error screen must offer Try Again — restarting the app "
             "re-triggers the boot sequence and may recover after a transient failure."
         )
 

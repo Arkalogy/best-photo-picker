@@ -3,7 +3,8 @@
  * Shared helpers for end-to-end Playwright tests.
  *
  * The dev server is expected to be running at http://localhost:5001
- * with a populated library. Tests are read-mostly — they don't import,
+ * with a populated library and `--open-loopback` (the specs open "/"
+ * in fresh contexts, with no boot key). Tests are read-mostly — they don't import,
  * delete, or rename anything. State-mutating tests (verdicts, deletes)
  * are explicitly opted in with descriptive expectations.
  */

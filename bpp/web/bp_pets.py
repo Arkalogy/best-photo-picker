@@ -7,7 +7,8 @@ import os
 
 from flask import Blueprint, Response, jsonify, request, send_file
 
-from bpp.constants import ACTIVE_PHOTO_SQL, JPEG_QUALITY_CROP, PET_CROP_PADDING, PET_CROP_SIZE
+from bpp.config import cfg_get
+from bpp.constants import ACTIVE_PHOTO_SQL, PET_CROP_PADDING, PET_CROP_SIZE, active_photo_sql
 from bpp.db.albums import list_albums as db_list_albums
 from bpp.db.pets import (
     dismiss_pet_cluster,
@@ -18,12 +19,15 @@ from bpp.db.pets import (
 )
 from bpp.db.photos import get_photo_id_by_path
 from bpp.db.smart_albums import get_affected_album_types, refresh_smart_albums
-from bpp.errors import BppError, NotFoundError, ValidationError
+from bpp.errors import NotFoundError, ValidationError
 from bpp.utils.logging import get_logger
+from bpp.web import box_crop
+from bpp.web.media_support import crop_failure_error, raw_full_jpeg_path, raw_preview_error
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx
 
 _ACTIVE = ACTIVE_PHOTO_SQL
+_P_ACTIVE = active_photo_sql("p")
 
 log = get_logger(__name__)
 
@@ -37,51 +41,31 @@ def _generate_pet_crop(
     path_hash: str,
     detection_index: int,
     max_long_side: int = 1024,
+    raw_full_jpeg: str | None = None,
 ) -> str | None:
-    """Generate a cropped pet thumbnail, returns path or None."""
-    # Include bbox hash so re-analysis with a different bbox gets a fresh crop.
+    """Generate a cropped pet thumbnail, returns path or None.
+    *raw_full_jpeg* is the cache path of a camera RAW's full-size
+    conversion (see ``box_crop.open_oriented``)."""
+    # Include bbox hash so re-analysis with a different bbox gets a fresh
+    # crop. Keyed by the four numbers, whatever sequence carries them (a
+    # sqlite3.Row's str() is its object address: a key that never hits).
+    bx, by, bw, bh = bbox
+    bbox = (bx, by, bw, bh)
     bbox_tag = hashlib.md5(f"{bbox}".encode()).hexdigest()[:8]
     crop_path = os.path.join(crop_dir, f"pet_{path_hash}_{detection_index}_{bbox_tag}.jpg")
     if os.path.exists(crop_path):
         return crop_path
 
-    try:
-        from PIL import Image, ImageOps
-
-        from bpp.utils.retry import retry_io
-
-        # Context manager closes the file handle — on-demand crops leak an
-        # FD each otherwise (same fix as face_crop.py).
-        with retry_io(Image.open, filepath, label="pet_crop") as src:
-            img = ImageOps.exif_transpose(src)
-            orig_w, orig_h = img.size
-            long_side = max(orig_w, orig_h)
-            scale = long_side / max_long_side if long_side > max_long_side else 1.0
-
-            bx, by, bw, bh = bbox
-            sx = int(bx * scale)
-            sy = int(by * scale)
-            sw = int(bw * scale)
-            sh = int(bh * scale)
-
-            pad_x = int(sw * PET_CROP_PADDING)
-            pad_y = int(sh * PET_CROP_PADDING)
-            x1 = max(0, sx - pad_x)
-            y1 = max(0, sy - pad_y)
-            x2 = min(orig_w, sx + sw + pad_x)
-            y2 = min(orig_h, sy + sh + pad_y)
-
-            if x1 >= x2 or y1 >= y2:
-                log.warning("Invalid crop region for %s pet %d", filepath, detection_index)
-                return None
-
-            crop = img.crop((x1, y1, x2, y2))
-        crop.thumbnail((PET_CROP_SIZE, PET_CROP_SIZE), Image.LANCZOS)
-        crop.convert("RGB").save(crop_path, "JPEG", quality=JPEG_QUALITY_CROP)
-        return crop_path
-    except Exception:
-        log.exception("Failed to generate pet crop for %s", filepath)
-        return None
+    return box_crop.generate_box_crop(
+        filepath,
+        bbox,
+        crop_path,
+        padding=PET_CROP_PADDING,
+        size=PET_CROP_SIZE,
+        max_long_side=max_long_side,
+        label="pet_crop",
+        raw_full_jpeg=raw_full_jpeg,
+    )
 
 
 @bp.get("/api/v1/pets/crop/<path_hash>/<int:detection_index>")
@@ -117,19 +101,25 @@ def api_pet_crop(path_hash: str, detection_index: int) -> Response | tuple[Respo
 
     crop_dir = ctx.dirs["pet_crops"]
     os.makedirs(crop_dir, exist_ok=True)
-    max_long_side = ctx.config.get("max_long_side", 1024)
+    max_long_side = cfg_get(ctx.config, "max_long_side")
 
-    crop_path = _generate_pet_crop(
-        filepath, row, crop_dir, path_hash, detection_index, max_long_side
-    )
+    bbox = (row["bbox_x"], row["bbox_y"], row["bbox_w"], row["bbox_h"])
+    try:
+        crop_path = _generate_pet_crop(
+            filepath,
+            bbox,
+            crop_dir,
+            path_hash,
+            detection_index,
+            max_long_side,
+            raw_full_jpeg=raw_full_jpeg_path(ctx, path_hash),
+        )
+    except box_crop.RawUnreadable:
+        raise raw_preview_error(path_hash, filepath, detection_index=detection_index) from None
     if crop_path is None:
-        raise BppError(
-            "Failed to generate crop",
-            user_message="Failed to generate crop",
-            diagnostic_message=(
-                f"_generate_pet_crop returned None for {filepath} index={detection_index}"
-            ),
-            path_hash=path_hash,
+        raise crop_failure_error(
+            path_hash,
+            f"_generate_pet_crop returned None for {filepath} index={detection_index}",
             detection_index=detection_index,
         )
 
@@ -199,7 +189,7 @@ def api_pet_cluster_detail(cluster_id: int) -> tuple[Response, int]:
         "SELECT pd.id, pd.detection_index, p.filepath, pd.confidence "
         "FROM pet_detections pd "
         "JOIN photos p ON p.id = pd.photo_id "
-        f"WHERE pd.cluster_id = ? AND p.{_ACTIVE} "
+        f"WHERE pd.cluster_id = ? AND {_P_ACTIVE} "
         "ORDER BY COALESCE(pd.confidence, 0) DESC, p.filepath, pd.detection_index",
         (cluster_id,),
     ).fetchall()

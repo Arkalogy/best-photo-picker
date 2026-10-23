@@ -26,6 +26,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from bpp.scoring.inference_log import report_inference_failure
+from bpp.scoring.install_hold import requires
 from bpp.scoring.model_base import ModelSingleton
 from bpp.utils.logging import get_logger
 from bpp.utils.paths import models_dir as _models_dir
@@ -46,7 +48,7 @@ _MODEL_DIR = str(_models_dir())
 # Why this one: float16 quantised "latest" lite hand landmarker —
 #         MediaPipe ships heavier models for AR/skeletal tracking
 #         that bpp doesn't need.
-# License: Apache 2.0 (MediaPipe).
+# License: see the bpp.registry entry ``mediapipe_hand_landmarker``.
 # To bump: Google's `/latest/` pattern means the URL stays stable
 #         across releases. SHA pin still detects when the artifact
 #         is rotated.
@@ -82,8 +84,8 @@ _hand_landmarker = ModelSingleton(
     model_url=_HAND_MODEL_URL,
     model_sha256=_HAND_MODEL_SHA256,
     create_fn=_create_hand_detector,
-    registry_id=None,  # ancillary mediapipe model, no licensing concern
-    import_check=lambda: __import__("mediapipe"),
+    registry_id="mediapipe_hand_landmarker",
+    import_check=requires("mediapipe.tasks"),  # what create imports
 )
 # Inference lock: MediaPipe detectors are NOT thread-safe — serialize .detect() calls.
 _hand_lock = threading.Lock()
@@ -121,6 +123,7 @@ def _detect_hand_bboxes(image: np.ndarray) -> list[tuple[int, int, int, int]]:
         with _hand_lock:
             result = detector.detect(mp_image)
     except Exception:
+        report_inference_failure("Hand filter")
         return []
 
     if not result.hand_landmarks:

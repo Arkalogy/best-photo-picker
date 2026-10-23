@@ -1,4 +1,4 @@
-"""TDD tests for M-2: permanent delete must clean up cache files."""
+"""TDD tests: permanent delete must clean up cache files."""
 
 from __future__ import annotations
 
@@ -69,29 +69,26 @@ def test_remove_for_hash_cleans_content_hash_inpaint(tmp_path):
     assert not (thumb_dir / f"{path_hash}_inpainted.png").exists()
 
 
-def test_remove_for_hash_catches_unregistered_suffixes(tmp_path):
-    """Glob-based cleanup must catch suffixes that aren't in
-    PHOTO_CACHE_SUFFIXES — that's the whole point of switching from
-    iterating the registry to globbing. Pins the regression: if a
-    future contributor adds a new variant suffix and forgets to
-    update the registry, cleanup STILL works."""
+def test_remove_for_hash_sweeps_every_registered_suffix_in_both_formats(tmp_path):
+    """Cleanup removes exactly the registered variants (no directory
+    listing — the cache folder is swept per photo on every edit save and
+    delete). A suffix missing from PHOTO_CACHE_SUFFIXES would leak, which
+    tests/test_cache_suffix_registry.py guards against."""
+    from bpp.constants import PHOTO_CACHE_SUFFIXES
+
     thumb_dir = tmp_path / "thumbs"
     thumb_dir.mkdir()
     cache = ThumbnailCache(str(thumb_dir))
 
     h = "abc12300"
-    # The base thumb is the only suffix in PHOTO_CACHE_SUFFIXES that's
-    # an empty string. Future hypothetical variants:
-    (thumb_dir / f"{h}.jpg").write_bytes(b"thumb")
-    (thumb_dir / f"{h}_future_variant.jpg").write_bytes(b"unknown")
-    (thumb_dir / f"{h}_another_one.png").write_bytes(b"also unknown")
+    names = [f"{h}{suffix}{ext}" for suffix in PHOTO_CACHE_SUFFIXES for ext in (".jpg", ".png")]
+    for n in names:
+        (thumb_dir / n).write_bytes(b"x")
 
     removed = cache.remove_for_hash(h)
 
-    # All three deleted via glob, even though only "" is in the registry
-    assert removed == 3
-    assert not (thumb_dir / f"{h}_future_variant.jpg").exists()
-    assert not (thumb_dir / f"{h}_another_one.png").exists()
+    assert removed == len(names)
+    assert not any((thumb_dir / n).exists() for n in names)
 
 
 def test_remove_for_hash_does_not_touch_other_hashes(tmp_path):

@@ -108,7 +108,7 @@ export async function _editorAutoEnhance() {
       _refreshAdjustTab();
       _applyLivePreview();
       // No toast: the live preview + moved sliders show the enhancement
-      // applied instantly. (Toast-noise audit item 8.)
+      // applied instantly.
     } else if (data.errors && data.errors[p.filepath]) {
       toastError("auto-enhance the photo", new Error(data.errors[p.filepath]));
     }

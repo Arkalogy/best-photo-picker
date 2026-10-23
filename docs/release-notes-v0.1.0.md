@@ -9,15 +9,15 @@ First public release. Local-first, face-aware photo curation — pick the best s
 - **Near-duplicate detection** — burst shots and visually similar photos grouped by perceptual hash distance. Step through duplicates side-by-side and keep the winner.
 - **Live Photo sidecar filtering** — iPhone `_N` companion files excluded from counts and albums automatically.
 - **Full photo library** — import, browse, tag, edit (non-destructive), export, trash, search, maps, calendar, memories, slideshow.
-- **Offline-first** — model downloads happen once; no cloud account, no telemetry. Your photos never leave the machine for analysis.
+- **Local-first** — your photos never leave the machine for analysis; models download once and are cached; no cloud account, no telemetry. (bpp does make a few network calls — a signed model-registry check at startup, an update check, map tiles — listed in the README's Privacy section.)
 - **Optional LAN sharing** — serve the UI on your network, approve devices via QR-code pairing.
 - **Native macOS app** — Tauri v2 wrapper with native menus and auto-respawn on crash.
 
 ## Install
 
 ```bash
-pip install bppicker[web]      # Flask UI, no ML models
-pip install bppicker[web,faces,heic,raw]  # recommended for macOS
+pip install "bppicker[web]"      # Flask UI; ML models download on first analysis
+pip install "bppicker[web,faces,heic,raw]"  # recommended for macOS
 bpp serve --library ~/Pictures/MyPhotos
 ```
 
@@ -44,7 +44,7 @@ See the [README](https://github.com/Arkalogy/best-photo-picker#readme) for the f
 
 ## Roadmap
 
-- **Official Docker image** (`arkalogy/bppicker`) for one-command self-hosting — the build pipeline is in place; publishing is planned for a follow-up release.
+- **Official Docker image** for one-command self-hosting — not published. The repo ships a `Dockerfile` and a manually triggered build workflow, but neither has been run in CI yet.
 
 ## Full changelog
 

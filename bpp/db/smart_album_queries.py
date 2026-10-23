@@ -25,6 +25,7 @@ from bpp.utils.logging import get_logger
 log = get_logger(__name__)
 
 _ACTIVE = ACTIVE_PHOTO_SQL
+_P_ACTIVE = active_photo_sql("p")
 
 # Aliased active filters for self-join queries (e.g., duplicates)
 _P1_ACTIVE = active_photo_sql("p1")
@@ -94,7 +95,7 @@ def _get_all_ids(conn: sqlite3.Connection, _rule: dict) -> list[int]:
 def _get_unsorted_ids(conn: sqlite3.Connection, _rule: dict) -> list[int]:
     rows = conn.execute(
         "SELECT p.id FROM photos p "
-        f"WHERE p.{_ACTIVE} "
+        f"WHERE {_P_ACTIVE} "
         "AND p.id NOT IN ("
         "  SELECT ap.photo_id FROM album_photos ap "
         "  JOIN albums a ON a.id = ap.album_id "
@@ -110,7 +111,7 @@ def _get_pet_ids(conn: sqlite3.Connection, rule: dict) -> list[int]:
         rows = conn.execute(
             "SELECT DISTINCT p.id FROM photos p "
             "JOIN pet_detections pd ON pd.photo_id = p.id "
-            f"WHERE pd.cluster_id = ? AND p.{_ACTIVE}",
+            f"WHERE pd.cluster_id = ? AND {_P_ACTIVE}",
             (cid,),
         ).fetchall()
         return [r[0] for r in rows]
@@ -163,7 +164,7 @@ def _get_person_ids(conn: sqlite3.Connection, rule: dict) -> list[int]:
     face_rows = conn.execute(
         "SELECT DISTINCT fe.photo_id FROM face_embeddings fe "
         "JOIN photos p ON p.id = fe.photo_id "
-        f"WHERE fe.cluster_id=? AND p.{_ACTIVE}",
+        f"WHERE fe.cluster_id=? AND {_P_ACTIVE}",
         (cluster_id,),
     ).fetchall()
     ids.update(r[0] for r in face_rows)
@@ -171,7 +172,7 @@ def _get_person_ids(conn: sqlite3.Connection, rule: dict) -> list[int]:
         tag_rows = conn.execute(
             "SELECT pt.photo_id FROM photo_person_tags pt "
             "JOIN photos p ON p.id = pt.photo_id "
-            f"WHERE pt.cluster_id=? AND p.{_ACTIVE}",
+            f"WHERE pt.cluster_id=? AND {_P_ACTIVE}",
             (cluster_id,),
         ).fetchall()
         ids.update(r[0] for r in tag_rows)
@@ -246,21 +247,18 @@ def _get_no_faces_ids(conn: sqlite3.Connection, _rule: dict) -> list[int]:
 
 
 def _get_document_ids(conn: sqlite3.Connection, _rule: dict) -> list[int]:
-    import numpy as np
 
     try:
-        from bpp.db.clip import get_all_clip_embeddings
+        from bpp.db.clip import load_clip_matrix
         from bpp.scoring.clip_embed import compute_text_embedding
     except ImportError:
         return []
-    embeddings = get_all_clip_embeddings(conn)
-    if not embeddings:
+    photo_ids_list, emb_matrix = load_clip_matrix(conn)  # one copy, no per-photo dict
+    if not photo_ids_list:
         return []
     text_emb = compute_text_embedding(DOCUMENT_PROMPT)
     if text_emb is None:
         return []
-    photo_ids_list = list(embeddings.keys())
-    emb_matrix = np.stack([embeddings[pid] for pid in photo_ids_list])
     similarities = emb_matrix @ text_emb
     matching = [
         photo_ids_list[i]
@@ -281,7 +279,7 @@ def _get_edited_ids(conn: sqlite3.Connection, _rule: dict) -> list[int]:
     rows = conn.execute(
         f"SELECT pe.photo_id FROM photo_edits pe "
         f"JOIN photos p ON p.id = pe.photo_id "
-        f"WHERE p.{_ACTIVE} ORDER BY pe.modified_at DESC"
+        f"WHERE {_P_ACTIVE} ORDER BY pe.modified_at DESC"
     ).fetchall()
     return [r[0] for r in rows]
 
@@ -293,7 +291,7 @@ def _get_tag_ids(conn: sqlite3.Connection, rule: dict) -> list[int]:
     rows = conn.execute(
         "SELECT DISTINCT p.id FROM photos p "
         "JOIN photo_tags pt ON pt.photo_id = p.id "
-        f"WHERE pt.tag_id = ? AND p.{_ACTIVE}",
+        f"WHERE pt.tag_id = ? AND {_P_ACTIVE}",
         (tid,),
     ).fetchall()
     return [r[0] for r in rows]

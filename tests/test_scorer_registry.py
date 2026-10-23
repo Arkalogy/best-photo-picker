@@ -272,3 +272,43 @@ class TestPluginScorerFlowsThroughPipeline:
         compute_aggregate([photo_with], {})
         # No effect — weight is 0
         assert abs(photo_with["aggregate_score"] - 0.595) < 1e-5
+
+
+class TestPluginWeightKey:
+    def test_a_plugin_weight_is_a_bounded_setting_until_the_plugin_goes(self, reset_plugin_scorers):
+        from bpp.config import DEFAULTS, cfg_get
+        from bpp.config_schema import get_schema
+        from bpp.scoring.registry import _reset_plugin_scorers_for_tests, register_scorer
+
+        register_scorer(
+            ScorerDef(
+                key="myp_tone",
+                optional=True,
+                score_fn=lambda *_a, **_k: {},
+                weight_key="myp_tone_weight",
+                default_weight=0.2,
+            )
+        )
+        assert cfg_get({}, "myp_tone_weight") == 0.2
+        field = get_schema("myp_tone_weight")
+        assert (field.min, field.max) == (0.0, 1.0)
+        _reset_plugin_scorers_for_tests()
+        assert "myp_tone_weight" not in DEFAULTS
+        assert get_schema("myp_tone_weight") is None
+
+    @pytest.mark.parametrize("bad", ["max_per_day", "blur_weight", "myp_tone"])
+    def test_a_weight_key_that_is_an_app_setting_or_misnamed_is_refused(
+        self, reset_plugin_scorers, bad
+    ):
+        from bpp.scoring.registry import register_scorer
+
+        with pytest.raises(ValueError):
+            register_scorer(
+                ScorerDef(
+                    key="myp_tone",
+                    optional=True,
+                    score_fn=lambda *_a, **_k: {},
+                    weight_key=bad,
+                    default_weight=0.2,
+                )
+            )

@@ -12,9 +12,14 @@
  * fallback.
  */
 
-import { apiFetch, authEventSource } from "./api-client.mjs";
+import { apiFetch } from "./api-client.mjs";
 import { appConfirm } from "./dialogs.mjs";
-import { parseSSE } from "./format-helpers.mjs";
+import {
+  followInstall,
+  installAllowedNow,
+  showInstallDone,
+  toastInstallError,
+} from "./install-done.mjs";
 import { toast, toastError } from "./toast.mjs";
 
 export function _renderRemoveControls() {
@@ -161,6 +166,9 @@ export async function _checkInpaintAvailable() {
   try {
     const data = await apiFetch("/api/v1/inpaint/status");
     win._inpaintAvailable = !!data.available;
+    win._inpaintRestartPending = !!data.restart_pending;
+    win._inpaintRepairNeeded = !!data.repair_needed;
+    win._inpaintInstallable = data.installable !== false;
   } catch (err) {
     console.warn("Inpaint status check failed:", err);
     win._inpaintAvailable = false;
@@ -176,11 +184,21 @@ function _updateInpaintStatus() {
   const applyBtn = /** @type {HTMLButtonElement | null} */ (
     document.getElementById("inpaint-apply-btn")
   );
-  if (win._inpaintAvailable === false) {
+  if (win._inpaintAvailable === false && win._inpaintRestartPending) {
     el.innerHTML =
-      '<span class="editor-remove-unavailable">AI removal model not available.</span>' +
-      '<button class="btn btn-primary btn-sm" style="margin-top:8px" data-action="_installInpaintModel" data-arg0="this">' +
-      "Download AI Model</button>";
+      '<span class="editor-remove-unavailable">Restart Best Photo Picker to finish installing AI removal.</span>';
+    if (applyBtn) applyBtn.disabled = true;
+  } else if (win._inpaintAvailable === false) {
+    const why = win._inpaintRepairNeeded
+      ? "The AI removal install didn't finish — download it again to repair it."
+      : "AI removal model not available.";
+    // Only the owner can install: a paired device just reads "not available".
+    const download =
+      win._inpaintInstallable === false
+        ? ""
+        : '<button class="btn btn-primary btn-sm" style="margin-top:8px" data-action="_installInpaintModel" data-arg0="this">' +
+          "Download AI Model</button>";
+    el.innerHTML = `<span class="editor-remove-unavailable">${why}</span>` + download;
     if (applyBtn) applyBtn.disabled = true;
   } else if (win._inpaintAvailable === true) {
     el.innerHTML = "";
@@ -194,6 +212,15 @@ function _updateInpaintStatus() {
 export async function _installInpaintModel(btn) {
   /** @type {any} */
   const win = window;
+  if (!(await installAllowedNow())) {
+    // AI removal itself waits for a restart: say so where the button was.
+    // (Another install waiting, or "not now": the toast said so.)
+    if (win.installRestartPending?.includes("inpaint")) {
+      win._inpaintRestartPending = true;
+      _updateInpaintStatus();
+    }
+    return;
+  }
   const ok = await appConfirm(
     "Download AI removal model?",
     "This will download and install the LaMa inpainting package (~50 MB install + ~200 MB model on first use)."
@@ -202,42 +229,31 @@ export async function _installInpaintModel(btn) {
   btn.disabled = true;
   btn.textContent = "Installing…";
   try {
-    const resp = await apiFetch("/api/v1/install/inpaint", { method: "POST" });
-    if (resp.error) {
-      toast(resp.error, true);
-      btn.disabled = false;
-      btn.textContent = "Download AI Model";
+    await apiFetch("/api/v1/install/inpaint", { method: "POST" });
+    const done = await followInstall("inpaint", () => {
+      btn.textContent = "Installing…";
+    });
+    if (showInstallDone("AI removal model", "inpaint", done)) {
+      // Usable after a restart: say so where the button was.
+      win._inpaintRestartPending = true;
+      _updateInpaintStatus();
+    } else {
+      // It was there already: ask the server whether it works now.
+      win._inpaintAvailable = null;
+      await _checkInpaintAvailable();
+    }
+  } catch (e) {
+    const refreshed = toastInstallError("install the inpainting model", e);
+    const err = /** @type {any} */ (e);
+    // pip ran for AI removal (failed, but wrote packages), or the server
+    // refused because AI removal itself waits for a restart: say "restart"
+    // where the button was. (Another feature waiting: the toast said so.)
+    await refreshed; // (restart pending: learn which install waits)
+    if (err?.restartRequired || win.installRestartPending?.includes("inpaint")) {
+      win._inpaintRestartPending = true;
+      _updateInpaintStatus();
       return;
     }
-    await new Promise((resolve, reject) => {
-      const src = authEventSource("/api/v1/install/inpaint/progress");
-      src.onmessage = (ev) => {
-        const msg = /** @type {any} */ (parseSSE(ev.data));
-        if (!msg) return;
-        if (msg.type === "log") {
-          btn.textContent = "Installing…";
-        } else if (msg.type === "done") {
-          src.close();
-          resolve(undefined);
-        } else if (msg.type === "error") {
-          src.close();
-          reject(new Error(msg.message || "Install failed"));
-        }
-      };
-      src.onerror = () => {
-        src.close();
-        reject(new Error("Connection lost"));
-      };
-    });
-    toast("AI removal model installed successfully");
-    win._inpaintAvailable = null;
-    await _checkInpaintAvailable();
-    const applyBtn = /** @type {HTMLButtonElement | null} */ (
-      document.getElementById("inpaint-apply-btn")
-    );
-    if (applyBtn && win._inpaintAvailable) applyBtn.disabled = false;
-  } catch (e) {
-    toastError("install the inpainting model", e);
     btn.disabled = false;
     btn.textContent = "Download AI Model";
   }

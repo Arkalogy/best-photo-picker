@@ -21,7 +21,7 @@
  *   function references at call time).
  */
 
-import { apiFetch, authedSrc } from "./api-client.mjs";
+import { apiFetch, petCropUrl } from "./api-client.mjs";
 import { appConfirm } from "./dialogs.mjs";
 import { esc, escapeAttr } from "./text-format.mjs";
 import { toast, toastError } from "./toast.mjs";
@@ -367,7 +367,7 @@ export async function updateLightboxPets(p) {
         const label = d.class.charAt(0).toUpperCase() + d.class.slice(1);
         const albumName = petDisplayName(d.cluster_id) || label;
         return `<div class="lb-pet-chip" title="${escapeAttr(label)} (${(d.confidence * 100).toFixed(0)}%)">
-        <img src="${authedSrc(`/api/v1/pets/crop/${p.thumb_hash}/${d.detection_index}`)}" class="lb-pet-crop">
+        <img src="${petCropUrl(p.thumb_hash, d.detection_index)}" class="lb-pet-crop">
         <span>${esc(albumName)}</span>
       </div>`;
       })
