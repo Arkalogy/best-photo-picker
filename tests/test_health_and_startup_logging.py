@@ -1,4 +1,4 @@
-"""Second-pass supportability review (v0.1.3): a failed face-extraction
+"""Second-pass supportability review (v0.2.0): a failed face-extraction
 resume shows in health, the clustering journal handler reports failure,
 startup plugin dispatch and the install-note cleanup are logged,
 debug/memory reports current and peak memory, and the API docs match."""

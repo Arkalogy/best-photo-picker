@@ -196,7 +196,7 @@ The macOS desktop app is built in CI with
 with PyInstaller, so — unlike a plain `pip install bppicker` — it
 contains the optional runtime components listed above, together with
 the native libraries their wheels bundle and the Python runtime
-itself. Checked against the v0.1.2 release DMG and the v0.1.3 build
+itself. Checked against the v0.1.2 release DMG and the v0.2.0 build
 changes, the app's bpp server includes among others:
 
 - the CPython 3.11 runtime (PSF-2.0), with the libraries its build
@@ -246,7 +246,7 @@ changes, the app's bpp server includes among others:
     any way out of the use of this software, even if advised of the
     possibility of such damage.
 
-Not included, from v0.1.3 onward: NudeNet's Python package, and dlib,
+Not included, from v0.2.0 onward: NudeNet's Python package, and dlib,
 face_recognition and face_recognition_models. Those last three are
 the optional dlib face path; face_recognition loads all of
 face_recognition_models' weights when it is imported, including the
@@ -260,7 +260,7 @@ No other model weights are bundled; they are downloaded at first use
 exactly as for a pip install. Each component keeps its own license
 inside the app.
 
-Inventory and corresponding source (v0.1.3 onward). Every desktop
+Inventory and corresponding source (v0.2.0 onward). Every desktop
 release on GitHub carries two extra files:
 
 - `bppicker-third-party-inventory.json` — for the app's Python side

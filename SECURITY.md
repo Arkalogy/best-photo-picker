@@ -4,7 +4,8 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
+| 0.2.x   | :white_check_mark: |
+| 0.1.x   | :x:                |
 
 ## Reporting a Vulnerability
 
@@ -29,7 +30,7 @@ For urgent security matters you can also email **support@arkalogy.com**. (GitHub
 
 ## Threat Model & Trust Assumptions
 
-The full threat model — trust assumptions, scope, what's in/out of bounds, and the extension hooks for hardening into a multi-user or internet-facing deployment — lives in [`docs/security.md`](docs/security.md). The summary below is what's true for the v0.1.x line:
+The full threat model — trust assumptions, scope, what's in/out of bounds, and the extension hooks for hardening into a multi-user or internet-facing deployment — lives in [`docs/security.md`](docs/security.md). The summary below is what's true for the v0.2.x line:
 
 **Designed for single-user, local-network deployments**:
 
@@ -55,7 +56,7 @@ The full threat model — trust assumptions, scope, what's in/out of bounds, and
 - Unsafe subprocess handling (analyze worker, video trim, ffmpeg) — e.g. argument injection via file names or parameters
 
 **Out of scope**:
-- Rate-limiting on a single-owner local-network app (not a hardening target for v0.1.x)
+- Rate-limiting beyond the phone-pairing endpoint (not a hardening target for v0.2.x)
 - DoS via expensive CPU work — the photo collection itself is the workload; analysis cost is by-design unbounded
 - Anything requiring physical access to the host machine
 - Issues in third-party dependencies — please report those upstream first

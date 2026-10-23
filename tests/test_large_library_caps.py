@@ -1,4 +1,4 @@
-"""Second-pass performance review (v0.1.3): the recluster endpoint honours
+"""Second-pass performance review (v0.2.0): the recluster endpoint honours
 the face cap, blocked clustering and face assignment cast per chunk,
 pass 2 of the semantic dedupe sizes its block by bytes, and the selection
 diversity check is one vector op per candidate."""

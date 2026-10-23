@@ -27,7 +27,7 @@ What actually happened. Include error messages or screenshots if applicable.
 - OS: (e.g., macOS 15, Ubuntu 24.04)
 - Python: (e.g., 3.11.8)
 - Install method: (Mac app, pipx/pip, Docker, editable)
-- bpp version: (e.g., 0.1.3; Mac app: About → version)
+- bpp version: (e.g., 0.2.0; Mac app: About → version)
 
 ## Logs
 

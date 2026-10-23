@@ -6,7 +6,7 @@ this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.1.3] — 2026-10-21
+## [0.2.0] — 2026-10-23
 
 Licensing, accuracy and hardening release. **Schema version: 44** (unchanged).
 
@@ -74,6 +74,9 @@ Licensing, accuracy and hardening release. **Schema version: 44** (unchanged).
   dismissal.
 
 ### Changed
+- A minor rather than a patch bump: this release drops the `--seed` flag and
+  locks the page behind a boot key by default, both of which change how
+  scripts call it.
 - **Large libraries.** Face clustering of more than 8,000 faces runs in
   blocks with bounded memory; the face detector is built once per
   thread; new faces are matched to known people in one pass. The People
@@ -425,14 +428,14 @@ External calls are limited to documented features:
 - LAN-share traffic to paired devices, never traversing the
   internet.
 
-### Platform scope (0.1.x)
+### Platform scope (unchanged through 0.2.0)
 
 - macOS-first. The Flask backend runs on Linux too; the Tauri
   desktop wrapper currently builds only the macOS bundle.
 - Python 3.11 only (CI tests this version; 3.12+ is unvalidated).
 
-[Unreleased]: https://github.com/Arkalogy/best-photo-picker/compare/v0.1.3...HEAD
-[0.1.3]: https://github.com/Arkalogy/best-photo-picker/releases/tag/v0.1.3
+[Unreleased]: https://github.com/Arkalogy/best-photo-picker/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Arkalogy/best-photo-picker/releases/tag/v0.2.0
 [0.1.2]: https://github.com/Arkalogy/best-photo-picker/releases/tag/v0.1.2
 [0.1.1]: https://github.com/Arkalogy/best-photo-picker/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Arkalogy/best-photo-picker/releases/tag/v0.1.0

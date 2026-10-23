@@ -1,4 +1,4 @@
-"""Second-pass patterns review (v0.1.3): IN batching goes through
+"""Second-pass patterns review (v0.2.0): IN batching goes through
 in_batches everywhere (and the two library-sized lists are split), the
 DB layer no longer reaches into bpp.web, the layering gate sees every
 import form, the phase-5 backfill thread has an owner, and the sidebar

@@ -468,7 +468,7 @@ The reader lives in `bpp/commands/serve.py`.
 **Type:** `1` to enable (the `--open-loopback` flag does the same).
 
 **What it does:** serves the app to any local process without the boot
-key, as versions before 0.1.3 did. Use it when opening the page by hand
+key, as versions before 0.2.0 did. Use it when opening the page by hand
 or from a test runner that navigates to `/` in fresh browser contexts
 (`scripts/run_e2e.sh` sets it).
 

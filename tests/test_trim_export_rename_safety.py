@@ -1,4 +1,4 @@
-"""Second-pass security review (v0.1.3): trim output never collides with
+"""Second-pass security review (v0.2.0): trim output never collides with
 a library file, the exported gallery escapes names, library rename only
 moves a registered library, and report.csv can't carry formulas."""
 

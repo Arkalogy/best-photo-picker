@@ -218,7 +218,7 @@ class WebAppState(_LegacyDelegateMixin):
         # Set by `bpp serve` / the desktop shell: the loopback index page
         # renders the owner token only to a caller presenting this secret
         # (first load, then a cookie). None = open loopback (tests, dev
-        # opt-out), the pre-0.1.3 behaviour.
+        # opt-out), the pre-0.2.0 behaviour.
         self.boot_secret: str | None = None
         # Port is set by the serve command after argparse, so endpoints
         # can render the correct share URL. The LAN sharing toggle

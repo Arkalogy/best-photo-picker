@@ -1,4 +1,4 @@
-"""Security review follow-ups for the 0.1.3 release.
+"""Security review follow-ups for the 0.2.0 release.
 
 The loopback index page carries the owner token; with a boot secret set
 only the caller that presents it (the shell's first navigation, then

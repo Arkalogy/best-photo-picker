@@ -1,4 +1,4 @@
-"""Second-pass reliability review (v0.1.3): thumbnails are written to a
+"""Second-pass reliability review (v0.2.0): thumbnails are written to a
 temp file and renamed into place; the cache warmer survives a delete
 while it runs."""
 

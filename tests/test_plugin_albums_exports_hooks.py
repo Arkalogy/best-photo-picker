@@ -1,4 +1,4 @@
-"""Second-pass extensibility review (v0.1.3): a plugin smart album has a
+"""Second-pass extensibility review (v0.2.0): a plugin smart album has a
 public creation helper and documented callback signatures, non-smart_
 types are refused at registration, a plugin export handler's failure is
 per-photo, and the import worker fires post_analyze."""
