@@ -74,7 +74,7 @@ def test_duplicates_album_ui_hook_is_registered_by_the_web_layer():
 def test_phase5_backfill_thread_is_joined_with_the_store_threads():
     src = (BPP / "web" / "analysis_store.py").read_text()
     assert "phase5_thread" in src
-    joined = src[src.index("def join_threads") :]
+    joined = src[src.index("def _threads") :]
     assert '("phase5_thread", self.phase5_thread)' in joined
     init = (BPP / "web" / "state_init.py").read_text()
     assert "phase5_thread = " in init

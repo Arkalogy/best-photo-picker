@@ -32,8 +32,18 @@ export const _authToken =
  * a tab left open across a library switch cannot act on the other
  * library's rows (the server answers 409 instead).
  */
-export const _libraryId =
+export let _libraryId =
   document.querySelector('meta[name="library-id"]')?.getAttribute("content") || "";
+
+/**
+ * Bind this tab to the library the server just switched to (the switch
+ * response carries its id). A tab that switches without reloading keeps
+ * working instead of getting 409 on every later edit.
+ * @param {string} id
+ */
+export function setLibraryId(id) {
+  if (typeof id === "string" && id) _libraryId = id;
+}
 
 /**
  * Append the auth token to a URL for use in `<img src>` / `<video src>`

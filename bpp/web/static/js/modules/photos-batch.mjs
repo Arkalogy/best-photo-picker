@@ -51,7 +51,15 @@ export async function batchOverride(mode) {
       body: JSON.stringify({ filepaths, mode }),
     });
   } catch (e) {
+    // The server kept the old state: so does the view.
+    for (const fp of filepaths) {
+      if (prevOverrides[fp]) overrides[fp] = prevOverrides[fp];
+      else delete overrides[fp];
+    }
+    saveOverrides();
+    scheduleRecompute();
     toastError("apply the override to the selected photos", e);
+    return;
   }
   const label =
     mode === "include"
@@ -112,7 +120,13 @@ export async function batchFavorite(favorite) {
       body: JSON.stringify({ filepaths, favorite }),
     });
   } catch (e) {
+    for (const fp of filepaths) {
+      if (prevFavs[fp]) favorites.add(fp);
+      else favorites.delete(fp);
+    }
+    renderGrid();
     toastError("favorite the selected photos", e);
+    return;
   }
   const label = favorite
     ? `Favorited ${filepaths.length} photos`
@@ -125,31 +139,34 @@ export async function batchFavorite(favorite) {
     renderGrid();
     const toFav = filepaths.filter((fp) => prevFavs[fp]);
     const toUnfav = filepaths.filter((fp) => !prevFavs[fp]);
-    const calls = [];
-    if (toFav.length)
-      calls.push(
+    /** @type {[string[], boolean][]} */
+    const groups = [];
+    if (toFav.length) groups.push([toFav, true]);
+    if (toUnfav.length) groups.push([toUnfav, false]);
+    Promise.allSettled(
+      groups.map(([paths, fav]) =>
         apiFetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ filepaths: toFav, favorite: true }),
+          body: JSON.stringify({ filepaths: paths, favorite: fav }),
         })
-      );
-    if (toUnfav.length)
-      calls.push(
-        apiFetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ filepaths: toUnfav, favorite: false }),
-        })
-      );
-    Promise.all(calls).catch((e) => {
-      // The server kept the batch: put the view back the way it is.
-      for (const fp of filepaths) {
-        if (favorite) favorites.add(fp);
-        else favorites.delete(fp);
+      )
+    ).then((results) => {
+      // The server kept the batch for the call that failed: put only
+      // those photos back the way it has them.
+      let failure = null;
+      results.forEach((r, i) => {
+        if (r.status !== "rejected") return;
+        failure = r.reason;
+        for (const fp of groups[i][0]) {
+          if (favorite) favorites.add(fp);
+          else favorites.delete(fp);
+        }
+      });
+      if (failure) {
+        renderGrid();
+        toastError("undo the favorite change", failure, "reload to see the saved state");
       }
-      renderGrid();
-      toastError("undo the favorite change", e, "reload to see the saved state");
     });
   });
 }

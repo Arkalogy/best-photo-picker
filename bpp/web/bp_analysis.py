@@ -268,8 +268,21 @@ def api_clear_library() -> tuple[Response, int]:
     # Background recovery threads (hashes, clustering) write too: let
     # them finish before the rows and folders go, then re-arm them (the
     # join sets the cancel flag the next backfill would otherwise honour).
-    ctx.analysis_store.join_threads(timeout=30.0)
-    ctx.analysis_store.bump_generation_and_reset_phash()
+    # Within the request's own budget (the page gives up at 30 s).
+    ctx.analysis_store.join_threads(timeout=20.0)
+    # An import or analysis may have started in another tab while we
+    # waited: look again before anything is deleted.
+    busy_now = [name for name, w in ctx.workers.items() if getattr(w, "is_alive", False)]
+    straggler = busy_now + ctx.analysis_store.threads_alive()
+    # Re-armed on both paths: the join set the cancel token, and the
+    # next backfill must not start cancelled.
+    ctx.analysis_store.rearm_phash()
+    if straggler:
+        raise ConflictError(
+            "Cannot clear the library while background processing is still finishing; "
+            "try again in a moment",
+            blocker=straggler[0],
+        )
     conn = ctx.get_conn()
     library_path = ctx.library_path
     if not library_path:

@@ -57,12 +57,22 @@ export function _analyzeStop() {
   }
 }
 
+let _previewWalkRunning = false;
+let _previewWalkAgain = false;
+
 function _schedulePreviewRefresh() {
   /** @type {any} */
   const win = window;
   if (_previewRefreshTimer) return;
   _previewRefreshTimer = setTimeout(async () => {
     _previewRefreshTimer = null;
+    // One walk of the pages at a time; a batch that lands meanwhile
+    // asks for one more walk after it, not a second one alongside.
+    if (_previewWalkRunning) {
+      _previewWalkAgain = true;
+      return;
+    }
+    _previewWalkRunning = true;
     try {
       const photos = await fetchAllPages("/api/v1/photos/preview", { pageSize: 500 });
       if (photos.length > 0) {
@@ -77,6 +87,12 @@ function _schedulePreviewRefresh() {
       }
     } catch {
       /* ignore during analysis */
+    } finally {
+      _previewWalkRunning = false;
+      if (_previewWalkAgain) {
+        _previewWalkAgain = false;
+        _schedulePreviewRefresh();
+      }
     }
   }, 1000);
 }

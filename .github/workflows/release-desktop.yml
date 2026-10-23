@@ -75,8 +75,9 @@ jobs:
           # (cryptography), which isn't installed in this job.
           PKG_VERSION=$(grep -E '^__version__' bpp/__init__.py | sed -E 's/.*"([^"]+)".*/\1/')
           TAURI_VERSION=$(python3 -c "import json; print(json.load(open('desktop/src-tauri/tauri.conf.json'))['version'])")
-          if [ "$TAG_VERSION" != "$PKG_VERSION" ] || [ "$TAG_VERSION" != "$TAURI_VERSION" ]; then
-            echo "::error::Tag '$TAG_VERSION' vs package '$PKG_VERSION' vs tauri.conf '$TAURI_VERSION' — versions must all agree. Bump pyproject.toml, bpp/__init__.py, and desktop/src-tauri/tauri.conf.json before tagging."
+          CARGO_VERSION=$(grep -E '^version' desktop/src-tauri/Cargo.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ] || [ "$TAG_VERSION" != "$TAURI_VERSION" ] || [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
+            echo "::error::Tag '$TAG_VERSION' vs package '$PKG_VERSION' vs tauri.conf '$TAURI_VERSION' vs Cargo.toml '$CARGO_VERSION' — versions must all agree. Bump pyproject.toml, bpp/__init__.py, desktop/src-tauri/tauri.conf.json and desktop/src-tauri/Cargo.toml before tagging."
             exit 1
           fi
           echo "OK: tag $TAG_VERSION matches package and tauri.conf"

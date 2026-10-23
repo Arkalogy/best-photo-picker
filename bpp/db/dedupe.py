@@ -99,7 +99,9 @@ def _link_near_duplicates(
     # contiguous slice found by bisection. Undated rows (no EXIF, not yet
     # scored) sit in their own bucket at the end: they are compared with
     # each other only, and all of it vectorised, so a batch that shares
-    # one timestamp or none at all is not a Python-level quadratic.
+    # one timestamp or none at all is not a Python-level quadratic. (An
+    # undated near-duplicate of a dated photo is not linked here; scored
+    # rows always carry a date, from EXIF or the file time.)
     import bisect
 
     import numpy as np

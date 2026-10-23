@@ -10,6 +10,7 @@ re-exported from export.py for back-compat with plugins.
 from __future__ import annotations
 
 import contextlib
+import errno
 import os
 import shutil
 import zipfile
@@ -48,6 +49,21 @@ def _unlink_existing(dest: str) -> None:
         os.unlink(dest)
 
 
+def _entry(path: str) -> str:
+    """The directory entry a path names: its folder resolved, the final
+    component as written (a symlink there is that entry, not its target)."""
+    return os.path.join(os.path.realpath(os.path.dirname(path)), os.path.basename(path))
+
+
+def _refuse_self_export(src: str, dest: str) -> None:
+    """A destination that is the source's own directory entry (the photo
+    already lives at the export path) is refused: unlinking or replacing
+    it would destroy the original. A second hard link or a symlink at
+    ``dest`` is a different entry and may be replaced."""
+    if _entry(dest) == _entry(src):
+        raise OSError(errno.EEXIST, "the export target is the photo itself", dest)
+
+
 def _process_image(
     src: str, dest: str, fmt: str, max_size: int | None, quality: int, *, keep_exif: bool = False
 ) -> str:
@@ -57,6 +73,7 @@ def _process_image(
     photo comes out upright, as the copy path does). With *keep_exif*
     the remaining EXIF rides along; without it the output carries none.
     """
+    _refuse_self_export(src, dest)
     from PIL import Image, ImageOps
 
     # Context manager releases the source file handle when the block
@@ -180,6 +197,7 @@ def _copy_image_without_metadata(src: str, dest: str, quality: int) -> str:
     that photo, never a copy of the original bytes (they carry the
     metadata the user asked to drop). A disk error keeps its errno so
     the export loop can still tell a full disk from a bad photo."""
+    _refuse_self_export(src, dest)
     import contextlib
 
     # A sibling ".part" file, written with the process umask like any
@@ -216,6 +234,7 @@ def metadata_not_strippable(src: str, why: str) -> MetadataNotStrippableError:
 
 
 def _export_copy(src: str, dest: str) -> None:
+    _refuse_self_export(src, dest)
     tmp = _fresh_dest(dest)
     try:
         retry_io(shutil.copy2, src, tmp, label="export-copy")
@@ -226,11 +245,13 @@ def _export_copy(src: str, dest: str) -> None:
 
 
 def _export_hardlink(src: str, dest: str) -> None:
+    _refuse_self_export(src, dest)
     _unlink_existing(dest)
     retry_io(os.link, src, dest, label="export-link")
 
 
 def _export_symlink(src: str, dest: str) -> None:
+    _refuse_self_export(src, dest)
     _unlink_existing(dest)
     retry_io(os.symlink, os.path.abspath(src), dest, label="export-symlink")
 

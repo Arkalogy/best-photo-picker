@@ -203,6 +203,26 @@ Licensing, accuracy and hardening release. **Schema version: 44** (unchanged).
 - Removed the `--seed` flag, the recompute `seed` parameter and the
   "Selection RNG seed" setting: selection was always deterministic, so
   none of them did anything.
+- Final review sweep. Mac app: Restart Server and Quit now stop the
+  server itself (a bare kill left it holding the port, so a restart
+  could never succeed); the error screens' buttons work on the loaded
+  page; a stale "update required" verdict is cleared once the server is
+  healthy. Web page: every reload, including Cmd+R and the overlay's
+  Reload, first checks that the listener on the port is this app's
+  server and refuses to load anyone else's page; the reconnect overlay
+  clears on a locked server; the first-run wizard's library choice no
+  longer leaves the tab refused on its next edit. Data: exporting a
+  photo onto itself is refused; a folder that once received symlink
+  exports accepts later exports; "Restore All" and friends work past
+  32,000 photos; a serving lock is removed only by the server that
+  holds it; a batch of photos finishing during a hash backfill is
+  hashed too; clearing the library waits with one deadline and refuses
+  while background work is still finishing. Performance: the preview
+  grid shows its first page at once and the server reads one page per
+  request; the global duplicate pass uses a band index instead of
+  comparing every representative. Trimming a video refuses playlists
+  the same way decoding does. Failed batch actions no longer show a
+  success message.
 
 ### Documentation
 - Corrected statements that didn't match the code or the repo settings,

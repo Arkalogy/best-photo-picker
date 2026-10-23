@@ -126,6 +126,20 @@ def deduplicate(
     return selected
 
 
+#: Past this many bands (each under 3 bits) the band index stops helping.
+_MAX_BANDS = 21
+
+
+def _band_edges(threshold: int) -> list[tuple[int, int]]:
+    """``[(lo, hi), …]`` bit ranges of the threshold+1 bands of a 64-bit
+    hash, or ``[]`` when the threshold is too wide for banding."""
+    n = int(threshold) + 1
+    if n < 2 or n > _MAX_BANDS:
+        return []
+    edges = [round(64 * i / n) for i in range(n + 1)]
+    return [(edges[i], edges[i + 1]) for i in range(n)]
+
+
 def _global_dedup(items: list[dict[str, Any]], threshold: int) -> list[dict[str, Any]]:
     """Second-pass dedup: cluster by hash alone (ignoring time).
 
@@ -155,14 +169,47 @@ def _global_dedup(items: list[dict[str, Any]], threshold: int) -> list[dict[str,
     rep_ah = np.empty(len(sorted_items), dtype=np.uint64)
     rep_has_ah = np.zeros(len(sorted_items), dtype=bool)
     n_reps = 0
+    # Band index: two hashes within `threshold` bits agree on at least one
+    # of threshold+1 bands (pigeonhole), so only representatives sharing
+    # a band value with the item need an exact distance. Exact, and far
+    # fewer than all of them at the cap. (A wide threshold makes the
+    # bands too narrow to help: then every representative is compared.)
+    bands = _band_edges(threshold)
+    index: dict[tuple[int, int, bool], list[int]] = {}
+
+    def _band_keys(value: int, is_ahash: bool) -> list[tuple[int, int, bool]]:
+        return [
+            (b, (value >> lo) & ((1 << (hi - lo)) - 1), is_ahash)
+            for b, (lo, hi) in enumerate(bands)
+        ]
 
     def _remember(it: dict[str, Any]) -> None:
         nonlocal n_reps
-        rep_ph[n_reps] = np.uint64(int(it["phash"]) & _U64)
+        ph = int(it["phash"]) & _U64
+        rep_ph[n_reps] = np.uint64(ph)
         ah = it.get("ahash")
         rep_ah[n_reps] = np.uint64(int(ah) & _U64) if ah is not None else np.uint64(0)
         rep_has_ah[n_reps] = ah is not None
+        if bands:
+            for key in _band_keys(ph, False):
+                index.setdefault(key, []).append(n_reps)
+            if ah is not None:
+                for key in _band_keys(int(ah) & _U64, True):
+                    index.setdefault(key, []).append(n_reps)
         n_reps += 1
+
+    def _candidates(ph: int, ah: int | None) -> np.ndarray | None:
+        """Indices of the representatives worth an exact distance, or None
+        for all of them."""
+        if not bands:
+            return None
+        found: set[int] = set()
+        for key in _band_keys(ph, False):
+            found.update(index.get(key, ()))
+        if ah is not None:
+            for key in _band_keys(ah, True):
+                found.update(index.get(key, ()))
+        return np.fromiter(found, dtype=np.int64, count=len(found))
 
     for item in sorted_items:
         if item.get("phash") is None:
@@ -177,13 +224,21 @@ def _global_dedup(items: list[dict[str, Any]], threshold: int) -> list[dict[str,
 
         matched = False
         if n_reps:
-            dist = _hamming_many(int(item["phash"]) & _U64, rep_ph[:n_reps])
+            ph = int(item["phash"]) & _U64
             ah = item.get("ahash")
-            if ah is not None:
-                # Dual hash where both sides have one: min of the two.
-                a_dist = _hamming_many(int(ah) & _U64, rep_ah[:n_reps])
-                dist = np.where(rep_has_ah[:n_reps], np.minimum(dist, a_dist), dist)
-            matched = bool((dist <= threshold).any())
+            ah = int(ah) & _U64 if ah is not None else None
+            cand = _candidates(ph, ah)
+            if cand is None:
+                reps_ph, reps_ah, reps_has = rep_ph[:n_reps], rep_ah[:n_reps], rep_has_ah[:n_reps]
+            else:
+                reps_ph, reps_ah, reps_has = rep_ph[cand], rep_ah[cand], rep_has_ah[cand]
+            if len(reps_ph):
+                dist = _hamming_many(ph, reps_ph)
+                if ah is not None:
+                    # Dual hash where both sides have one: min of the two.
+                    a_dist = _hamming_many(ah, reps_ah)
+                    dist = np.where(reps_has, np.minimum(dist, a_dist), dist)
+                matched = bool((dist <= threshold).any())
 
         if not matched:
             representatives.append(item)

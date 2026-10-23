@@ -23,6 +23,9 @@ import {
 } from "./compare.mjs";
 
 let _compareSiblingMode = false;
+/** Bumped whenever a strip opens or closes: an Undo for another strip's
+ * photo must not slot it into this one. */
+let _compareStripId = 0;
 /** @type {any[]} */
 let _compareSiblings = [];
 let _compareSiblingIdx = -1;
@@ -46,6 +49,7 @@ export function getSiblingParent() {
   return _compareSiblingParent;
 }
 export function resetSiblingState() {
+  _compareStripId += 1;
   _compareSiblingMode = false;
   _compareSiblings = [];
   _compareSiblingIdx = -1;
@@ -62,6 +66,7 @@ export function openCompareWithSibling(parentPhoto, siblings, siblingIdx) {
   /** @type {any} */
   const win = window;
   if (!parentPhoto || !siblings || !siblings.length) return;
+  _compareStripId += 1;
   _compareSiblingMode = true;
   _compareSiblings = siblings;
   _compareSiblingIdx = siblingIdx;
@@ -242,6 +247,7 @@ export async function _siblingDelete() {
   }
 
   // 20s recoverable Undo (congruent with the Moments prune spec).
+  const stripId = _compareStripId;
   const name = sibling.filename || sibling.filepath.split("/").pop();
   toast(`Moved "${name}" to trash`, undefined, {
     duration: 20000,
@@ -249,7 +255,7 @@ export async function _siblingDelete() {
     // the photo without touching it (as if the compare had closed).
     action: {
       label: "Undo",
-      fn: () => _undoSiblingDelete(sibling, idx, stillHere === -1 || closedAfter),
+      fn: () => _undoSiblingDelete(sibling, idx, stillHere === -1 || closedAfter, stripId),
     },
   });
 }
@@ -261,8 +267,9 @@ export async function _siblingDelete() {
  * @param {any} sibling
  * @param {number} idx  original index in the strip
  * @param {boolean} wasClosed  compare had auto-closed (last sibling) — restore silently, don't reopen
+ * @param {number} stripId  the strip the photo left; another strip is left alone
  */
-async function _undoSiblingDelete(sibling, idx, wasClosed) {
+async function _undoSiblingDelete(sibling, idx, wasClosed, stripId) {
   try {
     await apiFetch("/api/v1/photos/restore", {
       method: "POST",
@@ -274,7 +281,7 @@ async function _undoSiblingDelete(sibling, idx, wasClosed) {
     return;
   }
   _setPhotoDeletedInMemory(sibling.filepath, false);
-  if (_compareSiblingMode && !wasClosed) {
+  if (_compareSiblingMode && !wasClosed && stripId === _compareStripId) {
     _compareSiblings.splice(Math.min(idx, _compareSiblings.length), 0, sibling);
     _compareSiblingIdx = idx;
     _renderCompareSide("right", _compareSiblings[_compareSiblingIdx]);

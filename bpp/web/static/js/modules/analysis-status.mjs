@@ -306,12 +306,21 @@ export async function showPreviewGallery(importedCount) {
   document.querySelector("main")?.classList.add("analyzing-pending");
   showSkeletonGrid(importedCount || 12);
 
-  const photos = await fetchAllPages("/api/v1/photos/preview", { pageSize: 500 });
-  if (photos.length > 0) {
-    win.photos = photos;
-    win.selectedPaths = new Set();
-    win.renderGrid?.();
-  }
+  // The first page replaces the skeleton as soon as it lands; the rest
+  // extend the grid as they arrive. The walk keeps its own list: a
+  // preview refresh may replace win.photos between two pages.
+  /** @type {any[]} */
+  const acc = [];
+  await fetchAllPages("/api/v1/photos/preview", {
+    pageSize: 500,
+    onPage: (items) => {
+      if (items.length === 0) return;
+      acc.push(...items);
+      win.photos = acc.slice();
+      win.selectedPaths = new Set();
+      win.renderGrid?.();
+    },
+  });
   win.loadAlbumList?.();
 }
 

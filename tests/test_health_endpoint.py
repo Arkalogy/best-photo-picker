@@ -309,7 +309,7 @@ class TestE2EFixtureSentinel:
         rate-limit bypass in app.py gates on. A real library (no sentinel)
         keeps the limiter; a fixture bypasses it so the Playwright suite
         isn't throttled mid-run."""
-        from bpp.web.bp_health import _e2e_fixture_cache, is_e2e_fixture_library
+        from bpp.web.e2e_fixture import _e2e_fixture_cache, is_e2e_fixture_library
 
         _e2e_fixture_cache.clear()
         app_no, _ = self._make_app_obj(tmp_path, with_sentinel=False)
@@ -325,7 +325,7 @@ class TestE2EFixtureSentinel:
         """The result is cached by library root so the gate doesn't stat
         the filesystem on every destructive request. Deleting the sentinel
         after the first lookup must NOT flip the cached value."""
-        from bpp.web.bp_health import _e2e_fixture_cache, is_e2e_fixture_library
+        from bpp.web.e2e_fixture import _e2e_fixture_cache, is_e2e_fixture_library
 
         _e2e_fixture_cache.clear()
         app_yes, lib = self._make_app_obj(tmp_path, with_sentinel=True)

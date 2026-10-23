@@ -59,7 +59,7 @@ describe("boot proof before a self-navigation", () => {
     expect(await listenerIsOurs(/** @type {any} */ (dead))).toBe(false);
   });
 
-  test("reloadSafely forgets the key before a reload the listener did not earn", async () => {
+  test("reloadSafely never navigates into a listener that did not earn it", async () => {
     sessionStorage.setItem("bpp_boot", SECRET);
     const reload = vi.fn();
     vi.stubGlobal("location", { reload });
@@ -67,13 +67,15 @@ describe("boot proof before a self-navigation", () => {
       "fetch",
       answering(async () => "")
     );
+    const told = vi.fn();
+    window.addEventListener("bpp:foreign-listener", told);
     expect(await reloadSafely()).toBe(false);
-    expect(reload).toHaveBeenCalledTimes(1);
-    expect(sessionStorage.getItem("bpp_boot")).toBeNull();
-    sessionStorage.setItem("bpp_boot", SECRET);
+    expect(reload).not.toHaveBeenCalled();
+    expect(told).toHaveBeenCalledTimes(1);
+    expect(sessionStorage.getItem("bpp_boot")).toBe(SECRET);
     vi.stubGlobal("fetch", answering(expectedProof));
     expect(await reloadSafely()).toBe(true);
-    expect(reload).toHaveBeenCalledTimes(2);
+    expect(reload).toHaveBeenCalledTimes(1);
     expect(sessionStorage.getItem("bpp_boot")).toBe(SECRET);
   });
 

@@ -133,6 +133,6 @@ def api_faces_recluster() -> tuple[Response, int]:
     # Refresh smart albums for the new clusters
     refresh_smart_albums(conn, kinds=get_affected_album_types("face_tag"))
 
-    n_clusters = len(set(labels))
+    n_clusters = len({label for label in labels if label != CLUSTER_UNASSIGNED})
     dispatch_post_cluster(conn, "face", n_clusters)
     return jsonify({"status": "reclustered", "clusters": n_clusters}), 200

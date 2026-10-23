@@ -276,3 +276,56 @@ def test_switching_libraries_releases_the_old_serving_lock(tmp_path):
     b_dirs = ensure_library_dirs(str(b))
     assert os.path.exists(lock_path(b_dirs["data"]))
     assert not os.path.exists(lock_path(str(a / "data"))), "the old library still reads as served"
+
+
+def test_trimming_a_playlist_never_reaches_ffmpeg(tmp_path, monkeypatch):
+    from bpp.utils import video
+
+    fake = tmp_path / "holiday.mp4"
+    fake.write_text("#EXTM3U\nhttp://127.0.0.1:1/marker.ts\n")
+    monkeypatch.setattr(video, "ffmpeg_available", lambda: True)
+    monkeypatch.setattr(
+        video.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(AssertionError("ran"))
+    )
+    result = video.trim_video(str(fake), str(tmp_path / "out.mp4"), 0.0, 1.0)
+    assert result["ok"] is False and "playlist" in result["error"]
+    src = (ROOT / "bpp" / "utils" / "video.py").read_text()
+    assert '"-protocol_whitelist",\n        "file",' in src
+
+
+def test_every_reload_the_page_or_shell_offers_goes_through_the_boot_proof():
+    page = (ROOT / "bpp" / "web" / "static" / "js" / "globals.js").read_text()
+    assert "_bppReload" not in page
+    assert "e.preventDefault(); location.reload();" not in page
+    html = (ROOT / "bpp" / "web" / "templates" / "index.html").read_text()
+    assert "_bppReload" not in html
+    shell = (ROOT / "desktop" / "src-tauri" / "src" / "screens.rs").read_text()
+    reload_button = shell.split("#bpp-ov-reload')")[1].split("\n")[0]
+    assert "reloadSafely" in reload_button
+
+
+def test_a_restore_lock_that_keeps_vanishing_is_reported(tmp_path, monkeypatch):
+    import builtins
+
+    from bpp.commands import db_restore
+
+    lock = str(tmp_path / ".restore.lock")
+    real_open = builtins.open
+
+    def vanishing(path, *a, **k):
+        if str(path) == lock and a and a[0] if a else False:
+            return real_open(path, *a, **k)
+        if str(path) == lock:
+            raise FileNotFoundError(path)
+        return real_open(path, *a, **k)
+
+    real_os_open = os.open
+
+    def exists_then_not(path, flags, *a):
+        if str(path) == lock:
+            raise FileExistsError(path)
+        return real_os_open(path, flags, *a)
+
+    monkeypatch.setattr(os, "open", exists_then_not)
+    monkeypatch.setattr(builtins, "open", vanishing)
+    assert db_restore._acquire_maintenance_lock(lock, b"1") == 7

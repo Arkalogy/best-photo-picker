@@ -222,7 +222,9 @@ class TestSwitchLibraryDrainsAllCollaborators:
             lambda path: {"data": "/new_wd", "thumbs": "/new_t"},
         )
         # Stub close_all_connections so we don't touch the real pool.
-        monkeypatch.setattr(_impl, "close_all_connections", lambda: events.append("close_pool"))
+        monkeypatch.setattr(
+            _impl, "close_all_connections", lambda **kw: events.append("close_pool")
+        )
         # No plugins registered → fire_on_library_close is a no-op.
 
         _impl.switch_library(ctx, "/new/path")
@@ -285,7 +287,7 @@ class TestSwitchLibraryResetsPhase5HealthFlag:
             "bpp.db.library.ensure_library_dirs",
             lambda path: {"data": "/new_wd", "thumbs": "/new_t"},
         )
-        monkeypatch.setattr(_impl, "close_all_connections", lambda: None)
+        monkeypatch.setattr(_impl, "close_all_connections", lambda **kw: None)
 
         _impl.switch_library(ctx, "/new/path")
 
@@ -385,7 +387,7 @@ class TestSwitchLibrarySerialized:
             "bpp.db.library.ensure_library_dirs",
             lambda path: {"data": "/new_wd", "thumbs": "/new_t"},
         )
-        monkeypatch.setattr(_impl, "close_all_connections", lambda: None)
+        monkeypatch.setattr(_impl, "close_all_connections", lambda **kw: None)
 
         errors: list[BaseException] = []
 
@@ -422,7 +424,7 @@ class TestSwitchLibrarySerialized:
             "bpp.db.library.ensure_library_dirs",
             lambda path: {"data": "/new_wd", "thumbs": "/new_t"},
         )
-        monkeypatch.setattr(_impl, "close_all_connections", lambda: None)
+        monkeypatch.setattr(_impl, "close_all_connections", lambda **kw: None)
 
         _impl.switch_library(ctx, "/new/path/1")
         # Second call should not deadlock — lock was released.

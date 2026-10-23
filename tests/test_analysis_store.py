@@ -80,7 +80,7 @@ class TestJoinThreads:
 
     def test_stuck_thread_logged_not_blocking(self, caplog):
         """A thread that won't exit within timeout triggers ERROR but
-        join_threads still returns and clears the slot."""
+        join_threads still returns and keeps the slot (the thread is alive)."""
         import logging
 
         store = AnalysisStore()
@@ -100,15 +100,20 @@ class TestJoinThreads:
         with caplog.at_level(logging.ERROR, logger="bpp.web.analysis_store"):
             store.join_threads(timeout=0.2)
 
-        # Reference cleared even though thread is still alive.
-        assert store.warm_thread is None
+        # A thread still running stays known: the clear-library path
+        # refuses while it is alive, and the next join waits for it.
+        assert store.warm_thread is t
+        assert store.threads_alive() == ["warm_thread"]
         errors = [r for r in caplog.records if r.levelno == logging.ERROR]
         assert errors, "stuck thread must produce ERROR log"
         assert any("warm_thread" in r.getMessage() for r in errors)
 
-        # Release the stuck thread so the test process exits cleanly.
+        # Release the stuck thread so the test process exits cleanly;
+        # once it stopped, the next join forgets it.
         unstoppable_done.set()
         t.join(timeout=1)
+        store.join_threads(timeout=0.2)
+        assert store.warm_thread is None
 
 
 class TestWebAppStateDelegation:

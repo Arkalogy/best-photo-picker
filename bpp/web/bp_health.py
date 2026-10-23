@@ -20,7 +20,7 @@ from bpp.db.dialect import dialect
 from bpp.db.journal import pending_journals
 from bpp.utils.logging import get_logger
 from bpp.utils.retry import check_storage_accessible
-from bpp.web.e2e_fixture import _e2e_fixture_cache, is_e2e_fixture_library  # noqa: F401
+from bpp.web.e2e_fixture import is_e2e_fixture_library
 from bpp.web.share import principal_is_local_app
 from bpp.web.state import get_ctx
 
@@ -52,13 +52,6 @@ def api_storage_health() -> tuple[Response, int]:
             "latency_ms": result.get("latency_ms"),
         }
     return jsonify(result), 200
-
-
-# Cache: library root → is-fixture bool. The sentinel never appears or
-# vanishes mid-session, and switching libraries produces a different root
-# (a fresh key), so a plain dict is safe and spares a filesystem stat on
-# every destructive request — the rate-limit gate in app.py calls this on
-# each POST/PUT/DELETE.
 
 
 @bp.get("/api/v1/_diag/is_e2e_fixture")

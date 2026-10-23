@@ -138,13 +138,6 @@ DLIB_ENTRY = ModelEntry(
 #: "License" section. That distinction (code permissive, weights
 #: restricted) is exactly the case our acceptance-log scaffolding
 #: was built for.
-#:
-#: ``weight_sha256`` is left as the project-wide sentinel until the
-#: maintainer downloads the weights and pins the actual hash before
-#: a real release (same pattern SFACE_ENTRY and DLIB_ENTRY follow).
-#: The integrity check fires only when a non-empty hash is configured,
-#: so registering with the sentinel does not weaken the production
-#: chain.
 BUFFALO_S_ENTRY = ModelEntry(
     id="insightface_buffalo_s",
     display_name="InsightFace buffalo_s (research-only)",

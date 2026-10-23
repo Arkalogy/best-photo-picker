@@ -124,6 +124,10 @@ def init_app_db(ctx: WebAppState) -> None:
     # to the wrong place.
     ctx.smart_album_backfill_done.clear()
     db_path_at_spawn = db_p  # captured workdir/photopicker.db at this exact init
+    # The cancel token of this library: a switch or clear sets it before
+    # draining, and phase 5 checks it between its steps.
+    _store = getattr(ctx, "analysis_store", None)
+    phase5_cancel = _store.phash_cancel if _store is not None else None
 
     def _phase5_background() -> None:
         # Server-log breadcrumbs — same pattern as the bookend logs
@@ -144,7 +148,9 @@ def init_app_db(ctx: WebAppState) -> None:
         log.info("Phase 5 backfill starting (background, db=%s)", db_path_at_spawn)
         try:
             bg_conn = get_db(db_path_at_spawn)
-            _backfill_dup_clusters_and_refresh(bg_conn, force_refresh=sidecars_linked)
+            _backfill_dup_clusters_and_refresh(
+                bg_conn, force_refresh=sidecars_linked, cancel=phase5_cancel
+            )
         except Exception:
             # ERROR (not WARNING) — a failed background backfill leaves
             # the user with silently-stale smart-album counts until

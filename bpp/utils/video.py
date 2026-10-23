@@ -33,8 +33,11 @@ def is_video_file(filepath: str) -> bool:
 
 
 #: FFmpeg (OpenCV's backend) follows the URLs inside a DASH / HLS manifest
-#: that merely carries a video extension; the capture options pin it to
-#: the local file protocol. Read when a capture opens, so set at import.
+#: that merely carries a video extension. The control is the manifest
+#: sniff in open_capture (such a file never reaches the decoder); this
+#: capture option asks the backend for the local file protocol only, but
+#: the bundled OpenCV wheel does not honour it, so it is best effort, not
+#: a second layer.
 os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "protocol_whitelist;file")
 
 
@@ -54,8 +57,10 @@ def _looks_like_a_manifest(filepath: str) -> bool:
 
 
 def open_capture(filepath: str) -> cv2.VideoCapture | None:
-    """The one way this app opens a video: refuses manifests, pins the
-    decoder to local files, returns None when the file does not open."""
+    """The one way this app decodes a video: refuses manifests (the one
+    real guard against a playlist with a video extension), returns None
+    when the file does not open. (:func:`trim_video` gates ffmpeg the
+    same way, plus ``-protocol_whitelist file``.)"""
     if _looks_like_a_manifest(filepath):
         return None
     cap = cv2.VideoCapture(filepath, cv2.CAP_FFMPEG)
@@ -241,12 +246,18 @@ def trim_video(src: str, dest: str, start: float, end: float) -> dict[str, Any]:
         return {"ok": False, "error": "Start time must be before end time"}
     if not os.path.isfile(src):
         return {"ok": False, "error": f"Source file not found: {src}"}
+    if _looks_like_a_manifest(src):
+        # A playlist with a video extension would have ffmpeg open
+        # whatever it lists; the decoder refuses it, so does the trim.
+        return {"ok": False, "error": "This file is a playlist, not a video"}
     if not ffmpeg_available():
         return {"ok": False, "error": "ffmpeg is not installed"}
 
     cmd = [
         "ffmpeg",
         "-y",
+        "-protocol_whitelist",
+        "file",
         "-ss",
         str(start),
         "-to",

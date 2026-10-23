@@ -95,7 +95,7 @@ def rename_open_library(ctx: WebAppState, new_path: str, move: Callable[[], None
         old_dirs = dict(ctx.dirs or {})
         _drain_current_library(ctx)
         with ctx.lock:
-            close_all_connections()  # this thread's handles; the pool is thread-local
+            close_all_connections(new_epoch=True)  # this thread's handles; the pool is thread-local
         try:
             move()
         except Exception:
@@ -228,7 +228,7 @@ def _adopt_library(ctx: WebAppState, new_path: str, new_dirs: dict[str, str], wo
         getattr(ctx, "library_id", None),
     )
     with ctx.lock:
-        close_all_connections()
+        close_all_connections(new_epoch=True)
         ctx.state["analysis"] = None
         # update both the structured paths and the legacy
         # state dict so callers reading either form see consistent
@@ -284,7 +284,7 @@ def _adopt_library(ctx: WebAppState, new_path: str, new_dirs: dict[str, str], wo
             clear_lock(workdir)
         paths, workdir, library_path, library_id = old
         with ctx.lock:
-            close_all_connections()
+            close_all_connections(new_epoch=True)
             ctx.paths = paths
             ctx.state["workdir"] = workdir
             ctx.state["library_path"] = library_path
@@ -399,4 +399,4 @@ def shutdown(ctx: WebAppState) -> None:
         ctx._health_handle.stop_and_join(timeout=WORKER_JOIN_TIMEOUT_S)
     # Same drain dance as switch_library, now a single call.
     ctx.analysis_store.join_threads(timeout=WORKER_JOIN_TIMEOUT_S)
-    close_all_connections()
+    close_all_connections(new_epoch=True)

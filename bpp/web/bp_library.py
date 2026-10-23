@@ -261,7 +261,7 @@ def api_libraries_switch() -> tuple[Response, int]:
     set_active_library(path)
     add_library(path)
     log.info("Library switch complete: now serving from %s", path)
-    return jsonify({"status": "switched", "path": path}), 200
+    return jsonify({"status": "switched", "path": path, "library_id": ctx.library_id}), 200
 
 
 @bp.get("/api/v1/libraries/active")

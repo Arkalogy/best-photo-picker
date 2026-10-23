@@ -57,7 +57,11 @@ def precompute_phashes(ctx: WebAppState, data: list[dict[str, Any]]) -> None:
     t = ctx.analysis_store.compute_thread
     if t is not None and t.is_alive() and t is not threading.current_thread():
         log.info("Derived recovery already running — queueing a re-run")
-        ctx.analysis_store.recovery_rerun = data
+        # Two batches finishing during one run both get hashed: merged
+        # by path, the later item winning.
+        queued = {item.get("filepath"): item for item in ctx.analysis_store.recovery_rerun or []}
+        queued.update({item.get("filepath"): item for item in data})
+        ctx.analysis_store.recovery_rerun = list(queued.values())
         return
 
     missing_fps = [
@@ -77,16 +81,23 @@ def precompute_phashes(ctx: WebAppState, data: list[dict[str, Any]]) -> None:
     # state.
     spawn_generation = ctx.analysis_store.phash_generation
     spawn_event = ctx.analysis_store.phash_ready
+    spawn_cancel = ctx.analysis_store.phash_cancel
     ctx.analysis_store.recovery_failed = False
 
     ctx.analysis_store.compute_thread = threading.Thread(
-        target=_run_recovery, args=(ctx, missing_fps, spawn_generation, spawn_event), daemon=True
+        target=_run_recovery,
+        args=(ctx, missing_fps, spawn_generation, spawn_event, spawn_cancel),
+        daemon=True,
     )
     ctx.analysis_store.compute_thread.start()
 
 
 def _run_recovery(
-    ctx: WebAppState, missing_fps: list[str], spawn_generation: int, spawn_event: threading.Event
+    ctx: WebAppState,
+    missing_fps: list[str],
+    spawn_generation: int,
+    spawn_event: threading.Event,
+    spawn_cancel: threading.Event | None = None,
 ) -> None:
     """The pipeline, in order, on the compute thread.
 
@@ -98,7 +109,7 @@ def _run_recovery(
     store.recovery_running = True
     failed = False
     try:
-        _recover(ctx, missing_fps, spawn_generation, spawn_event)
+        _recover(ctx, missing_fps, spawn_generation, spawn_event, spawn_cancel)
     except Exception:
         log.warning("Derived recovery failed; hashes may be incomplete", exc_info=True)
         store.recovery_failed = True  # /api/v1/health shows it
@@ -128,7 +139,11 @@ def _start_queued_rerun(ctx: WebAppState, spawn_generation: int, why: str) -> No
 
 
 def _recover(
-    ctx: WebAppState, missing_fps: list[str], spawn_generation: int, spawn_event: threading.Event
+    ctx: WebAppState,
+    missing_fps: list[str],
+    spawn_generation: int,
+    spawn_event: threading.Event,
+    spawn_cancel: threading.Event | None = None,
 ) -> None:
     log.info("Pre-computing hashes for %d images...", len(missing_fps))
     db_path = ctx.state.get("workdir", "")
@@ -138,7 +153,7 @@ def _recover(
     # and is thread-local, so this thread gets its own connection.
     conn = get_db(db_path)
 
-    backfilled = _backfill_hashes(ctx, conn, missing_fps)
+    backfilled = _backfill_hashes(ctx, conn, missing_fps, spawn_cancel)
     if backfilled is None:
         # Cancelled (shutdown or library switch): whatever was queued
         # for after this run is for a library we no longer serve.
@@ -178,7 +193,7 @@ def _recover(
 
 
 def _backfill_hashes(
-    ctx: WebAppState, conn: Any, missing_fps: list[str]
+    ctx: WebAppState, conn: Any, missing_fps: list[str], cancel: threading.Event | None = None
 ) -> tuple[dict[str, tuple[int | None, int | None]], int] | None:
     """Compute + store the missing perceptual hashes. Returns what was
     computed and the error count, or None when cancelled.
@@ -197,6 +212,10 @@ def _backfill_hashes(
     done = 0
     total = len(missing_fps)
     store = ctx.analysis_store
+    # The token this run was spawned with: a switch replaces the store's
+    # token right after setting this one, and a run that outlived the
+    # join must still see the cancel.
+    cancel = cancel if cancel is not None else store.phash_cancel
     store.phash_total = total
     store.phash_done = 0
     store.phash_running = True
@@ -207,7 +226,7 @@ def _backfill_hashes(
             futures = {pool.submit(compute_hashes_from_file, fp): fp for fp in batch_fps}
             batch_rows: list[tuple[str, int | None, int | None]] = []
             for future in as_completed(futures):
-                if store.phash_cancel.is_set():
+                if cancel.is_set():
                     log.info("Hash backfill cancelled at %d/%d", done, total)
                     pool.shutdown(wait=False, cancel_futures=True)
                     db_update_hashes_many(conn, batch_rows)

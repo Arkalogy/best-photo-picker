@@ -228,15 +228,34 @@ def acquire_lock(workdir: str) -> int | None:
 
 
 def clear_lock(workdir: str) -> None:
-    """Remove the lockfile. Safe to call when no lock exists.
+    """Remove this process's lockfile. Safe to call when no lock exists.
 
-    Called from an atexit handler on clean shutdown. SIGKILL'd
-    processes won't reach this — that's what the kill-probe in
-    `read_lock_pid_if_alive` is for.
+    Only a lock that names this process is removed: after a library
+    switch (or a refused switch) the lock at that path may belong to
+    another server, and the atexit handler registered for an earlier
+    library must not take it away from that server.
+
+    SIGKILL'd processes won't reach this — that's what the kill-probe
+    in `read_lock_pid_if_alive` is for.
     """
     if not workdir:
         return
     path = lock_path(workdir)
+    try:
+        with open(path, encoding="utf-8") as f:
+            raw = f.read().strip()
+    except FileNotFoundError:
+        return
+    except OSError as e:
+        log.warning("Could not read serving lock at %s: %s", path, e)
+        return
+    try:
+        holder = int(raw)
+    except ValueError:
+        holder = None
+    if holder is not None and holder != os.getpid():
+        log.info("Serving lock at %s belongs to PID %d; left in place", path, holder)
+        return
     try:
         os.remove(path)
     except FileNotFoundError:

@@ -184,26 +184,34 @@ function _startAutoReconnect() {
 }
 
 async function _pollUntilServerBack() {
-  // Poll "/" (auth-exempt) because after server restart the auth token
-  // changes — /api/status would return 403 with the stale token.
-  // A successful fetch of "/" means the server is alive; reload gets
-  // the fresh token from the re-rendered index page.
+  // Poll /boot-check (answers without a token; the index page is 403
+  // on a locked server, so it would never read as "back"). Any answer
+  // means something listens; the reload goes through only once that
+  // listener proves it is our server (boot-proof.mjs).
   while (_serverDownPolling) {
     await new Promise(r => setTimeout(r, 2000));
     try {
-      const r = await fetch("/", {signal: AbortSignal.timeout(3000)});
-      if (r.ok) {
+      const alive =
+        typeof window.somethingListens === "function"
+          ? await window.somethingListens()
+          : (await fetch("/boot-check", {signal: AbortSignal.timeout(3000)})) !== null;
+      if (alive) {
         // Something answers again. The reload carries the boot key only
         // if the listener proves it is our server (boot-proof.mjs,
         // bridged onto window); otherwise the key is forgotten first.
-        _serverDownPolling = false;
-        _healthFailures = 0;
-        if (typeof window.reloadSafely === "function") {
-          await window.reloadSafely();
-        } else {
+        if (typeof window.reloadSafely !== "function") {
+          _serverDownPolling = false;
+          _healthFailures = 0;
           location.reload();
+          return;
         }
-        return;
+        if (await window.reloadSafely()) {
+          _serverDownPolling = false;
+          _healthFailures = 0;
+          return;
+        }
+        // Something else answers on the port: keep waiting for our
+        // server (the message comes from the bpp:foreign-listener event).
       }
     } catch {}
   }
@@ -212,7 +220,26 @@ async function _pollUntilServerBack() {
 // ── Cmd+R / Ctrl+R / F5 reload (Tauri webview doesn't handle natively) ──
 document.addEventListener("keydown", (e) => {
   if (((e.metaKey || e.ctrlKey) && e.key === "r") || e.key === "F5") {
-    e.preventDefault(); location.reload();
+    e.preventDefault();
+    if (typeof window.reloadSafely === "function") window.reloadSafely();
+    else location.reload();
+  }
+});
+
+// A listener on the port that is not our server: say so instead of
+// loading its page (boot-proof.mjs refuses the navigation).
+let _foreignListenerToldAt = 0;
+window.addEventListener("bpp:foreign-listener", () => {
+  const port = location.port || "5001";
+  const msg =
+    `Something else is answering on port ${port}. Waiting for Best Photo Picker; ` +
+    "if you restarted the server yourself, open the new link it printed.";
+  const inner = document.querySelector("#server-down-overlay .server-down-inner p");
+  if (inner) inner.textContent = msg;
+  // The poll asks every two seconds; the toast once a minute.
+  if (Date.now() - _foreignListenerToldAt > 60000 && typeof toast === "function") {
+    _foreignListenerToldAt = Date.now();
+    toast(msg, "warning");
   }
 });
 
@@ -342,7 +369,6 @@ document.addEventListener("touchend", function _bppTouchendDispatch(e) { if (!e 
 window._toggleSettingTip = function() {
   this.closest(".setting-item").classList.toggle("tip-open");
 };
-window._bppReload = function() { location.reload(); };
 window._bppThisSelect = function() { this.select(); };
 window._openShareTab = function() { switchSettingsTab("share"); _renderShareTab(); };
 window._openActivityTab = function() { switchSettingsTab("activity"); _renderActivityTab(); };

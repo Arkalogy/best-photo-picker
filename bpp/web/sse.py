@@ -17,8 +17,6 @@ from typing import Any
 
 from bpp.constants import PROGRESS_QUEUE_TIMEOUT_S
 
-#: Progress messages between two trust re-checks of a paired device.
-
 
 def sse_event(payload: dict[str, Any]) -> str:
     """One Server-Sent Events ``data:`` frame carrying ``payload`` as

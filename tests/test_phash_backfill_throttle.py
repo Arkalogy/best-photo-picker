@@ -201,7 +201,7 @@ def test_recovery_reentrancy_queues_one_rerun(monkeypatch):
     # kicking the pipeline (the batch-apply writes hashes onto that list).
     ctx.state["analysis"] = data2
     precompute_phashes(ctx, data2)  # queued, not raced
-    assert ctx.analysis_store.recovery_rerun is data2
+    assert ctx.analysis_store.recovery_rerun == data2
     assert ctx.analysis_store.compute_thread is first_thread, "second thread raced"
 
     gate.set()

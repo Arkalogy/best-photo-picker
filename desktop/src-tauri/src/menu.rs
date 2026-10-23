@@ -27,7 +27,7 @@ pub(crate) fn install_menu(app: &tauri::App) -> tauri::Result<()> {
                 Some(AboutMetadata {
                     name: Some("Best Photo Picker".into()),
                     version: Some(env!("CARGO_PKG_VERSION").into()),
-                    copyright: Some("© 2026 Arkalogy LLC".into()),
+                    copyright: Some("© 2026 Arkalogy".into()),
                     credits: Some("Developed with AI-assisted coding".into()),
                     icon: tauri::image::Image::from_path("icons/icon.png").ok(),
                     ..Default::default()

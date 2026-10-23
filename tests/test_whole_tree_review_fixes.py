@@ -171,7 +171,7 @@ def test_restart_server_is_the_only_spawner_after_an_intentional_stop():
     assert "pub(crate) generation: Arc<AtomicU64>" in src
     restart = src.split("fn restart_server(")[1].split("\n}\n")[0]
     assert "generation.fetch_add(1" in restart
-    assert restart.index("generation.fetch_add(1") < restart.index("child.kill()")
+    assert restart.index("generation.fetch_add(1") < restart.index("stop_child(child")
     terminated = src.split("CommandEvent::Terminated(payload) =>")[1].split("spawn_sidecar(")[0]
     assert "generation.load(Ordering::SeqCst) != my_generation" in terminated
     assert "break;" in terminated
@@ -213,7 +213,7 @@ def test_a_database_recreated_at_a_known_path_gets_its_tables_again(tmp_path):
     db = str(tmp_path / "t.db")
     conn = connection.init_db(db)
     assert conn.execute("SELECT count(*) FROM photos").fetchone()[0] == 0
-    connection.close_all_connections()
+    connection.close_all_connections(new_epoch=True)  # what a switch / restore does
     os.remove(db)
     conn = connection.init_db(db)
     assert conn.execute("SELECT count(*) FROM photos").fetchone()[0] == 0

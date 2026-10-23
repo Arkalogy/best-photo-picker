@@ -116,6 +116,23 @@ pub(crate) fn port_is_held(port: u16) -> bool {
 /// copy's live sidecar: that one also fails our probe (different
 /// secret), but its parent shell is alive — that case ends on the
 /// held-port screen.
+/// SIGKILL the sidecar server process that still holds `port` after its
+/// bootloader was killed (the one-file bootloader is a separate process;
+/// killing it alone leaves the server listening). Only a process named
+/// bpp-server is touched.
+pub(crate) fn kill_sidecar_listener(port: u16) {
+    let Some(pid) = listener_pid(port) else {
+        return;
+    };
+    let name = process_name(pid).unwrap_or_default();
+    if !name.ends_with("bpp-server") && !name.ends_with("bpp-server.exe") {
+        eprintln!("[sidecar] port {} is held by pid {} ({}); leaving it alone", port, pid, name);
+        return;
+    }
+    eprintln!("[sidecar] killing orphaned server pid {} on port {}", pid, port);
+    let _ = std::process::Command::new("kill").args(["-KILL", &pid.to_string()]).status();
+}
+
 pub(crate) fn reclaim_port_from_stale_sidecar(port: u16) {
     if !port_is_held(port) || server_knows_boot_secret(port) {
         return;

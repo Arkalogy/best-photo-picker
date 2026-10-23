@@ -179,6 +179,13 @@ fn main() {
                             if consecutive_failures > 0 {
                                 eprintln!("[health] Server recovered");
                             }
+                            // A verdict classified from a log line while the
+                            // server kept serving (a refused library switch)
+                            // must not decide the next crash's handling.
+                            let respawning_now = respawning_nav.load(Ordering::SeqCst);
+                            if !respawning_now {
+                                startup_failure_nav.store(STARTUP_OK, Ordering::SeqCst);
+                            }
                             // Server is back — if we were respawning, reload the page.
                             // A connect alone proves nothing: any local process
                             // could have taken the port while the sidecar was
@@ -188,7 +195,7 @@ fn main() {
                             // only on a tick that proved the listener first: a
                             // termination landing between two reads can never
                             // route the key past the proof.
-                            if respawning_nav.load(Ordering::SeqCst) {
+                            if respawning_now {
                                 if !server_knows_boot_secret(port) {
                                     foreign_ticks += 1;
                                     eprintln!(
@@ -305,11 +312,16 @@ fn main() {
                 }
             }
             RunEvent::ExitRequested { .. } => {
-                // Kill the sidecar on exit
+                // Stop the sidecar on exit: a graceful stop frees the port
+                // and the serving lock (a bare kill left the Python server
+                // running after the app was gone).
+                let rs = app_handle.state::<RestartState>();
+                let port = rs.port;
+                rs.generation.fetch_add(1, Ordering::SeqCst); // no respawn on exit
                 let state = app_handle.state::<Mutex<ServerState>>();
                 let mut guard = state.lock().unwrap();
                 if let Some(child) = guard.child.take() {
-                    let _ = child.kill();
+                    crate::sidecar::stop_child(child, port, 3);
                 }
             }
             _ => {}

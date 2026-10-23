@@ -156,7 +156,11 @@ def _dedupe_cached(
             cur.update(added)
             candidates.append(cur)
         return candidates, mode
-    before = {d["filepath"]: frozenset(d) for d in items}
+    # The pass only adds keys. Items share one column set, so remember
+    # that set once and, per item, only the odd extra key (none at the
+    # cap: ~450 MB of per-item key sets otherwise).
+    base_keys = frozenset(items[0]) if items else frozenset()
+    before = {d["filepath"]: (frozenset(d) - base_keys) or None for d in items}
     candidates, mode = dedupe_candidates(
         items,
         config,
@@ -170,7 +174,8 @@ def _dedupe_cached(
     # the cap).
     outcome = []
     for c in candidates:
-        keep = {k: v for k, v in c.items() if k not in before.get(c["filepath"], frozenset())}
+        extra = before.get(c["filepath"]) or ()
+        keep = {k: v for k, v in c.items() if k not in base_keys and k not in extra}
         for k in _DEDUPE_REWRITTEN:
             if k in c:
                 keep[k] = c[k]

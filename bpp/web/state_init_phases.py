@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import atexit
 import os
+import threading
 from typing import TYPE_CHECKING, Any
 
 from bpp.db.albums import sync_all_photos_album
@@ -95,6 +96,9 @@ def backup_or_refuse_corrupt(db_p: str, wd: str) -> None:
     if backup_result is None and os.path.isfile(db_p) and os.path.getsize(db_p) > 0:
         from bpp.db.integrity import check_integrity
 
+        log.info(
+            "Backup failed; checking the database before opening it (a large library takes a while)"
+        )
         if check_integrity(db_p):
             # The database is fine; the copy failed (disk full, a
             # permission, a bad copy). Never tell the owner to restore an
@@ -222,7 +226,9 @@ def import_from_legacy_caches(conn: Any, wd: str, lib_root: str, photo_count: in
             import_presets_from_json(conn, presets_json)
 
 
-def backfill_dup_clusters_and_refresh(conn: Any, force_refresh: bool) -> None:
+def backfill_dup_clusters_and_refresh(
+    conn: Any, force_refresh: bool, cancel: threading.Event | None = None
+) -> None:
     """Phase 5 — near-duplicate cluster backfill + final smart-album refresh.
 
     Libraries with phash data but no ``dup_cluster_id`` assignment
@@ -239,6 +245,9 @@ def backfill_dup_clusters_and_refresh(conn: Any, force_refresh: bool) -> None:
     """
     _needs_smart_refresh = force_refresh
     backfill_error: Exception | None = None
+    if cancel is not None and cancel.is_set():
+        log.info("Phase 5 skipped: the library is being switched or cleared")
+        return
     try:
         unclust = conn.execute(
             "SELECT 1 FROM photos "
@@ -254,10 +263,18 @@ def backfill_dup_clusters_and_refresh(conn: Any, force_refresh: bool) -> None:
         log.warning("Near-duplicate cluster backfill failed", exc_info=True)
         backfill_error = exc
 
+    if cancel is not None and cancel.is_set():
+        log.info("Phase 5 stopped before the smart-album refresh: library switched or cleared")
+        return
     if _needs_smart_refresh:
         from bpp.db.smart_albums import refresh_smart_albums
 
-        refresh_smart_albums(conn)
+        try:
+            refresh_smart_albums(conn)
+        except Exception as exc:
+            if backfill_error is not None:
+                raise exc from backfill_error  # both causes in the traceback
+            raise
         log.info("Smart albums refreshed after startup backfill")
     if backfill_error is not None:
         raise backfill_error

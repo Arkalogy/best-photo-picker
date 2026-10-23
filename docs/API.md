@@ -33,6 +33,8 @@ TOKEN=$(curl -s http://localhost:5001/ | sed -n 's/.*name="auth-token" content="
 
 The examples below omit the header for brevity; add `-H "X-Auth-Token: $TOKEN"` to each one, or the request is rejected with `403`.
 
+**Library binding.** The page carries the open library's id (`<meta name="library-id">`) and sends it as `X-Library-Id` on every mutating `/api/` request. After the server switched libraries, a request still carrying the old id is refused with `409` and `{"error": "library_changed"}`, so a stale tab never edits the other library; reload to pick up the new id. Requests without the header are not checked (scripts, phones).
+
 ### 1. Check status and list photos
 
 ```bash
@@ -464,7 +466,10 @@ error envelope.
 
 ### GET /api/v1/photos/preview
 
-Preview photos from DB before analysis is complete. Returns basic metadata for all imported photos.
+Preview photos from DB before analysis is complete, one page at a time:
+`?limit=` (default and at most 500) and `?offset=`; the response carries
+`count` (this page), `total` (all photos), `limit` and `offset`. Walk the
+pages until `offset + count >= total`.
 
 ### POST /api/v1/recompute
 
@@ -662,7 +667,8 @@ retried at the next start. Both are listed in `files_failed` with
 
 ### GET /api/v1/photos/deleted
 
-List all soft-deleted photos.
+List soft-deleted photos, paged: `?limit=` (default 200) and `?offset=`,
+with `total` in the response.
 
 ### POST /api/v1/photos/hide
 
@@ -682,7 +688,7 @@ Unhide previously hidden photos.
 
 ### GET /api/v1/photos/hidden
 
-List all hidden photos.
+List hidden photos, paged like `/photos/deleted` (`limit`, `offset`, `total`).
 
 ### POST /api/v1/photos/enhance
 

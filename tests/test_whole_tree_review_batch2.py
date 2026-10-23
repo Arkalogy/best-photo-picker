@@ -45,7 +45,6 @@ def test_a_manifest_with_a_video_extension_never_reaches_the_decoder(tmp_path, m
     assert video.extract_video_metadata(str(fake)) is None
     assert video.extract_video_frame(str(fake)) is None
     assert opened == [], "the decoder was handed a playlist"
-    assert os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"].startswith("protocol_whitelist;file")
 
 
 def test_a_real_container_header_is_still_decoded(tmp_path, monkeypatch):

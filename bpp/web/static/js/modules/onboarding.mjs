@@ -5,7 +5,7 @@
  * app.js's bootstrap when the server reports `first_run`.
  */
 
-import { apiFetch } from "./api-client.mjs";
+import { apiFetch, setLibraryId } from "./api-client.mjs";
 import { esc, escapeAttr } from "./text-format.mjs";
 import { toastError } from "./toast.mjs";
 import { USE_CONTEXT_OPTIONS } from "./use-context-options.mjs";
@@ -383,11 +383,14 @@ export async function _onboardingFinish(importNow) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path: newPath }),
       });
-      await apiFetch("/api/v1/libraries/switch", {
+      const switched = await apiFetch("/api/v1/libraries/switch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path: newPath }),
       });
+      // This tab now edits the new library: rebind it, or every later
+      // write (Import Now included) is refused as a stale tab.
+      setLibraryId(switched?.library_id);
     } catch (e) {
       toastError("set the library location", e);
     }

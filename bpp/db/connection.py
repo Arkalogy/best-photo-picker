@@ -255,12 +255,21 @@ def checkpoint_wal(conn: sqlite3.Connection) -> None:
         _log.warning("WAL checkpoint failed; continuing shutdown", exc_info=True)
 
 
-def close_all_connections() -> None:
-    """Checkpoint WAL and close all thread-local SQLite connections."""
+def close_all_connections(*, new_epoch: bool = False) -> None:
+    """Checkpoint WAL and close this thread's SQLite connections.
+
+    ``new_epoch`` is for the lifecycle paths (a library switch, rename,
+    restore, shutdown): the next ``init_db`` runs the schema setup
+    again, so a database re-created at the same path gets its tables.
+    A worker closing its own handles at exit must not do that: it would
+    make every request thread re-run the DDL (and commit whatever that
+    thread had open) at its next ``get_conn``.
+    """
     global _INIT_EPOCH
-    with _INIT_LOCK:
-        _INITIALIZED_PATHS.clear()
-        _INIT_EPOCH += 1
+    if new_epoch:
+        with _INIT_LOCK:
+            _INITIALIZED_PATHS.clear()
+            _INIT_EPOCH += 1
     keys = [k for k in _local.__dict__ if k.startswith("conn_")]
     for key in keys:
         db_path = key[len("conn_") :]
@@ -306,10 +315,14 @@ def init_db(db_path: str) -> sqlite3.Connection:
     if getattr(_local, init_key, None) != _INIT_EPOCH:
         # One thread runs the DDL / migrations; the others wait for it
         # instead of racing the same ALTER TABLEs on their own connections.
+        # The epoch stamped on this thread is the one read under the lock:
+        # a new epoch started between the two would otherwise be claimed
+        # without its DDL having run.
         with _INIT_LOCK:
             if db_path not in _INITIALIZED_PATHS:
                 conn = get_db(db_path)
                 create_tables(conn)
                 _INITIALIZED_PATHS.add(db_path)
-        setattr(_local, init_key, _INIT_EPOCH)
+            epoch = _INIT_EPOCH
+        setattr(_local, init_key, epoch)
     return get_db(db_path)

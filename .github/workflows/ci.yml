@@ -63,11 +63,13 @@ jobs:
           init_text = pathlib.Path("bpp/__init__.py").read_text()
           init = re.search(r'__version__\s*=\s*"(.+?)"', init_text).group(1)
           tauri = json.load(open("desktop/src-tauri/tauri.conf.json"))["version"]
+          cargo = tomllib.load(open("desktop/src-tauri/Cargo.toml", "rb"))["package"]["version"]
           print(f"pyproject.toml: {pyproject}")
           print(f"bpp/__init__.py: {init}")
           print(f"tauri.conf.json: {tauri}")
-          if not (pyproject == init == tauri):
-              print(f"::error::Version mismatch! pyproject={pyproject} init={init} tauri={tauri}")
+          print(f"desktop Cargo.toml: {cargo}")
+          if not (pyproject == init == tauri == cargo):
+              print(f"::error::Version mismatch! pyproject={pyproject} init={init} tauri={tauri} cargo={cargo}")
               sys.exit(1)
           print("All versions match.")
           SCRIPT

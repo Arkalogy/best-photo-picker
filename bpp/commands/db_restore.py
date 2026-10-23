@@ -126,7 +126,7 @@ _EMPTY_LOCK_RETRY_S = 0.2
 
 
 def _acquire_maintenance_lock(
-    maintenance_lock: str, pid_bytes: bytes, _retry_after_stale: bool = False
+    maintenance_lock: str, pid_bytes: bytes, _retry_after_stale: bool = False, _vanished: int = 0
 ) -> int | None:
     """Acquire the maintenance lock. Returns rc on failure, None on
     success.
@@ -168,8 +168,19 @@ def _acquire_maintenance_lock(
             with open(maintenance_lock, encoding="utf-8") as f:
                 holder_raw = f.read().strip()
         except FileNotFoundError:
-            # Released between our create and this read: try again.
-            return _acquire_maintenance_lock(maintenance_lock, pid_bytes, _retry_after_stale)
+            # Released between our create and this read: try again (a
+            # few times; a lock that keeps appearing and vanishing is
+            # reported rather than chased).
+            if _vanished >= 3:
+                print(
+                    f"error: maintenance lock at {maintenance_lock} keeps changing hands; "
+                    "retry in a moment.",
+                    file=sys.stderr,
+                )
+                return 7
+            return _acquire_maintenance_lock(
+                maintenance_lock, pid_bytes, _retry_after_stale, _vanished + 1
+            )
         except OSError as e:
             print(
                 f"error: could not read maintenance lock {maintenance_lock}: {e}", file=sys.stderr

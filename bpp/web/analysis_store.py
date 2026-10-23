@@ -27,6 +27,7 @@ so the existing call sites continue to work unchanged.
 from __future__ import annotations
 
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -133,7 +134,38 @@ class AnalysisStore:
         self.face_recovery_cancel = threading.Event()
         self.face_recovery_running = False
         self.face_recovery_failed = False
+        # A thread the drain could not join belongs to the old library:
+        # disowned here, so its ownership checks (face recovery's flag,
+        # the hash backfill's generation) fail and the new library's
+        # state stays its own. The thread holds its captured cancel token.
+        self.warm_thread = None
+        self.compute_thread = None
+        self.face_recovery_thread = None
+        self.phase5_thread = None
         self.missing_scan_refused = None
+
+    def rearm_phash(self) -> None:
+        """After the open library was cleared: a fresh cancel token and
+        progress for the same library. The generation stays, so the
+        health thread's callbacks (bound to it at startup) keep
+        reporting; a bump here made every later refused scan vanish."""
+        self.phash_cancel = threading.Event()
+        self.phash_running = False
+        self.phash_done = 0
+        self.phash_total = 0
+        self.recovery_failed = False
+
+    def _threads(self) -> list[tuple[str, threading.Thread | None]]:
+        return [
+            ("warm_thread", self.warm_thread),
+            ("compute_thread", self.compute_thread),
+            ("face_recovery_thread", self.face_recovery_thread),
+            ("phase5_thread", self.phase5_thread),
+        ]
+
+    def threads_alive(self) -> list[str]:
+        """Names of the background threads still running."""
+        return [name for name, t in self._threads() if t is not None and t.is_alive()]
 
     def join_threads(self, timeout: float) -> None:
         """Signal cancel + join both daemon threads.
@@ -148,23 +180,21 @@ class AnalysisStore:
         # doesn't keep decoding images while we tear down the DB pool.
         self.phash_cancel.set()
         self.face_recovery_cancel.set()
-        for name, t in (
-            ("warm_thread", self.warm_thread),
-            ("compute_thread", self.compute_thread),
-            ("face_recovery_thread", self.face_recovery_thread),
-            ("phase5_thread", self.phase5_thread),
-        ):
+        # One deadline for all of them: a caller waiting on a 30 s
+        # request budget must not wait 30 s per thread.
+        deadline = time.monotonic() + timeout
+        for name, t in self._threads():
             if t is not None and t.is_alive():
-                t.join(timeout=timeout)
+                t.join(timeout=max(0.0, deadline - time.monotonic()))
                 if t.is_alive():
                     log.error(
                         "%s did not stop within %ds — DB connections may race on shutdown",
                         name,
                         timeout,
                     )
-        # Clear references so a stale handle doesn't survive into the
-        # next library lifetime.
-        self.warm_thread = None
-        self.compute_thread = None
-        self.face_recovery_thread = None
-        self.phase5_thread = None
+        # Clear the handles that stopped, so a stale one doesn't survive
+        # into the next library lifetime; a thread still running stays
+        # known (threads_alive reports it, the next join waits for it).
+        for name, t in self._threads():
+            if t is not None and not t.is_alive():
+                setattr(self, name, None)

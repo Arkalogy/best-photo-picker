@@ -22,9 +22,6 @@ from bpp.db.albums import (
     toggle_favorite as db_toggle_favorite,
 )
 from bpp.db.photos import (
-    get_all_photos as db_get_all_photos,
-)
-from bpp.db.photos import (
     get_date_distribution,
     get_photo,
     get_photo_by_path,
@@ -209,20 +206,23 @@ def api_photos_preview() -> tuple[Response, int]:
     Paged: ``?limit=`` (default and at most ``PREVIEW_PAGE_MAX``) and
     ``?offset=``; ``total`` is the full row count, ``count`` the slice.
     """
+    from bpp.db.photos import get_photo_count, get_photos_page
+
     ctx = get_ctx()
     conn = ctx.get_conn()
-    data = db_get_all_photos(conn)
-    if not data:
-        return jsonify({"photos": [], "count": 0, "total": 0}), 200
-    if ctx.thumbs is None:
-        ctx.thumbs = ThumbnailCache(ctx.dirs["thumbs"])
-    ctx.thumbs.build_map(data)
     try:
         limit = min(int(request.args.get("limit", PREVIEW_PAGE_MAX)), PREVIEW_PAGE_MAX)
         offset = max(int(request.args.get("offset", 0)), 0)
     except ValueError:
         limit, offset = PREVIEW_PAGE_MAX, 0
-    page = data[offset : offset + max(limit, 0)]
+    # One page read and mapped per request: the client walks the pages,
+    # so reading the whole table each time was N/500 full scans.
+    total = get_photo_count(conn)
+    page = get_photos_page(conn, max(limit, 0), offset) if total else []
+    if ctx.thumbs is None:
+        ctx.thumbs = ThumbnailCache(ctx.dirs["thumbs"])
+    if page:
+        ctx.thumbs.add_to_map(page)
     photos_out = []
     for item in page:
         d = ctx.build_photo_dict(item)
@@ -232,7 +232,7 @@ def api_photos_preview() -> tuple[Response, int]:
         {
             "photos": photos_out,
             "count": len(photos_out),
-            "total": len(data),
+            "total": total,
             "limit": limit,
             "offset": offset,
         }

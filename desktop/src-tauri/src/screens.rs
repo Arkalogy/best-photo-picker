@@ -16,7 +16,7 @@ pub(crate) fn show_reconnecting_overlay(handle: &AppHandle) {
   var s=document.createElement('style');s.textContent='@keyframes bpp-spin{to{transform:rotate(360deg)}}';
   document.head.appendChild(s);document.body.appendChild(o);
   // Listeners, not inline handlers: the page's CSP has no unsafe-inline.
-  o.querySelector('#bpp-ov-reload').addEventListener('click',function(){location.reload()});
+  o.querySelector('#bpp-ov-reload').addEventListener('click',function(){if(typeof window.reloadSafely==='function'){window.reloadSafely()}else{location.reload()}});
   o.querySelector('#bpp-ov-quit').addEventListener('click',function(){window.__TAURI__&&window.__TAURI__.core&&window.__TAURI__.core.invoke('exit_app')});
 })()"#
         );
@@ -55,9 +55,14 @@ pub(crate) fn show_update_required(handle: &AppHandle) {
             "<p style=\"margin:0 0 12px;font-size:14px;line-height:1.5;color:rgba(255,255,255,0.65)\">This photo library was created by a newer version of Best Photo Picker, so this older app won&#39;t open it.</p>",
             "<p style=\"margin:0 0 24px;font-size:13px;color:rgba(255,255,255,0.45)\">Your photos and library are safe &mdash; the app stopped on purpose to avoid damaging them. Update to the latest version to continue.</p>",
             "<div style=\"display:flex;gap:8px;justify-content:center;flex-wrap:wrap\">",
-            "<button onclick=\"window.__TAURI__?.core?.invoke(\\'open_url\\',{url:\\'https://github.com/Arkalogy/best-photo-picker/releases/latest\\'})\" style=\"padding:8px 20px;background:#4a9eff;color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer\">Get the latest version</button>",
-            "<button onclick=\"window.__TAURI__?.core?.invoke(\\'exit_app\\')\" style=\"padding:8px 20px;background:rgba(255,255,255,0.15);color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer\">Quit</button>",
-            "</div></div></div>';"
+            "<button id=\"bpp-up-get\" style=\"padding:8px 20px;background:#4a9eff;color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer\">Get the latest version</button>",
+            "<button id=\"bpp-up-quit\" style=\"padding:8px 20px;background:rgba(255,255,255,0.15);color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer\">Quit</button>",
+            "</div></div></div>';",
+            // Listeners, not inline handlers: this screen replaces the loaded
+            // page's body, and that page's CSP has no unsafe-inline.
+            "var inv=function(c,a){window.__TAURI__&&window.__TAURI__.core&&window.__TAURI__.core.invoke(c,a)};",
+            "document.getElementById('bpp-up-get').addEventListener('click',function(){inv('open_url',{url:'https://github.com/Arkalogy/best-photo-picker/releases/latest'})});",
+            "document.getElementById('bpp-up-quit').addEventListener('click',function(){inv('exit_app')});"
         ));
     }
 }
@@ -93,10 +98,16 @@ pub(crate) fn show_start_failure(handle: &AppHandle, port_held: bool) {
                 "<h2 style=\"margin:0 0 8px;font-size:20px;color:#fff\">{}</h2>",
                 "<p style=\"margin:0 0 24px;font-size:14px;color:rgba(255,255,255,0.55)\">{}</p>",
                 "<div style=\"display:flex;gap:8px;justify-content:center;flex-wrap:wrap\">",
-                "<button onclick=\"window.__TAURI__?.core?.invoke(\\'restart_app\\')\" style=\"padding:8px 20px;background:#4a9eff;color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer\">Try Again</button>",
-                "<button onclick=\"window.__TAURI__?.core?.invoke(\\'exit_app\\')\" style=\"padding:8px 20px;background:rgba(255,255,255,0.15);color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer\">Quit</button>",
-                "<button onclick=\"window.__TAURI__?.core?.invoke(\\'open_url\\',{{url:\\'https://github.com/Arkalogy/best-photo-picker/issues/new?template=bug_report.md&title=Server+failed+to+start\\'}})\" style=\"padding:8px 20px;background:rgba(255,255,255,0.1);color:rgba(255,255,255,0.6);border:none;border-radius:6px;font-size:14px;cursor:pointer\">Report Issue</button>",
-                "</div></div></div>';"
+                "<button id=\"bpp-sf-retry\" style=\"padding:8px 20px;background:#4a9eff;color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer\">Try Again</button>",
+                "<button id=\"bpp-sf-quit\" style=\"padding:8px 20px;background:rgba(255,255,255,0.15);color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer\">Quit</button>",
+                "<button id=\"bpp-sf-report\" style=\"padding:8px 20px;background:rgba(255,255,255,0.1);color:rgba(255,255,255,0.6);border:none;border-radius:6px;font-size:14px;cursor:pointer\">Report Issue</button>",
+                "</div></div></div>';",
+                // Listeners, not inline handlers: this screen replaces the
+                // loaded page's body, and that page's CSP has no unsafe-inline.
+                "var inv=function(c,a){{window.__TAURI__&&window.__TAURI__.core&&window.__TAURI__.core.invoke(c,a)}};",
+                "document.getElementById('bpp-sf-retry').addEventListener('click',function(){{inv('restart_app')}});",
+                "document.getElementById('bpp-sf-quit').addEventListener('click',function(){{inv('exit_app')}});",
+                "document.getElementById('bpp-sf-report').addEventListener('click',function(){{inv('open_url',{{url:'https://github.com/Arkalogy/best-photo-picker/issues/new?template=bug_report.md&title=Server+failed+to+start'}})}});"
             ), title, detail));
         }
 }

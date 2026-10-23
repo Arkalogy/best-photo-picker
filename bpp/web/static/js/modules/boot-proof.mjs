@@ -74,25 +74,43 @@ export async function listenerIsOurs(fetchImpl) {
 }
 
 /**
- * Reload the page without ever handing the boot key to a listener that
- * did not prove it holds it: when the proof fails, the key is forgotten
- * first (a restarted server mints a new one anyway, and its locked page
- * asks for the new link). Resolves true when the listener proved itself.
+ * Is anything listening on this origin at all (our server or not)?
+ * Asks /boot-check, which answers without a token; the locked index
+ * page answers 403 and would never count as "back".
+ * @returns {Promise<boolean>}
+ */
+export async function somethingListens() {
+  try {
+    await fetch(`/boot-check?nonce=${_nonce()}`, { signal: AbortSignal.timeout(3000) });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Reload the page, but never into a listener that did not prove it holds
+ * this tab's boot key: with the request it would get the key, and with
+ * the document (in the desktop shell) the window's privileges. When the
+ * proof fails nothing is navigated: a "bpp:foreign-listener" event tells
+ * the page to say so, and the caller keeps polling until the proof
+ * passes (the shell navigates on its own once its server is back). Tabs
+ * without a key reload at once. Resolves true when a reload was issued.
  * @returns {Promise<boolean>}
  */
 export async function reloadSafely() {
-  const ours = await listenerIsOurs();
-  if (!ours) {
+  if (!(await listenerIsOurs())) {
     try {
-      sessionStorage.removeItem("bpp_boot");
+      window.dispatchEvent(new CustomEvent("bpp:foreign-listener"));
     } catch {
       /* no-op */
     }
+    return false;
   }
   try {
     window.location.reload();
   } catch {
     /* no-op */
   }
-  return ours;
+  return true;
 }

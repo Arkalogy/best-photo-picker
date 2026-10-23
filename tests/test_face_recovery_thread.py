@@ -109,6 +109,8 @@ def test_a_thread_left_over_from_a_switch_does_not_touch_the_new_flags(tmp_path,
     store = app.extensions["bpp"].analysis_store
     old = store.face_recovery_thread
     store.join_threads(timeout=0.2)  # too short: the old thread survives
+    assert store.face_recovery_thread is old, "a live thread stays known until the switch"
+    store.bump_generation_and_reset_phash()  # the switch disowns it
     assert store.face_recovery_thread is None
     store.face_recovery_running = True  # the next library's recovery is on
     store.face_recovery_failed = False

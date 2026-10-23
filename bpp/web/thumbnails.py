@@ -81,6 +81,14 @@ class ThumbnailCache:
         """Build hash-to-filepath and filepath-to-hash mappings from paths."""
         self._hash_to_path = {}
         self._path_to_hash: dict[str, str] = {}
+        self._add_paths(filepaths)
+
+    def add_to_map(self, analysis: list[dict[str, Any]]) -> None:
+        """Add these items' paths to the mappings, keeping what is there
+        (a page of a listing, not the whole library)."""
+        self._add_paths([item["filepath"] for item in analysis])
+
+    def _add_paths(self, filepaths: list[str]) -> None:
         for fp in filepaths:
             h = self._path_hash(fp)
             self._hash_to_path[h] = fp

@@ -154,6 +154,13 @@ pub(crate) fn spawn_sidecar(
                     let delay = Duration::from_secs(1 << (attempt - 1).min(4));
                     eprintln!("[server] Respawning (attempt {}/{}) after {:?}", attempt, MAX_RESPAWN_ATTEMPTS, delay);
                     std::thread::sleep(delay);
+                    // Restart Server may have spawned the replacement during
+                    // the backoff: then this thread's child is history and a
+                    // second spawn would only fight it for the port.
+                    if generation.load(Ordering::SeqCst) != my_generation {
+                        eprintln!("[server] restarted during the backoff — not respawning");
+                        break;
+                    }
 
                     spawn_sidecar(
                         &handle_clone,
@@ -189,8 +196,8 @@ pub(crate) fn restart_server(handle: &AppHandle) {
         // and stands down, whether the kill lands or the handle is stale.
         generation.fetch_add(1, Ordering::SeqCst);
         if let Some(child) = guard.child.take() {
-            eprintln!("[restart] Killing existing server");
-            let _ = child.kill();
+            eprintln!("[restart] Stopping existing server");
+            stop_child(child, port, 5);
         }
     }
 
@@ -206,4 +213,36 @@ pub(crate) fn restart_server(handle: &AppHandle) {
 
     // Health-check loop will detect server is back and reload the page
     eprintln!("[restart] Server restart initiated");
+}
+
+
+/// Stop a sidecar child: SIGTERM to the bootloader (it forwards the
+/// signal to the Python server, which shuts down and frees the port),
+/// wait up to `wait_secs` for the port to be released, then SIGKILL as
+/// the last resort. A plain kill() only ends the PyInstaller bootloader
+/// and leaves the server process holding the port and the serving lock,
+/// so the replacement could never start.
+pub(crate) fn stop_child(child: tauri_plugin_shell::process::CommandChild, port: u16, wait_secs: u64) {
+    let pid = child.pid();
+    let termed = std::process::Command::new("kill")
+        .args(["-TERM", &pid.to_string()])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if termed {
+        let deadline = std::time::Instant::now() + Duration::from_secs(wait_secs);
+        while std::time::Instant::now() < deadline {
+            if !crate::boot::port_is_held(port) {
+                eprintln!("[sidecar] server {} stopped and released port {}", pid, port);
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        eprintln!("[sidecar] server {} did not release port {} in time — killing it", pid, port);
+    }
+    // kill() ends the bootloader only; the server it started keeps the
+    // port unless it is ended by name.
+    let _ = child.kill();
+    std::thread::sleep(Duration::from_millis(200));
+    crate::boot::kill_sidecar_listener(port);
 }

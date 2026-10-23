@@ -204,7 +204,8 @@ export async function restorePhotos(filepaths) {
       body: JSON.stringify({ filepaths }),
     });
     if (typeof resp?.count === "number" && resp.count === 0) {
-      throw new Error("no photo matched; the list may be out of date");
+      await loadDeletedPhotos(); // the card was stale: show what is there
+      throw new Error("no photo matched; the list was out of date");
     }
     toast(`Restored ${filepaths.length} photo${filepaths.length > 1 ? "s" : ""}`);
     await loadDeletedPhotos();
@@ -230,13 +231,18 @@ export async function permanentDeletePhotos(filepaths) {
       body: JSON.stringify({ filepaths, confirmation: "delete" }),
     });
     const failed = Array.isArray(result?.files_failed) ? result.files_failed.length : 0;
+    const removed = typeof result?.count === "number" ? result.count : filepaths.length;
+    if (removed === 0 && failed === 0) {
+      await loadDeletedPhotos();
+      throw new Error("no photo matched; the list was out of date");
+    }
     if (failed > 0) {
       toast(
-        `Removed ${filepaths.length - failed} of ${filepaths.length} photos; ${failed} file${failed > 1 ? "s" : ""} couldn't be removed from disk (read-only or in use) — retried at the next start`,
+        `Removed ${removed - failed} of ${removed} photos; ${failed} file${failed > 1 ? "s" : ""} couldn't be removed from disk (read-only or in use) — retried at the next start`,
         "warning"
       );
     } else {
-      toast(`Permanently deleted ${filepaths.length} photo${filepaths.length > 1 ? "s" : ""}`);
+      toast(`Permanently deleted ${removed} photo${removed > 1 ? "s" : ""}`);
     }
     await loadDeletedPhotos();
   } catch (e) {
@@ -271,13 +277,27 @@ export async function allListedPaths(url) {
 }
 
 export async function restoreAllDeleted() {
-  const filepaths = await allListedPaths("/api/v1/photos/deleted");
+  /** @type {string[]} */
+  let filepaths;
+  try {
+    filepaths = await allListedPaths("/api/v1/photos/deleted");
+  } catch (e) {
+    toastError("list the deleted photos", e);
+    return;
+  }
   if (filepaths.length === 0) return;
   await restorePhotos(filepaths);
 }
 
 export async function permanentDeleteAll() {
-  const filepaths = await allListedPaths("/api/v1/photos/deleted");
+  /** @type {string[]} */
+  let filepaths;
+  try {
+    filepaths = await allListedPaths("/api/v1/photos/deleted");
+  } catch (e) {
+    toastError("list the deleted photos", e);
+    return;
+  }
   if (filepaths.length === 0) return;
   await permanentDeletePhotos(filepaths);
 }
@@ -426,7 +446,14 @@ export async function loadHiddenPhotos() {
 }
 
 export async function unhideAllHidden() {
-  const filepaths = await allListedPaths("/api/v1/photos/hidden");
+  /** @type {string[]} */
+  let filepaths;
+  try {
+    filepaths = await allListedPaths("/api/v1/photos/hidden");
+  } catch (e) {
+    toastError("list the hidden photos", e);
+    return;
+  }
   if (filepaths.length === 0) return;
   await unhidePhotos(filepaths);
 }

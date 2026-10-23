@@ -8,15 +8,20 @@ from pathlib import Path
 
 def safe_join(base: str, filename: str) -> str:
     """Safely join base and filename, preventing path traversal."""
-    # Strip any directory components from filename
+    # Only the final component of ``filename`` is used, so the result is
+    # always an entry of ``base`` itself; what remains to refuse is a
+    # name that is not an entry (empty, ".", ".."). The entry is not
+    # resolved: one that already exists as a symlink (an earlier
+    # symlink-mode export) is still this folder's entry, and the writer
+    # replaces it; following it would read as an escape.
     clean_name = os.path.basename(filename)
-    result = os.path.join(base, clean_name)
-    # Verify the result is within base
-    real_base = os.path.realpath(base)
-    real_result = os.path.realpath(result)
-    if not real_result.startswith(real_base + os.sep) and real_result != real_base:
+    if clean_name in ("", ".", "..") or "\x00" in clean_name:
         raise ValueError(f"Path traversal detected: {filename}")
-    return result
+    try:
+        clean_name.encode("utf-8")  # a name the filesystem can take
+    except UnicodeEncodeError as e:
+        raise ValueError(f"Invalid file name: {filename!r}") from e
+    return os.path.join(base, clean_name)
 
 
 def is_safe_archive_member(member_name: str, extract_dir: str) -> bool:
