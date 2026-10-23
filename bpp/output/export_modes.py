@@ -13,11 +13,13 @@ import contextlib
 import errno
 import os
 import shutil
+import stat
 import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
+from bpp.utils.fresh_file import open_fresh, replace_fresh
 from bpp.utils.logging import get_logger
 from bpp.utils.raw import RAW_EXTENSIONS
 from bpp.utils.retry import retry_io
@@ -34,6 +36,13 @@ def _fresh_dest(dest: str) -> str:
     and truncating it would destroy the original's pixels."""
     out_dir, base = os.path.split(dest)
     return os.path.join(out_dir, f".{base}.part")
+
+
+def _save_fresh(img: Any, path: str, fmt: str | None, **save_kw: Any) -> None:
+    """Save ``img`` into a file created fresh at ``path`` (never into
+    whatever a link planted at that name points at)."""
+    with open_fresh(path) as fh:
+        img.save(fh, fmt, **save_kw)
 
 
 def _replace_into(tmp: str, dest: str) -> None:
@@ -108,15 +117,15 @@ def _process_image(
                     img = img.convert("RGB")
                 dest = _swap_ext(dest, ".jpg")
                 tmp = _fresh_dest(dest)
-                img.save(tmp, "JPEG", quality=quality, **save_kw)
+                _save_fresh(img, tmp, "JPEG", quality=quality, **save_kw)
             elif fmt == "png":
                 dest = _swap_ext(dest, ".png")
                 tmp = _fresh_dest(dest)
-                img.save(tmp, "PNG", **save_kw)
+                _save_fresh(img, tmp, "PNG", **save_kw)
             else:
                 # original format but resized
                 tmp = _fresh_dest(dest)
-                img.save(tmp, format=raw.format, **save_kw)
+                _save_fresh(img, tmp, raw.format, **save_kw)
         _replace_into(tmp, dest)
         return dest
     finally:
@@ -187,7 +196,7 @@ def _strip_and_save(src: str, dest: str, quality: int) -> str:
             fmt = "JPEG"
             if ext in (".heic", ".heif"):
                 out = os.path.splitext(dest)[0] + ".jpg"
-        img.save(out, format=fmt, **save_kwargs)
+        _save_fresh(img, out, fmt, **save_kwargs)
     return out
 
 
@@ -233,11 +242,31 @@ def metadata_not_strippable(src: str, why: str) -> MetadataNotStrippableError:
     )
 
 
+def _copy_bytes(src: str, tmp: str) -> None:
+    """The source's bytes, mode, timestamps and extended attributes
+    into a file created fresh at ``tmp``: what ``shutil.copy2`` copies,
+    without ever opening the destination by name. The bytes take the
+    platform's fast copy, on a duplicate of the new file's descriptor."""
+    st = os.stat(src)
+    with open_fresh(tmp) as fdst:
+        fd = fdst.fileno()
+        shutil.copyfile(src, os.dup(fd))
+        with contextlib.suppress(OSError):
+            os.fchmod(fd, stat.S_IMODE(st.st_mode))
+        if hasattr(os, "listxattr"):
+            with contextlib.suppress(OSError):
+                for name in os.listxattr(src):
+                    with contextlib.suppress(OSError):
+                        os.setxattr(fd, name, os.getxattr(src, name))
+        times = (st.st_atime_ns, st.st_mtime_ns)
+        os.utime(fd if os.utime in os.supports_fd else tmp, ns=times)
+
+
 def _export_copy(src: str, dest: str) -> None:
     _refuse_self_export(src, dest)
     tmp = _fresh_dest(dest)
     try:
-        retry_io(shutil.copy2, src, tmp, label="export-copy")
+        retry_io(_copy_bytes, src, tmp, label="export-copy")
         _replace_into(tmp, dest)
     finally:
         with contextlib.suppress(OSError):
@@ -282,7 +311,10 @@ def bundle_selected_zip(selected_dir: str, archive_path: str, dest_names: list[s
     """
 
     def _write() -> None:
-        with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        with (
+            replace_fresh(archive_path) as fh,
+            zipfile.ZipFile(fh, "w", zipfile.ZIP_DEFLATED) as zf,
+        ):
             for name in dest_names:
                 src = os.path.join(selected_dir, name)
                 if os.path.isfile(src):

@@ -320,3 +320,33 @@ class TestSimilarityDiversity:
         # Hash should catch the duplicate even though CLIP didn't
         assert len(selected) == 1
         assert selected[0]["filepath"] == "a.jpg"
+
+
+def test_the_fill_to_count_fallback_keeps_the_month_cap():
+    from bpp.selection.choose import choose
+
+    candidates = [
+        {
+            "filepath": f"/p{i}.jpg",
+            "aggregate_score": 1.0 - i / 10,
+            "date": f"2026-01-0{i + 1}T10:00:00",
+            "date_day": f"2026-01-0{i + 1}",
+            "date_month": "2026-01",
+        }
+        for i in range(5)
+    ]
+    config = {
+        "max_per_day": 3,
+        "min_per_month": 0,
+        "max_per_month": 1,
+        "similarity_threshold": 0.0,
+    }
+    chosen = choose(candidates, k=5, config=config)
+    assert len(chosen) == 1, "the month cap was dropped to reach the requested count"
+
+    # The day cap alone is still relaxed when it is all that stands in the way.
+    same_day = [dict(c, date_day="2026-01-01") for c in candidates]
+    config["max_per_month"] = 0
+    chosen = choose(same_day, k=5, config=config)
+    assert len(chosen) == 5
+    assert sum("relaxed day constraint" in c["selection_reason"] for c in chosen) == 2

@@ -30,6 +30,7 @@ import zlib
 from PIL import Image, ImageOps
 
 from bpp.constants import JPEG_QUALITY_CROP, JPEG_QUALITY_FULL
+from bpp.utils.fresh_file import replace_fresh
 from bpp.utils.logging import get_logger
 from bpp.utils.retry import retry_io
 
@@ -105,8 +106,8 @@ def _generate_cached_image(
                     img = _apply_edits(img, edits)
                 if thumb_size:
                     img.thumbnail((THUMBNAIL_MAX_SIZE, THUMBNAIL_MAX_SIZE), Image.LANCZOS)
-                img.save(tmp_path, "JPEG", quality=quality)
-            os.replace(tmp_path, output_path)
+                with replace_fresh(output_path, part=tmp_path) as fh:
+                    img.save(fh, "JPEG", quality=quality)
         log.debug("Generated cached image: %s", output_path)
         return True
     except Exception as e:

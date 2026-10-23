@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import html
 import os
 import urllib.parse
@@ -19,6 +18,7 @@ except ImportError:
 
 from bpp import APP_NAME
 from bpp.constants import JPEG_QUALITY_THUMB, THUMBNAIL_MAX_SIZE
+from bpp.utils.fresh_file import replace_fresh
 from bpp.utils.logging import get_logger
 from bpp.utils.paths import safe_join
 from bpp.utils.retry import retry_io
@@ -127,13 +127,8 @@ def _save_atomically(img: Any, dest: str, fmt: str, **kw: Any) -> None:
     import threading
 
     tmp = f"{dest}.{os.getpid()}.{threading.get_ident()}.tmp"
-    try:
-        img.save(tmp, fmt, **kw)
-        os.replace(tmp, dest)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.remove(tmp)
-        raise
+    with replace_fresh(dest, part=tmp) as fh:
+        img.save(fh, fmt, **kw)
 
 
 def generate_gallery(selected: list[dict[str, Any]], outdir: str) -> None:
@@ -169,7 +164,7 @@ def generate_gallery(selected: list[dict[str, Any]], outdir: str) -> None:
     }
 
     gallery_path = os.path.join(outdir, "gallery.html")
-    with open(gallery_path, "w") as f:
+    with replace_fresh(gallery_path, "w") as f:
         f.write(page)
 
     log.info("Gallery written: %s (%d thumbnails)", gallery_path, len(cards))

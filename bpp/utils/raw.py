@@ -7,6 +7,7 @@ import threading
 import time
 from typing import TYPE_CHECKING
 
+from bpp.utils.fresh_file import replace_fresh
 from bpp.utils.logging import get_logger
 
 if TYPE_CHECKING:
@@ -291,8 +292,8 @@ def convert_raw_to_jpeg(raw_path: str, output_path: str, quality: int = 92) -> s
     # must not leave a truncated preview that would be served from then on.
     tmp = f"{output_path}.{os.getpid()}.{threading.get_ident()}.tmp"
     try:
-        Image.fromarray(decode_raw_rgb(raw_path)).save(tmp, "JPEG", quality=quality)
-        os.replace(tmp, output_path)
+        with replace_fresh(output_path, part=tmp) as fh:
+            Image.fromarray(decode_raw_rgb(raw_path)).save(fh, "JPEG", quality=quality)
         return output_path
     except RawSupportMissing:
         return None

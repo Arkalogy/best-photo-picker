@@ -44,6 +44,8 @@ import threading
 import urllib.request
 from collections.abc import Callable, Iterator
 
+from bpp.utils.fresh_file import open_fresh
+
 _DOWNLOAD_TIMEOUT = 120  # seconds
 _CHUNK = 256 * 1024
 log = logging.getLogger(__name__)
@@ -277,7 +279,7 @@ def download_file(
     enter_registry_download()
     try:
         try:
-            with urllib.request.urlopen(url, timeout=timeout) as resp, open(dest, "wb") as f:
+            with urllib.request.urlopen(url, timeout=timeout) as resp, open_fresh(dest) as f:
                 _copy_with_progress(resp, f)
         except Exception:
             log.warning("Download failed for %s", url, exc_info=True)

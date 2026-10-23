@@ -105,15 +105,16 @@ def choose(
         selected.append(cand_copy)
         used_paths.add(cand["filepath"])
 
-    # If still under k and we have remaining candidates, relax day constraint
-    # but still respect visual similarity
+    # If still under k and we have remaining candidates, relax the day
+    # constraint; the month cap and visual similarity still hold.
     if len(selected) < k:
         for cand in sorted_candidates:
             if len(selected) >= k:
                 break
             if cand["filepath"] in used_paths:
                 continue
-            if tracker.is_too_similar(cand):
+            ok, _reason = tracker.can_accept(cand, relax_day=True)
+            if not ok:
                 continue
             tracker.accept(cand)
             cand_copy = dict(cand)

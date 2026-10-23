@@ -344,12 +344,15 @@ def api_import() -> tuple[Response, int]:
     wd = ctx.ensure_workdir()
     lib = ctx.library_path
     os.makedirs(lib, exist_ok=True)
+    # Imported photos are scored by this worker: with the stored model
+    # switches and thresholds merged in, as an Analyze would score them.
+    merged_config = run_config_for_analyze(ctx, ctx.get_conn())
 
     started = ctx.import_worker.start(
         source_dir=source_dir,
         library_path=lib,
         workdir=wd,
-        config=ctx.config,
+        config=merged_config,
         extensions=ctx.state["extensions"],
         batch_name=batch_name,
         import_live_photo_sidecars=import_live_photo_sidecars,

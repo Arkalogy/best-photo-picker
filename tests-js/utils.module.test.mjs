@@ -413,3 +413,22 @@ describe("validateInput", () => {
     expect(() => validateInput()).not.toThrow();
   });
 });
+
+describe("doExport after a cancel", () => {
+  test("a stopped export is reported as a stop with its count, not as a failure", async () => {
+    /** @type {HTMLInputElement} */ (document.getElementById("export-dir")).value = "/out";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResp({ count: 12, failed: 0, outdir: "/out", cancelled: true }))
+    );
+    await doExport();
+    const status = document.getElementById("export-status");
+    expect(status?.innerHTML).toContain("Export stopped after 12 photos");
+    expect(status?.innerHTML).toContain("Open Folder");
+    expect(status?.classList.contains("error")).toBe(false);
+    expect(document.querySelector("#toast-container .toast.error")).toBeNull();
+    expect(document.querySelector("#toast-container .toast")?.textContent).toContain(
+      "Export stopped after 12 photos"
+    );
+  });
+});

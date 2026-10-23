@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import errno
 import os
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -81,6 +82,9 @@ class ExportResult:
     #: Files exported with their metadata although removal was asked for
     #: (videos: the export doesn't re-encode them). Reported, never silent.
     metadata_kept: int = 0
+    #: The run was cancelled between photos: ``exported`` counts what was
+    #: written before the stop; no manifest, report, gallery or bundle.
+    cancelled: bool = False
 
     def __iter__(self):
         # Back-compat for any caller that still tuple-unpacks the
@@ -118,6 +122,7 @@ def export_selected(
     include_source_paths: bool = False,
     strip_metadata: bool = True,
     on_progress: Callable[[int, int, str], None] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> ExportResult:
     """Export selected photos and write reports.
 
@@ -139,7 +144,10 @@ def export_selected(
     these sidecar files. Pass ``include_source_paths=True``
     to opt in to absolute paths for diagnostics. Image exports in copy/original
     mode strip embedded metadata by default; pass ``strip_metadata=False`` to
-    preserve original image bytes intentionally."""
+    preserve original image bytes intentionally.
+
+    ``cancel_event`` is checked between photos: once set, the loop stops,
+    what was written stays, and the sidecar files are skipped."""
     if config is None:
         config = {}
 
@@ -182,31 +190,42 @@ def export_selected(
     # now it's 1.
     score_pairs = _iter_weighted_score_pairs()
 
+    cancelled = False
+    keep_staging = False  # the photos stay, visible or not: never removed
     try:
-        exported, failed, disk_error, metadata_kept = _write_photos(
-            selected, selected_dir, plan, score_pairs, write_xmp, on_progress
+        exported, failed, disk_error, metadata_kept, cancelled = _write_photos(
+            selected, selected_dir, plan, score_pairs, write_xmp, on_progress, cancel_event
         )
         if failed:
             log.warning("Export completed with %d failures out of %d", len(failed), len(selected))
 
-        if write_manifest and exported:
-            _write_manifest(outdir, exported, score_pairs, library_path, include_source_paths)
-
-        report_path = _write_reports(
-            outdir, selected, analysis, config, score_pairs, library_path, include_source_paths
-        )
-        log.info("Exported %d photos to %s", len(exported), selected_dir)
-        log.info("Report: %s", report_path)
-
-        if bundle_zip and exported and disk_error is None:
-            disk_error = _bundle_zip(outdir, selected_dir, exported)
-            if disk_error is not None:
-                # The zip failed: keep the photos, under a name the user
-                # can see, instead of in the hidden staging folder.
+        if cancelled:
+            log.info("Export cancelled after %d of %d photos", len(exported), len(selected))
+            if bundle_zip and exported:
+                # The photos written so far stay, where the user can see them.
+                keep_staging = True
                 selected_dir = _keep_staging_visible(outdir, selected_dir)
+        else:
+            if write_manifest and exported:
+                _write_manifest(outdir, exported, score_pairs, library_path, include_source_paths)
+
+            report_path = _write_reports(
+                outdir, selected, analysis, config, score_pairs, library_path, include_source_paths
+            )
+            log.info("Exported %d photos to %s", len(exported), selected_dir)
+            log.info("Report: %s", report_path)
+
+            if bundle_zip and exported and disk_error is None:
+                disk_error = _bundle_zip(outdir, selected_dir, exported)
+                if disk_error is not None:
+                    # The zip failed: keep the photos, under a name the user
+                    # can see, instead of in the hidden staging folder.
+                    keep_staging = True
+                    selected_dir = _keep_staging_visible(outdir, selected_dir)
     finally:
         if (
             bundle_zip
+            and not keep_staging
             and os.path.isdir(selected_dir)
             and os.path.basename(selected_dir).startswith(".bundle-")
         ):
@@ -214,7 +233,7 @@ def export_selected(
 
             shutil.rmtree(selected_dir, ignore_errors=True)
 
-    if gallery and not bundle_zip:
+    if gallery and not bundle_zip and not cancelled:
         from bpp.output.gallery import generate_gallery
 
         generate_gallery(selected, outdir)
@@ -225,6 +244,7 @@ def export_selected(
         disk_error=disk_error,
         failures=failed,
         metadata_kept=metadata_kept,
+        cancelled=cancelled,
     )
 
 
@@ -286,16 +306,22 @@ def _write_photos(
     score_pairs: list[tuple[str, str]],
     write_xmp: bool,
     on_progress: Callable[[int, int, str], None] | None,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None, int]:
+    cancel_event: threading.Event | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None, int, bool]:
     """The per-photo loop. Returns ``(exported, failed, disk_error,
-    metadata_kept)``; the loop stops at the first OSError every further
-    write would repeat."""
+    metadata_kept, cancelled)``; the loop stops at the first OSError
+    every further write would repeat, and between photos once
+    ``cancel_event`` is set."""
     exported: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
     disk_error: dict[str, Any] | None = None
     metadata_kept = 0
+    cancelled = False
     total = len(selected)
     for i, item in enumerate(selected, 1):
+        if cancel_event is not None and cancel_event.is_set():
+            cancelled = True
+            break
         src = item["filepath"]
         orig_name = os.path.basename(src)
         dest_name = f"{i:03d}_{orig_name}"
@@ -347,7 +373,7 @@ def _write_photos(
             # record it and carry on (it says nothing about the disk).
             log.warning("Export handler failed on %s: %s", src, e, exc_info=True)
             failed.append({"index": i, "source": src, "error": str(e)})
-    return exported, failed, disk_error, metadata_kept
+    return exported, failed, disk_error, metadata_kept, cancelled
 
 
 def _keep_staging_visible(outdir: str, staging_dir: str) -> str:

@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from bpp.config import cfg_get
 from bpp.db.albums import sync_all_photos_album
 from bpp.db.connection import init_db
 from bpp.db.library import import_folder
@@ -15,6 +14,7 @@ from bpp.scoring.aggregate import (
     init_analysis_db,
     normalize_blur_scores,
     process_one,
+    process_one_settings,
 )
 from bpp.utils.logging import get_logger
 from bpp.web.base_worker import BackgroundWorker
@@ -194,7 +194,9 @@ class ImportWorker(BackgroundWorker):
 
         cache_db_path = os.path.join(workdir, DB_NAME)
         init_analysis_db(cache_db_path)
-        max_long_side = cfg_get(config, "max_long_side")
+        # The same settings an Analyze scores with: the stored model
+        # switches and thresholds, not the scorer's defaults.
+        max_long_side, face_conf, model_toggles, thresholds = process_one_settings(config)
 
         valid: list[dict[str, Any]] = []
         total_analyze = len(result.imported_paths)
@@ -202,7 +204,9 @@ class ImportWorker(BackgroundWorker):
             if self._cancelled.is_set():
                 self._emit({"type": "cancelled"})
                 return
-            analyzed = process_one((filepath, max_long_side, cache_db_path))
+            analyzed = process_one(
+                (filepath, max_long_side, cache_db_path, face_conf, model_toggles, thresholds)
+            )
             if analyzed is not None:
                 valid.append(analyzed)
             self._emit(

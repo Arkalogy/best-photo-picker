@@ -12,6 +12,7 @@ from typing import Any
 
 from bpp import __version__
 from bpp.output.export_metadata import _safe_source_name, write_json_manifest
+from bpp.utils.fresh_file import replace_fresh
 from bpp.utils.logging import get_logger
 from bpp.utils.retry import retry_io
 
@@ -122,10 +123,8 @@ def _write_reports(
     report_path = os.path.join(outdir, "report.json")
 
     def _write_json_report():
-        tmp = report_path + ".tmp"
-        with open(tmp, "w") as f:
+        with replace_fresh(report_path, "w") as f:
             json.dump(report, f, indent=2)
-        os.replace(tmp, report_path)
 
     retry_io(_write_json_report, label="write_report_json")
 
@@ -141,7 +140,7 @@ def _write_reports(
     csv_path = os.path.join(outdir, "report.csv")
 
     def _write_csv_report():
-        with open(csv_path, "w", newline="") as f:
+        with replace_fresh(csv_path, "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=csv_fieldnames)
             writer.writeheader()
             for entry in report["selected"]:

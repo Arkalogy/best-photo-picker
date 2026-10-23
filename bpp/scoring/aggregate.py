@@ -289,6 +289,30 @@ def analyze_single_image(
     return result
 
 
+def process_one_settings(
+    config: dict[str, Any],
+) -> tuple[Any, float, dict[str, bool], dict[str, Any]]:
+    """What a run's config hands :func:`process_one` beyond the path and
+    the cache: the long side, the face confidence, every model switch
+    and the detector thresholds. The scoring subprocess and the import
+    worker build their calls from this, so a photo is scored the same
+    whichever brought it in."""
+    from bpp.constants import RUN_TOGGLE_KEYS
+
+    model_toggles = {k: bool(config.get(k, True)) for k in RUN_TOGGLE_KEYS}
+    thresholds = {
+        "pet_detection_confidence": float(cfg_get(config, "pet_detection_confidence")),
+        "pet_input_size": int(cfg_get(config, "pet_input_size")),
+        "min_face_area_pct": float(cfg_get(config, "min_face_area_pct")),
+    }
+    return (
+        cfg_get(config, "max_long_side"),
+        float(cfg_get(config, "face_detection_confidence")),
+        model_toggles,
+        thresholds,
+    )
+
+
 def process_one(args: tuple) -> dict[str, Any] | None:
     """Worker: (filepath, max_long_side, db_path[, face_confidence[, model_toggles[, config]]])."""
     from bpp.media_types import MediaKind, media_kind_from_path

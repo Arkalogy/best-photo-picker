@@ -126,15 +126,17 @@ class DiversityTracker:
                 rows[: self._n_clip] = self._clip_rows[: self._n_clip]
             self._clip_rows = rows
 
-    def can_accept(self, item: dict[str, Any]) -> tuple[bool, str]:
+    def can_accept(self, item: dict[str, Any], *, relax_day: bool = False) -> tuple[bool, str]:
         """Check if item can be accepted under diversity constraints.
 
-        Returns (accepted, reason).
+        Returns (accepted, reason). With ``relax_day`` the per-day cap
+        is waived (the fill pass, when the count can't be reached under
+        it); the month cap and the similarity check always hold.
         """
         day = item.get("date_day", "unknown")
         month = item.get("date_month", "unknown")
 
-        if self.day_counts[day] >= self.max_per_day:
+        if not relax_day and self.day_counts[day] >= self.max_per_day:
             return False, f"day {day} already has {self.max_per_day} photos"
 
         if self.max_per_month > 0 and self.month_counts[month] >= self.max_per_month:

@@ -100,9 +100,11 @@ def test_the_band_index_keeps_the_old_answer_and_is_not_quadratic():
         }
         for i in range(40_000)
     ]
-    t0 = time.monotonic()
+    # CPU time, not wall-clock: a loaded machine must not fail this. The
+    # quadratic pass this guards against takes minutes on 40k hashes.
+    t0 = time.process_time()
     _global_dedup(big, 8)
-    assert time.monotonic() - t0 < 6.0, "the global pass still compares every representative"
+    assert time.process_time() - t0 < 20.0, "the global pass still compares every representative"
 
 
 def test_clearing_the_library_refuses_a_straggling_thread(tmp_path, monkeypatch):

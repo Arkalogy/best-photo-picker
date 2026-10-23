@@ -132,6 +132,7 @@ class ExportWorker(BackgroundWorker):
                 library_path=library_path,
                 strip_metadata=strip_metadata,
                 on_progress=_on_progress,
+                cancel_event=self._cancelled,
             )
         finally:
             log.info(
@@ -141,6 +142,16 @@ class ExportWorker(BackgroundWorker):
             )
 
         self.last_result = result
+        if result.cancelled:
+            self._emit(
+                {
+                    "type": "cancelled",
+                    "message": "Export cancelled",
+                    "outdir": outdir,
+                    "count": result.exported,
+                }
+            )
+            return
         self._emit(
             {
                 "type": "done",

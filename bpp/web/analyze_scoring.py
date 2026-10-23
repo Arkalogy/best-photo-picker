@@ -30,7 +30,6 @@ import os
 import traceback
 from typing import Any
 
-from bpp.config import cfg_get
 from bpp.utils.logging import get_logger
 from bpp.utils.subprocess_runner import (
     SENTINEL,
@@ -56,21 +55,12 @@ def _scoring_worker(
         from bpp.scoring.aggregate import (
             init_analysis_db,
             process_one,
+            process_one_settings,
         )
         from bpp.web.analyze_model_preflight import apply_run_download_skips
 
         apply_run_download_skips(config)
-
-        max_long_side = cfg_get(config, "max_long_side")
-        face_conf = float(cfg_get(config, "face_detection_confidence"))
-
-        from bpp.constants import RUN_TOGGLE_KEYS
-
-        model_toggles = {k: config.get(k, True) for k in RUN_TOGGLE_KEYS}
-        extra_config = {
-            "pet_detection_confidence": float(cfg_get(config, "pet_detection_confidence")),
-            "pet_input_size": int(cfg_get(config, "pet_input_size")),
-        }
+        max_long_side, face_conf, model_toggles, extra_config = process_one_settings(config)
 
         init_analysis_db(db_path)
 

@@ -36,7 +36,7 @@ const _EXPORT_STREAM_THRESHOLD = 25;
  *
  * @param {Record<string, any>} body
  * @param {HTMLElement | null} statusEl
- * @returns {Promise<{count: number, failed: number, outdir: string, disk_error: any, metadata_kept: number}>}
+ * @returns {Promise<{count: number, failed: number, outdir: string, disk_error: any, metadata_kept: number, cancelled?: boolean}>}
  */
 async function _streamExport(body, statusEl) {
   // 1) Kick off the worker; 202 means streaming has begun.
@@ -73,7 +73,18 @@ async function _streamExport(body, statusEl) {
           disk_error: msg.disk_error,
           metadata_kept: msg.metadata_kept || 0,
         });
-      } else if (msg.type === "error" || msg.type === "cancelled") {
+      } else if (msg.type === "cancelled") {
+        // A stop, not a failure: the photos written so far are kept.
+        es.close();
+        resolve({
+          count: msg.count || 0,
+          failed: 0,
+          outdir: msg.outdir,
+          disk_error: null,
+          metadata_kept: 0,
+          cancelled: true,
+        });
+      } else if (msg.type === "error") {
         es.close();
         reject(new Error(msg.message || msg.type));
       }
@@ -238,7 +249,9 @@ export async function doExport() {
   if (cancelBtn) cancelBtn.textContent = "Done";
   _armPostSuccessRevert();
 
-  let msg = `Exported ${data.count} photo${data.count !== 1 ? "s" : ""}`;
+  let msg = data.cancelled
+    ? `Export stopped after ${data.count} photo${data.count !== 1 ? "s" : ""}`
+    : `Exported ${data.count} photo${data.count !== 1 ? "s" : ""}`;
   if (data.failed > 0) msg += ` (${data.failed} failed)`;
   // Videos (never re-encoded) and linked files keep their metadata: say
   // so rather than let a "metadata removed" export quietly ship some.

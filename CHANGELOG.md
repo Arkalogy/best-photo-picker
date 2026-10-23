@@ -110,6 +110,21 @@ Licensing, accuracy and hardening release. **Schema version: 44** (unchanged).
   written offer for the source of any bundled GPL/LGPL component.
 
 ### Fixed
+- **Every file an export writes is a new file of its own.** A link
+  planted in the export folder at the name of a photo's temporary file,
+  a report, the manifest, the gallery, a thumbnail or the zip bundle no
+  longer redirects the write into whatever it pointed at: the file is
+  created exclusively and the planted entry is replaced.
+- Importing a folder scores the new photos with the stored model
+  switches and detection thresholds, as Analyze does, instead of the
+  scorer's defaults. The "minimum face area" setting now reaches the
+  scorer on both paths; it was read as its default before.
+- Cancelling an export stops it after the photo being written; the
+  photos already exported stay, the manifest, report, gallery and zip
+  bundle are skipped, and the progress stream ends with `cancelled`
+  rather than `done`.
+- BPP Picks keeps the "Max photos per month" cap when it relaxes the
+  per-day cap to reach the requested count.
 - Permanent delete renames each selected file to a hidden sibling
   before anything is removed and deletes only recycle-bin rows, so a
   crash at any point loses nothing: a photo whose row survived

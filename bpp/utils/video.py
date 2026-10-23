@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import threading
 from typing import Any
 
 import cv2
@@ -17,6 +18,7 @@ from bpp.constants import (
     VIDEO_SPRITE_START,
     VIDEO_SPRITE_WIDTH,
 )
+from bpp.utils.fresh_file import replace_fresh
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -218,7 +220,9 @@ def generate_video_sprite(
         sprite = np.hstack(padded)
         rgb = cv2.cvtColor(sprite, cv2.COLOR_BGR2RGB)
         img = Image.fromarray(rgb)
-        img.save(output_path, "JPEG", quality=JPEG_QUALITY_SPRITE)
+        tmp = f"{output_path}.{os.getpid()}.{threading.get_ident()}.tmp"
+        with replace_fresh(output_path, part=tmp) as fh:
+            img.save(fh, "JPEG", quality=JPEG_QUALITY_SPRITE)
         return True
     except Exception as e:
         log.debug("Failed to generate video sprite for %s: %s", filepath, e)
