@@ -105,3 +105,27 @@ class TestDesktopShellRestartLifecycle:
         monitor = src.split("Server respawned successfully")[0]
         monitor = monitor[monitor.rfind("loop {") :]
         assert "foreign_ticks" in monitor and "show_start_failure(&handle_nav, true)" in monitor
+
+
+def test_the_signed_app_may_load_its_own_python():
+    """The sidecar is a PyInstaller one-file binary; under the hardened
+    runtime it needs library validation disabled or it can't load the
+    Python it unpacks (the 0.2.0 Mac build did not start). The bundler
+    applies the entitlements file to every binary it signs, and the
+    release runs the signed sidecar from the DMG, serving a page, before
+    anything is uploaded."""
+    import json
+    import plistlib
+
+    conf = json.loads((ROOT / "desktop" / "src-tauri" / "tauri.conf.json").read_text())
+    name = conf["bundle"]["macOS"]["entitlements"]
+    plist = plistlib.loads((ROOT / "desktop" / "src-tauri" / name).read_bytes())
+    assert plist["com.apple.security.cs.disable-library-validation"] is True
+    assert plist["com.apple.security.cs.allow-unsigned-executable-memory"] is True
+    workflow = (ROOT / ".github" / "workflows" / "release-desktop.yml").read_text()
+    gate = workflow.index("Verify the signed sidecar starts and serves")
+    assert gate < workflow.index("Notarize and staple the DMG")
+    step = workflow[gate : workflow.index("Notarize and staple the DMG")]
+    assert '"$server" --version' in step
+    assert "serve --library" in step and "curl -sf" in step
+    assert "alarm 120" in step and "hdiutil detach" in step

@@ -197,6 +197,44 @@ jobs:
           ls -lh "$OUT"
           echo "ARTIFACT=$OUT" >> "$GITHUB_ENV"
 
+      - name: Verify the signed sidecar starts and serves
+        # The sidecar is signed with the hardened runtime inside the app.
+        # If its entitlements are wrong, macOS refuses to load its own
+        # Python (or a library the server loads later) and the app can
+        # never reach the server; running it from the DMG is the only
+        # check that sees the signed binary as a user would. Both steps
+        # are time-bounded (macOS runners have no `timeout`), the verdict
+        # is printed before the image is detached, and the step hard-fails
+        # the release before anything is uploaded.
+        run: |
+          mount="$RUNNER_TEMP/dmg-mount"
+          lib="$RUNNER_TEMP/gate-library"
+          mkdir -p "$mount" "$lib"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$ARTIFACT"
+          server="$mount/Best Photo Picker.app/Contents/MacOS/bpp-server"
+          ok=1
+          # 1. the runtime loads
+          version="$(perl -e 'alarm 120; exec @ARGV' "$server" --version 2>&1 || true)"
+          echo "$version" | tail -3
+          echo "$version" | grep -q "^bpp " || { ok=0; echo "::error::the signed sidecar does not start"; }
+          # 2. the server comes up and answers (the lazily loaded libraries)
+          if [ "$ok" = 1 ]; then
+            "$server" serve --library "$lib" --no-browser --open-loopback --port 5099 > "$RUNNER_TEMP/gate-serve.log" 2>&1 &
+            pid=$!
+            up=0
+            for _ in $(seq 1 120); do
+              if curl -sf -o /dev/null http://127.0.0.1:5099/; then up=1; break; fi
+              kill -0 "$pid" 2>/dev/null || break
+              sleep 1
+            done
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+            tail -5 "$RUNNER_TEMP/gate-serve.log"
+            [ "$up" = 1 ] || { ok=0; echo "::error::the signed sidecar did not serve a page within 120 s"; }
+          fi
+          hdiutil detach "$mount" -quiet || true
+          [ "$ok" = 1 ]
+
       - name: Notarize and staple the DMG
         # Tauri notarizes the .app but not the DMG around it, so
         # Gatekeeper would otherwise report the download itself as

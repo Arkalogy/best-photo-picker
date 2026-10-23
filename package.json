@@ -1,6 +1,6 @@
 {
   "name": "best-photo-picker-web",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "license": "MIT",
   "description": "Frontend dev tooling (lint + test) for the bpp web UI. Runtime JS is loaded directly from bpp/web/static/js/ via <script> tags — no build step.",

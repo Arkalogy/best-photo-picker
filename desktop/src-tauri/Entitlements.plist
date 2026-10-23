@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- The bpp-server sidecar is a PyInstaller one-file binary: at start it
+       unpacks its Python runtime and libraries to a temp folder and loads
+       them. PyInstaller ad-hoc-signs those collected libraries at build
+       time, and under the hardened runtime macOS library validation only
+       accepts libraries signed with the process's own Team ID, so the
+       server failed with "Failed to load Python shared library" (the
+       0.2.0 Mac build). These two entitlements are the ones PyInstaller
+       documents for signed one-file apps.
+       Trade-off: the Tauri bundler applies this one file to every binary
+       it signs, so the Rust/WebView host gets them too although it needs
+       neither. The narrower fix is to sign the collected libraries with
+       the Developer ID at PyInstaller build time (its codesign-identity
+       option) so validation can stay on; tracked as a follow-up. -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+</dict>
+</plist>

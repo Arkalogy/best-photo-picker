@@ -18,7 +18,7 @@ _os.environ.setdefault("OPENCV_IO_MAX_IMAGE_PIXELS", str(200_000_000))
 # the first import.
 _os.environ.setdefault("NO_ALBUMENTATIONS_UPDATE", "1")
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 APP_NAME = "Best Photo Picker"
 
 # Eagerly import the model registry so the download chokepoint
