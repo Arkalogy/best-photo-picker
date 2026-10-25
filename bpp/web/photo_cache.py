@@ -7,9 +7,23 @@ import contextlib
 import os
 from typing import Any
 
-from bpp.constants import PHOTO_CACHE_SUFFIXES
+from bpp.constants import (
+    PHOTO_CACHE_SUFFIX_EDITED,
+    PHOTO_CACHE_SUFFIX_EDITED_THUMB,
+    PHOTO_CACHE_SUFFIXES,
+)
 
 _CACHE_EXTS = (".jpg", ".png")
+
+#: The variants that depend on the photo's saved edits and nothing else.
+#: An edit save sweeps these only: the full-size conversion (``_full``) is
+#: edit-independent, and for a camera RAW it is a slow decode.
+EDIT_VARIANT_SUFFIXES = (PHOTO_CACHE_SUFFIX_EDITED, PHOTO_CACHE_SUFFIX_EDITED_THUMB)
+
+
+def cached_variant_path(cache_dir: str, path_hash: str, suffix: str) -> str:
+    """Where one cached derivative of a photo lives (JPEG)."""
+    return os.path.join(cache_dir, f"{path_hash}{suffix}.jpg")
 
 
 def cached_variant_paths(cache_dir: str, hashes: set[str]) -> list[str]:
@@ -25,7 +39,9 @@ def cached_variant_paths(cache_dir: str, hashes: set[str]) -> list[str]:
     ]
 
 
-def invalidate_photo_cache(ctx: Any, path_hash: str, *, content_hash: str | None = None) -> None:
+def invalidate_photo_cache(
+    ctx: Any, path_hash: str, *, content_hash: str | None = None, edits_only: bool = False
+) -> None:
     """Remove cached full photo and thumbnail variants for a hash.
 
     The variant names come from ``PHOTO_CACHE_SUFFIXES`` (a new variant
@@ -34,7 +50,8 @@ def invalidate_photo_cache(ctx: Any, path_hash: str, *, content_hash: str | None
 
     ``content_hash`` is the truncated SHA-256 of the file content: the
     inpaint cache is content-addressed, so when it is given both hashes
-    are swept.
+    are swept. ``edits_only`` (an edit save, enhance or reset) removes
+    just the edit-dependent variants and keeps the full-size conversion.
     """
     if not ctx.thumbs:
         return
@@ -44,7 +61,11 @@ def invalidate_photo_cache(ctx: Any, path_hash: str, *, content_hash: str | None
     hashes = {path_hash}
     if content_hash:
         hashes.add(content_hash)
-    for cached in cached_variant_paths(cache_dir, hashes):
+    if edits_only:
+        targets = [cached_variant_path(cache_dir, path_hash, s) for s in EDIT_VARIANT_SUFFIXES]
+    else:
+        targets = cached_variant_paths(cache_dir, hashes)
+    for cached in targets:
         # A variant that won't go (locked by a sync client, read-only
         # folder) must not fail the edit save or delete that called us.
         with contextlib.suppress(OSError):

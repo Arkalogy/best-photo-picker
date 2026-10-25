@@ -4,7 +4,6 @@ RAW preview failure turns into for the viewer."""
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from bpp.constants import PHOTO_CACHE_SUFFIX_FULL
@@ -14,8 +13,10 @@ from bpp.errors import BppError
 def raw_full_jpeg_path(ctx: Any, path_hash: str) -> str:
     """Cache path of a camera RAW's full-size JPEG conversion: made by
     the viewer or the first face / pet crop, reused by the others."""
+    from bpp.web.photo_cache import cached_variant_path
+
     cache_dir = ctx.thumbs.cache_dir if ctx.thumbs else ctx.ensure_workdir()
-    return os.path.join(cache_dir, f"{path_hash}{PHOTO_CACHE_SUFFIX_FULL}.jpg")
+    return cached_variant_path(cache_dir, path_hash, PHOTO_CACHE_SUFFIX_FULL)
 
 
 def crop_failure_error(path_hash: str, diagnostic: str, **context: Any) -> BppError:
