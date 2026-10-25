@@ -6,6 +6,7 @@ this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-10-24
 
 ### Fixed
 - **Faces are grouped far more accurately, with each face model.** All
