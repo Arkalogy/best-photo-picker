@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import errno
-import hashlib
 import os
 import shutil
 import sqlite3
@@ -11,12 +10,19 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from bpp.db.library_copy import (
+    _copy_atomically,
+    _photo_record,
+    _remove_stale_tmp,
+    _sha256_file,
+    _slot_for,
+    _unique_dest_path,  # noqa: F401  (tests import it from here)
+    active_import,
+)
 from bpp.db.photos import bulk_upsert_photos, check_missing
 from bpp.io_scan import scan_images
 from bpp.utils.logging import get_logger
-from bpp.utils.raw import is_raw_file
 from bpp.utils.retry import retry_io
-from bpp.utils.video import is_video_file
 
 log = get_logger(__name__)
 
@@ -54,6 +60,16 @@ class ImportResult:
     errors: int = 0
     batch_name: str = ""
     imported_paths: list[str] = field(default_factory=list)
+    #: files an earlier, interrupted import had copied but never recorded;
+    #: recorded now instead of copied again (counted in imported_paths too)
+    adopted: int = 0
+    #: the copy stopped at the caller's cancel; rows so far are kept
+    cancelled: bool = False
+
+
+#: Rows are written every this many copied files, so a kill mid-import
+#: (the desktop quit is a SIGKILL after 3 s) loses at most this many rows.
+IMPORT_ROW_FLUSH_EVERY = 100
 
 
 def get_library_path(config: dict[str, Any] | None = None) -> str:
@@ -93,23 +109,6 @@ def ensure_library_dirs(library_path: str) -> dict[str, str]:
     return dirs
 
 
-def _sha256_file(filepath: str) -> str:
-    """Compute SHA-256 hex digest of a file.
-
-    Retries on transient I/O errors (NAS flakes).
-    """
-    from bpp.utils.retry import retry_io
-
-    def _read() -> str:
-        h = hashlib.sha256()
-        with open(filepath, "rb") as f:
-            for chunk in iter(lambda: f.read(8192), b""):
-                h.update(chunk)
-        return h.hexdigest()
-
-    return retry_io(_read, label=f"sha256({os.path.basename(filepath)})")
-
-
 def import_folder(
     conn: sqlite3.Connection,
     source_dir: str,
@@ -118,15 +117,17 @@ def import_folder(
     batch_name: str | None = None,
     on_progress: Callable[[int, int, str, str], None] | None = None,
     import_live_photo_sidecars: bool = False,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> ImportResult:
     """Import photos from source_dir into the library.
 
-    - Scans source_dir for images
-    - SHA-256 dedup against existing library
-    - Copies to library/photos/{batch_name}/ preserving filenames
-    - Inserts into photos table
+    Scans source_dir, dedups by SHA-256 against the library, copies into
+    library/photos/{batch_name}/ (adopting a file an interrupted run copied
+    but never recorded), and writes the photos rows as it goes — every
+    IMPORT_ROW_FLUSH_EVERY files and before any abort. Stops between files
+    when ``cancel_check()`` is true, keeping what it has written.
 
-    on_progress(current, total, filename, status) is called after each file.
+    on_progress(current, total, filename, status) is called after each file;
     status is one of "imported", "skipped", "error".
 
     import_live_photo_sidecars controls whether iPhone Live Photo motion
@@ -137,11 +138,6 @@ def import_folder(
     but remain hidden from the grid and smart albums.
     See bpp/db/live_photo.py for the full detection assumptions.
     """
-    from bpp.db.live_photo import (
-        detect_and_link_live_photo_sidecars,
-        filter_sidecar_paths,
-    )
-
     if extensions is None:
         extensions = DEFAULT_EXTENSIONS
 
@@ -156,6 +152,36 @@ def import_folder(
     photos_dir = get_library_dirs(library_path)["photos"]
     batch_dir = os.path.join(photos_dir, batch_name)
     os.makedirs(batch_dir, exist_ok=True)
+    _remove_stale_tmp(batch_dir)
+    with active_import(batch_dir):
+        return _import_into(
+            conn,
+            source_dir,
+            batch_dir,
+            batch_name,
+            extensions,
+            on_progress,
+            import_live_photo_sidecars,
+            cancel_check,
+        )
+
+
+def _import_into(
+    conn: sqlite3.Connection,
+    source_dir: str,
+    batch_dir: str,
+    batch_name: str,
+    extensions: list[str],
+    on_progress: Callable[[int, int, str, str], None] | None,
+    import_live_photo_sidecars: bool,
+    cancel_check: Callable[[], bool] | None,
+) -> ImportResult:
+    """The scan, copy and record loop of :func:`import_folder`, run with
+    the batch folder marked as active."""
+    from bpp.db.live_photo import (
+        detect_and_link_live_photo_sidecars,
+        filter_sidecar_paths,
+    )
 
     images = scan_images(source_dir, extensions=extensions, recursive=True)
 
@@ -184,53 +210,55 @@ def import_folder(
     # idx_photos_sha256 index makes the per-row lookup essentially free.
     seen_hashes: set[str] = set()
 
-    imported_photos: list[dict[str, Any]] = []
+    pending: list[dict[str, Any]] = []
 
-    for i, src_path in enumerate(images):
-        filename = os.path.basename(src_path)
-        tmp_path = None
-        try:
-            sha = _sha256_file(src_path)
+    def flush() -> None:
+        if pending:
+            bulk_upsert_photos(conn, pending)
+            pending.clear()
 
-            if (
-                sha in seen_hashes
-                or conn.execute("SELECT 1 FROM photos WHERE sha256 = ? LIMIT 1", (sha,)).fetchone()
-            ):
-                result.skipped += 1
-                if on_progress:
-                    on_progress(i + 1, total, filename, "skipped")
-                continue
-
-            dest_path = _unique_dest_path(batch_dir, filename)
-            tmp_path = dest_path + ".tmp"
-            _copy_atomically(src_path, tmp_path, dest_path)
-            photo_rec = _photo_record(dest_path, filename, batch_name, sha)
-            imported_photos.append(photo_rec)
-            seen_hashes.add(sha)
-            result.imported += 1
-            result.imported_paths.append(dest_path)
-
+    try:
+        for i, src_path in enumerate(images):
+            if cancel_check is not None and cancel_check():
+                result.cancelled = True
+                log.info("Import cancelled after %d of %d file(s); their rows are kept", i, total)
+                break
+            filename = os.path.basename(src_path)
+            try:
+                status = _import_one(
+                    conn, src_path, batch_dir, batch_name, seen_hashes, result, pending
+                )
+            except OSError as e:
+                if e.errno == errno.ENOSPC:
+                    log.error("Disk full while importing %s", src_path)
+                    raise OSError("Disk is full. Free up space and try again.") from e
+                log.warning("Failed to import %s: %s", src_path, e)
+                result.errors += 1
+                status = "error"
+            except Exception as e:
+                log.warning("Failed to import %s: %s", src_path, e)
+                result.errors += 1
+                status = "error"
+            # Outside the per-file try: a row-write failure is not that
+            # file's error (its copy succeeded) and must surface as itself.
+            if len(pending) >= IMPORT_ROW_FLUSH_EVERY:
+                flush()
             if on_progress:
-                on_progress(i + 1, total, filename, "imported")
+                on_progress(i + 1, total, filename, status)
+        flush()
+    finally:
+        # Any abort (disk full, Ctrl-C, a hook raising): the files already
+        # copied keep their rows. The normal path flushed above, so this
+        # only acts, and only logs on failure, when something broke.
+        if pending:
+            try:
+                flush()
+            except Exception:
+                log.warning(
+                    "Could not record the files copied before the import aborted", exc_info=True
+                )
 
-        except OSError as e:
-            if e.errno == errno.ENOSPC:
-                log.error("Disk full while importing %s", src_path)
-                if tmp_path and os.path.exists(tmp_path):
-                    os.remove(tmp_path)
-                raise OSError("Disk is full. Free up space and try again.") from e
-            log.warning("Failed to import %s: %s", src_path, e)
-            result.errors += 1
-            if on_progress:
-                on_progress(i + 1, total, filename, "error")
-        except Exception as e:
-            log.warning("Failed to import %s: %s", src_path, e)
-            result.errors += 1
-            if on_progress:
-                on_progress(i + 1, total, filename, "error")
-
-    if imported_photos:
-        bulk_upsert_photos(conn, imported_photos)
+    if result.imported_paths:
         # Link any Live Photo sidecars that came in with this batch.
         # Runs even when import_live_photo_sidecars=False because the
         # library may already contain unlinked sidecars from a prior
@@ -243,90 +271,49 @@ def import_folder(
     # the breadcrumb showing 100% skipped is what tells support
     # whether the run actually executed.
     log.info(
-        "Import complete: %d imported, %d skipped, %d errors (batch=%s, dest=%s)",
-        result.imported,
+        "Import complete: %d imported, %d skipped, %d errors (batch=%s, dest=%s)%s%s",
+        result.imported + result.adopted,
         result.skipped,
         result.errors,
         batch_name,
         batch_dir,
+        f"; {result.adopted} adopted from an earlier interrupted import" if result.adopted else "",
+        "; cancelled" if result.cancelled else "",
     )
 
     return result
 
 
-def _unique_dest_path(batch_dir: str, filename: str) -> str:
-    """The destination for ``filename`` in the batch folder, numbered on
-    a collision within the batch."""
-    dest_path = os.path.join(batch_dir, filename)
-    if _slot_taken(dest_path):
-        name, ext = os.path.splitext(filename)
-        counter = 1
-        while _slot_taken(dest_path):
-            dest_path = os.path.join(batch_dir, f"{name}_{counter}{ext}")
-            counter += 1
-    return dest_path
-
-
-def _slot_taken(path: str) -> bool:
-    """Whether a file is at ``path``. A storage error is an error here
-    (``os.path.exists`` would read it as "free" and let the copy overwrite
-    a photo imported moments ago)."""
-    from bpp.db.photos_missing import file_present
-
-    present = file_present(path)
-    if present is None:
-        raise OSError(f"Storage didn't answer for {path}")
-    return present
-
-
-def _copy_atomically(src_path: str, tmp_path: str, dest_path: str) -> None:
-    """Atomic copy: write to .tmp, verify size, then rename. On any
-    failure the .tmp is removed, so a half-copied file never lingers in
-    the batch folder."""
-    try:
-        retry_io(shutil.copy2, src_path, tmp_path, label="copy")
-        src_size = retry_io(os.path.getsize, src_path, label="src_size")
-        tmp_size = retry_io(os.path.getsize, tmp_path, label="tmp_size")
-        if src_size != tmp_size:
-            raise OSError(f"Size mismatch after copy: {src_size} vs {tmp_size}")
-        os.rename(tmp_path, dest_path)
-    except OSError:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-        raise
-
-
-def _photo_record(dest_path: str, filename: str, batch_name: str, sha: str) -> dict[str, Any]:
-    """The photos row for an imported file (video / RAW flags included)."""
-    stat = retry_io(os.stat, dest_path, label="stat")
-    photo_rec: dict[str, Any] = {
-        "filepath": dest_path,
-        "original_filename": filename,
-        "import_batch": batch_name,
-        "sha256": sha,
-        "file_size": stat.st_size,
-        "file_mtime": stat.st_mtime,
-    }
-    if is_video_file(dest_path):
-        photo_rec["is_video"] = 1
-        from bpp.utils.video import extract_video_metadata
-
-        # Optional: a probe failure must not orphan the file already in
-        # the batch folder (it would be re-copied as name_1 next time).
-        try:
-            vmeta = extract_video_metadata(dest_path)
-        except Exception:
-            log.warning("Could not read video metadata for %s", dest_path, exc_info=True)
-            vmeta = None
-        if vmeta:
-            photo_rec["video_duration"] = vmeta["duration"]
-            photo_rec["video_width"] = vmeta["width"]
-            photo_rec["video_height"] = vmeta["height"]
-            photo_rec["video_fps"] = vmeta["fps"]
-            photo_rec["video_codec"] = vmeta["codec"]
-    if is_raw_file(dest_path):
-        photo_rec["is_raw"] = 1
-    return photo_rec
+def _import_one(
+    conn: sqlite3.Connection,
+    src_path: str,
+    batch_dir: str,
+    batch_name: str,
+    seen_hashes: set[str],
+    result: ImportResult,
+    pending: list[dict[str, Any]],
+) -> str:
+    """One source file: dedup by SHA-256, copy (or adopt the copy an
+    interrupted run left) and queue its row. Returns the progress status,
+    ``"imported"`` or ``"skipped"``; errors propagate to the caller."""
+    filename = os.path.basename(src_path)
+    sha = _sha256_file(src_path)
+    if (
+        sha in seen_hashes
+        or conn.execute("SELECT 1 FROM photos WHERE sha256 = ? LIMIT 1", (sha,)).fetchone()
+    ):
+        result.skipped += 1
+        return "skipped"
+    dest_path, adopt = _slot_for(conn, batch_dir, filename, sha, os.path.getsize(src_path))
+    if adopt:
+        result.adopted += 1
+    else:
+        _copy_atomically(src_path, dest_path + ".tmp", dest_path)
+        result.imported += 1
+    pending.append(_photo_record(dest_path, filename, batch_name, sha))
+    seen_hashes.add(sha)
+    result.imported_paths.append(dest_path)
+    return "imported"
 
 
 def _dispatch_post_import(conn: sqlite3.Connection, imported_paths: list[str]) -> None:

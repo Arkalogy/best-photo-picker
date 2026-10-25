@@ -167,11 +167,13 @@ export function listenImportProgress() {
     } else if (msg.type === "import_done") {
       // A failed page must say so, not leave the skeleton grid behind
       // a generic toast.
-      Promise.resolve(win.showPreviewGallery?.(msg.imported)).catch((e) =>
-        toastError("show the imported photos", e)
+      Promise.resolve(win.showPreviewGallery?.((msg.imported || 0) + (msg.adopted || 0))).catch(
+        (e) => toastError("show the imported photos", e)
       );
-      win.advanceTourToPhase?.(2);
-      showNudge("analyze_photos", "nudge-container");
+      if (!msg.cancelled) {
+        win.advanceTourToPhase?.(2);
+        showNudge("analyze_photos", "nudge-container");
+      }
       _showImportSummary(msg);
     } else if (msg.type === "done") {
       src.close();
@@ -256,17 +258,32 @@ export async function cancelOperation() {
  * Render the import-summary toast. Counts duplicates and errors
  * separately. Shown on the `import_done` SSE message.
  *
- * @param {{ imported: number, skipped?: number, errors?: number, batch_name?: string }} msg
+ * ``adopted`` counts files an earlier, interrupted import had copied but
+ * never recorded; they are imported now without a second copy.
+ *
+ * @param {{ imported: number, adopted?: number, skipped?: number, errors?: number, cancelled?: boolean, batch_name?: string }} msg
  */
 export function _showImportSummary(msg) {
-  if (msg.imported === 0 && (msg.skipped || 0) === 0 && (msg.errors || 0) === 0) {
+  const adopted = msg.adopted || 0;
+  const imported = msg.imported + adopted;
+  if (msg.cancelled) {
+    toast(
+      `Import stopped after ${imported} photo${imported === 1 ? "" : "s"} — they are in the library; import the folder again to continue.`,
+      "warning"
+    );
+    return;
+  }
+  if (imported === 0 && (msg.skipped || 0) === 0 && (msg.errors || 0) === 0) {
     toast("No supported photos found in this folder.", true);
     return;
   }
-  let text = `Imported ${msg.imported} photo${msg.imported === 1 ? "" : "s"}`;
+  let text = `Imported ${imported} photo${imported === 1 ? "" : "s"}`;
   if (msg.batch_name) text += ` from "${msg.batch_name}"`;
   /** @type {string[]} */
   const parts = [];
+  if (adopted > 0) {
+    parts.push(`${adopted} recovered from an interrupted import`);
+  }
   if ((msg.skipped || 0) > 0) {
     parts.push(`${msg.skipped} duplicate${msg.skipped === 1 ? "" : "s"} skipped`);
   }
@@ -274,5 +291,5 @@ export function _showImportSummary(msg) {
     parts.push(`${msg.errors} error${msg.errors === 1 ? "" : "s"}`);
   }
   if (parts.length) text += ` (${parts.join(", ")})`;
-  toast(text, msg.imported === 0 ? "warning" : undefined);
+  toast(text, imported === 0 ? "warning" : undefined);
 }
