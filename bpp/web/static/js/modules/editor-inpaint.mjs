@@ -12,6 +12,7 @@
  * fallback.
  */
 
+import { installPackagesNote } from "./analysis-install.mjs";
 import { apiFetch } from "./api-client.mjs";
 import { appConfirm } from "./dialogs.mjs";
 import {
@@ -223,7 +224,8 @@ export async function _installInpaintModel(btn) {
   }
   const ok = await appConfirm(
     "Download AI removal model?",
-    "This will download and install the LaMa inpainting package (~50 MB install + ~200 MB model on first use)."
+    "This will download and install the LaMa inpainting package (~50 MB install + ~200 MB model on first use)." +
+      (await installPackagesNote("inpaint"))
   );
   if (!ok) return;
   btn.disabled = true;

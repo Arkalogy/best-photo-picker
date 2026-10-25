@@ -65,13 +65,40 @@ export function _promptFaceInstall() {
   });
 }
 
+/** How long the consent dialog waits for the package list before showing without it. */
+export const INSTALL_INFO_TIMEOUT_MS = 2500;
+
+/**
+ * What an install will put on this machine, for the consent dialog:
+ * the pip specs from ``/api/v1/install/<key>/info`` and their source.
+ * Empty when the server can't say (the confirm still shows).
+ *
+ * @param {string} key  e.g. ``faces`` / ``inpaint``
+ * @returns {Promise<string>}
+ */
+export async function installPackagesNote(key) {
+  try {
+    // A hint, not a gate: give the server a moment, then show the
+    // confirm without it rather than leave the button looking dead.
+    const info = await apiFetch(`/api/v1/install/${encodeURIComponent(key)}/info`, {
+      signal: AbortSignal.timeout(INSTALL_INFO_TIMEOUT_MS),
+    });
+    const pkgs = Array.isArray(info?.packages) ? info.packages.filter(Boolean) : [];
+    if (!pkgs.length) return "";
+    return ` Installs from ${info.host || "pypi.org"}: ${pkgs.join(", ")}.`;
+  } catch {
+    return "";
+  }
+}
+
 export async function _doFaceInstall() {
   /** @type {any} */
   const win = window;
   if (!(await installAllowedNow())) return false;
   const ok = await appConfirm(
     "Install face recognition?",
-    "This will download and install a Python package from PyPI. Only proceed if you trust your network."
+    "This will download and install a Python package from PyPI. Only proceed if you trust your network." +
+      (await installPackagesNote("faces"))
   );
   if (!ok) return false;
   try {

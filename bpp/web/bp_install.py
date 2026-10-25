@@ -327,10 +327,12 @@ def api_install_state() -> tuple[Response, int]:
 
 
 @bp.get("/api/v1/install/<key>/info")
+@requires_local_app
 def api_install_info(key: str) -> tuple[Response, int]:
     """Return the pip specs that the install endpoint will run for *key*.
     Powers the consent dialog so the user sees exactly which packages
-    are about to be installed before clicking OK."""
+    are about to be installed before clicking OK. Owner only, like the
+    package names in ``/install/state``."""
     specs = _INSTALLABLE_PACKAGES.get(key)
     if specs is None:
         raise ValidationError(f"Unknown package: {key}", key=key)

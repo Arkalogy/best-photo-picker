@@ -1309,8 +1309,8 @@ Owner-only. Install a whitelisted pip package at runtime (e.g.
 
 ### GET /api/v1/install/:key/info
 
-The exact pip specs the install endpoint will run for `key` — powers
-the consent dialog.
+Owner-only. The exact pip specs the install endpoint will run for
+`key` — powers the consent dialog.
 
 ### GET /api/v1/install/:key/progress
 

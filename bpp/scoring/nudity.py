@@ -307,18 +307,23 @@ def is_available() -> bool:
     return _nudenet.is_available()
 
 
-def is_active() -> bool:
+def is_active(config: dict | None = None) -> bool:
     """Return *True* only when automatic detection will actually run:
-    ONNX Runtime is importable, the license gate passes (accepted with
-    the CURRENT acknowledgment text, under the current use context) and
-    the weights are on disk.
+    its ``model_nudity`` switch is on (when ``config`` is given), ONNX
+    Runtime is importable, the license gate passes (accepted with the
+    CURRENT acknowledgment text, under the current use context) and the
+    weights are on disk.
 
     Drives the "is nudity detection on?" UI (polled). Cheap: the license
     check is cached until the acceptance files change, plus a stat — no
     model load.
     """
+    from bpp.config import cfg_get
     from bpp.registry import ModelLoadBlockedError
+    from bpp.scoring.toggles import toggle_on
 
+    if config is not None and not toggle_on(cfg_get(config, "model_nudity")):
+        return False
     if not is_available() or not is_on_disk():
         return False
     try:

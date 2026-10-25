@@ -18,6 +18,8 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from bpp.scoring.toggles import toggle_on
+
 
 def _file_info(name: str, path: str) -> dict[str, Any]:
     """One row for the per-feature 'files' breakdown the JS UI renders."""
@@ -296,7 +298,7 @@ def build_model_features(ctx: Any) -> list[dict[str, Any]]:
     # again would only be refused).
     ort_ok = ort_usable() or "onnxruntime" in held_keys()
 
-    toggles = {key: bool(ctx.config.get(key, True)) for key in MODEL_TOGGLE_KEYS}
+    toggles = {key: toggle_on(ctx.config.get(key, True)) for key in MODEL_TOGGLE_KEYS}
 
     return [
         # Default detectors first; research-only SCRFD is an opt-in extra.
@@ -366,7 +368,7 @@ def _build_plugin_models(ctx: Any) -> list[dict[str, Any]]:
         toggle = _plugin_toggle_key(e)
         if toggle:
             row["toggle_key"] = toggle
-            row["enabled"] = bool(ctx.config.get(toggle, True))
+            row["enabled"] = toggle_on(ctx.config.get(toggle, True))
         legal_id = fetchable_legal_id(e)
         if legal_id is None:
             row["no_download"] = True

@@ -98,3 +98,16 @@ def test_a_switched_off_plugin_scorer_does_not_run(plugin_models):
     assert "myplugin_sat_score" not in out
     out = run_optional_scorers(img, "/p.jpg", {"model_myplugin_sat": True}, {})
     assert out.get("myplugin_sat_score") == 0.5
+
+
+def test_a_plugin_switch_stored_as_a_string_reads_as_off(plugin_models):
+    """A plugin key has no DEFAULTS entry, so Config hands back the raw
+    settings string; "false" must not read as on."""
+    from bpp.scoring.toggles import toggle_on, toggles_from_config
+
+    toggles = toggles_from_config({"model_myplugin_det": "false", "model_myplugin_sat": "0"})
+    assert toggles["model_myplugin_det"] is False
+    assert toggles["model_myplugin_sat"] is False
+    assert toggles["model_pets"] is True, "unset means on"
+    assert toggle_on("true") and toggle_on(True) and toggle_on("1")
+    assert not toggle_on("False") and not toggle_on(False)

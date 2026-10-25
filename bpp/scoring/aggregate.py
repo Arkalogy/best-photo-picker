@@ -298,8 +298,13 @@ def process_one_settings(
     worker build their calls from this, so a photo is scored the same
     whichever brought it in."""
     from bpp.constants import RUN_TOGGLE_KEYS
+    from bpp.scoring.toggles import toggle_on, toggles_from_config
 
-    model_toggles = {k: bool(config.get(k, True)) for k in RUN_TOGGLE_KEYS}
+    # Every switch, a plugin's included, parsed alike: a missing key would
+    # default to on in the dispatcher, and bool("false") is True.
+    model_toggles = toggles_from_config(config)
+    for k in RUN_TOGGLE_KEYS:  # model_yunet is a run switch with no Settings toggle
+        model_toggles.setdefault(k, toggle_on(config.get(k, True)))
     thresholds = {
         "pet_detection_confidence": float(cfg_get(config, "pet_detection_confidence")),
         "pet_input_size": int(cfg_get(config, "pet_input_size")),

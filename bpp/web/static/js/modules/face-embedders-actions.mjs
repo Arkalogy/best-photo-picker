@@ -326,3 +326,32 @@ export async function setActiveFaceEmbedder(
     toastError("set the active embedder", err);
   }
 }
+
+/**
+ * Turn a model's run switch (its ``model_*`` toggle) on or off. The
+ * analysis honours the switch; the picker shows an "Off" row for a model
+ * switched off. Dispatched from the row menu, so ``enabled`` arrives as the
+ * string "true" / "false".
+ *
+ * @param {string} toggleKey  e.g. ``model_pets``
+ * @param {string | boolean} enabled
+ * @param {string} displayName
+ */
+export async function setModelRunToggle(toggleKey, enabled, displayName) {
+  const on = enabled === true || enabled === "true";
+  try {
+    await apiFetch("/api/v1/models/toggle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: toggleKey, enabled: on }),
+    });
+    toast(
+      on
+        ? `${displayName} will run in the next analysis.`
+        : `${displayName} is skipped from now on; re-analyze to drop its results.`,
+    );
+    notifyModelsChanged();
+  } catch (err) {
+    toastError(on ? `turn ${displayName} on` : `turn ${displayName} off`, err);
+  }
+}

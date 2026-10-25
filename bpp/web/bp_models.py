@@ -48,7 +48,7 @@ def api_content_filter_status() -> tuple[Response, int]:
     instead of fetching the whole /api/v1/status snapshot."""
     from bpp.scoring.nudity import is_active
 
-    return jsonify({"active": bool(is_active())}), 200
+    return jsonify({"active": bool(is_active(get_ctx().config))}), 200
 
 
 @bp.get("/api/v1/models")
