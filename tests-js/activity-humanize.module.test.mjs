@@ -173,3 +173,31 @@ describe("humanizeActivityList", () => {
     ]);
   });
 });
+
+describe("humanizeActivity — a person's name could not be placed", () => {
+  test("after re-clustering", () => {
+    const out = humanizeActivity(
+      e(
+        "Could not place the name 'Mia' after re-clustering (cluster 0 now holds other faces); kept as a person without faces",
+        "WARNING"
+      )
+    );
+    expect(out?.level).toBe("WARNING");
+    expect(out?.text).toBe(
+      "Couldn’t find “Mia” after re-clustering — the name comes back when their photos are found again"
+    );
+  });
+
+  test("after a face-model switch", () => {
+    expect(
+      humanizeActivity(
+        e(
+          "Could not place the name 'Leo' after the face-model switch to sface; kept as a person without faces",
+          "WARNING"
+        )
+      )?.text
+    ).toBe(
+      "Couldn’t find “Leo” after the face-model switch — the name comes back when their photos are found again"
+    );
+  });
+});

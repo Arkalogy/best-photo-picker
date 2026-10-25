@@ -12,6 +12,7 @@ public surface. This module is the implementation backbone behind it.
 
 from __future__ import annotations
 
+from bpp.constants import CLUSTER_UNASSIGNED
 from bpp.scoring.face_embed import embedding_method
 from bpp.utils.logging import get_logger
 from bpp.web import face_extraction_journal as journal
@@ -342,6 +343,21 @@ class ExtractEmbeddingsPhase:
         )
 
 
+def _resume_has_unclustered_faces(ctx: FacePhaseContext) -> bool:
+    """A resumed run with faces not clustered yet: this run's extraction
+    stored new ones (recovery resumes a chunk's journal over the whole
+    analysis list, so it reaches photos the chunk never covered), or an
+    earlier resume stored them and died before clustering. Clustering
+    must run again for them whatever the journal says, or a face-model
+    switch would be finished on a partly clustered library."""
+    if ctx.extraction is not None and ctx.extraction.extracted_count > 0:
+        return True
+    row = ctx.conn.execute(
+        "SELECT 1 FROM face_embeddings WHERE cluster_id = ? LIMIT 1", (CLUSTER_UNASSIGNED,)
+    ).fetchone()
+    return row is not None
+
+
 class ClusterPhase:
     """Phase 6 — cluster the extracted embeddings."""
 
@@ -349,7 +365,7 @@ class ClusterPhase:
     journal_bit = journal.PHASE_BIT_CLUSTER
 
     def should_skip(self, ctx: FacePhaseContext) -> bool:
-        return ctx.journal_complete(self.journal_bit)
+        return ctx.journal_complete(self.journal_bit) and not _resume_has_unclustered_faces(ctx)
 
     def rehydrate(self, ctx: FacePhaseContext) -> None:
         # The cluster IDs were written to face_embeddings in the prior
@@ -387,6 +403,14 @@ class ClusterPhase:
     def run(self, ctx: FacePhaseContext) -> None:
         assert ctx.extraction is not None
         records = ctx.extraction.all_records
+        if ctx.journal_complete(self.journal_bit):
+            # Re-clustering on a resume (new faces): the prior run's
+            # clustering row is superseded by the one opened below.
+            from bpp.db.journal import journal_complete
+
+            prior = self._find_pending_journal_id(ctx)
+            if prior is not None:
+                journal_complete(ctx.conn, prior)
         if records:
             from bpp.db.journal import journal_start
 
@@ -407,6 +431,23 @@ class ClusterPhase:
         from bpp.db.event_hooks import dispatch_post_cluster
 
         dispatch_post_cluster(ctx.conn, "face", ctx.n_clusters)
+
+
+def _record_switch_coverage(ctx: FacePhaseContext) -> None:
+    """While a face-model switch is pending, note which photos this batch
+    processed and which it could not, so the switch ends only once every
+    candidate photo went through (a folder-only Analyze, or unreadable
+    photos, must not end it on partial evidence)."""
+    from bpp.db.face_switch_record import record_coverage, switch_pending
+
+    if not switch_pending(ctx.conn):
+        return
+    processed = {
+        ctx.photo_map[a["filepath"]] for a in ctx.with_faces if a["filepath"] in ctx.photo_map
+    }
+    failed = set(getattr(ctx.extraction, "failed_photo_ids", frozenset()) or ())
+    record_coverage(ctx.conn, set(processed), failed)
+    ctx.conn.commit()
 
 
 class IdentityReconstructPhase:
@@ -435,3 +476,4 @@ class IdentityReconstructPhase:
             reconstruct_identities_fn=ctx.reconstruct_identities_fn,
             remap_names_and_tags_fn=ctx.remap_names_and_tags_fn,
         )
+        _record_switch_coverage(ctx)

@@ -93,6 +93,17 @@ def cluster_faces(
             assigned.append((fp, photo_id, fi, emb, cid, bbox_w, quality))
         else:
             unassigned.append((fp, photo_id, fi, emb, bbox_w, quality))
+    # The run arrives in chunks of photos; this chunk's records alone would
+    # not know the clusters earlier chunks (or earlier runs) made, so new
+    # faces would restart at id 0 and merge different people. Every
+    # existing cluster is represented by one library-wide centroid (the
+    # chunk's own assigned rows are part of it, so they are not counted a
+    # second time), and the next free id comes from the table itself.
+    floor: int | None = None
+    if unassigned:
+        dim = len(unassigned[0][3])
+        assigned = _library_cluster_samples(conn, dim)
+        floor = _highest_cluster_id(conn)
 
     if unassigned:
         new_labels = assign_new_faces_fn(
@@ -100,6 +111,7 @@ def cluster_faces(
             unassigned,
             threshold,
             hard_negatives=hard_neg_map if hard_neg_map else None,
+            next_id_floor=floor,
         )
         conn.executemany(
             "UPDATE face_embeddings SET cluster_id=? WHERE photo_id=? AND face_index=?",
@@ -139,3 +151,44 @@ def cluster_faces(
             conn.commit()
 
     return n_clusters
+
+
+#: Faces per existing cluster averaged into the one centroid record that
+#: stands in for it when a chunk's new faces are assigned.
+CLUSTER_SAMPLE_FACES = 3
+
+
+def _library_cluster_samples(
+    conn: sqlite3.Connection, dim: int
+) -> list[tuple[str, int, int, np.ndarray, int, int, int | None]]:
+    """One ``assigned`` record per assigned cluster in the library: the
+    quality-weighted mean of its ``CLUSTER_SAMPLE_FACES`` best faces (the
+    centroid ``_assign_new_faces`` would build from them); rows of another
+    embedding size are left out before the ranking, damaged ones after.
+    The caller reserves ids from the table, so a cluster with no usable
+    sample is still never reused. Memory: a few blobs per cluster, read
+    once, one vector per cluster kept."""
+    rows = conn.execute(
+        "SELECT photo_id, face_index, cluster_id, embedding, bbox_w, quality FROM ("
+        "  SELECT photo_id, face_index, cluster_id, embedding, bbox_w, quality,"
+        "         ROW_NUMBER() OVER (PARTITION BY cluster_id"
+        "                            ORDER BY quality DESC, id) AS rn"
+        "  FROM face_embeddings WHERE cluster_id >= 0 AND length(embedding) = ?"
+        ") WHERE rn <= ?",
+        (dim * 4, CLUSTER_SAMPLE_FACES),
+    ).fetchall()
+    sums: dict[int, np.ndarray] = {}
+    weights: dict[int, float] = {}
+    for _photo_id, _fi, cid, blob, _bbox_w, quality in rows:
+        emb = np.frombuffer(blob, dtype=np.float32).astype(np.float64)
+        if not np.isfinite(emb).all():
+            continue  # a damaged row must not poison its cluster's centroid
+        q = max(float(quality), 0.1) if quality is not None else 0.5
+        sums[int(cid)] = sums.get(int(cid), 0.0) + emb * q
+        weights[int(cid)] = weights.get(int(cid), 0.0) + q
+    return [
+        ("", -1, -1, (sums[cid] / weights[cid]).astype(np.float32), cid, 0, 1.0) for cid in sums
+    ]
+
+
+from bpp.db.face_cluster_ids import highest_cluster_id as _highest_cluster_id  # noqa: E402

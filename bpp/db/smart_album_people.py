@@ -18,6 +18,14 @@ from typing import Any
 
 from bpp.constants import ACTIVE_PHOTO_SQL, active_photo_sql
 from bpp.db.dialect import dialect
+from bpp.db.face_name_placement import is_parked
+from bpp.db.face_switch_record import (
+    HAS_STASH_SQL,
+    held_albums,
+    restore_unplaced_tags,
+    set_album_evidence,
+    single_face_photos,
+)
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -119,16 +127,27 @@ def _collect_orphan_albums(
     # Read the shadow column directly. The previous load-and-parse
     # pattern hit every row's rule_json text; the shadow column gives
     # the same data via the indexed lookup path.
+    # An album carrying stashed manual tags (an unplaced person, even one
+    # with a default "Person N" name) holds something the user put in: it
+    # is kept and transferred like a named one, never deleted as a default.
     existing = conn.execute(
-        "SELECT id, name, smart_person_cluster_id AS cid FROM albums "
-        "WHERE album_type='smart_person'"
+        f"SELECT id, name, smart_person_cluster_id AS cid, {HAS_STASH_SQL} AS has_tags "
+        "FROM albums WHERE album_type='smart_person'"
     ).fetchall()
     orphan_album_ids: list[int] = []
     user_named: list[tuple[int, str, int]] = []
-    for album_id, album_name, cid in existing:
+    from bpp.db.face_switch_record import switch_pending
+
+    pending = switch_pending(conn)
+    for album_id, album_name, cid, has_tags in existing:
+        if cid is not None and is_parked(cid) and pending:
+            # Parked by the face-model switch in progress: the switch
+            # places it when its cluster appears; not an orphan. (Parked
+            # with no switch pending, or UNPLACED, IS an orphan here.)
+            continue
         if cid is not None and cid not in embedding_cluster_ids:
             orphan_album_ids.append(album_id)
-            if not _is_default_person_name(album_name):
+            if has_tags or not _is_default_person_name(album_name):
                 user_named.append((album_id, album_name, cid))
     return orphan_album_ids, user_named
 
@@ -173,47 +192,64 @@ def _transfer_orphan_names(
     orphan_names: list[tuple[int, str, int, list[int]]],
     cluster_photo_map: dict[int, set[int]],
 ) -> set[int]:
-    """Transfer user-given names from orphan albums to the best-overlap
-    surviving cluster. Returns the album ids whose names WERE transferred
-    — the orchestrator must keep (not delete) the rest, so an unmatched
-    name survives until a refresh that can place it.
+    """Move user-named orphan albums onto the surviving cluster holding
+    most of their photos. Returns the album ids that WERE moved — the
+    orchestrator must keep (not delete) the rest, so an unmatched name
+    survives until a refresh that can place it.
 
-    Uses best-overlap matching: find the new cluster containing the
-    most photos from the old named cluster. No minimum threshold —
-    if someone took the time to name a person, preserve that name
-    as long as any photos match. Sorted by old-cluster size so
-    larger clusters claim first.
+    Same matcher and move as re-clustering (``face_identity_remap``,
+    ``face_name_placement``): strongest overlap first, no minimum, the
+    album itself moves (a default album on the target gives way, another
+    person's named album is never overwritten) and its manual tags
+    follow without clobbering the target's own tags.
     """
+    from bpp.db.face_identity_remap import _match_named_clusters
+    from bpp.db.face_name_placement import move_named_albums
+    from bpp.db.face_name_relocate import _move_tags, _tags_of
 
-    transferred: set[int] = set()
-    claimed_cids: set[int] = set()
-    orphan_names.sort(key=lambda x: -len(x[3]))
-    for album_id, name, old_cid, old_pids in orphan_names:
-        old_set = set(old_pids)
-        best_cid = None
-        best_overlap = 0
-        for cid, pids in cluster_photo_map.items():
-            if cid in claimed_cids:
-                continue
-            overlap = len(old_set & pids)
-            if overlap > best_overlap:
-                best_overlap = overlap
-                best_cid = cid
-        if best_cid is not None and best_overlap > 0:
-            claimed_cids.add(best_cid)
-            transferred.add(album_id)
-            # Indexed shadow-column lookup.
-            conn.execute(
-                "UPDATE albums SET name=? WHERE album_type='smart_person' "
-                "AND smart_person_cluster_id=?",
-                (name, best_cid),
-            )
-            # Remap photo_person_tags so future tag lookups follow the new cluster.
-            conn.execute(
-                "UPDATE photo_person_tags SET cluster_id=? WHERE cluster_id=?",
-                (best_cid, old_cid),
-            )
-    return transferred
+    # Albums held by unreadable photos are not placed automatically.
+    held = held_albums(conn, [aid for aid, _n, _c, _p in orphan_names])
+    orphan_names = [o for o in orphan_names if o[0] not in held]
+    # Keyed by album id: several unplaced albums share one cluster id.
+    named = {aid: name for aid, name, _old_cid, _pids in orphan_names}
+    old_photos = {aid: set(pids) for aid, _name, _old_cid, pids in orphan_names}
+    old_cid_of = {aid: old_cid for aid, _name, old_cid, _pids in orphan_names}
+    remap: dict[int, int] = {}
+    # Only photos with a single face count: in a group photo, photo overlap
+    # cannot tell which face is whose (a person whose own face was
+    # unreadable would land on the other person in the shot). Someone seen
+    # only in group photos stays unplaced until named again.
+    solo = single_face_photos(conn, set().union(*old_photos.values()) if old_photos else set())
+    _match_named_clusters(
+        named,
+        {aid: pids & solo for aid, pids in old_photos.items()},
+        {cid: pids & solo for cid, pids in cluster_photo_map.items()},
+        remap,
+        set(),
+    )
+    accepted, _ = move_named_albums(conn, list(remap.items()), displace_named=False)
+    moved_albums = {aid for aid, _ in accepted}
+    restore_unplaced_tags(conn, dict(accepted))  # an unplaced person's tags come back
+    _move_tags(
+        conn,
+        [
+            (old_cid_of[aid], n)
+            for aid, n in remap.items()
+            if aid in moved_albums and old_cid_of[aid] >= 0
+        ],
+        set(),
+        clear_targets=False,
+    )
+    # The moved album still lists its old photos: give it its new
+    # cluster's faces and manual tags now, not at the next refresh.
+    if accepted:
+        tagged = _tags_of(conn, [n for _aid, n in accepted])
+        set_album_evidence(
+            conn,
+            {aid: cluster_photo_map.get(n, set()) | tagged.get(n, set()) for aid, n in accepted},
+            active_only=True,
+        )
+    return moved_albums
 
 
 def _create_tag_only_clusters(conn: sqlite3.Connection, embedding_cluster_ids: set[int]) -> None:
@@ -304,7 +340,10 @@ def _refresh_person_albums(conn: sqlite3.Connection) -> None:
             len(untransferred_named),
             sorted(untransferred_named),
         )
-    _delete_orphan_albums(conn, [aid for aid in orphan_album_ids if aid not in untransferred_named])
+    # Default orphans go; a moved album is no orphan any more.
+    _delete_orphan_albums(
+        conn, [aid for aid in orphan_album_ids if aid not in untransferred_named | transferred_ids]
+    )
 
     # Step 3: create albums for clusters that only have manual tags.
     _create_tag_only_clusters(conn, embedding_cluster_ids)
@@ -334,6 +373,18 @@ def _on_rename_smart_person(conn: sqlite3.Connection, album: dict[str, Any], new
         return
     if new_name.startswith("Person ") and new_name[7:].isdigit():
         return
+    # The album's number and the switch state as they are now, at the
+    # write: a switch that began since the caller read the album parks it,
+    # and its old number then means someone else.
+    from bpp.db.face_switch_record import switch_pending
+
+    row = conn.execute(
+        "SELECT smart_person_cluster_id FROM albums WHERE id=?", (album.get("id"),)
+    ).fetchone()
+    if row is not None and row[0] is not None:
+        cid = int(row[0])
+    if int(cid) < 0 or switch_pending(conn):
+        return  # parked, unplaced or mid-switch: no cluster of faces is this person now
     conn.execute(
         "UPDATE face_embeddings SET identity = ? WHERE cluster_id = ?",
         (new_name, cid),

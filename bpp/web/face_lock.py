@@ -1,5 +1,6 @@
-"""Serializing face mutations: the face lock decorator and the guard
-that refuses them while an interrupted face extraction resumes.
+"""Serializing face mutations: the face lock decorator and the guards
+that refuse them while an interrupted face extraction resumes or a
+face-model switch is still placing people's names.
 
 Split out of :mod:`bpp.web.state` (500-LOC cap); the names are
 re-exported there.
@@ -18,6 +19,11 @@ FACE_LOCK_TIMEOUT_S = 30.0
 
 FACE_RECOVERY_MESSAGE = "Face extraction is resuming after a restart; wait for it to finish"
 
+FACE_SWITCH_MESSAGE = (
+    "A face-model switch is still placing people's names; "
+    "run the face analysis to completion before changing clusters or names"
+)
+
 
 def refuse_while_face_recovery(ctx: Any) -> None:
     """409 while an interrupted face extraction resumes on its thread:
@@ -30,16 +36,44 @@ def refuse_while_face_recovery(ctx: Any) -> None:
         raise ConflictError(FACE_RECOVERY_MESSAGE, blocker="face_recovery")
 
 
+def refuse_while_switch_pending(ctx: Any) -> None:
+    """409 while a face-model switch has names it has not placed yet: a
+    recluster, merge or rename would work on half-placed people, and the
+    next chunk would place names onto clusters the user just changed."""
+    from bpp.db.face_name_placement import switch_pending
+
+    get_conn = getattr(ctx, "get_conn", None)
+    if get_conn is None:  # a bare test double without a DB
+        return
+    if switch_pending(get_conn()):
+        from bpp.errors import ConflictError
+
+        raise ConflictError(FACE_SWITCH_MESSAGE, blocker="face_switch")
+
+
+def allow_during_face_switch(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """Mark an endpoint that :func:`with_face_lock` must NOT refuse while
+    a face-model switch is pending: the ones that start face extraction,
+    which is what finishes the switch."""
+    fn.allow_during_face_switch = True  # type: ignore[attr-defined]
+    return fn
+
+
 def with_face_lock(fn: Callable[..., Any]) -> Callable[..., Any]:
     """Serialize face-mutating operations via face_op_lock and invalidate
     the face cluster map on exit.
 
     All endpoints that mutate face_embeddings, photo_person_tags, or
-    smart_person albums MUST use this decorator. Two contracts:
+    smart_person albums MUST use this decorator. Three contracts:
 
     1. ``face_op_lock`` serializes the body so concurrent face mutations
        can't interleave.
-    2. ``invalidate_face_cluster_map()`` fires in ``finally`` so the
+    2. A pending face-model switch refuses the body (409, ``face_switch``)
+       unless the endpoint is marked :func:`allow_during_face_switch`.
+       The check runs again once the lock is held, because the thread
+       that held it before us may have been the extraction that began
+       the switch.
+    3. ``invalidate_face_cluster_map()`` fires in ``finally`` so the
        grid + recompute paths see fresh ``filepath → [cluster_ids]``
        data on the next read.
 
@@ -58,6 +92,7 @@ def with_face_lock(fn: Callable[..., Any]) -> Callable[..., Any]:
     Cheap to invalidate; expensive to debug a "why does Alice show as
     Bob" report.
     """
+    guard_switch = not getattr(fn, "allow_during_face_switch", False)
 
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -65,6 +100,8 @@ def with_face_lock(fn: Callable[..., Any]) -> Callable[..., Any]:
 
         ctx = get_ctx()
         refuse_while_face_recovery(ctx)
+        if guard_switch:
+            refuse_while_switch_pending(ctx)
         if not ctx.face_op_lock.acquire(timeout=FACE_LOCK_TIMEOUT_S):
             from bpp.errors import ConflictError
 
@@ -76,6 +113,8 @@ def with_face_lock(fn: Callable[..., Any]) -> Callable[..., Any]:
                 blocker="face_lock",
             )
         try:
+            if guard_switch:
+                refuse_while_switch_pending(ctx)
             return fn(*args, **kwargs)
         finally:
             # Invalidate while still holding the lock, so the next holder

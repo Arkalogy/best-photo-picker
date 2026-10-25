@@ -105,6 +105,17 @@ const RULES = [
   { re: /^CLIP model download failed/i, level: "WARNING", text: "Some photo features are unavailable" },
   { re: /^Downloading .* model/i, text: "Downloading AI model…" },
 
+  // ── People: a name that no cluster matched any more ───────────────────
+  // One WARNING per name that could not be placed (face_name_placement
+  // ._UNPLACED). The reason is "re-clustering (…)" or "the face-model
+  // switch to <model>".
+  {
+    re: /^Could not place the name '(.+?)' after (re-clustering|the face-model switch)/i,
+    level: "WARNING",
+    text: (m) =>
+      `Couldn’t find “${m[1]}” after ${m[2] === "re-clustering" ? "re-clustering" : "the face-model switch"} — the name comes back when their photos are found again`,
+  },
+
   // ── Startup / backfill / recovery noise (all hidden) ──────────────────
   { re: /backfill/i, hide: true },
   { re: /^Smart album/i, hide: true },

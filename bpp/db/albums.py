@@ -80,7 +80,7 @@ def get_smart_person_cluster_name_map(
     rows = conn.execute(
         "SELECT smart_person_cluster_id, name FROM albums "
         "WHERE album_type = 'smart_person' "
-        "AND smart_person_cluster_id IS NOT NULL"
+        "AND smart_person_cluster_id >= 0"  # negative: parked by a face-model switch
     ).fetchall()
     return {int(r[0]): r[1] for r in rows}
 
@@ -121,6 +121,32 @@ def _extract_smart_person_cluster_id(album_type: str, rule: dict[str, Any] | Non
     return cid if isinstance(cid, int) else None
 
 
+def _public_config(raw: str | None) -> dict[str, Any] | None:
+    """An album's config as the API shows it: without the bookkeeping the
+    face-model switch keeps there (an unplaced person's manual tags)."""
+    from bpp.db.face_switch_record import INTERNAL_CONFIG_KEYS
+
+    cfg = safe_json_loads(raw, context="album config", expected_type=dict)
+    if isinstance(cfg, dict) and any(k in cfg for k in INTERNAL_CONFIG_KEYS):
+        cfg = {k: v for k, v in cfg.items() if k not in INTERNAL_CONFIG_KEYS}
+    return cfg
+
+
+def _config_json_keeping_stash(
+    conn: sqlite3.Connection, album_id: int, config: dict[str, Any] | None
+) -> str | None:
+    """The stored config for a client-supplied one: the switch's stashed
+    tags survive a config write that did not know about them."""
+    from bpp.db.face_switch_record import INTERNAL_CONFIG_KEYS
+
+    row = conn.execute("SELECT config_json FROM albums WHERE id=?", (album_id,)).fetchone()
+    old = safe_json_loads(row[0], context="album config", expected_type=dict) if row else None
+    merged = {k: v for k, v in (config or {}).items() if k not in INTERNAL_CONFIG_KEYS}
+    if isinstance(old, dict):
+        merged.update({k: old[k] for k in INTERNAL_CONFIG_KEYS if k in old})
+    return json.dumps(merged) if merged else None
+
+
 def list_albums(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """Return all albums with photo + selection counts.
 
@@ -141,12 +167,17 @@ def list_albums(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         f"  WHERE {active_photo_sql('p')} "
         "  GROUP BY ap.album_id"
         ") cnt ON cnt.album_id=a.id "
+        # A person album parked by a face-model switch, or kept unplaced
+        # after one, has no cluster the UI could act on: not listed until
+        # the switch or the refresh places it.
+        "WHERE a.album_type != 'smart_person' OR a.smart_person_cluster_id IS NULL "
+        "OR a.smart_person_cluster_id >= 0 "
         "ORDER BY a.album_type, a.name"
     ).fetchall()
     result = []
     for r in rows:
         d = dict(r)
-        d["config"] = safe_json_loads(d["config_json"], context="album config", expected_type=dict)
+        d["config"] = _public_config(d["config_json"])
         d["rule"] = safe_json_loads(d["rule_json"], context="album rule", expected_type=dict)
         del d["config_json"]
         del d["rule_json"]
@@ -174,7 +205,7 @@ def get_album(conn: sqlite3.Connection, album_id: int) -> dict[str, Any] | None:
     if row is None:
         return None
     d = dict(row)
-    d["config"] = safe_json_loads(d["config_json"], context="album config", expected_type=dict)
+    d["config"] = _public_config(d["config_json"])
     d["rule"] = safe_json_loads(d["rule_json"], context="album rule", expected_type=dict)
     del d["config_json"]
     del d["rule_json"]
@@ -183,11 +214,24 @@ def get_album(conn: sqlite3.Connection, album_id: int) -> dict[str, Any] | None:
 
 def update_album(conn: sqlite3.Connection, album_id: int, **kwargs: Any) -> None:
     """Update album fields. Accepts name, config, k, rule, parent_id."""
+    try:
+        _update_album(conn, album_id, **kwargs)
+    except BaseException:
+        if conn.in_transaction:
+            conn.rollback()  # never leave the write lock (or half a write) behind
+        raise
+
+
+def _update_album(conn: sqlite3.Connection, album_id: int, **kwargs: Any) -> None:
     updates = {}
     if "name" in kwargs:
         updates["name"] = kwargs["name"]
     if "config" in kwargs:
-        updates["config_json"] = json.dumps(kwargs["config"]) if kwargs["config"] else None
+        # The switch writes its keys into this config from another
+        # connection: read them and write the merge under one write lock.
+        if not conn.in_transaction:
+            conn.execute("BEGIN IMMEDIATE")
+        updates["config_json"] = _config_json_keeping_stash(conn, album_id, kwargs["config"])
     if "k" in kwargs:
         updates["k"] = kwargs["k"]
     if "rule" in kwargs:

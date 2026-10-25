@@ -335,10 +335,13 @@ class TestFaceWorkerRemap:
         # Should not crash
         _remap_names_and_tags(conn, old_cluster_photos, new_cluster_photos)
 
+        from bpp.constants import CLUSTER_UNPLACED
+
         names = _get_person_album_names(conn)
-        # Carol stays on old cluster 0 (no remap target)
-        assert names.get(0) == "Carol"
-        assert "Carol" not in {v for k, v in names.items() if k != 0}
+        # Her faces matched nothing: kept as a person without faces, holding
+        # her face photos as evidence, never left on a number or deleted.
+        assert names.get(CLUSTER_UNPLACED) == "Carol"
+        assert "Carol" not in {v for k, v in names.items() if k != CLUSTER_UNPLACED}
 
     def test_remap_multiple_names(self, tmp_path):
         """Multiple named clusters all remap correctly."""
@@ -397,14 +400,21 @@ class TestFaceWorkerRemap:
         _remap_names_and_tags(conn, old_cluster_photos, new_cluster_photos)
 
         names = _get_person_album_names(conn)
-        # Only one should win cluster 9
-        assert names.get(9) in ("Alice", "Bob")
-        # Count how many albums point to cluster 9
+        # Equal evidence for both: neither is guessed onto cluster 9; both
+        # are kept as people without faces.
+        assert names.get(9) is None
+        kept = {
+            n
+            for (n,) in conn.execute(
+                "SELECT name FROM albums WHERE smart_person_cluster_id=-3 ORDER BY name"
+            )
+        }
+        assert kept == {"Alice", "Bob"}
         count = conn.execute(
             "SELECT COUNT(*) FROM albums WHERE album_type='smart_person' AND rule_json=?",
             (json.dumps({"cluster_id": 9}, sort_keys=True),),
         ).fetchone()[0]
-        assert count == 1
+        assert count == 0
 
 
 # ===========================================================================

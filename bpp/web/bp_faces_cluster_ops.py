@@ -194,13 +194,10 @@ def api_faces_split() -> tuple[Response, int]:
     ).fetchall()
     old_cids = {r[0] for r in rows}
 
-    # Allocate a new cluster ID. MAX() always returns a 1-row result
-    # set, but the column value is None on an empty table — guard with
-    # an explicit None check so this stays safe even if the surrounding
-    # arithmetic ever changes.
-    max_row = conn.execute("SELECT MAX(cluster_id) FROM face_embeddings").fetchone()
-    current_max = max_row[0] if max_row and max_row[0] is not None else 0
-    new_cid = current_max + 1
+    # A new cluster id above every id in use, tag-only people's included.
+    from bpp.db.face_cluster_ids import next_cluster_id
+
+    new_cid = next_cluster_id(conn)
 
     # Move selected faces to new cluster
     conn.execute(

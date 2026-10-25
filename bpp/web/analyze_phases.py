@@ -46,6 +46,9 @@ def run_face_phase(
     emit({"type": "face_start", "total": face_total})
 
     if face_total == 0:
+        from bpp.db.face_switch_finish import finish_switch_if_nothing_to_extract
+
+        finish_switch_if_nothing_to_extract(conn)
         return 0, 0
 
     db_path = dialect.database_path(conn)

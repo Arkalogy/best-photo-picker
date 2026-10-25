@@ -48,34 +48,34 @@ def _insert_photo(conn, filepath: str) -> int:
 
 
 class TestRetryWipesPersonTags:
-    """The retry endpoint must wipe photo_person_tags alongside
-    face_embeddings — otherwise stale tags create ghost albums in
-    the next refresh pass."""
+    """The retry endpoint must take photo_person_tags out of the table
+    alongside wiping face_embeddings — otherwise stale tags create ghost
+    albums in the next refresh pass. Since 0.2.2 it does so by parking the
+    names and tags (``begin_switch``), which lifts the tag rows into the
+    pending record so the re-extraction can put them back."""
 
     def test_retry_handler_wipes_both_tables(self):
-        # Source-scan: api_faces_retry must DELETE FROM both tables.
+        # Source-scan: api_faces_retry's wipe helper must clear face rows
+        # and park the tags.
         from pathlib import Path
 
         repo = Path(__file__).resolve().parent.parent
         source = (repo / "bpp" / "web" / "bp_faces_extract.py").read_text()
 
-        # Locate the api_faces_retry function body.
-        start = source.find("def api_faces_retry")
-        # Body ends at the next top-level def or @bp decorator after
-        # the function start.
+        start = source.find("def _wipe_faces_and_restart")
         end_marker = source.find("\n@bp.", start + 1)
         if end_marker == -1:
             end_marker = source.find("\ndef ", start + 50)
         body = source[start:end_marker] if end_marker > 0 else source[start:]
 
         assert "DELETE FROM face_embeddings" in body, (
-            "api_faces_retry must wipe face_embeddings — that's the whole point."
+            "the retry wipe must clear face_embeddings — that's the whole point."
         )
-        assert "DELETE FROM photo_person_tags" in body, (
-            "api_faces_retry must wipe photo_person_tags. Without this, manual "
-            "person-tags pointing at the about-to-be-renumbered clusters get "
-            "left behind, and the next refresh creates ghost 'Person N' albums "
-            "for stale cluster_ids that no longer have any face data."
+        assert "begin_switch(" in body, (
+            "the retry wipe must park names and tags (begin_switch lifts every "
+            "photo_person_tags row into the pending record). Without this, manual "
+            "person-tags pointing at the about-to-be-renumbered clusters get left "
+            "behind, and the next refresh creates ghost 'Person N' albums."
         )
 
 

@@ -348,12 +348,24 @@ def reconstruct_identities(
     outside the SAVEPOINT because they're best-effort and already
     wrapped in their own try/except.
     """
+    from bpp.db.face_name_placement import switch_pending
+
     conn.execute("SAVEPOINT phase7_reconstruct")
     try:
         reconstruct_identities_fn(conn)
 
-        # Legacy fallback: remap by photo-overlap if identity labels not available
-        if snapshot.old_cluster_photos is not None:
+        # During a face-model switch the names stay parked: they are placed
+        # once, from the complete clusters, when the whole run has finished
+        # (finish_switch), never batch by batch.
+        if (
+            not switch_pending(conn)
+            and snapshot.old_cluster_photos is not None
+            and not snapshot.method_changed
+        ):
+            # Stale photos re-extracted without a switch: remap by overlap.
+            # (After a switch the record owns the names; once it is gone
+            # the placement happened, and a replay of this phase after a
+            # crash must not remap the already-moved albums again.)
             new_cluster_photos = _snapshot_cluster_photos(conn)
             remap_names_and_tags_fn(conn, snapshot.old_cluster_photos, new_cluster_photos)
     except Exception:

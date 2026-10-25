@@ -245,10 +245,9 @@ def insert_face_and_optional_album(
     # high-water mark. with_face_lock serializes writers, so this
     # is race-safe.
     if new_person_name is not None:
-        max_cid_row = conn.execute(
-            "SELECT MAX(cluster_id) AS m FROM face_embeddings WHERE cluster_id >= 0"
-        ).fetchone()
-        cluster_id = (max_cid_row["m"] + 1) if max_cid_row and max_cid_row["m"] is not None else 0
+        from bpp.db.face_cluster_ids import next_cluster_id
+
+        cluster_id = next_cluster_id(conn)  # above tag-only people's ids too
     assert cluster_id is not None  # invariant: branch above OR parse fills it
 
     # Allocate the next face_index for this photo.

@@ -23,7 +23,6 @@ import _reconstruct_identities`` style still resolves.
 
 from __future__ import annotations
 
-import json
 import sqlite3
 
 import numpy as np
@@ -51,55 +50,60 @@ def _reconstruct_identities(conn: sqlite3.Connection) -> None:
     if "identity" not in cols:
         return
 
-    rows = conn.execute(
-        "SELECT identity, cluster_id, COUNT(*) as cnt "
-        "FROM face_embeddings "
-        "WHERE identity IS NOT NULL AND cluster_id >= 0 "
-        "GROUP BY identity, cluster_id "
-        "ORDER BY identity, cnt DESC"
-    ).fetchall()
-
-    if not rows:
+    # Each identity's labelled face rows, and which cluster holds each:
+    # matched by the shared rule (strongest first, a tie decided for no
+    # one), so this step never undoes a tie a re-clustering left open.
+    labelled: dict[str, set[int]] = {}
+    by_cluster: dict[int, set[int]] = {}
+    for fid, name, cid in conn.execute(
+        "SELECT id, identity, cluster_id FROM face_embeddings "
+        "WHERE identity IS NOT NULL AND cluster_id >= 0"
+    ):
+        labelled.setdefault(name, set()).add(int(fid))
+        by_cluster.setdefault(int(cid), set()).add(int(fid))
+    if not labelled:
         return
+    best: dict[str, int] = {}
+    _match_named_clusters({n: n for n in labelled}, labelled, by_cluster, best, set())
 
-    # For each identity, find the cluster with the most labeled faces
-    identity_best: dict[str, tuple[int, int]] = {}
-    for name, cid, cnt in rows:
-        if name not in identity_best or cnt > identity_best[name][1]:
-            identity_best[name] = (cid, cnt)
+    # The moves are applied in one order-independent pass (park, then
+    # place), so two people whose clusters swapped cannot collide on the
+    # unique (album_type, rule_json) index. A default "Person N" album on a
+    # destination gives way; another named person's album does not.
+    from bpp.db.face_name_placement import move_named_albums
 
-    if not identity_best:
-        return
+    albums = {
+        row[1]: (int(row[0]), int(row[2]))
+        for row in conn.execute(
+            "SELECT id, name, smart_person_cluster_id FROM albums "
+            "WHERE album_type='smart_person' AND smart_person_cluster_id IS NOT NULL"
+        ).fetchall()
+    }
+    moves: list[tuple[int, int]] = []
+    for name, best_cid in best.items():
+        entry = albums.get(name)
+        if entry is None or entry[1] == best_cid:
+            continue  # no album for this identity, or already correct
+        moves.append((entry[0], best_cid))
+        log.info("Identity reconstruct: '%s' cluster %s → %d", name, entry[1], best_cid)
 
-    remapped = 0
-    for name, (best_cid, _count) in identity_best.items():
-        # Read the shadow column directly instead of parsing
-        # rule_json. Positional access so this works without
-        # sqlite3.Row factory.
-        album = conn.execute(
-            "SELECT id, smart_person_cluster_id FROM albums "
-            "WHERE album_type='smart_person' AND name=?",
-            (name,),
-        ).fetchone()
-        if not album:
-            continue
-        old_cid = album[1]
-        if old_cid == best_cid:
-            continue  # Already correct
-        new_rule = json.dumps({"cluster_id": best_cid}, sort_keys=True)
-        conn.execute(
-            "UPDATE albums SET rule_json=?, smart_person_cluster_id=? WHERE id=?",
-            (new_rule, best_cid, album[0]),
+    applied, _ = move_named_albums(conn, moves)
+    remapped = len(applied)
+    if applied:
+        from bpp.db.face_name_relocate import _move_tags
+        from bpp.db.face_switch_record import restore_unplaced_tags
+
+        # The manual tags a person had on the cluster the album leaves go
+        # with the album (a renumbering the names missed left them there);
+        # tags already on the destination are the user's and are kept.
+        left = {aid: cid for aid, cid in albums.values()}
+        _move_tags(
+            conn,
+            [(left[aid], new_cid) for aid, new_cid in applied if left[aid] >= 0],
+            set(),
+            clear_targets=False,
         )
-        log.info(
-            "Identity reconstruct: '%s' cluster %s → %d (%d labeled faces)",
-            name,
-            old_cid,
-            best_cid,
-            _count,
-        )
-        remapped += 1
-
+        restore_unplaced_tags(conn, dict(applied))  # an unplaced person's tags come back
     if remapped:
         conn.commit()
         log.info("Reconstructed %d named albums from identity labels", remapped)
@@ -119,6 +123,18 @@ def _snapshot_cluster_photos(conn: sqlite3.Connection) -> dict[int, set[int]]:
     return result
 
 
+def _snapshot_cluster_faces(conn: sqlite3.Connection) -> dict[int, set[int]]:
+    """Return ``{cluster_id: {face row id, ...}}``. A recluster keeps every
+    face row, so matching by row says which face was whose; matching by
+    photo cannot tell two people in the same photos apart."""
+    result: dict[int, set[int]] = {}
+    for cid, fid in conn.execute(
+        "SELECT cluster_id, id FROM face_embeddings WHERE cluster_id >= 0"
+    ):
+        result.setdefault(cid, set()).add(fid)
+    return result
+
+
 def _is_default_person_name(name: str) -> bool:
     """Return True if the name is an auto-generated default like ``Person 5``."""
     import re
@@ -126,12 +142,23 @@ def _is_default_person_name(name: str) -> bool:
     return bool(re.match(r"^Person \d+$", name))
 
 
+from bpp.db.face_name_matching import (  # noqa: E402  (re-exported for callers and tests)
+    _match_named_clusters,
+    _match_tag_clusters,
+)
+
+
 def _remap_names_and_tags(
     conn: sqlite3.Connection,
     old_cluster_photos: dict[int, set[int]],
     new_cluster_photos: dict[int, set[int]],
-) -> None:
+    evidence_photos: dict[int, set[int]] | None = None,
+) -> bool:
     """Remap named person albums and photo_person_tags from old → new cluster IDs.
+    The two maps may hold face row ids (a recluster: exact) or photo ids
+    (a re-extraction); ``evidence_photos`` is then the old cluster → photo
+    map an unplaced person's album keeps (default: ``old_cluster_photos``).
+    Returns False when the moves failed and were rolled back (nothing committed).
 
     Matching:
       - Named clusters: pick the new cluster with the *most* overlapping
@@ -141,8 +168,9 @@ def _remap_names_and_tags(
       - Tag-only clusters: Jaccard >= 0.1 (permissive but requires some
         overlap so we don't claim an unrelated cluster).
 
-    SAVEPOINT around the bulk UPDATEs so a partial failure rolls back
-    cleanly instead of leaving half the albums pointing at stale IDs.
+    The moves are applied by ``face_name_relocate.relocate_albums_and_tags``
+    (order-independent, so swapped or chained ids work); a SAVEPOINT
+    around them rolls a partial failure back cleanly. Commits on success.
     """
     TAG_MIN_JACCARD = 0.1
 
@@ -182,173 +210,39 @@ def _remap_names_and_tags(
             "No cluster remapping found — %d named clusters orphaned",
             len(named_clusters),
         )
-        return
+    else:
+        log.info(
+            "Remapping %d clusters (%d named, %d tags) to new IDs",
+            len(remap),
+            len(set(remap) & set(named_clusters)),
+            len(set(remap) & tag_only_cids),
+        )
 
-    log.info(
-        "Remapping %d clusters (%d named, %d tags) to new IDs",
-        len(remap),
-        len(set(remap) & set(named_clusters)),
-        len(set(remap) & tag_only_cids),
-    )
+    # All-or-nothing: a failed UPDATE rolls the whole remap back and returns
+    # False. The recluster endpoint keeps its renumbering uncommitted until
+    # here and rolls it back on False, so every name stays on its person;
+    # the extraction's phase 7 has committed its clusters and logs it.
+    from bpp.db.face_name_relocate import relocate_albums_and_tags
 
-    # All-or-nothing: if any UPDATE fails, roll back the whole remap
-    # so we don't leave half the albums pointing at stale cluster IDs.
     conn.execute("SAVEPOINT remap_clusters")
     try:
-        _apply_remap(conn, remap, named_clusters, tag_cids)
+        relocate_albums_and_tags(
+            conn,
+            remap,
+            named_clusters,
+            tag_cids,
+            evidence_photos if evidence_photos is not None else old_cluster_photos,
+            set(new_cluster_photos),
+        )
         conn.execute("RELEASE remap_clusters")
     except Exception:
         conn.execute("ROLLBACK TO remap_clusters")
         conn.execute("RELEASE remap_clusters")
         log.warning("Cluster remapping failed — rolled back", exc_info=True)
-        return
+        return False
 
     conn.commit()
-
-
-def _match_named_clusters(
-    named_clusters: dict[int, str],
-    old_cluster_photos: dict[int, set[int]],
-    new_cluster_photos: dict[int, set[int]],
-    remap: dict[int, int],
-    claimed: set[int],
-) -> None:
-    """Each named old cluster claims the unclaimed new cluster with the
-    most overlapping photos (no minimum: a name survives any overlap)."""
-    for old_cid in sorted(named_clusters, key=lambda c: -len(old_cluster_photos.get(c, set()))):
-        old_pids = old_cluster_photos.get(old_cid, set())
-        if not old_pids:
-            continue
-        best_new_cid = None
-        best_overlap = 0
-        for new_cid, new_pids in new_cluster_photos.items():
-            if new_cid in claimed:
-                continue
-            overlap = len(old_pids & new_pids)
-            if overlap > best_overlap:
-                best_overlap = overlap
-                best_new_cid = new_cid
-        if best_new_cid is not None and best_overlap > 0:
-            remap[old_cid] = best_new_cid
-            claimed.add(best_new_cid)
-            log.info(
-                "Name remap: '%s' cluster %d → %d (overlap %d/%d photos)",
-                named_clusters[old_cid],
-                old_cid,
-                best_new_cid,
-                best_overlap,
-                len(old_pids),
-            )
-
-
-def _match_tag_clusters(
-    tag_only_cids: set[int],
-    old_cluster_photos: dict[int, set[int]],
-    new_cluster_photos: dict[int, set[int]],
-    remap: dict[int, int],
-    claimed: set[int],
-    min_jaccard: float,
-) -> None:
-    """A tag-only old cluster claims the unclaimed new cluster with the
-    best Jaccard overlap, when it reaches ``min_jaccard``."""
-    for old_cid in tag_only_cids:
-        old_pids = old_cluster_photos.get(old_cid, set())
-        if not old_pids:
-            continue
-        best_new_cid = None
-        best_jaccard = 0.0
-        for new_cid, new_pids in new_cluster_photos.items():
-            if new_cid in claimed:
-                continue
-            intersection = len(old_pids & new_pids)
-            if intersection == 0:
-                continue
-            union = len(old_pids | new_pids)
-            jaccard = intersection / union
-            if jaccard > best_jaccard:
-                best_jaccard = jaccard
-                best_new_cid = new_cid
-        if best_new_cid is not None and best_jaccard >= min_jaccard:
-            remap[old_cid] = best_new_cid
-            claimed.add(best_new_cid)
-
-
-def _apply_remap(
-    conn: sqlite3.Connection,
-    remap: dict[int, int],
-    named_clusters: dict[int, str],
-    tag_cids: set[int],
-) -> None:
-    """The bulk UPDATEs: album rules + shadow column, orphaned albums,
-    photo_person_tags. Runs inside the caller's SAVEPOINT."""
-    # Pre-load all smart_person albums keyed by smart_person_cluster_id
-    # for O(1) lookups (use the v36 shadow column instead of
-    # rule_json as the key — same data, cheaper lookup). Positional
-    # access so this works without sqlite3.Row factory.
-    person_albums_by_cid: dict[int, tuple[int, str]] = {}
-    for row in conn.execute(
-        "SELECT id, name, smart_person_cluster_id FROM albums "
-        "WHERE album_type='smart_person' "
-        "AND smart_person_cluster_id IS NOT NULL"
-    ).fetchall():
-        person_albums_by_cid[int(row[2])] = (row[0], row[1])
-
-    # Remap album rule_json for named clusters: collect, then two
-    # batched statements (no UPDATE per cluster).
-    orphan_album_ids: list[int] = []
-    renames: list[tuple[str, int]] = []  # (name, album_id)
-    repoints: list[tuple[str, int, int]] = []  # (rule_json, new_cid, old_cid)
-    for old_cid, name in named_clusters.items():
-        new_cid = remap.get(old_cid)
-        if new_cid is None or new_cid == old_cid:
-            continue  # No remap needed (unmapped or identity)
-        existing = person_albums_by_cid.get(new_cid)
-        if existing:
-            # New cluster already has an album — update its name
-            renames.append((name, existing[0]))
-            old_entry = person_albums_by_cid.get(old_cid)
-            if old_entry:
-                orphan_album_ids.append(old_entry[0])
-        else:
-            # No album for the new cluster yet — repoint the old
-            # album's rule_json AND shadow column to the new cid.
-            new_rule = json.dumps({"cluster_id": new_cid}, sort_keys=True)
-            repoints.append((new_rule, new_cid, old_cid))
-        log.info("Remapped person '%s': cluster %d → %d", name, old_cid, new_cid)
-    if renames:
-        conn.executemany("UPDATE albums SET name=? WHERE id=?", renames)
-    if repoints:
-        conn.executemany(
-            "UPDATE albums SET rule_json=?, smart_person_cluster_id=? "
-            "WHERE album_type='smart_person' "
-            "AND smart_person_cluster_id=?",
-            repoints,
-        )
-
-    # Batch-delete orphaned albums
-    if orphan_album_ids:
-        ph = ",".join("?" * len(orphan_album_ids))
-        conn.execute(f"DELETE FROM album_photos WHERE album_id IN ({ph})", orphan_album_ids)
-        conn.execute(f"DELETE FROM albums WHERE id IN ({ph})", orphan_album_ids)
-
-    # Remap photo_person_tags in batch (UPDATE OR IGNORE handles
-    # primary-key conflicts where both old and new cluster tags exist).
-    remap_pairs = [
-        (old_cid, new_cid)
-        for old_cid, new_cid in remap.items()
-        if old_cid != new_cid and old_cid in tag_cids
-    ]
-    if remap_pairs:
-        conn.executemany(
-            "UPDATE OR IGNORE photo_person_tags SET cluster_id=? WHERE cluster_id=?",
-            [(new, old) for old, new in remap_pairs],
-        )
-        old_cids = [old for old, _ in remap_pairs]
-        ph = ",".join("?" * len(old_cids))
-        conn.execute(
-            f"DELETE FROM photo_person_tags WHERE cluster_id IN ({ph})",
-            old_cids,
-        )
+    return True
 
 
 # ── Quality + assignment ─────────────────────────────────────────────
@@ -374,8 +268,13 @@ def _assign_new_faces(
     unassigned: list[tuple[str, int, int, np.ndarray, int, float | None]],
     threshold: float,
     hard_negatives: dict[int, set[int]] | None = None,
+    next_id_floor: int | None = None,
 ) -> list[int]:
     """Assign new faces to existing clusters or create new ones.
+
+    ``next_id_floor`` is the highest cluster id the library already holds
+    (new ids start above it), for callers whose ``assigned`` records do
+    not cover every cluster.
 
     For each unassigned face, find the nearest existing cluster centroid.
     If distance < threshold, assign to that cluster. Otherwise, cluster
@@ -415,6 +314,8 @@ def _assign_new_faces(
         centroids[cid] = np.average(embs, axis=0, weights=weights)
 
     max_existing = max(centroids.keys()) if centroids else -1
+    if next_id_floor is not None:
+        max_existing = max(max_existing, next_id_floor)
 
     # Nearest centroid per new face in one chunked matrix product
     # (``_nearest_centroid``: squared norms + a GEMM, never an

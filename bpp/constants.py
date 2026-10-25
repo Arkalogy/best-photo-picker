@@ -193,6 +193,9 @@ LOG_BACKUP_COUNT = 3  # number of rotated log backups
 # ── Face clustering sentinel values ──
 CLUSTER_UNASSIGNED = -1  # face not yet assigned to a cluster
 CLUSTER_DISMISSED = -2  # face dismissed (not a real face / ignored)
+CLUSTER_UNPLACED = (
+    -3
+)  # a named person whose faces a model switch could not find; placed by a later refresh
 
 # ── Significant-person threshold ──
 # Apple-Photos-style rule: a cluster matters when the user named it OR it

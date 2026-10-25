@@ -360,9 +360,11 @@ class TestReconstructIdentities:
         )
 
     def test_calls_remap_when_snapshot_present(self, conn):
+        """Stale photos re-extracted without a model switch: the legacy
+        overlap remap runs with the snapshot's old map."""
         snapshot = phases.PreExtractSnapshot(
-            stored_method="dlib",
-            method_changed=True,
+            stored_method="sface",
+            method_changed=False,
             old_cluster_photos={5: {1, 2}},
             stale_photo_ids=frozenset(),
             dismissed_slots=frozenset(),
@@ -391,8 +393,29 @@ class TestReconstructIdentities:
         assert observed_old == {5: {1, 2}}
         assert observed_new == {10: {1}}
 
+    # ── Phase 7 SAVEPOINT rollback ──
 
-# ── Phase 7 SAVEPOINT rollback ──
+    def test_no_legacy_remap_after_a_model_switch(self, conn):
+        """After a switch the pending record owns the names; once it is gone
+        the placement happened, and a replay of this phase (crash recovery)
+        must not remap the already-moved albums again."""
+        snapshot = phases.PreExtractSnapshot(
+            stored_method="dlib",
+            method_changed=True,
+            old_cluster_photos={5: {1, 2}},
+            stale_photo_ids=frozenset(),
+            dismissed_slots=frozenset(),
+        )
+        _insert_face(conn, photo_id=1, face_index=0, cluster_id=10)
+        conn.commit()
+        calls: list[object] = []
+        phases.reconstruct_identities(
+            conn,
+            snapshot,
+            reconstruct_identities_fn=lambda _c: None,
+            remap_names_and_tags_fn=lambda *_a: calls.append(_a),
+        )
+        assert calls == []
 
 
 class TestReconstructIdentitiesSavepointRollback:

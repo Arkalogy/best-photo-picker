@@ -22,7 +22,7 @@ from bpp.constants import CLUSTER_DISMISSED, CLUSTER_UNASSIGNED
 from bpp.db.event_hooks import dispatch_post_cluster
 from bpp.db.face_queries import assert_face_load_cap
 from bpp.db.smart_albums import get_affected_album_types, refresh_smart_albums
-from bpp.errors import ConflictError, ValidationError
+from bpp.errors import ConflictError, IntegrityError, ValidationError
 from bpp.scoring.face_cluster import cluster_faces
 from bpp.utils.logging import get_logger
 from bpp.web.bp_faces_cluster_ops import bp
@@ -41,6 +41,7 @@ def api_faces_recluster() -> tuple[Response, int]:
     Preserves named clusters by snapshotting old cluster→photo mappings,
     re-clustering, then remapping names to the new cluster IDs.
     """
+    from bpp.db.face_identity_remap import _snapshot_cluster_faces
     from bpp.web.face_worker import _remap_names_and_tags, _snapshot_cluster_photos
 
     ctx = get_ctx()
@@ -74,6 +75,7 @@ def api_faces_recluster() -> tuple[Response, int]:
 
     # Snapshot old cluster→photo mappings BEFORE re-clustering
     old_cluster_photos = _snapshot_cluster_photos(conn)
+    old_cluster_faces = _snapshot_cluster_faces(conn)  # what the names follow
 
     # Every non-dismissed embedding is loaded below: refuse past the cap
     # with a structured 503 (as merge/restore do) instead of an OOM kill.
@@ -104,28 +106,42 @@ def api_faces_recluster() -> tuple[Response, int]:
 
     labels = cluster_faces(embeddings, threshold=threshold)
 
-    conn.executemany(
-        "UPDATE face_embeddings SET cluster_id=? WHERE id=?",
-        zip(labels, fe_ids, strict=True),
-    )
-    # Rows left out (unreadable, or another model's size) must not keep
-    # an old cluster number that now means someone else.
-    kept_ids = set(fe_ids)
-    skipped = [(CLUSTER_UNASSIGNED, r[0]) for r in rows if r[0] not in kept_ids]
-    if skipped:
-        conn.executemany("UPDATE face_embeddings SET cluster_id=? WHERE id=?", skipped)
-    conn.commit()
+    # The renumbering and the move of the named albums and manual tags
+    # are ONE transaction (the remap commits it): a crash, a failed move
+    # or any other error between the two would otherwise leave every name
+    # on a cluster that now holds someone else's faces. Anything that goes
+    # wrong rolls the renumbering back off the pooled connection, so no
+    # later request can commit it by accident.
+    try:
+        conn.executemany(
+            "UPDATE face_embeddings SET cluster_id=? WHERE id=?",
+            zip(labels, fe_ids, strict=True),
+        )
+        # Rows left out (unreadable, or another model's size) must not keep
+        # an old cluster number that now means someone else.
+        kept_ids = set(fe_ids)
+        skipped = [(CLUSTER_UNASSIGNED, r[0]) for r in rows if r[0] not in kept_ids]
+        if skipped:
+            conn.executemany("UPDATE face_embeddings SET cluster_id=? WHERE id=?", skipped)
+        moved = _remap_names_and_tags(
+            conn,
+            old_cluster_faces,
+            _snapshot_cluster_faces(conn),
+            evidence_photos=old_cluster_photos,
+        )
+    except BaseException:
+        conn.rollback()
+        raise
+    if not moved:
+        conn.rollback()
+        raise IntegrityError(
+            "Re-clustering was undone: the people's names could not be moved to the new clusters"
+        )
 
-    # Remap named albums and person tags from old cluster IDs to new ones
-    new_cluster_photos = _snapshot_cluster_photos(conn)
-    _remap_names_and_tags(conn, old_cluster_photos, new_cluster_photos)
-
-    # Remove orphaned person tags (clusters that vanished entirely)
-    conn.execute(
-        "DELETE FROM photo_person_tags WHERE cluster_id NOT IN "
-        "(SELECT DISTINCT cluster_id FROM face_embeddings WHERE cluster_id >= 0)"
-    )
-    conn.commit()
+    # Manual tags are never deleted here: a tag whose cluster has no faces
+    # is a person known by tags alone (their album may be gone only because
+    # their photos are hidden). A reused id was already moved off by the
+    # remap; new ids are allocated above every tag's id.
 
     # Update config so future extractions use this threshold
     ctx.config["face_cluster_threshold"] = threshold

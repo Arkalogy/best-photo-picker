@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import os
 
+import pytest
+
 from tests._web_shared import (  # noqa: F401
     _default_config,
     _make_analysis,
@@ -345,3 +347,138 @@ class TestDeleteRoutes:
             json={"filepaths": ["/tmp/test_photos/img_000.jpg"]},
         )
         assert resp.status_code == 404
+
+
+class TestRecluster0Point2Point2:
+    def test_recluster_keeps_the_tags_of_a_tag_only_person(self, face_web_client, tmp_path):
+        """A person who exists by manual tags alone (no detected faces) is an
+        intentional feature; re-clustering must not wipe their tags."""
+        import os
+
+        from bpp.db.connection import get_db
+
+        conn = get_db(os.path.join(str(tmp_path / "workdir"), "photopicker.db"))
+        conn.execute(
+            "INSERT INTO albums (name, album_type, rule_json)"
+            " VALUES ('Grandma', 'smart_person', ?)",
+            (json.dumps({"cluster_id": 9}, sort_keys=True),),
+        )
+        pid = conn.execute("SELECT id FROM photos ORDER BY id LIMIT 1").fetchone()[0]
+        conn.execute("INSERT INTO photo_person_tags (photo_id, cluster_id) VALUES (?, 9)", (pid,))
+        conn.commit()
+
+        resp = face_web_client.post("/api/v1/faces/recluster", json={"threshold": 0.6})
+        assert resp.status_code == 200, resp.data
+
+        rows = conn.execute("SELECT photo_id FROM photo_person_tags WHERE cluster_id=9").fetchall()
+        assert [r[0] for r in rows] == [pid]
+
+    def test_an_interrupted_recluster_leaves_faces_and_names_untouched(
+        self, face_web_client, tmp_path
+    ):
+        """The face rows are renumbered and the names moved in ONE
+        transaction: a process killed between the two must not leave every
+        name on a cluster that now holds someone else's faces."""
+        import os
+        from unittest.mock import patch
+
+        import numpy as np
+
+        from bpp.db.connection import close_all_connections, get_db
+
+        def clusters(conn):
+            return {
+                cid: {
+                    pid
+                    for (pid,) in conn.execute(
+                        "SELECT photo_id FROM face_embeddings WHERE cluster_id=?", (cid,)
+                    )
+                }
+                for (cid,) in conn.execute("SELECT DISTINCT cluster_id FROM face_embeddings")
+            }
+
+        def alice_cluster(conn):
+            row = conn.execute(
+                "SELECT smart_person_cluster_id FROM albums WHERE name='Alice'"
+            ).fetchone()
+            return row[0] if row else None
+
+        db_path = os.path.join(str(tmp_path / "workdir"), "photopicker.db")
+        conn = get_db(db_path)
+        # Cluster numbers a re-clustering would NOT reproduce (it numbers
+        # from 0 in photo order), so a committed renumbering is visible.
+        conn.execute("UPDATE face_embeddings SET cluster_id=5 WHERE cluster_id=0")
+        conn.execute("UPDATE face_embeddings SET cluster_id=3 WHERE cluster_id=1")
+        conn.execute("DELETE FROM albums WHERE album_type='smart_person'")
+        conn.execute(
+            "INSERT INTO albums (name, album_type, rule_json) VALUES ('Alice', 'smart_person', ?)",
+            (json.dumps({"cluster_id": 5}, sort_keys=True),),
+        )
+        # Real, well-separated vectors (the fixture's are zero and would be
+        # skipped before the renumbering ever started).
+        rng = np.random.RandomState(7)
+        for fid, cid in conn.execute("SELECT id, cluster_id FROM face_embeddings").fetchall():
+            emb = rng.randn(512).astype(np.float32) * 0.01
+            emb[cid] += 1.0  # one axis per cluster: far apart
+            conn.execute(
+                "UPDATE face_embeddings SET embedding=? WHERE id=?",
+                (np.asarray(emb, dtype=np.float32).tobytes(), fid),
+            )
+        conn.commit()
+        before = clusters(conn)
+        assert set(before) == {5, 3} and alice_cluster(conn) == 5
+
+        class Killed(BaseException):
+            pass
+
+        def die(*_a, **_k):
+            raise Killed()
+
+        with patch("bpp.web.face_worker._remap_names_and_tags", die), pytest.raises(Killed):
+            face_web_client.post("/api/v1/faces/recluster", json={"threshold": 1.2})
+        close_all_connections()
+
+        conn = get_db(db_path)
+        assert clusters(conn) == before, "nothing of the interrupted re-clustering was kept"
+        assert alice_cluster(conn) == 5
+
+        # The same request, not interrupted, does renumber and keeps Alice.
+        resp = face_web_client.post("/api/v1/faces/recluster", json={"threshold": 1.2})
+        assert resp.status_code == 200, resp.data
+        renumbered = clusters(conn)
+        assert set(renumbered) != {5, 3}, "the renumbering happened"
+        assert renumbered[alice_cluster(conn)] == before[5], "Alice is on her photos' cluster"
+
+    def test_a_failed_name_move_undoes_the_re_clustering(self, face_web_client, tmp_path):
+        """When the albums cannot be moved, the renumbering is rolled back
+        too (one transaction) and the request says so."""
+        import os
+        from unittest.mock import patch
+
+        import numpy as np
+
+        from bpp.db.connection import get_db
+
+        db_path = os.path.join(str(tmp_path / "workdir"), "photopicker.db")
+        conn = get_db(db_path)
+        conn.execute("UPDATE face_embeddings SET cluster_id=5 WHERE cluster_id=0")
+        conn.execute("UPDATE face_embeddings SET cluster_id=3 WHERE cluster_id=1")
+        rng = np.random.RandomState(7)
+        for fid, cid in conn.execute("SELECT id, cluster_id FROM face_embeddings").fetchall():
+            emb = rng.randn(512).astype(np.float32) * 0.01
+            emb[cid] += 1.0
+            conn.execute(
+                "UPDATE face_embeddings SET embedding=? WHERE id=?",
+                (np.asarray(emb, dtype=np.float32).tobytes(), fid),
+            )
+        conn.commit()
+
+        def broken(*_a, **_k):
+            raise RuntimeError("albums table is read-only today")
+
+        with patch("bpp.db.face_name_relocate.relocate_albums_and_tags", broken):
+            resp = face_web_client.post("/api/v1/faces/recluster", json={"threshold": 1.2})
+        assert resp.status_code == 500, resp.data
+        assert "undone" in resp.get_json()["error"]
+        ids = {cid for (cid,) in conn.execute("SELECT DISTINCT cluster_id FROM face_embeddings")}
+        assert ids == {5, 3}, "the renumbering was rolled back with the failed move"

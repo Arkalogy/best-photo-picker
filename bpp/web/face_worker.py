@@ -160,6 +160,25 @@ from bpp.web.face_recovery import (  # noqa: E402, F401
 )
 
 
+def _clear_retry_journals(conn: Any) -> None:
+    """Close pending ``face_extraction_retry`` journal entries after a run
+    completed. api_faces_retry opens one before wiping face data; closing
+    it stops the recovery handler from re-firing on the next startup.
+    Best-effort: the extraction did complete, and the handler is
+    idempotent if it does fire."""
+    try:
+        from bpp.db.journal import journal_complete, pending_journals
+
+        for entry in pending_journals(conn, kind="face_extraction_retry"):
+            journal_complete(conn, entry["id"])
+    except Exception:
+        log.warning(
+            "Failed to clear face_extraction_retry journal entries — "
+            "next startup may re-fire recovery (idempotent, harmless)",
+            exc_info=True,
+        )
+
+
 class FaceWorker(BackgroundWorker):
     """Extracts face embeddings in a background thread, then clusters."""
 
@@ -228,6 +247,14 @@ class FaceWorker(BackgroundWorker):
                 "Face extraction done: 0 with-face candidates, 0 faces, 0 clusters in %.1fs",
                 _time.perf_counter() - _t0,
             )
+            # A run with nothing to do is still a completed run: a pending
+            # face-model switch (or Retry) ends here, keeping the names it
+            # could not place as people without faces, instead of locking
+            # face edits until a detectable face is imported.
+            from bpp.web.analyze_face_extract import _finish_name_placement
+
+            _finish_name_placement(db_path, completed=True)
+            _clear_retry_journals(conn)
             self._emit({"type": "done", "total": 0, "faces_found": 0, "clusters": 0})
             return
 
@@ -273,25 +300,7 @@ class FaceWorker(BackgroundWorker):
             if self.ctx is not None:
                 self.ctx.invalidate_face_cluster_map()
 
-        # Clear any pending `face_extraction_retry` journal entries.
-        # api_faces_retry creates one before wiping face data; we close
-        # the loop here so the recovery handler doesn't re-fire on next
-        # startup. Best-effort: a DB error here doesn't change the fact
-        # that extraction completed successfully — the user-visible
-        # state is correct, and worst case the recovery handler runs on
-        # next startup and finds nothing to do (handlers are
-        # idempotent).
-        try:
-            from bpp.db.journal import journal_complete, pending_journals
-
-            for entry in pending_journals(conn, kind="face_extraction_retry"):
-                journal_complete(conn, entry["id"])
-        except Exception:
-            log.warning(
-                "Failed to clear face_extraction_retry journal entries — "
-                "next startup may re-fire recovery (idempotent, harmless)",
-                exc_info=True,
-            )
+        _clear_retry_journals(conn)
 
         log.info(
             "Face extraction done: %d with-face candidates, %d faces found, %d clusters in %.1fs",
