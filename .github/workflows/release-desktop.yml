@@ -82,7 +82,7 @@ jobs:
           fi
           echo "OK: tag $TAG_VERSION matches package and tauri.conf"
 
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.11" # pinned — matches the sidecar/CI pin
 
@@ -160,7 +160,7 @@ jobs:
             echo "::warning::Couldn't read the sidecar archive — the inventory lacks the bundled-file list"
           fi
 
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "20"
 
