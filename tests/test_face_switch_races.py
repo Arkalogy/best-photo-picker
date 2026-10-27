@@ -218,3 +218,23 @@ def test_an_album_update_that_fails_leaves_no_write_lock(alice):
     with pytest.raises(TypeError):
         albums.update_album(db, aid, config={"bad": object()})
     assert not db.in_transaction
+
+
+def test_a_skipped_move_of_an_unplaced_person_is_logged_by_name(alice, caplog):
+    from bpp.db.face_name_placement import _set_album_cluster, move_named_albums
+
+    db, _aid, _ = alice
+    ids = []
+    for name in ("Gus", "Hana"):  # both kept aside: they share CLUSTER_UNPLACED
+        ids.append(
+            db.execute(
+                "INSERT INTO albums (name, album_type, rule_json) VALUES (?, 'smart_person', ?)",
+                (name, json.dumps({"cluster_id": 100 + len(ids)})),
+            ).lastrowid
+        )
+    _set_album_cluster(db, [(i, CLUSTER_UNPLACED) for i in ids])
+
+    with caplog.at_level("WARNING"):
+        move_named_albums(db, [(ids[0], 9)], displace_named=False)  # Alice holds 9
+
+    assert "Not moving 'Gus' onto cluster 9: 'Alice' is already there" in caplog.text

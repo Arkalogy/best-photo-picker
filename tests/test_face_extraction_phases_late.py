@@ -296,9 +296,10 @@ class TestClusterFaces:
         ).fetchone()[0]
         assert cid == 42
 
-    def test_post_cluster_dedup_removes_duplicate_cluster_rows(self, conn):
-        # Photo 1 has two embeddings both assigned to cluster 5 —
-        # dedup must keep one and delete the other.
+    def test_post_cluster_dedup_drops_a_face_found_twice(self, conn):
+        # Photo 1 has two rows in cluster 5 with the same box: one face
+        # detected twice, so one row goes (two different boxes would be
+        # parted instead; see tests/test_face_grouping_threshold.py).
         _insert_face(conn, photo_id=1, face_index=0, cluster_id=5)
         _insert_face(conn, photo_id=1, face_index=1, cluster_id=5)
         _insert_face(conn, photo_id=2, face_index=0, cluster_id=6)
@@ -317,14 +318,9 @@ class TestClusterFaces:
             assign_new_faces_fn=lambda *a, **kw: [],
             post_cluster_dedup=True,
         )
-        # 2 distinct cluster_ids: 5, 6 (after dedup)
         assert n == 2
-        rows = conn.execute(
-            "SELECT photo_id, face_index FROM face_embeddings ORDER BY photo_id, face_index"
-        ).fetchall()
-        # Photo 1 has just one face left (dedup removed the duplicate).
-        photo_1_rows = [r for r in rows if r[0] == 1]
-        assert len(photo_1_rows) == 1
+        rows = conn.execute("SELECT cluster_id FROM face_embeddings WHERE photo_id = 1").fetchall()
+        assert [r[0] for r in rows] == [5]
 
 
 # ── Phase 7: reconstruct_identities ──

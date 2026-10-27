@@ -14,7 +14,6 @@ from typing import Any
 import numpy as np
 from flask import Blueprint, Response, jsonify, request
 
-from bpp.config import cfg_get
 from bpp.constants import (
     ACTIVE_PHOTO_SQL,
     CLUSTER_DISMISSED,
@@ -34,6 +33,7 @@ from bpp.db.face_feedback import (
 )
 from bpp.db.smart_albums import get_affected_album_types, refresh_smart_albums
 from bpp.errors import ValidationError
+from bpp.scoring.face_threshold import face_threshold
 from bpp.utils.logging import get_logger
 from bpp.web.face_merge_core import assert_merge_within_cap, perform_face_merge
 from bpp.web.share import requires_local_app
@@ -356,7 +356,7 @@ def _assign_unassigned_to_nearest(ctx: Any, conn: Any) -> None:
     if not centroids:
         return
 
-    threshold = float(cfg_get(ctx.config, "face_cluster_threshold"))
+    threshold = face_threshold(conn)
     # Assign each unassigned face to nearest cluster or create new
     unassigned = conn.execute(
         f"SELECT id, embedding FROM face_embeddings WHERE cluster_id = {CLUSTER_UNASSIGNED}"

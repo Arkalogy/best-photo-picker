@@ -12,7 +12,7 @@ from __future__ import annotations
 import argparse
 import os
 
-from bpp.config import cfg_get, load_config
+from bpp.config import cfg_get, load_config, parse_scan_extensions
 from bpp.utils.logging import get_logger, setup_logging
 
 
@@ -27,7 +27,7 @@ def do_analyze(args: argparse.Namespace) -> int:
     load_plugins_for_cli()
 
     cfg = load_config(getattr(args, "config", None))
-    extensions = [e.strip().lower() for e in args.extensions.split(",")]
+    extensions = parse_scan_extensions(args.extensions or cfg_get(cfg, "scan_extensions"))
 
     from bpp.io_scan import scan_images
     from bpp.scoring.aggregate import analyze_all

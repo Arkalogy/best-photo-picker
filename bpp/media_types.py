@@ -59,6 +59,19 @@ def media_kind_from_dict(photo: dict[str, Any]) -> MediaKind:
     return MediaKind.PHOTO
 
 
+def media_flags(photo: dict[str, Any]) -> dict[str, int]:
+    """``is_video`` / ``is_raw`` for a photos row: the row's own values,
+    else what the file's extension says. Always 0 or 1, so a row is never
+    written with the flags blank (the RAW filter and the library stats
+    read them)."""
+    kind = media_kind_from_path(photo["filepath"])
+    flags = {"is_video": int(kind is MediaKind.VIDEO), "is_raw": int(kind is MediaKind.RAW)}
+    for key in flags:
+        if photo.get(key) is not None:
+            flags[key] = int(bool(photo[key]))
+    return flags
+
+
 def media_kind_from_path(filepath: str) -> MediaKind:
     """Classify a media file by its filesystem path.
 

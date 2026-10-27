@@ -24,6 +24,7 @@ from bpp.db.face_queries import assert_face_load_cap
 from bpp.db.smart_albums import get_affected_album_types, refresh_smart_albums
 from bpp.errors import ConflictError, IntegrityError, ValidationError
 from bpp.scoring.face_cluster import cluster_faces
+from bpp.scoring.face_threshold import save_face_threshold
 from bpp.utils.logging import get_logger
 from bpp.web.bp_faces_cluster_ops import bp
 from bpp.web.share import requires_local_app
@@ -123,10 +124,15 @@ def api_faces_recluster() -> tuple[Response, int]:
         skipped = [(CLUSTER_UNASSIGNED, r[0]) for r in rows if r[0] not in kept_ids]
         if skipped:
             conn.executemany("UPDATE face_embeddings SET cluster_id=? WHERE id=?", skipped)
+        new_cluster_faces = _snapshot_cluster_faces(conn)
+        # "Not the same person" answers follow their faces like the names do
+        from bpp.db.face_feedback import carry_hard_negatives
+
+        carry_hard_negatives(conn, old_cluster_faces, new_cluster_faces)
         moved = _remap_names_and_tags(
             conn,
             old_cluster_faces,
-            _snapshot_cluster_faces(conn),
+            new_cluster_faces,
             evidence_photos=old_cluster_photos,
         )
     except BaseException:
@@ -141,10 +147,12 @@ def api_faces_recluster() -> tuple[Response, int]:
     # Manual tags are never deleted here: a tag whose cluster has no faces
     # is a person known by tags alone (their album may be gone only because
     # their photos are hidden). A reused id was already moved off by the
-    # remap; new ids are allocated above every tag's id.
+    # remap. New cluster ids start at 0, so a new cluster can take a
+    # tag-only person's id: the remap gives an unnamed one a fresh id and
+    # keeps a named one as a person without faces.
 
-    # Update config so future extractions use this threshold
-    ctx.config["face_cluster_threshold"] = threshold
+    # Kept for this embedder: later analysis groups new faces the same way
+    save_face_threshold(conn, threshold)
 
     # Refresh smart albums for the new clusters
     refresh_smart_albums(conn, kinds=get_affected_album_types("face_tag"))

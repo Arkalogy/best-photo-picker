@@ -476,7 +476,7 @@ class TestRecluster0Point2Point2:
         def broken(*_a, **_k):
             raise RuntimeError("albums table is read-only today")
 
-        with patch("bpp.db.face_name_relocate.relocate_albums_and_tags", broken):
+        with patch("bpp.db.face_name_relocate.renumber_people", broken):
             resp = face_web_client.post("/api/v1/faces/recluster", json={"threshold": 1.2})
         assert resp.status_code == 500, resp.data
         assert "undone" in resp.get_json()["error"]

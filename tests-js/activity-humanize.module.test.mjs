@@ -25,6 +25,14 @@ describe("humanizeActivity — friendly milestones", () => {
     );
   });
 
+  test("a cancelled import reads as stopped, not imported", () => {
+    expect(
+      humanizeActivity(
+        e("Import complete: 40 imported, 0 skipped, 0 errors (batch=b, dest=d); cancelled")
+      )?.text
+    ).toBe("Import stopped after 40 photos");
+  });
+
   test("analysis started", () => {
     expect(humanizeActivity(e("Analysis started"))?.text).toBe("Analyzing your photos…");
   });

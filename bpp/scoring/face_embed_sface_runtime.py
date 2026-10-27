@@ -32,12 +32,10 @@ from bpp.utils.paths import models_dir as _sface_models_dir
 
 log = get_logger(__name__)
 
-# Scale factor applied to L2-normalized SFace embeddings so that
-# Euclidean distances fall in the same range as dlib's face_recognition:
-#   dlib:  same-person ~0.4,  different ~0.9 (the default threshold is
-#          FACE_CLUSTER_THRESHOLD_FALLBACK in bpp.constants)
-#   SFace: same-person ~0.52, different ~0.88  (after scaling by 0.65)
-# This lets the existing clustering threshold slider (0.3-1.0) work unchanged.
+# Scale factor applied to L2-normalized SFace embeddings so their
+# Euclidean distances sit inside the Regroup slider's range (0.3-1.2).
+# The ranges still differ per model, so each embedder carries its own
+# measured grouping default (SFACE_CLUSTER_THRESHOLD in face_embed.py).
 SFACE_DISTANCE_SCALE = 0.65
 
 

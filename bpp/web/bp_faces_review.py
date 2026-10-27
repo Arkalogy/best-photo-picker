@@ -23,7 +23,6 @@ from typing import Any
 import numpy as np
 from flask import Blueprint, Response, jsonify, request
 
-from bpp.config import cfg_get
 from bpp.db.face_feedback import (
     compute_adaptive_face_threshold,
     count_ambiguous_pairs,
@@ -32,7 +31,9 @@ from bpp.db.face_feedback import (
     undo_hard_negative,
     undo_last_pair_feedback,
 )
+from bpp.db.sql_batches import in_batches
 from bpp.errors import NotFoundError, ValidationError
+from bpp.scoring.face_threshold import face_threshold
 from bpp.utils.logging import get_logger
 from bpp.web.review_meta import attach_photo_meta, photo_meta_by_filepaths
 from bpp.web.share import requires_local_app
@@ -48,7 +49,7 @@ def api_faces_threshold() -> tuple[Response, int]:
     """Return the current adaptive face clustering threshold and metadata."""
     ctx = get_ctx()
     conn = ctx.get_conn()
-    config_threshold = cfg_get(ctx.config, "face_cluster_threshold")
+    config_threshold = face_threshold(conn)
     threshold, info = compute_adaptive_face_threshold(conn, default=config_threshold)
     return jsonify(
         {
@@ -93,7 +94,7 @@ def api_faces_review_pairs_next() -> tuple[Response, int]:
     except ValueError:
         limit = 20
 
-    config_threshold = cfg_get(ctx.config, "face_cluster_threshold")
+    config_threshold = face_threshold(conn)
     threshold, _ = compute_adaptive_face_threshold(conn, default=config_threshold)
 
     # Fetch all pairs to know the true total, then slice for the response
@@ -417,11 +418,12 @@ def _restore_merged_cluster(conn: Any, undo: dict[str, Any]) -> list[dict[str, A
     )
     remapped_only = sorted(set(absorbed_tags) - set(primary_tags))
     if remapped_only:
-        placeholders = ",".join("?" for _ in remapped_only)
-        conn.execute(
-            f"DELETE FROM photo_person_tags WHERE cluster_id=? AND photo_id IN ({placeholders})",
-            [primary, *remapped_only],
-        )
+        for placeholders, batch in in_batches(remapped_only):
+            conn.execute(
+                "DELETE FROM photo_person_tags WHERE cluster_id=? "
+                f"AND photo_id IN ({placeholders})",
+                [primary, *batch],
+            )
     # Re-create the absorbed cluster's person album with its user-given
     # name INSIDE the same transaction as the face/tag restore — a crash
     # between "faces restored" and "name restored" would otherwise let
@@ -463,7 +465,7 @@ def api_faces_feedback_stats() -> tuple[Response, int]:
 
     ctx = get_ctx()
     conn = ctx.get_conn()
-    config_threshold = cfg_get(ctx.config, "face_cluster_threshold")
+    config_threshold = face_threshold(conn)
     threshold, info = compute_adaptive_face_threshold(conn, default=config_threshold)
     feedback = get_face_feedback(conn)
     nudge = should_suggest_recluster(

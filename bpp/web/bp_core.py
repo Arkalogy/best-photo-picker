@@ -17,7 +17,7 @@ from typing import Any
 
 from flask import Blueprint, Response, jsonify, make_response, render_template, request
 
-from bpp.config import DEFAULTS, cfg_get
+from bpp.config import DEFAULTS
 from bpp.db.clip import (
     get_clip_embedding_count,
 )
@@ -31,6 +31,7 @@ from bpp.scoring.clip_embed import (
     is_available as clip_is_available,
 )
 from bpp.scoring.face_embed import is_available as face_recognition_available
+from bpp.scoring.face_threshold import face_threshold, faces_method
 from bpp.scoring.nudity import is_active as nudenet_active
 from bpp.scoring.nudity import is_available as nudenet_available
 from bpp.scoring.pets import is_available as pets_available
@@ -328,12 +329,15 @@ def api_status() -> Response:
         # present). ``nudenet_active``: it actually runs — accepted with
         # the current license text AND weights on disk.
         "nudenet_available": nudenet_available(),
-        "nudenet_active": nudenet_active(),
+        "nudenet_active": nudenet_active(ctx.config),
         "pets_available": pets_available(),
         "face_extraction_done": has_face_data(conn) if conn else False,
         "face_needs_clustering": needs_face_clustering(conn) if conn else False,
         "face_extracting": ctx.face_worker.is_alive,
-        "face_cluster_threshold": cfg_get(ctx.config, "face_cluster_threshold"),
+        "face_cluster_threshold": face_threshold(conn) if conn else None,
+        # The model that made the stored faces (not the next analysis's pick):
+        # the Face grouping settings suggest a better one when this is dlib.
+        "face_embedding_method": faces_method(conn) if conn else None,
         "clip_available": clip_avail,
         "clip_installable": clip_installable,
         "clip_ready": clip_ready,

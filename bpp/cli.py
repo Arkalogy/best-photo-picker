@@ -14,15 +14,15 @@ def build_parser() -> argparse.ArgumentParser:
         description=f"{APP_NAME} — score, deduplicate, and select the best photos.",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    # default pulled from the config registry so a plugin
-    # override (e.g. AVIF / RAW format support) propagates without
-    # touching this argparse declaration.
-    from bpp.config import DEFAULTS
-
+    # No default here: an omitted --extensions means the config file's
+    # scan_extensions (or its default), which analyze resolves.
     parser.add_argument(
         "--extensions",
-        default=DEFAULTS["scan_extensions"],
-        help="Comma-separated image extensions to include (default from config: scan_extensions)",
+        default=None,
+        help=(
+            "Comma-separated file extensions to include (default: every supported photo,"
+            " camera RAW and video format; config: scan_extensions)"
+        ),
     )
 
     sub = parser.add_subparsers(dest="command", help="Available commands")

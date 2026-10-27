@@ -32,7 +32,7 @@ from tests.test_face_name_switch import (  # noqa: F401
 class TestCarriedAndStrayNames:
     def test_a_carried_and_a_current_name_can_tie(self, people):
         """Typed string keys sort next to int keys without a crash."""
-        from bpp.db.face_identity_remap import _match_named_clusters
+        from bpp.db.face_name_matching import _match_named_clusters
 
         remap: dict = {}
         _match_named_clusters(
@@ -127,7 +127,7 @@ class TestRetryAndTags:
     def test_placement_logs_cleanly_with_a_carried_name(self, people, caplog):
         """The app's log handler formats every record; a carried name's
         string key must not break the matcher's INFO line."""
-        from bpp.db.face_identity_remap import _match_named_clusters
+        from bpp.db.face_name_matching import _match_named_clusters
 
         remap: dict = {}
         with caplog.at_level(logging.INFO):

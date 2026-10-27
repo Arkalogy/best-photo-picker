@@ -268,7 +268,9 @@ export function _showImportSummary(msg) {
   const imported = msg.imported + adopted;
   if (msg.cancelled) {
     toast(
-      `Import stopped after ${imported} photo${imported === 1 ? "" : "s"} — they are in the library; import the folder again to continue.`,
+      imported === 0
+        ? "Import stopped before any photos were added."
+        : `Import stopped after ${imported} photo${imported === 1 ? "" : "s"} — they are in the library; import the folder again to continue.`,
       "warning"
     );
     return;

@@ -9,6 +9,7 @@ import json
 import sqlite3
 from dataclasses import dataclass, field
 
+from bpp.db.sql_batches import in_batches, rows_in
 from bpp.utils.json_utils import safe_json_loads
 
 #: ``settings`` key holding the pending record of a model switch.
@@ -74,7 +75,10 @@ class PendingNames:
                 covered={int(p) for p in data.get("covered", [])},
                 failed={int(p) for p in data.get("failed", [])},
             )
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as e:
+            import logging
+
+            logging.getLogger(__name__).warning("Face-model switch record is damaged: %s", e)
             return None
 
     def unplaced_names(self) -> dict[Key, str]:
@@ -171,12 +175,9 @@ HAS_HOLD_SQL = (
 
 
 def _album_configs(conn: sqlite3.Connection, album_ids: list[int]) -> dict[int, dict]:
-    if not album_ids:
-        return {}
-    ph = ",".join("?" * len(album_ids))
     out: dict[int, dict] = {}
-    for aid, raw in conn.execute(
-        f"SELECT id, config_json FROM albums WHERE id IN ({ph})", album_ids
+    for aid, raw in rows_in(
+        conn, "SELECT id, config_json FROM albums WHERE id IN ({ph})", album_ids
     ):
         cfg = safe_json_loads(raw, default=None, expected_type=dict, context="album config")
         out[int(aid)] = dict(cfg) if isinstance(cfg, dict) else {}
@@ -222,16 +223,14 @@ def single_face_photos(conn: sqlite3.Connection, photo_ids: set[int]) -> set[int
     say whose face is whose: a person is re-placed later by them alone."""
     from bpp.constants import CLUSTER_DISMISSED
 
-    wanted = sorted(photo_ids)
-    if not wanted:
-        return set()
-    ph = ",".join("?" * len(wanted))
     return {
         int(r[0])
-        for r in conn.execute(
-            f"SELECT photo_id FROM face_embeddings WHERE photo_id IN ({ph}) "
+        for r in rows_in(
+            conn,
+            "SELECT photo_id FROM face_embeddings WHERE photo_id IN ({ph}) "
             "AND cluster_id != ? GROUP BY photo_id HAVING COUNT(*) = 1",
-            [*wanted, CLUSTER_DISMISSED],
+            photo_ids,
+            [CLUSTER_DISMISSED],
         )
     }
 
@@ -241,28 +240,22 @@ def group_photos(conn: sqlite3.Connection, photo_ids: set[int]) -> set[int]:
     not counted)."""
     from bpp.constants import CLUSTER_DISMISSED
 
-    wanted = sorted(photo_ids)
-    if not wanted:
-        return set()
-    ph = ",".join("?" * len(wanted))
     return {
         int(r[0])
-        for r in conn.execute(
-            f"SELECT photo_id FROM face_embeddings WHERE photo_id IN ({ph}) "
+        for r in rows_in(
+            conn,
+            "SELECT photo_id FROM face_embeddings WHERE photo_id IN ({ph}) "
             "AND cluster_id != ? GROUP BY photo_id HAVING COUNT(*) > 1",
-            [*wanted, CLUSTER_DISMISSED],
+            photo_ids,
+            [CLUSTER_DISMISSED],
         )
     }
 
 
 def alive_photo_ids(conn: sqlite3.Connection, photo_ids: set[int]) -> set[int]:
     """The subset of these photo ids that still have a ``photos`` row (a tag
-    may only point at one of those), in one query."""
-    wanted = sorted(photo_ids)
-    if not wanted:
-        return set()
-    ph = ",".join("?" * len(wanted))
-    return {int(r[0]) for r in conn.execute(f"SELECT id FROM photos WHERE id IN ({ph})", wanted)}
+    may only point at one of those), in batches."""
+    return {int(r[0]) for r in rows_in(conn, "SELECT id FROM photos WHERE id IN ({ph})", photo_ids)}
 
 
 def set_album_evidence(
@@ -280,15 +273,14 @@ def set_album_evidence(
     if active_only and alive:
         from bpp.constants import ACTIVE_PHOTO_SQL
 
-        ph = ",".join("?" * len(alive))
         alive = {
             int(r[0])
-            for r in conn.execute(
-                f"SELECT id FROM photos WHERE id IN ({ph}) AND {ACTIVE_PHOTO_SQL}", sorted(alive)
+            for r in rows_in(
+                conn, f"SELECT id FROM photos WHERE id IN ({{ph}}) AND {ACTIVE_PHOTO_SQL}", alive
             )
         }
-    ph = ",".join("?" * len(photos_by_album))
-    conn.execute(f"DELETE FROM album_photos WHERE album_id IN ({ph})", list(photos_by_album))
+    for ph, batch in in_batches(sorted(photos_by_album)):
+        conn.execute(f"DELETE FROM album_photos WHERE album_id IN ({ph})", batch)
     conn.executemany(
         "INSERT OR IGNORE INTO album_photos (album_id, photo_id) VALUES (?, ?)",
         [(aid, pid) for aid, pids in photos_by_album.items() for pid in sorted(pids & alive)],
@@ -323,18 +315,18 @@ def held_albums(conn: sqlite3.Connection, album_ids: list[int]) -> set[int]:
             held[aid] = {int(p) for p in cfg[HELD_FOR]}
     if not held:
         return set()
-    pids = sorted(set().union(*held.values()))
-    ph = ",".join("?" * len(pids))
+    pids = set().union(*held.values())
     with_faces = {
         int(r[0])
-        for r in conn.execute(
-            f"SELECT DISTINCT photo_id FROM face_embeddings WHERE photo_id IN ({ph})", pids
+        for r in rows_in(
+            conn, "SELECT DISTINCT photo_id FROM face_embeddings WHERE photo_id IN ({ph})", pids
         )
     }
     in_library = {
         int(r[0])
-        for r in conn.execute(
-            f"SELECT id FROM photos WHERE id IN ({ph}) AND deleted_at IS NULL AND missing = 0",
+        for r in rows_in(
+            conn,
+            "SELECT id FROM photos WHERE id IN ({ph}) AND deleted_at IS NULL AND missing = 0",
             pids,
         )
     }
@@ -366,13 +358,10 @@ def release_holds(conn: sqlite3.Connection, processed: set[int]) -> None:
 
 def albums_with_stashed_tags(conn: sqlite3.Connection, album_ids: list[int]) -> set[int]:
     """Which of these albums hold stashed manual tags (an unplaced person)."""
-    if not album_ids:
-        return set()
-    ph = ",".join("?" * len(album_ids))
     return {
         int(r[0])
-        for r in conn.execute(
-            f"SELECT id FROM albums WHERE id IN ({ph}) AND {HAS_STASH_SQL}", album_ids
+        for r in rows_in(
+            conn, f"SELECT id FROM albums WHERE id IN ({{ph}}) AND {HAS_STASH_SQL}", album_ids
         )
     }
 

@@ -87,24 +87,52 @@ def _match_tag_clusters(
     min_jaccard: float,
 ) -> None:
     """A tag-only old cluster claims the unclaimed new cluster with the
-    best Jaccard overlap, when it reaches ``min_jaccard``."""
+    best Jaccard overlap, when it reaches ``min_jaccard``. The same rule as
+    for names: level by level, strongest first; a cluster whose best
+    overlap is shared by two new clusters, or a new cluster two of them
+    claim equally, is decided for no one: no one falls back to a weaker
+    match, and a new cluster left open by a tie is not handed to a weaker
+    claimant either. Exact fractions, so equal overlaps compare equal."""
+    from fractions import Fraction
+
+    threshold = Fraction(str(min_jaccard))  # 0.1 as written, not the float just above it
+    pairs: list[tuple[Fraction, int, int]] = []
     for old_cid in tag_only_cids:
         old_pids = old_cluster_photos.get(old_cid, set())
         if not old_pids:
             continue
-        best_new_cid = None
-        best_jaccard = 0.0
         for new_cid, new_pids in new_cluster_photos.items():
             if new_cid in claimed:
                 continue
-            intersection = len(old_pids & new_pids)
-            if intersection == 0:
+            common = len(old_pids & new_pids)
+            if not common:
                 continue
-            union = len(old_pids | new_pids)
-            jaccard = intersection / union
-            if jaccard > best_jaccard:
-                best_jaccard = jaccard
-                best_new_cid = new_cid
-        if best_new_cid is not None and best_jaccard >= min_jaccard:
-            remap[old_cid] = best_new_cid
-            claimed.add(best_new_cid)
+            score = Fraction(common, len(old_pids | new_pids))
+            if score >= threshold:
+                pairs.append((score, old_cid, new_cid))
+    blocked_old: set = set()
+    blocked_new: set = set()
+    for level in sorted({t[0] for t in pairs}, reverse=True):
+        open_pairs = [
+            (o, n)
+            for score, o, n in pairs
+            if score == level
+            and o not in remap
+            and o not in blocked_old
+            and n not in claimed
+            and n not in blocked_new
+        ]
+        per_old: dict = {}
+        per_new: dict = {}
+        for o, n in open_pairs:
+            per_old[o] = per_old.get(o, 0) + 1
+            per_new[n] = per_new.get(n, 0) + 1
+        for o, n in open_pairs:
+            if per_old[o] > 1 or per_new[n] > 1:
+                blocked_old.add(o)
+                blocked_new.add(n)
+        for o, n in open_pairs:
+            if o in blocked_old or n in blocked_new:
+                continue
+            remap[o] = n
+            claimed.add(n)

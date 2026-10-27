@@ -39,3 +39,29 @@ def test_a_clear_second_choice_is_taken_when_the_first_is_clearly_someone_elses(
 
 def test_two_names_with_equal_evidence_on_one_cluster_are_both_left_open():
     assert _match({0: "Alice", 1: "Bob"}, {0: {1, 2}, 1: {1, 2}}, {9: {1, 2}}) == {}
+
+
+def _tag_match(old, new, min_jaccard=0.1):
+    from bpp.db.face_name_matching import _match_tag_clusters
+
+    remap: dict = {}
+    _match_tag_clusters(set(old), old, new, remap, set(), min_jaccard)
+    return remap
+
+
+def test_an_unnamed_cluster_split_in_half_is_not_guessed_in_either_order():
+    old = {8: {1, 2}}
+    assert _tag_match(old, {0: {1}, 1: {2}}) == {}
+    assert _tag_match(old, {1: {2}, 0: {1}}) == {}
+
+
+def test_two_unnamed_clusters_tied_for_one_new_cluster_are_both_left_open():
+    assert _tag_match({7: {1, 2}, 8: {1, 2}}, {0: {1, 2}}) == {}
+
+
+def test_a_clear_unnamed_match_still_follows_its_faces():
+    assert _tag_match({8: {1, 2, 3}}, {0: {1, 2}, 1: {3}}) == {8: 0}
+
+
+def test_an_unnamed_cluster_exactly_on_the_threshold_is_still_matched():
+    assert _tag_match({8: {1}}, {0: set(range(1, 11))}) == {8: 0}, "Jaccard 1/10 == 0.1"

@@ -54,6 +54,10 @@ const RULES = [
   // ── Import ────────────────────────────────────────────────────────────
   { re: /^Import starting/i, text: "Importing photos…" },
   {
+    re: /^Import complete: (\d+) imported.*; cancelled/i,
+    text: (m) => `Import stopped after ${fmtNum(m[1])} ${plural(m[1], "photo")}`,
+  },
+  {
     re: /^Import complete: (\d+) imported/i,
     text: (m) => `Imported ${fmtNum(m[1])} ${plural(m[1], "photo")}`,
   },

@@ -177,14 +177,6 @@ def _faces(ConfigField: type[ConfigField]) -> list[ConfigField]:
             category="Face detection",
         ),
         ConfigField(
-            key="face_cluster_threshold",
-            type=float,
-            min=0.3,
-            max=1.2,
-            ui_type="slider",
-            category="Face detection",
-        ),
-        ConfigField(
             key="face_selection_boost",
             type=float,
             min=0.0,

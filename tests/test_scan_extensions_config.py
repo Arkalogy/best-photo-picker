@@ -35,7 +35,7 @@ class TestParseScanExtensions:
 
     def test_none_returns_default(self):
         result = parse_scan_extensions(None)
-        # Default is "jpg,jpeg,png,heic"
+        # Default: every supported photo, camera RAW and video format
         assert "jpg" in result
         assert "heic" in result
 
@@ -93,13 +93,11 @@ class TestIoScanReadsConfig:
 
 
 class TestCliReadsConfig:
-    def test_argparse_default_pulls_from_config(self):
-        """`bpp --extensions` default must be derived from config, not
-        a hardcoded string."""
-        from pathlib import Path
+    def test_argparse_leaves_the_default_to_the_config(self):
+        """`bpp --extensions` has no default of its own: an omitted flag
+        means the config file's scan_extensions (or DEFAULTS), resolved
+        by the command; see test_import_raw_and_video_by_default."""
+        from bpp.cli import build_parser
 
-        src = Path("bpp/cli.py").read_text()
-        # Reference to DEFAULTS["scan_extensions"] must be present
-        assert 'DEFAULTS["scan_extensions"]' in src, (
-            "CLI argparse default must read from DEFAULTS, not a literal"
-        )
+        args = build_parser().parse_args(["analyze", "--input", "x", "--out", "y"])
+        assert args.extensions is None

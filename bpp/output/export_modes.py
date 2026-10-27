@@ -19,9 +19,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
+from bpp.constants import RAW_EXTENSIONS
+from bpp.output.export_pixels import encoder_args, scrubbed, upright_pixels, writer_mode
 from bpp.utils.fresh_file import open_fresh, replace_fresh
 from bpp.utils.logging import get_logger
-from bpp.utils.raw import RAW_EXTENSIONS
 from bpp.utils.retry import retry_io
 
 log = get_logger(__name__)
@@ -81,51 +82,40 @@ def _process_image(
     The EXIF orientation is applied to the pixels (a portrait phone
     photo comes out upright, as the copy path does). With *keep_exif*
     the remaining EXIF rides along; without it the output carries none.
+    A camera RAW or a HEIC comes out as JPEG unless PNG was asked for, as
+    the metadata-removal copy makes it: pixels can't be written back as a
+    RAW, and the HEIF encoder is slow and can crash the process.
     """
     _refuse_self_export(src, dest)
-    from PIL import Image, ImageOps
+    from PIL import Image
 
-    # Context manager releases the source file handle when the block
-    # exits. `img.convert(...)` returns a new Image instance independent
-    # of the source file, so rebinding `img` inside the block is fine —
-    # the original FD still closes correctly on exit.
+    img, src_format, save_kw = upright_pixels(src, keep_exif, max_size)
+    if src_format in (None, "HEIF") and fmt != "png":
+        fmt = "jpeg"
     tmp = None
     try:
-        with Image.open(src) as raw:
-            try:
-                img = ImageOps.exif_transpose(raw)
-            except Exception as e:  # a malformed APP1 block raises SyntaxError
-                log.warning("Exporting %s without applying its EXIF (unreadable): %s", src, e)
-                img = raw.copy()
-            # Resize if needed
-            if max_size and max(img.size) > max_size:
-                img.thumbnail((max_size, max_size), Image.LANCZOS)
-            save_kw: dict = {}
-            if keep_exif:
-                try:
-                    exif = img.getexif()
-                    exif.pop(0x0112, None)  # orientation is applied, not re-declared
-                    if exif:
-                        save_kw["exif"] = exif.tobytes()
-                except Exception as e:  # a malformed APP1 block raises SyntaxError
-                    log.warning("Exporting %s without its EXIF (unreadable): %s", src, e)
-
-            # Determine output format and extension. The pixels go to a
-            # sibling temp file first (see _fresh_dest), then onto dest.
-            if fmt == "jpeg":
-                if img.mode in ("RGBA", "P", "LA"):
-                    img = img.convert("RGB")
-                dest = _swap_ext(dest, ".jpg")
-                tmp = _fresh_dest(dest)
-                _save_fresh(img, tmp, "JPEG", quality=quality, **save_kw)
-            elif fmt == "png":
-                dest = _swap_ext(dest, ".png")
-                tmp = _fresh_dest(dest)
-                _save_fresh(img, tmp, "PNG", **save_kw)
-            else:
-                # original format but resized
-                tmp = _fresh_dest(dest)
-                _save_fresh(img, tmp, raw.format, **save_kw)
+        if max_size and max(img.size) > max_size:
+            img.thumbnail((max_size, max_size), Image.LANCZOS)
+        # The pixels go to a sibling temp file first (see _fresh_dest),
+        # then onto dest.
+        if fmt == "jpeg":
+            writer, dest = "JPEG", _swap_ext(dest, ".jpg")
+            save_kw["quality"] = quality
+        elif fmt == "png":
+            writer, dest = "PNG", _swap_ext(dest, ".png")
+        else:
+            writer = src_format  # original format but resized
+            if writer in ("JPEG", "MPO", "WEBP"):
+                save_kw["quality"] = quality
+        from_mode = img.mode
+        to_mode = writer_mode(from_mode, writer)
+        if to_mode != from_mode:
+            img = img.convert(to_mode)
+        args = encoder_args(save_kw, writer, from_mode, to_mode)
+        if "icc_profile" not in args:
+            img.info.pop("icc_profile", None)  # the PNG encoder reads it from there
+        tmp = _fresh_dest(dest)
+        _save_fresh(img, tmp, writer, **args)
         _replace_into(tmp, dest)
         return dest
     finally:
@@ -185,13 +175,17 @@ def _strip_and_save(src: str, dest: str, quality: int) -> str:
     with Image.open(src) as img:
         fmt = img.format
         img = ImageOps.exif_transpose(img)
-        save_kwargs: dict[str, Any] = {}
+        converts = fmt in ("JPEG", "MPO", "HEIF", "HEIC") or ext in (".heic", ".heif")
+        to_rgb = converts and img.mode not in ("RGB", "L")
+        save_kwargs: dict[str, Any] = scrubbed(img, to_mode="RGB" if to_rgb else img.mode)
         out = dest
         # MPO is a multi-picture JPEG (phone portrait shots): the primary
         # frame is saved as a plain JPEG at the chosen quality.
-        if fmt in ("JPEG", "MPO", "HEIF", "HEIC") or ext in (".heic", ".heif"):
+        if converts:
             if img.mode not in ("RGB", "L"):
                 img = img.convert("RGB")
+                if "icc_profile" not in save_kwargs:
+                    img.info.pop("icc_profile", None)
             save_kwargs["quality"] = quality
             fmt = "JPEG"
             if ext in (".heic", ".heif"):

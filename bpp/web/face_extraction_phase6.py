@@ -20,8 +20,8 @@ from typing import Any
 
 import numpy as np
 
-from bpp.config import cfg_get
 from bpp.constants import CLUSTER_UNASSIGNED
+from bpp.scoring.face_threshold import face_threshold
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -38,11 +38,13 @@ def cluster_faces(
     """Phase 6: adaptive threshold + assign new faces + count clusters.
 
     Returns ``n_clusters``. Side effects: ``UPDATE face_embeddings
-    SET cluster_id`` for newly-assigned faces; optional dedup DELETE.
+    SET cluster_id`` for newly-assigned faces; with ``post_cluster_dedup``,
+    two faces of one photo in one cluster are parted or, when their boxes
+    overlap, the double detection is dropped (``face_same_photo``).
 
-    Adaptive threshold falls back to ``FACE_CLUSTER_THRESHOLD_FALLBACK``
-    when no feedback data is available. Hard-negative pairs gate
-    sibling/lookalike merges.
+    The threshold is the active embedder's (``face_threshold``); feedback
+    may only make it stricter. Hard-negative pairs gate sibling/lookalike
+    merges.
 
     ``assign_new_faces_fn`` is injected so the phase file doesn't pull
     the clustering implementation at module-load time.
@@ -51,7 +53,7 @@ def cluster_faces(
         return 0
 
     all_records.sort(key=lambda r: (r[1], r[2]))
-    config_threshold = cfg_get(config, "face_cluster_threshold")
+    config_threshold = face_threshold(conn)
 
     from bpp.db.face_feedback import (
         compute_adaptive_face_threshold,
@@ -96,9 +98,9 @@ def cluster_faces(
     # The run arrives in chunks of photos; this chunk's records alone would
     # not know the clusters earlier chunks (or earlier runs) made, so new
     # faces would restart at id 0 and merge different people. Every
-    # existing cluster is represented by one library-wide centroid (the
-    # chunk's own assigned rows are part of it, so they are not counted a
-    # second time), and the next free id comes from the table itself.
+    # existing cluster is represented by its best few faces library-wide
+    # (the chunk's own assigned rows are among them, so they are not
+    # counted a second time), and the next free id comes from the table.
     floor: int | None = None
     if unassigned:
         dim = len(unassigned[0][3])
@@ -128,67 +130,51 @@ def cluster_faces(
             len(unassigned),
         )
 
+    if post_cluster_dedup:
+        from bpp.db.face_same_photo import part_same_photo_faces
+
+        part_same_photo_faces(conn, {photo_id for _fp, photo_id, _fi, _emb in all_records})
+
     row = conn.execute(
         "SELECT COUNT(DISTINCT cluster_id) FROM face_embeddings WHERE cluster_id >= 0"
     ).fetchone()
-    n_clusters = row[0] if row else 0
-
-    if post_cluster_dedup:
-        dupes = conn.execute(
-            "DELETE FROM face_embeddings "
-            "WHERE cluster_id >= 0 "
-            "  AND id NOT IN ("
-            "    SELECT MIN(id) FROM face_embeddings "
-            "    WHERE cluster_id >= 0 "
-            "    GROUP BY photo_id, cluster_id"
-            "  )"
-        )
-        if dupes.rowcount:
-            log.info(
-                "Removed %d duplicate face embeddings after clustering",
-                dupes.rowcount,
-            )
-            conn.commit()
-
-    return n_clusters
+    return row[0] if row else 0
 
 
-#: Faces per existing cluster averaged into the one centroid record that
-#: stands in for it when a chunk's new faces are assigned.
+#: Best faces per existing cluster that new faces are compared with (mean
+#: distance, as Regroup's linkage). Measured on labelled photos: 3 groups
+#: as well as using every member, at a fraction of the reads.
 CLUSTER_SAMPLE_FACES = 3
 
 
 def _library_cluster_samples(
     conn: sqlite3.Connection, dim: int
-) -> list[tuple[str, int, int, np.ndarray, int, int, int | None]]:
-    """One ``assigned`` record per assigned cluster in the library: the
-    quality-weighted mean of its ``CLUSTER_SAMPLE_FACES`` best faces (the
-    centroid ``_assign_new_faces`` would build from them); rows of another
-    embedding size are left out before the ranking, damaged ones after.
-    The caller reserves ids from the table, so a cluster with no usable
-    sample is still never reused. Memory: a few blobs per cluster, read
-    once, one vector per cluster kept."""
+) -> list[tuple[str, int, int, np.ndarray, int, int, float | None]]:
+    """``assigned`` records for every assigned cluster in the library: its
+    ``CLUSTER_SAMPLE_FACES`` best faces, ordered by cluster. Rows of
+    another embedding size are left out before the ranking, damaged ones
+    after. The caller reserves ids from the table, so a cluster with no
+    usable sample is still never reused. Memory: a few blobs per cluster,
+    read once."""
+    # Rank on the narrow columns only, then join back for the picked rows'
+    # blobs: the sort never carries every embedding, and one statement
+    # reads one snapshot.
     rows = conn.execute(
-        "SELECT photo_id, face_index, cluster_id, embedding, bbox_w, quality FROM ("
-        "  SELECT photo_id, face_index, cluster_id, embedding, bbox_w, quality,"
-        "         ROW_NUMBER() OVER (PARTITION BY cluster_id"
-        "                            ORDER BY quality DESC, id) AS rn"
+        "SELECT fe.cluster_id, fe.embedding, fe.quality FROM ("
+        "  SELECT id, ROW_NUMBER() OVER (PARTITION BY cluster_id"
+        "                                ORDER BY quality DESC, id) AS rn"
         "  FROM face_embeddings WHERE cluster_id >= 0 AND length(embedding) = ?"
-        ") WHERE rn <= ?",
+        ") r JOIN face_embeddings fe ON fe.id = r.id WHERE r.rn <= ?",
         (dim * 4, CLUSTER_SAMPLE_FACES),
     ).fetchall()
-    sums: dict[int, np.ndarray] = {}
-    weights: dict[int, float] = {}
-    for _photo_id, _fi, cid, blob, _bbox_w, quality in rows:
-        emb = np.frombuffer(blob, dtype=np.float32).astype(np.float64)
+    samples = []
+    for cid, blob, quality in rows:
+        emb = np.frombuffer(blob, dtype=np.float32)
         if not np.isfinite(emb).all():
-            continue  # a damaged row must not poison its cluster's centroid
-        q = max(float(quality), 0.1) if quality is not None else 0.5
-        sums[int(cid)] = sums.get(int(cid), 0.0) + emb * q
-        weights[int(cid)] = weights.get(int(cid), 0.0) + q
-    return [
-        ("", -1, -1, (sums[cid] / weights[cid]).astype(np.float32), cid, 0, 1.0) for cid in sums
-    ]
+            continue  # a damaged row must not skew its cluster's distances
+        samples.append(("", -1, -1, emb, int(cid), 0, quality))
+    samples.sort(key=lambda rec: rec[4])
+    return samples
 
 
 from bpp.db.face_cluster_ids import highest_cluster_id as _highest_cluster_id  # noqa: E402

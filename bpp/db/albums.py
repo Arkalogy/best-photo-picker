@@ -7,6 +7,15 @@ import sqlite3
 from typing import Any
 
 from bpp.constants import ACTIVE_PHOTO_SQL, active_photo_sql, visible_photo_conditions
+from bpp.db.album_photos import (  # noqa: F401  (re-exported for callers)
+    add_photos_to_album,
+    remove_photos_from_album,
+    set_album_selection,
+    set_favorites_bulk,
+    set_override,
+    set_overrides_bulk,
+    toggle_favorite,
+)
 from bpp.db.photos import PHOTO_COLS_PREFIXED, PHOTO_COLS_SLIM_PREFIXED
 from bpp.utils.json_utils import safe_json_loads
 from bpp.utils.logging import get_logger
@@ -271,124 +280,8 @@ def delete_album(conn: sqlite3.Connection, album_id: int) -> None:
     log.info("Deleted album %d", album_id)
 
 
-def add_photos_to_album(conn: sqlite3.Connection, album_id: int, photo_ids: list[int]) -> int:
-    """Add photos to an album. Returns count added."""
-    conn.executemany(
-        "INSERT OR IGNORE INTO album_photos (album_id, photo_id) VALUES (?, ?)",
-        ((album_id, pid) for pid in photo_ids),
-    )
-    conn.commit()
-    return len(photo_ids)
-
-
-def remove_photos_from_album(conn: sqlite3.Connection, album_id: int, photo_ids: list[int]) -> None:
-    """Remove photos from an album. No-op on empty list."""
-    if not photo_ids:
-        return
-    placeholders = ", ".join(["?"] * len(photo_ids))
-    conn.execute(
-        f"DELETE FROM album_photos WHERE album_id=? AND photo_id IN ({placeholders})",
-        [album_id, *photo_ids],
-    )
-    conn.commit()
-
-
-def set_album_selection(
-    conn: sqlite3.Connection, album_id: int, selected_photo_ids: set[int]
-) -> None:
-    """Bulk update which photos are algorithmically selected in an album.
-
-    collapsed into a single UPDATE … CASE so two concurrent
-    callers (e.g. recompute fired from two browser tabs against the
-    same album) can't interleave between the "clear all" and "set
-    selected" statements. The previous two-statement sequence
-    let tab B's clear+set run in between tab A's clear and set,
-    so tab A's set then re-applied stale ids on top of B's commit
-    and tab B's selection silently disappeared. SQLite's per-write
-    transaction makes the single-UPDATE form atomic against any
-    concurrent reader.
-    """
-    if selected_photo_ids:
-        placeholders = ", ".join(["?"] * len(selected_photo_ids))
-        conn.execute(
-            f"UPDATE album_photos SET selected = CASE "
-            f"WHEN photo_id IN ({placeholders}) THEN 1 ELSE 0 END "
-            "WHERE album_id=?",
-            [*selected_photo_ids, album_id],
-        )
-    else:
-        conn.execute("UPDATE album_photos SET selected=0 WHERE album_id=?", (album_id,))
-    conn.commit()
-
-
-def set_override(
-    conn: sqlite3.Connection, album_id: int, photo_id: int, override: str | None
-) -> None:
-    """Set override for a photo in an album. override is 'include', 'exclude', or None."""
-    conn.execute(
-        "UPDATE album_photos SET override=? WHERE album_id=? AND photo_id=?",
-        (override, album_id, photo_id),
-    )
-    conn.commit()
-
-
-def set_overrides_bulk(
-    conn: sqlite3.Connection,
-    album_id: int,
-    photo_ids: list[int],
-    override: str | None,
-) -> int:
-    """Set override for multiple photos in an album. Returns count updated."""
-    if not photo_ids:
-        return 0
-    placeholders = ", ".join(["?"] * len(photo_ids))
-    cur = conn.execute(
-        f"UPDATE album_photos SET override=? WHERE album_id=? AND photo_id IN ({placeholders})",
-        [override, album_id, *photo_ids],
-    )
-    conn.commit()
-    return cur.rowcount
-
-
-def set_favorites_bulk(
-    conn: sqlite3.Connection,
-    album_id: int,
-    photo_ids: list[int],
-    favorite: bool,
-) -> int:
-    """Set favorite state for multiple photos in an album. Returns count updated."""
-    if not photo_ids:
-        return 0
-    placeholders = ", ".join(["?"] * len(photo_ids))
-    cur = conn.execute(
-        f"UPDATE album_photos SET favorite=? WHERE album_id=? AND photo_id IN ({placeholders})",
-        [1 if favorite else 0, album_id, *photo_ids],
-    )
-    conn.commit()
-    return cur.rowcount
-
-
-def toggle_favorite(conn: sqlite3.Connection, album_id: int, photo_id: int) -> bool:
-    """Toggle favorite status. Returns new favorite state."""
-    row = conn.execute(
-        "SELECT favorite FROM album_photos WHERE album_id=? AND photo_id=?",
-        (album_id, photo_id),
-    ).fetchone()
-    if row is None:
-        return False
-    new_val = 0 if row[0] else 1
-    conn.execute(
-        "UPDATE album_photos SET favorite=? WHERE album_id=? AND photo_id=?",
-        (new_val, album_id, photo_id),
-    )
-    conn.commit()
-    return bool(new_val)
-
-
 # Columns needed by build_photo_dict (everything except exif_json).
 # Imported from photos.py as PHOTO_COLS_SLIM_PREFIXED.
-
-
 def get_album_photos(
     conn: sqlite3.Connection,
     album_id: int,

@@ -35,30 +35,30 @@ class TestPrecedence:
         from bpp.config_resolver import Config
 
         cfg = Config({}, get_conn=make_conn)
-        # face_cluster_threshold is in DEFAULTS at 0.80
-        assert cfg.get("face_cluster_threshold") == 0.80
+        # face_embedding_confidence is in DEFAULTS at 0.65
+        assert cfg.get("face_embedding_confidence") == 0.65
 
     def test_yaml_overrides_defaults(self, make_conn):
         from bpp.config_resolver import Config
 
-        cfg = Config({"face_cluster_threshold": 0.5}, get_conn=make_conn)
-        assert cfg.get("face_cluster_threshold") == 0.5
+        cfg = Config({"face_embedding_confidence": 0.5}, get_conn=make_conn)
+        assert cfg.get("face_embedding_confidence") == 0.5
 
     def test_db_overrides_yaml(self, conn, make_conn):
         from bpp.config_resolver import Config
         from bpp.db.settings import set_setting
 
-        cfg = Config({"face_cluster_threshold": 0.5}, get_conn=make_conn)
-        set_setting(conn, "face_cluster_threshold", "0.9")
-        assert cfg.get("face_cluster_threshold") == 0.9
+        cfg = Config({"face_embedding_confidence": 0.5}, get_conn=make_conn)
+        set_setting(conn, "face_embedding_confidence", "0.9")
+        assert cfg.get("face_embedding_confidence") == 0.9
 
     def test_db_overrides_defaults_when_no_yaml(self, conn, make_conn):
         from bpp.config_resolver import Config
         from bpp.db.settings import set_setting
 
         cfg = Config({}, get_conn=make_conn)
-        set_setting(conn, "face_cluster_threshold", "0.42")
-        assert cfg.get("face_cluster_threshold") == 0.42
+        set_setting(conn, "face_embedding_confidence", "0.42")
+        assert cfg.get("face_embedding_confidence") == 0.42
 
     def test_caller_default_when_unknown_everywhere(self, make_conn):
         from bpp.config_resolver import Config
@@ -77,8 +77,8 @@ class TestTypeCoercion:
         from bpp.db.settings import set_setting
 
         cfg = Config({}, get_conn=make_conn)
-        set_setting(conn, "face_cluster_threshold", "0.9")
-        result = cfg.get("face_cluster_threshold")
+        set_setting(conn, "face_embedding_confidence", "0.9")
+        result = cfg.get("face_embedding_confidence")
         assert result == 0.9
         assert isinstance(result, float)
 
@@ -120,7 +120,7 @@ class TestDictCompat:
         from bpp.config_resolver import Config
 
         cfg = Config({}, get_conn=make_conn)
-        assert cfg["face_cluster_threshold"] == 0.80
+        assert cfg["face_embedding_confidence"] == 0.65
 
     def test_getitem_raises_keyerror_on_unknown(self, make_conn):
         from bpp.config_resolver import Config
@@ -133,7 +133,7 @@ class TestDictCompat:
         from bpp.config_resolver import Config
 
         cfg = Config({"my_yaml_key": 1}, get_conn=make_conn)
-        assert "face_cluster_threshold" in cfg  # in DEFAULTS
+        assert "face_embedding_confidence" in cfg  # in DEFAULTS
         assert "my_yaml_key" in cfg  # in YAML
         assert "totally_unknown_key" not in cfg
 
@@ -146,18 +146,18 @@ class TestDictCompat:
         keys = set(iter(cfg))
         assert "my_db_key" in keys
         assert "my_yaml_key" in keys
-        assert "face_cluster_threshold" in keys  # DEFAULTS
+        assert "face_embedding_confidence" in keys  # DEFAULTS
 
     def test_as_dict_returns_resolved_view(self, conn, make_conn):
         from bpp.config_resolver import Config
         from bpp.db.settings import set_setting
 
         cfg = Config({}, get_conn=make_conn)
-        set_setting(conn, "face_cluster_threshold", "0.42")
+        set_setting(conn, "face_embedding_confidence", "0.42")
         d = cfg.as_dict()
-        assert d["face_cluster_threshold"] == 0.42
+        assert d["face_embedding_confidence"] == 0.42
         # Type-coerced
-        assert isinstance(d["face_cluster_threshold"], float)
+        assert isinstance(d["face_embedding_confidence"], float)
 
 
 # ── Mutation ────────────────────────────────────────────────────────
@@ -169,11 +169,11 @@ class TestSet:
         from bpp.db.settings import get_setting
 
         cfg = Config({}, get_conn=make_conn)
-        cfg.set("face_cluster_threshold", 0.42)
+        cfg.set("face_embedding_confidence", 0.42)
         # Stored as string in DB
-        assert get_setting(conn, "face_cluster_threshold") == "0.42"
+        assert get_setting(conn, "face_embedding_confidence") == "0.42"
         # Read back through Config returns float
-        assert cfg.get("face_cluster_threshold") == 0.42
+        assert cfg.get("face_embedding_confidence") == 0.42
 
     def test_set_without_db_raises(self):
         from bpp.config_resolver import Config
@@ -193,7 +193,7 @@ class TestNoDB:
         cfg = Config({"max_long_side": 2048}, get_conn=None)
         assert cfg.get("max_long_side") == 2048
         # Falls through to DEFAULTS for unset keys
-        assert cfg.get("face_cluster_threshold") == 0.80
+        assert cfg.get("face_embedding_confidence") == 0.65
 
     def test_no_db_no_crash(self):
         """Calling .get on a Config without a connection must not raise
@@ -201,4 +201,4 @@ class TestNoDB:
         from bpp.config_resolver import Config
 
         cfg = Config({}, get_conn=None)
-        cfg.get("face_cluster_threshold")  # no exception
+        cfg.get("face_embedding_confidence")  # no exception

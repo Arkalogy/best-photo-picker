@@ -36,9 +36,6 @@ def client(app):
 class TestConfigDefaults:
     """Verify DEFAULTS dict has correct values for all UI-exposed settings."""
 
-    def test_face_cluster_threshold_default(self):
-        assert DEFAULTS["face_cluster_threshold"] == 0.80
-
     def test_face_detection_confidence_default(self):
         assert DEFAULTS["face_detection_confidence"] == 0.3
 
@@ -99,17 +96,6 @@ class TestSettingsAPI:
         data = resp.get_json()
         assert data["thumbnail_size"] == "128"
 
-    def test_save_and_get_face_cluster_threshold(self, client):
-        resp = client.put(
-            "/api/v1/settings",
-            json={"face_cluster_threshold": "0.55"},
-            content_type="application/json",
-        )
-        assert resp.status_code == 200
-        resp = client.get("/api/v1/settings")
-        data = resp.get_json()
-        assert data["face_cluster_threshold"] == "0.55"
-
     def test_save_and_get_face_detection_confidence(self, client):
         resp = client.put(
             "/api/v1/settings",
@@ -134,14 +120,19 @@ class TestSettingsAPI:
 
 
 # ---------------------------------------------------------------------------
-# Status API — face_cluster_threshold default
+# Status API — the grouping distance shown on the Regroup slider
 # ---------------------------------------------------------------------------
 
 
 class TestStatusDefaults:
     """Verify /api/status returns correct defaults for settings."""
 
-    def test_status_face_cluster_threshold_default(self, client):
+    def test_status_shows_the_active_models_grouping_distance(self, client):
+        from bpp.scoring.face_threshold import default_threshold, faces_method
+        from bpp.web.state import get_ctx
+
+        with client.application.app_context():
+            method = faces_method(get_ctx().get_conn())
         resp = client.get("/api/v1/status")
         data = resp.get_json()
-        assert data["face_cluster_threshold"] == 0.80
+        assert data["face_cluster_threshold"] == default_threshold(method)

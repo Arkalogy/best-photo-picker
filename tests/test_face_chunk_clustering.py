@@ -15,6 +15,7 @@ from bpp.web.face_extraction_phase6 import cluster_faces
 
 
 def _schema(conn: sqlite3.Connection) -> None:
+    conn.row_factory = sqlite3.Row  # as the app's pooled connections
     conn.execute(
         "CREATE TABLE face_embeddings (id INTEGER PRIMARY KEY AUTOINCREMENT, photo_id INTEGER,"
         " face_index INTEGER, bbox_x INTEGER, bbox_y INTEGER, bbox_w INTEGER, bbox_h INTEGER,"
@@ -29,6 +30,12 @@ def _schema(conn: sqlite3.Connection) -> None:
         "CREATE TABLE face_hard_negatives (cluster_id_a INTEGER, cluster_id_b INTEGER,"
         " count INTEGER DEFAULT 1, created_at TEXT, updated_at TEXT,"
         " PRIMARY KEY (cluster_id_a, cluster_id_b))"
+    )
+    # The grouping distance is read per embedder (bpp.scoring.face_threshold)
+    conn.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)")
+    conn.executemany(
+        "INSERT INTO settings VALUES (?, ?)",
+        [("face_embedding_method", "sface"), ("face_cluster_threshold.sface", "0.6")],
     )
     conn.commit()
 

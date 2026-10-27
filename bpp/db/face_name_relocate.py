@@ -7,21 +7,14 @@ from __future__ import annotations
 
 import sqlite3
 
-from bpp.constants import CLUSTER_UNPLACED
-from bpp.db.face_cluster_ids import highest_cluster_id
 from bpp.db.face_name_placement import (
     _UNPLACED,
-    _person_albums,
-    _rule,
-    _set_album_cluster,
-    move_named_albums,
 )
 from bpp.db.face_switch_record import (
     alive_photo_ids,
     group_photos,
-    set_album_evidence,
-    stash_unplaced_tags,
 )
+from bpp.db.sql_batches import in_batches, rows_in
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -51,148 +44,146 @@ def _move_tags(
     if clear_targets:
         gone |= {new for _, new in pairs}
     if gone:
-        ph = ",".join("?" * len(gone))
-        conn.execute(f"DELETE FROM photo_person_tags WHERE cluster_id IN ({ph})", sorted(gone))
+        for ph, batch in in_batches(sorted(gone)):
+            conn.execute(f"DELETE FROM photo_person_tags WHERE cluster_id IN ({ph})", batch)
     if pairs:
         temps = [-(_TAG_TEMP_BASE + new) for _, new in pairs]
         conn.executemany(
             "UPDATE OR IGNORE photo_person_tags SET cluster_id=? WHERE cluster_id=?",
             [(new, temp) for (_, new), temp in zip(pairs, temps, strict=True)],
         )
-        ph = ",".join("?" * len(temps))
-        conn.execute(f"DELETE FROM photo_person_tags WHERE cluster_id IN ({ph})", temps)
+        for ph, batch in in_batches(temps):
+            conn.execute(f"DELETE FROM photo_person_tags WHERE cluster_id IN ({ph})", batch)
 
 
-def relocate_albums_and_tags(
+def renumber_people(
     conn: sqlite3.Connection,
-    remap: dict[int, int],
-    named_clusters: dict[int, str],
-    tag_cids: set[int],
-    old_cluster_photos: dict[int, set[int]],
-    new_cluster_ids: set[int],
+    old_clusters: dict[int, set[int]],
+    new_clusters: dict[int, set[int]],
+    evidence_photos: dict[int, set[int]],
 ) -> None:
-    """Apply ``remap`` (old cluster id → new) to the named person albums
-    and the manual tags. Runs inside the caller's transaction.
+    """Put every person back on the new cluster numbers through the shared
+    step (:func:`bpp.db.people_placement.place_people`). Runs inside the
+    caller's transaction.
 
-    * A named album whose old id is remapped moves to the new id
-      (:func:`move_named_albums`, displacing what sits there).
-    * A named album with no match whose old id now denotes a *different*
-      cluster (a tag-only person's included) becomes an unplaced person
-      (kept, with its manual tags stashed on the album) rather than being
-      left on a stranger. One whose old id no longer exists at all is kept
-      where it is (harmless, and a later refresh may still place it).
+    The manual tags are lifted off the table first and written back
+    wherever their person lands. A named person is matched by their old
+    faces; one known by tags alone keeps their number unless a new cluster
+    now uses it. A tagged cluster nobody named follows its faces, keeps a
+    free number, or moves to a fresh one; its tags are never dropped.
+    Anyone not placed is kept aside with their face photos minus group
+    photos (their tags if they had no faces) and their tags stashed.
     """
-    albums = _person_albums(conn)
-    moves: list[tuple[int, int]] = []
-    for old_cid, name in named_clusters.items():
-        new_cid = remap.get(old_cid)
-        entry = albums.get(old_cid)
-        if new_cid is None or new_cid == old_cid or entry is None:
-            continue
-        moves.append((entry[0], new_cid))
-        log.info("Remapped person '%s': cluster %d → %d", name, old_cid, new_cid)
+    from bpp.db.face_identity_remap import _is_default_person_name
+    from bpp.db.face_name_placement import _person_album_rows
+    from bpp.db.people_placement import Person, apply, decide, keep_nameless_on_fresh_ids
 
-    targets = {new for _, new in moves}
-    stale: list[tuple[int, str, int]] = []  # (album id, name, old cluster id)
-    for old_cid, name in named_clusters.items():
-        entry = albums.get(old_cid)
-        if entry is None or remap.get(old_cid) is not None:
-            continue
-        # Its id now means a different cluster, or its faces matched nothing
-        # (the id vanished): either way its album keeps its face evidence,
-        # unplaced, rather than a list a refresh would place it by wrongly.
-        # A person known by tags alone, on an id nothing reuses, stays put.
-        reused = old_cid in new_cluster_ids and old_cid not in targets
-        had_faces = bool(old_cluster_photos.get(old_cid))
-        if reused or had_faces:
-            stale.append((entry[0], name, old_cid))
-    _set_album_cluster(conn, [(aid, CLUSTER_UNPLACED) for aid, _n, _c in stale])
-    evicted = _evict_tag_only_identities(
-        conn, remap, targets | new_cluster_ids, tag_cids, named_clusters
-    )
-    _, displaced = move_named_albums(conn, moves, displace_named=True)
-    unplaced = stale + displaced
-    for _aid, name, _cid in unplaced:
-        log.warning(_UNPLACED, name, "re-clustering")
-    # Their manual tags wait on the album; the rows at their old ids go
-    # with the renumbering below.
-    tags_by_cid = _tags_of(conn, [cid for _a, _n, cid in unplaced])
-    stash_unplaced_tags(conn, {aid: tags_by_cid.get(cid, set()) for aid, _n, cid in unplaced})
-    # Their album lists their FACE photos from before (tags only for a
-    # person known by tags alone), not a tagged group photo whose other
-    # face now owns their old number: the refresh places them by it.
-    wanted = (
-        set().union(
-            *(
-                set(old_cluster_photos.get(c, ())) | tags_by_cid.get(c, set())
-                for _a, _n, c in unplaced
-            )
-        )
-        if unplaced
+    rows = _person_album_rows(conn)
+    named = {
+        cid: (aid, name)
+        for aid, name, cid in rows
+        if cid >= 0 and not _is_default_person_name(name)
+    }
+    default_album = {
+        cid: aid for aid, name, cid in rows if cid >= 0 and _is_default_person_name(name)
+    }
+    lifted: dict[int, set[int]] = {}
+    try:
+        for pid, cid in conn.execute("SELECT photo_id, cluster_id FROM photo_person_tags"):
+            lifted.setdefault(int(cid), set()).add(int(pid))
+        conn.execute("DELETE FROM photo_person_tags")
+    except sqlite3.OperationalError as e:  # a library without the tag table yet
+        log.debug("photo_person_tags not ready, renumbering without tags: %s", e)
+    everything = (
+        set().union(*evidence_photos.values(), *lifted.values())
+        if (evidence_photos or lifted)
         else set()
     )
-    alive = alive_photo_ids(conn, wanted)
-    # Group photos (two or more faces on record) are left out: they cannot
-    # say whose face is whose. A photo whose face is gone stays (it shows
-    # no one else, and the refresh checks it again when a face returns).
-    group = group_photos(conn, wanted)
-    set_album_evidence(
-        conn,
-        {
-            aid: (
-                set(old_cluster_photos[cid]) & alive - group
-                if old_cluster_photos.get(cid)
-                else tags_by_cid.get(cid, set()) & alive
+    alive = alive_photo_ids(conn, everything)
+    group = group_photos(conn, set().union(*evidence_photos.values()) if evidence_photos else set())
+
+    people: list[Person] = []
+    stay: list[tuple[int, int]] = []
+    for cid, (aid, name) in named.items():
+        faces = old_clusters.get(cid, set())
+        tags = lifted.pop(cid, set())
+        if not faces and cid not in new_clusters:
+            stay += [(pid, cid) for pid in tags]  # known by tags alone, number still free
+            continue
+        photos = evidence_photos.get(cid, set())
+        people.append(
+            Person(
+                key=cid,
+                name=name,
+                album_id=aid,
+                evidence=faces,
+                tags=tags,
+                keep=(photos & alive - group) if faces else (tags & alive),
             )
-            for aid, _n, cid in unplaced
-        },
-    )
-    stale_cids = {cid for _a, _n, cid in unplaced}
-    pairs = [(o, n) for o, n in remap.items() if o != n and o in tag_cids]
-    _move_tags(conn, pairs + evicted, stale_cids)
+        )
+    for cid, tags in lifted.items():
+        faces = old_clusters.get(cid, set())
+        if not faces and cid not in new_clusters:
+            stay += [(pid, cid) for pid in tags]
+            continue
+        people.append(
+            Person(
+                key=("tags", cid),
+                name=f"cluster {cid}",
+                album_id=None,
+                evidence=faces,
+                tags=tags,
+                nameless=True,
+            )
+        )
 
-
-def _evict_tag_only_identities(
-    conn: sqlite3.Connection,
-    remap: dict[int, int],
-    taken_ids: set[int],
-    tag_cids: set[int],
-    named_clusters: dict[int, str],
-) -> list[tuple[int, int]]:
-    """A person known only by manual tags (no faces, so the renumbering
-    could not follow them) whose cluster id now holds other faces (a
-    moved person, or a new cluster): move them, tags and default album,
-    to a fresh id nobody uses, instead of leaving their tags on the
-    newcomer. One with no album gets a default one there, so the tags are
-    not swept up as orphans. A user-named one is handled by the
-    displacement rule (kept unplaced, tags stashed). Returns the ``(old
-    id, fresh id)`` tag moves."""
-    taken = taken_ids | {n for o, n in remap.items() if o != n}
-    victims = sorted(c for c in taken if c in tag_cids and c not in remap)
-    victims = [c for c in victims if c not in named_clusters]
-    if not victims:
-        return []
-    next_id = max(highest_cluster_id(conn), *remap.values(), *taken) + 1
-    fresh = {c: next_id + i for i, c in enumerate(victims)}
-    albums = _person_albums(conn)
-    _set_album_cluster(conn, [(albums[c][0], fresh[c]) for c in victims if c in albums])
-    conn.executemany(
-        "INSERT INTO albums (name, album_type, rule_json) VALUES (?, 'smart_person', ?)",
-        [(f"Person {fresh[c] + 1}", _rule(fresh[c])) for c in victims if c not in albums],
-    )
-    for c in victims:
-        log.info("Tag-only person on cluster %d moved to %d: the id now holds others", c, fresh[c])
-    return list(fresh.items())
+    remap = decide(people, new_clusters)
+    # A tagged cluster nobody named that matched nothing keeps its number
+    # (and album) while no new cluster uses it; one whose number now
+    # belongs to a new cluster leaves first, with its default album, so a
+    # name arriving there does not remove that album.
+    unmatched = [p for p in people if p.nameless and p.key not in remap]
+    stay += [(pid, p.key[1]) for p in unmatched if p.key[1] not in new_clusters for pid in p.tags]
+    if stay:  # written before fresh ids are handed out, so none collides with them
+        conn.executemany(
+            "INSERT OR IGNORE INTO photo_person_tags (photo_id, cluster_id) VALUES (?, ?)", stay
+        )
+    leaving = [p for p in unmatched if p.key[1] in new_clusters]
+    movable = {p.key: default_album[p.key[1]] for p in leaving if p.key[1] in default_album}
+    fresh = keep_nameless_on_fresh_ids(conn, leaving, movable)
+    for p in leaving:
+        if p.key in fresh:
+            log.info(
+                "Tag-only person on cluster %d moved to %d: the id now holds others",
+                p.key[1],
+                fresh[p.key],
+            )
+    outcome = apply(conn, people, remap)
+    # The summary the raw activity log has always carried.
+    named_count = sum(1 for p in people if not p.nameless)
+    moved = {k: c for k, c in outcome.placed.items() if not isinstance(k, tuple) and k != c}
+    for k, c in moved.items():
+        log.info("Remapped person '%s': cluster %d → %d", named[k][1], k, c)
+    if named_count and not any(not isinstance(k, tuple) for k in outcome.placed):
+        log.warning("No cluster remapping found — %d named clusters orphaned", named_count)
+    else:
+        log.info(
+            "Remapping %d clusters (%d named, %d tags) to new IDs",
+            len(outcome.placed),
+            sum(1 for k in outcome.placed if not isinstance(k, tuple)),
+            sum(1 for k in outcome.placed if isinstance(k, tuple)),
+        )
+    for name in sorted({p.name for p in outcome.unplaced} | {n for _a, n, _c in outcome.displaced}):
+        log.warning(_UNPLACED, name, "re-clustering")
 
 
 def _tags_of(conn: sqlite3.Connection, cluster_ids: list[int]) -> dict[int, set[int]]:
-    """``{cluster_id: tagged photo ids}`` for these clusters, in one query."""
+    """``{cluster_id: tagged photo ids}`` for these clusters, in batches."""
     out: dict[int, set[int]] = {}
-    if cluster_ids:
-        ph = ",".join("?" * len(cluster_ids))
-        for pid, cid in conn.execute(
-            f"SELECT photo_id, cluster_id FROM photo_person_tags WHERE cluster_id IN ({ph})",
-            cluster_ids,
-        ):
-            out.setdefault(int(cid), set()).add(int(pid))
+    for pid, cid in rows_in(
+        conn,
+        "SELECT photo_id, cluster_id FROM photo_person_tags WHERE cluster_id IN ({ph})",
+        cluster_ids,
+    ):
+        out.setdefault(int(cid), set()).add(int(pid))
     return out

@@ -10,6 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from bpp.config import DEFAULTS, parse_scan_extensions
 from bpp.db.library_copy import (
     _copy_atomically,
     _photo_record,
@@ -27,28 +28,8 @@ from bpp.utils.retry import retry_io
 log = get_logger(__name__)
 
 DEFAULT_LIBRARY_PATH = os.path.expanduser("~/Pictures/BestPhotoPicker")
-DEFAULT_EXTENSIONS = [
-    "jpg",
-    "jpeg",
-    "png",
-    "heic",
-    "mp4",
-    "mov",
-    "avi",
-    "mkv",
-    "webm",
-    "cr2",
-    "cr3",
-    "nef",
-    "arw",
-    "orf",
-    "raf",
-    "rw2",
-    "dng",
-    "pef",
-    "srw",
-    "x3f",
-]
+#: The app's own list (photos, camera RAW, video): one list for every import.
+DEFAULT_EXTENSIONS = parse_scan_extensions(DEFAULTS["scan_extensions"])
 
 
 @dataclass

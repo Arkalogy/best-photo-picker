@@ -9,23 +9,17 @@ from __future__ import annotations
 
 import sqlite3
 
-from bpp.constants import CLUSTER_UNPLACED
-from bpp.db.face_name_placement import (
-    _UNPLACED,
-    _person_album_rows,
-    _set_album_cluster,
-    place_final,
-)
+from bpp.db.face_name_placement import _UNPLACED, _person_album_rows
 from bpp.db.face_switch_record import (
     PendingNames,
     _save_pending,
     alive_photo_ids,
-    hold_albums,
+    held_albums,
     load_pending,
-    set_album_evidence,
-    stash_unplaced_tags,
+    switch_pending,
     uncovered_photos,
 )
+from bpp.db.people_placement import Person, keep_nameless_on_fresh_ids, place_people
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -45,6 +39,12 @@ def finish_switch(
     stayed unplaced."""
     pending = load_pending(conn)
     if pending is None:
+        if switch_pending(conn):
+            # A record that cannot be read would keep face edits locked for
+            # good: drop it (the people stay parked, kept by their albums).
+            log.warning("Clearing a damaged face-model switch record")
+            _save_pending(conn, None)
+            conn.commit()
         return 0
     if new_cluster_photos is not None:
         waiting = uncovered_photos(conn, pending)
@@ -57,18 +57,28 @@ def finish_switch(
             )
             return 0
     try:
-        if new_cluster_photos is not None:
-            place_final(conn, pending, new_cluster_photos)
-        unplaced = _keep_unplaced(conn, pending)
-        _keep_nameless_tags(conn, pending)
+        people = _people_of(conn, pending)
+        alive_albums = {aid for aid, _n, _c in _person_album_rows(conn)}
+        deleted_people = [p for p in people if not p.nameless and p.album_id not in alive_albums]
+        outcome = place_people(conn, people, new_cluster_photos or {})
+        keep_nameless_on_fresh_ids(conn, outcome.nameless)
         _save_pending(conn, None)
         conn.commit()
     except Exception:
         conn.rollback()
         raise
+    for p in deleted_people:
+        if p.key not in outcome.placed and p.tags:
+            log.info(
+                "'%s' was deleted during the switch; its %d manual tag(s) go with it",
+                p.name,
+                len(p.tags),
+            )
+    unplaced = {p.key: p.name for p in outcome.unplaced}
+    dropped = [name for _aid, name, _cid in outcome.displaced]
     # Reported only once it is true (the activity feed shows these).
     reason = f"the face-model switch to {pending.to_method}"
-    for name in sorted({*pending.dropped, *unplaced.values()}):
+    for name in sorted({*pending.dropped, *dropped, *unplaced.values()}):
         log.warning(_UNPLACED, name, reason)
     if new_cluster_photos is not None:  # a completed run, not a give-up
         _rebuild_person_albums(conn)
@@ -97,73 +107,46 @@ def finish_switch_if_nothing_to_extract(conn: sqlite3.Connection) -> None:
         log.warning("Could not end the face-model switch after an empty run", exc_info=True)
 
 
-def _keep_unplaced(conn: sqlite3.Connection, pending: PendingNames) -> dict:
-    """Keep the names nothing matched as people without faces; returns them."""
-    unplaced = pending.unplaced_names()
-    alive_albums = {aid for aid, _name, _cid in _person_album_rows(conn)}
-    kept = {k: pending.albums[k] for k in unplaced if pending.albums.get(k) in alive_albums}
-    _set_album_cluster(conn, [(aid, CLUSTER_UNPLACED) for aid in kept.values()])
-    # Their manual tags wait on the album until the refresh places it.
-    stash_unplaced_tags(
-        conn, {aid: pending.tags[k] for k, aid in kept.items() if pending.tags.get(k)}
-    )
-    # Their album lists their ORIGINAL evidence (their face photos, or their
-    # tagged photos for a person known by tags alone, as the placement
-    # matched on), so the refresh places them by it and by nothing else.
-    photos = (
-        alive_photo_ids(
-            conn, set().union(*(pending.evidence(k) | pending.tags.get(k, set()) for k in kept))
-        )
-        if kept
+def _people_of(conn: sqlite3.Connection, pending: PendingNames) -> list[Person]:
+    """The switch's names and tagged clusters as :class:`Person` entries.
+
+    Evidence is each name's old face photos (their tagged photos for a
+    person known by tags alone). A name whose photos include one the new
+    model could not read is held (its own face there is missing; a group
+    shot's other face could take the name), as is one still held from an
+    earlier switch. If kept aside, the album keeps the photos that showed
+    them alone before the switch (their tags if they had no faces).
+    """
+    alive_albums = {aid for aid, _n, _c in _person_album_rows(conn)}
+    held = held_albums(conn, [a for a in pending.albums.values() if a in alive_albums])
+    keys = list(pending.names) + [k for k in pending.tags if k not in pending.names]
+    everything = (
+        set().union(*(pending.evidence(k) | pending.tags.get(k, set()) for k in keys))
+        if keys
         else set()
     )
-    set_album_evidence(
-        conn,
-        {
-            aid: (
-                pending.old_cluster_photos[k] & pending.solo & photos
-                if pending.old_cluster_photos.get(k)
-                else pending.tags.get(k, set()) & photos
+    alive = alive_photo_ids(conn, everything)
+    people = []
+    for k in keys:
+        evidence = pending.evidence(k)
+        faces = pending.old_cluster_photos.get(k, set())
+        aid = pending.albums.get(k) if k in pending.names else None
+        people.append(
+            Person(
+                key=k,
+                name=pending.names.get(k, str(k)),
+                album_id=aid,
+                evidence=evidence,
+                tags=set(pending.tags.get(k, set())),
+                keep=(faces & pending.solo & alive)
+                if faces
+                else (pending.tags.get(k, set()) & alive),
+                held=bool(evidence & pending.failed) or aid in held,
+                hold_for=evidence & pending.failed,
+                nameless=k not in pending.names,
             )
-            for k, aid in kept.items()
-        },
-    )
-    # Kept back because a photo of theirs could not be read: no automatic
-    # placement (the refresh included) until that photo has a face again.
-    hold_albums(conn, {aid: pending.evidence(k) & pending.failed for k, aid in kept.items()})
-    for k, name in unplaced.items():
-        if k not in kept and pending.tags.get(k):
-            log.info(
-                "'%s' was deleted during the switch; its %d manual tag(s) go with it",
-                name,
-                len(pending.tags[k]),
-            )
-    return unplaced
-
-
-def _keep_nameless_tags(conn: sqlite3.Connection, pending: PendingNames) -> None:
-    """Manual tags of a cluster nobody named that matched nothing (or a
-    give-up, where nothing was matched): kept as a tag-only person on a
-    fresh cluster id with a default album, never dropped."""
-    from bpp.db.face_cluster_ids import next_cluster_id
-    from bpp.db.face_name_placement import _rule
-
-    nameless = {k: p for k, p in pending.unplaced_tags().items() if k not in pending.names}
-    alive = alive_photo_ids(conn, set().union(*nameless.values())) if nameless else set()
-    nameless = {k: p & alive for k, p in nameless.items() if p & alive}
-    if not nameless:
-        return
-    first = next_cluster_id(conn)
-    fresh = {k: first + i for i, k in enumerate(sorted(nameless, key=str))}
-    conn.executemany(
-        "INSERT OR IGNORE INTO photo_person_tags (photo_id, cluster_id) VALUES (?, ?)",
-        [(pid, fresh[k]) for k, pids in nameless.items() for pid in sorted(pids)],
-    )
-    conn.executemany(
-        "INSERT INTO albums (name, album_type, rule_json) VALUES (?, 'smart_person', ?)",
-        [(f"Person {cid + 1}", _rule(cid)) for cid in fresh.values()],
-    )
-    log.info("Kept the manual tags of %d unnamed cluster(s) on new ids", len(nameless))
+        )
+    return people
 
 
 def _rebuild_person_albums(conn: sqlite3.Connection) -> None:

@@ -38,8 +38,9 @@ def refuse_while_face_recovery(ctx: Any) -> None:
 
 def refuse_while_switch_pending(ctx: Any) -> None:
     """409 while a face-model switch has names it has not placed yet: a
-    recluster, merge or rename would work on half-placed people, and the
-    next chunk would place names onto clusters the user just changed."""
+    recluster, merge or rename would work on parked people, and the end of
+    the run places names from the complete clusters, which such a change
+    would invalidate."""
     from bpp.db.face_name_placement import switch_pending
 
     get_conn = getattr(ctx, "get_conn", None)

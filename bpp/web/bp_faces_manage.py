@@ -18,6 +18,7 @@ from bpp.db.face_feedback import (
 )
 from bpp.db.photos import get_photo_id_by_path
 from bpp.db.smart_albums import get_affected_album_types, refresh_smart_albums
+from bpp.db.sql_batches import in_batches
 from bpp.errors import BppError, NotFoundError, ValidationError
 from bpp.utils.logging import get_logger
 from bpp.web.share import requires_local_app
@@ -265,14 +266,18 @@ def api_faces_purge() -> tuple[Response, int]:
     if not face_ids or not isinstance(face_ids, list):
         raise ValidationError("Provide face_ids or all:true", field="face_ids")
 
-    placeholders = ",".join("?" for _ in face_ids)
-    cur = conn.execute(
-        f"DELETE FROM face_embeddings"
-        f" WHERE id IN ({placeholders})"
-        f" AND cluster_id = {CLUSTER_DISMISSED}",
-        face_ids,
-    )
-    deleted = cur.rowcount
+    deleted = 0
+    try:
+        for placeholders, batch in in_batches(list(dict.fromkeys(face_ids))):
+            deleted += conn.execute(
+                f"DELETE FROM face_embeddings"
+                f" WHERE id IN ({placeholders})"
+                f" AND cluster_id = {CLUSTER_DISMISSED}",
+                batch,
+            ).rowcount
+    except BaseException:
+        conn.rollback()  # all batches or none
+        raise
     conn.commit()
     return jsonify({"deleted": deleted}), 200
 

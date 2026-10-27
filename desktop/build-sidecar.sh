@@ -63,6 +63,13 @@ cd "$PROJECT_ROOT"
 HAAR_CASCADE="$(python -c 'import cv2, os; print(os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml"))')"
 test -f "$HAAR_CASCADE" || { echo "Haar cascade not found at $HAAR_CASCADE"; exit 1; }
 
+# Modules bpp loads indirectly (import_gated / importlib) are invisible to
+# PyInstaller's import scan and must be named here, or the app fails at the
+# first use (re-clustering and the face-model switch need scipy's linkage).
+# tests/test_sidecar_hidden_imports.py keeps this list in step with the code.
+# A hidden import PyInstaller cannot find is only a warning, so check that
+# each one imports here first: a build without it must fail, not ship.
+python -c "import scipy.cluster.hierarchy" || { echo "scipy is required for the app build (re-clustering)"; exit 1; }
 python -m PyInstaller \
   --onefile \
   --name "bpp-server" \
@@ -72,6 +79,7 @@ python -m PyInstaller \
   --hidden-import "bpp.web.app" \
   --hidden-import "bpp.db" \
   --hidden-import "flask" \
+  --hidden-import "scipy.cluster.hierarchy" \
   --collect-all "bpp" \
   --collect-binaries "mediapipe" \
   --add-data "${HAAR_CASCADE}:cv2/data" \

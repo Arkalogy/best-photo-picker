@@ -62,7 +62,7 @@ from bpp.constants import (
     CLUSTER_DISMISSED,
 )
 from bpp.db.face_embedding_safety import decode_embedding
-from bpp.db.sql_batches import in_batches
+from bpp.db.sql_batches import in_batches, rows_in
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -273,14 +273,14 @@ def capture_dismissed_slots(
     extract_pids = {pid for _i, _fp, pid in need_extract}
     if not extract_pids:
         return frozenset()
-    ph = ",".join("?" * len(extract_pids))
     slots = {
         (r[0], r[1])
-        for r in conn.execute(
-            f"SELECT photo_id, face_index FROM face_embeddings "
-            f"WHERE photo_id IN ({ph}) AND cluster_id = {CLUSTER_DISMISSED}",
-            list(extract_pids),
-        ).fetchall()
+        for r in rows_in(
+            conn,
+            "SELECT photo_id, face_index FROM face_embeddings "
+            f"WHERE photo_id IN ({{ph}}) AND cluster_id = {CLUSTER_DISMISSED}",
+            extract_pids,
+        )
     }
     if slots:
         log.info("Preserving %d dismissed face slots during re-extraction", len(slots))

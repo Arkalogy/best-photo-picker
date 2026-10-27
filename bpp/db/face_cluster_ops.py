@@ -27,6 +27,7 @@ import numpy as np
 from bpp.constants import CLUSTER_DISMISSED
 from bpp.db.dialect import dialect
 from bpp.db.face_embedding_safety import decode_embeddings_filtered
+from bpp.db.sql_batches import in_batches, rows_in
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -44,29 +45,29 @@ def sync_face_counts_for_clusters(conn: sqlite3.Connection, cluster_ids: list[in
     """Update face_count for all photos that had faces in the given clusters."""
     if not cluster_ids:
         return
-    ph = ", ".join(["?"] * len(cluster_ids))
-    rows = conn.execute(
-        f"SELECT DISTINCT photo_id FROM face_embeddings WHERE cluster_id IN ({ph})",
+    rows = rows_in(
+        conn,
+        "SELECT DISTINCT photo_id FROM face_embeddings WHERE cluster_id IN ({ph})",
         cluster_ids,
-    ).fetchall()
-    sync_face_counts_for_photos(conn, [r["photo_id"] for r in rows])
+    )
+    sync_face_counts_for_photos(conn, sorted({r[0] for r in rows}))
 
 
 def sync_face_counts_for_photos(conn: sqlite3.Connection, photo_ids: list[int]) -> None:
     """Recount active faces and update face_count for the given photos.
 
-    Single correlated-subquery UPDATE — O(1) round trip regardless of batch size.
+    One correlated-subquery UPDATE per batch of ids.
     """
     if not photo_ids:
         return
-    placeholders = ",".join("?" * len(photo_ids))
-    conn.execute(
-        f"UPDATE photos SET face_count = ("
-        f" SELECT COUNT(*) FROM face_embeddings"
-        f" WHERE photo_id = photos.id AND cluster_id >= 0"
-        f") WHERE id IN ({placeholders})",
-        photo_ids,
-    )
+    for placeholders, batch in in_batches(list(dict.fromkeys(photo_ids))):
+        conn.execute(
+            f"UPDATE photos SET face_count = ("
+            f" SELECT COUNT(*) FROM face_embeddings"
+            f" WHERE photo_id = photos.id AND cluster_id >= 0"
+            f") WHERE id IN ({placeholders})",
+            batch,
+        )
     conn.commit()
 
 
@@ -121,17 +122,17 @@ def propagate_cluster(
     cid_ph = ",".join(["?"] * len(exclude_cids))
     params: list[Any] = list(exclude_cids)
 
-    exclude_clause = ""
-    if exclude_face_ids:
-        id_ph = ",".join(["?"] * len(exclude_face_ids))
-        exclude_clause = f" AND id NOT IN ({id_ph})"
-        params.extend(exclude_face_ids)
-
-    cand_filtered = conn.execute(
-        "SELECT id, cluster_id, embedding FROM face_embeddings "
-        f"WHERE cluster_id NOT IN ({cid_ph}){exclude_clause}",
-        params,
-    ).fetchall()
+    # Excluded faces are dropped here, not bound: the list can be long.
+    skip = set(exclude_face_ids or ())
+    cand_filtered = [
+        r
+        for r in conn.execute(
+            "SELECT id, cluster_id, embedding FROM face_embeddings "
+            f"WHERE cluster_id NOT IN ({cid_ph})",
+            params,
+        ).fetchall()
+        if r["id"] not in skip
+    ]
 
     if not cand_filtered:
         return 0

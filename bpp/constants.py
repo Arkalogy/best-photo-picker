@@ -206,11 +206,9 @@ CLUSTER_UNPLACED = (
 FACE_MIN_PHOTOS = 4
 
 # ── Face clustering threshold ──
-# The default for the user-tunable `face_cluster_threshold` config key
-# (DEFAULTS reads it from here — the one copy): clustering distance on the
-# scaled embedding metric, lower = stricter (schema range 0.3-1.2).
-# `config.get(..., FACE_CLUSTER_THRESHOLD_FALLBACK)` callers given a partial
-# config get the same value the app's own config would give.
+# Grouping distance for an embedder that does not state its own
+# (``FaceEmbedder.cluster_threshold``; the built-ins do, measured per model).
+# The value in use comes from bpp.scoring.face_threshold.
 FACE_CLUSTER_THRESHOLD_FALLBACK = 0.80
 
 # ── Scoring (face) ──
@@ -271,3 +269,15 @@ MODEL_TOGGLE_KEYS = (
 #: analysis preflight sets for a single run (``model_yunet`` has no
 #: Settings switch; it's turned off when its download failed).
 RUN_TOGGLE_KEYS = (*MODEL_TOGGLE_KEYS, "model_yunet")
+
+# File formats, with the leading dot. Import, scan and analysis take all
+# three kinds by default (``scan_extensions`` in bpp.config is built from
+# them); bpp.utils.raw / bpp.utils.video detect a file's kind with them.
+PHOTO_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".heic"})
+RAW_EXTENSIONS = frozenset(
+    {".cr2", ".cr3", ".nef", ".arw", ".orf", ".raf", ".rw2", ".dng", ".pef", ".srw", ".x3f"}
+)
+VIDEO_EXTENSIONS = frozenset(
+    {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v", ".3gp", ".wmv", ".flv"}
+)
+MEDIA_EXTENSIONS = PHOTO_EXTENSIONS | RAW_EXTENSIONS | VIDEO_EXTENSIONS

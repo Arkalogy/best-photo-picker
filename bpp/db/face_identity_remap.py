@@ -13,8 +13,8 @@ user named, so we have to remap:
      name and pin the album to it (``_reconstruct_identities``).
 
 Plus the new-faces assignment helper that decides whether a freshly
-extracted embedding joins an existing cluster (centroid distance +
-hard-negative gate) or seeds a new one (leftover clustering pass).
+extracted embedding joins an existing cluster (mean distance to its
+faces, as Regroup's linkage + hard-negative gate) or seeds a new one (leftover clustering pass).
 
 These helpers are pure DB/numpy logic with no worker state — re-
 exported from face_worker.py so the existing ``from bpp.web.face_worker
@@ -63,47 +63,41 @@ def _reconstruct_identities(conn: sqlite3.Connection) -> None:
         by_cluster.setdefault(int(cid), set()).add(int(fid))
     if not labelled:
         return
-    best: dict[str, int] = {}
-    _match_named_clusters({n: n for n in labelled}, labelled, by_cluster, best, set())
+    from bpp.db.face_name_placement import _person_album_rows
+    from bpp.db.face_name_relocate import _move_tags
+    from bpp.db.people_placement import Person, apply, decide
 
-    # The moves are applied in one order-independent pass (park, then
-    # place), so two people whose clusters swapped cannot collide on the
-    # unique (album_type, rule_json) index. A default "Person N" album on a
-    # destination gives way; another named person's album does not.
-    from bpp.db.face_name_placement import move_named_albums
-
-    albums = {
-        row[1]: (int(row[0]), int(row[2]))
-        for row in conn.execute(
-            "SELECT id, name, smart_person_cluster_id FROM albums "
-            "WHERE album_type='smart_person' AND smart_person_cluster_id IS NOT NULL"
-        ).fetchall()
-    }
-    moves: list[tuple[int, int]] = []
-    for name, best_cid in best.items():
-        entry = albums.get(name)
-        if entry is None or entry[1] == best_cid:
-            continue  # no album for this identity, or already correct
-        moves.append((entry[0], best_cid))
-        log.info("Identity reconstruct: '%s' cluster %s → %d", name, entry[1], best_cid)
-
-    applied, _ = move_named_albums(conn, moves)
-    remapped = len(applied)
-    if applied:
-        from bpp.db.face_name_relocate import _move_tags
-        from bpp.db.face_switch_record import restore_unplaced_tags
-
-        # The manual tags a person had on the cluster the album leaves go
-        # with the album (a renumbering the names missed left them there);
-        # tags already on the destination are the user's and are kept.
-        left = {aid: cid for aid, cid in albums.values()}
-        _move_tags(
-            conn,
-            [(left[aid], new_cid) for aid, new_cid in applied if left[aid] >= 0],
-            set(),
-            clear_targets=False,
-        )
-        restore_unplaced_tags(conn, dict(applied))  # an unplaced person's tags come back
+    albums = {name: (aid, cid) for aid, name, cid in _person_album_rows(conn)}
+    # Every labelled identity competes for clusters (an identity with no
+    # album still claims its cluster); only those with an album move.
+    people = [
+        Person(key=n, name=n, album_id=albums[n][0] if n in albums else None, evidence=ids)
+        for n, ids in labelled.items()
+    ]
+    best = decide(people, by_cluster)
+    moving = {n: cid for n, cid in best.items() if n in albums and albums[n][1] != cid}
+    for n, cid in moving.items():
+        log.info("Identity reconstruct: '%s' cluster %s → %d", n, albums[n][1], cid)
+    # A default "Person N" album on a destination gives way; another named
+    # person's album does not. Stashed tags of an unplaced person come back.
+    outcome = apply(
+        conn,
+        [p for p in people if p.key in moving],
+        moving,
+        displace_named=False,
+        keep_unplaced=False,
+        restore_stash=True,
+    )
+    # The manual tags a person had on the cluster the album leaves go with
+    # it (a renumbering the names missed left them there); tags already on
+    # the destination are the user's and are kept.
+    _move_tags(
+        conn,
+        [(albums[n][1], cid) for n, cid in outcome.placed.items() if albums[n][1] >= 0],
+        set(),
+        clear_targets=False,
+    )
+    remapped = len(outcome.placed)
     if remapped:
         conn.commit()
         log.info("Reconstructed %d named albums from identity labels", remapped)
@@ -142,12 +136,6 @@ def _is_default_person_name(name: str) -> bool:
     return bool(re.match(r"^Person \d+$", name))
 
 
-from bpp.db.face_name_matching import (  # noqa: E402  (re-exported for callers and tests)
-    _match_named_clusters,
-    _match_tag_clusters,
-)
-
-
 def _remap_names_and_tags(
     conn: sqlite3.Connection,
     old_cluster_photos: dict[int, set[int]],
@@ -160,79 +148,23 @@ def _remap_names_and_tags(
     map an unplaced person's album keeps (default: ``old_cluster_photos``).
     Returns False when the moves failed and were rolled back (nothing committed).
 
-    Matching:
-      - Named clusters: pick the new cluster with the *most* overlapping
-        photos. No minimum threshold — if the user named someone,
-        preserve the name when any photos match. This handles embedding-
-        method changes where clusters shift dramatically.
-      - Tag-only clusters: Jaccard >= 0.1 (permissive but requires some
-        overlap so we don't claim an unrelated cluster).
-
-    The moves are applied by ``face_name_relocate.relocate_albums_and_tags``
-    (order-independent, so swapped or chained ids work); a SAVEPOINT
-    around them rolls a partial failure back cleanly. Commits on success.
+    The people are placed by ``face_name_relocate.renumber_people`` (the
+    shared decide-and-apply step); a SAVEPOINT around it rolls a partial
+    failure back cleanly. Commits on success.
     """
-    TAG_MIN_JACCARD = 0.1
-
-    remap: dict[int, int] = {}
-    claimed: set[int] = set()
-
-    # Collect named albums: old_cid → name.
-    # Indexed shadow-column lookup via the canonical helper.
-    named_clusters: dict[int, str] = {}
-    try:
-        from bpp.db.albums import get_smart_person_cluster_name_map
-
-        for cid, name in get_smart_person_cluster_name_map(conn).items():
-            if not _is_default_person_name(name):
-                named_clusters[cid] = name
-    except sqlite3.OperationalError as e:
-        log.debug("albums table not ready, skipping: %s", e)
-
-    # Also collect photo_person_tags cluster IDs
-    tag_cids: set[int] = set()
-    try:
-        tag_rows = conn.execute("SELECT DISTINCT cluster_id FROM photo_person_tags").fetchall()
-        tag_cids = {r[0] for r in tag_rows}
-    except sqlite3.OperationalError as e:
-        log.debug("photo_person_tags table not ready, skipping: %s", e)
-
-    # Remap named clusters first (priority — best-overlap, no threshold)
-    _match_named_clusters(named_clusters, old_cluster_photos, new_cluster_photos, remap, claimed)
-    # Remap tag-only clusters (Jaccard threshold)
-    tag_only_cids = tag_cids - set(named_clusters.keys())
-    _match_tag_clusters(
-        tag_only_cids, old_cluster_photos, new_cluster_photos, remap, claimed, TAG_MIN_JACCARD
-    )
-
-    if not remap:
-        log.warning(
-            "No cluster remapping found — %d named clusters orphaned",
-            len(named_clusters),
-        )
-    else:
-        log.info(
-            "Remapping %d clusters (%d named, %d tags) to new IDs",
-            len(remap),
-            len(set(remap) & set(named_clusters)),
-            len(set(remap) & tag_only_cids),
-        )
-
     # All-or-nothing: a failed UPDATE rolls the whole remap back and returns
     # False. The recluster endpoint keeps its renumbering uncommitted until
     # here and rolls it back on False, so every name stays on its person;
     # the extraction's phase 7 has committed its clusters and logs it.
-    from bpp.db.face_name_relocate import relocate_albums_and_tags
+    from bpp.db.face_name_relocate import renumber_people
 
     conn.execute("SAVEPOINT remap_clusters")
     try:
-        relocate_albums_and_tags(
+        renumber_people(
             conn,
-            remap,
-            named_clusters,
-            tag_cids,
+            old_cluster_photos,
+            new_cluster_photos,
             evidence_photos if evidence_photos is not None else old_cluster_photos,
-            set(new_cluster_photos),
         )
         conn.execute("RELEASE remap_clusters")
     except Exception:
@@ -276,65 +208,60 @@ def _assign_new_faces(
     (new ids start above it), for callers whose ``assigned`` records do
     not cover every cluster.
 
-    For each unassigned face, find the nearest existing cluster centroid.
-    If distance < threshold, assign to that cluster. Otherwise, cluster
-    all remaining unassigned faces among themselves so genuinely new
-    people form groups, then give each new group a fresh ID.
+    Each unassigned face joins the existing cluster whose ``assigned``
+    faces are nearest on average, when that mean distance is under the
+    threshold: the rule average linkage (Regroup) uses to attach a face
+    to a cluster, so analysis and Regroup group alike. A distance to the
+    cluster's mean face would be looser (a face can sit near the mean
+    while far from every member) and merges different people. The faces
+    left over are clustered among themselves so genuinely new people
+    form groups, and each new group gets a fresh ID.
 
-    Quality gating: small faces (< ``_MIN_ASSIGN_PX``) skip centroid
-    matching and go straight to leftover clustering, preventing noisy
-    embeddings from contaminating established clusters.
+    Quality gating: small faces (< ``_MIN_ASSIGN_PX``) skip the matching
+    and go straight to leftover clustering, preventing noisy embeddings
+    from contaminating established clusters.
 
     Hard negative gating: if the best-match cluster has a hard negative
-    partner that the face is also close to (within ``threshold * 1.5``),
-    skip assignment to avoid sibling/lookalike confusion.
-
-    Centroids are quality-weighted using stored quality scores
-    (frontality, size, confidence, sharpness). Falls back to bbox-width
-    proxy when quality is not available.
+    partner that the face is also close to (mean distance within
+    ``threshold * 1.5``), skip assignment to avoid sibling/lookalike
+    confusion.
 
     Returns list of cluster IDs, same length as ``unassigned``.
     """
-    from bpp.scoring.face_cluster import cluster_faces
+    from bpp.scoring.face_cluster import _nearest_cluster_by_mean, cluster_faces
 
     if hard_negatives is None:
         hard_negatives = {}
 
-    # Build quality-weighted centroids for existing clusters
-    cluster_embs: dict[int, list[tuple[np.ndarray, float]]] = {}
-    for _fp, _pid, _fi, emb, cid, bw, quality in assigned:
-        q = quality if quality is not None else _bbox_quality(bw)
-        cluster_embs.setdefault(cid, []).append((emb, q))
+    # Each existing cluster's faces, as rows of one matrix labelled 0..k-1
+    cids = sorted({rec[4] for rec in assigned})
+    position = {cid: i for i, cid in enumerate(cids)}
+    members = np.stack([rec[3] for rec in assigned]) if assigned else None
+    member_labels = np.array([position[rec[4]] for rec in assigned], dtype=np.int64)
+    # Row ranges per cluster from one sort (only the hard-negative check reads them)
+    by_label = np.argsort(member_labels, kind="stable")
+    bounds = np.searchsorted(member_labels[by_label], np.arange(len(cids) + 1))
 
-    centroids: dict[int, np.ndarray] = {}
-    for cid, emb_q_pairs in cluster_embs.items():
-        embs = np.stack([e for e, _q in emb_q_pairs])
-        weights = np.array([max(q, 0.1) for _e, q in emb_q_pairs])
-        weights = weights / weights.sum()
-        centroids[cid] = np.average(embs, axis=0, weights=weights)
-
-    max_existing = max(centroids.keys()) if centroids else -1
+    max_existing = max(cids) if cids else -1
     if next_id_floor is not None:
         max_existing = max(max_existing, next_id_floor)
 
-    # Nearest centroid per new face in one chunked matrix product
-    # (``_nearest_centroid``: squared norms + a GEMM, never an
-    # (faces x centroids x dim) intermediate), instead of a Python loop
-    # over the centroids for each face. Only the hard-negative distances
-    # that matter are computed afterwards, one small dot each.
-    from bpp.scoring.face_cluster import _nearest_centroid
-
-    cids = list(centroids)
-    cent = np.stack([centroids[c] for c in cids]) if cids else None
+    # Nearest cluster by mean distance for every new face, a bounded
+    # chunk of rows at a time (the same helper Regroup's blocks use).
     n = len(unassigned)
     nearest = np.zeros(n, dtype=np.int64)
     nearest_dist = np.full(n, np.inf)
-    if cent is not None and n:
-        # The new faces stay in their stored dtype; _nearest_centroid
-        # promotes one chunk at a time.
+    if members is not None and n:
         rows = np.stack([u[3] for u in unassigned])
-        nearest, nearest_dist = _nearest_centroid(rows, cent)
+        nearest, nearest_dist = _nearest_cluster_by_mean(
+            rows, np.arange(n), members, member_labels, len(cids)
+        )
         del rows
+
+    def _mean_distance(emb: np.ndarray, cid: int) -> float:
+        i = position[cid]
+        own = members[by_label[bounds[i] : bounds[i + 1]]].astype(np.float64)
+        return float(np.linalg.norm(own - emb.astype(np.float64), axis=1).mean())
 
     labels: list[int] = []
     leftover_indices: list[int] = []
@@ -342,7 +269,7 @@ def _assign_new_faces(
     for i, (_fp, _pid, _fi, _emb, bw, _quality) in enumerate(unassigned):
         # Small faces produce unreliable embeddings — don't assign
         # to existing clusters, let them form their own groups.
-        if bw < _MIN_ASSIGN_PX or cent is None:
+        if bw < _MIN_ASSIGN_PX or members is None:
             labels.append(CLUSTER_UNASSIGNED)
             leftover_indices.append(i)
             continue
@@ -357,8 +284,8 @@ def _assign_new_faces(
             if neg_partners:
                 ambiguity_radius = threshold * 1.5
                 for neg_cid in neg_partners:
-                    if neg_cid in centroids:
-                        neg_dist = float(np.linalg.norm(_emb - centroids[neg_cid]))
+                    if neg_cid in position:
+                        neg_dist = _mean_distance(_emb, neg_cid)
                         if neg_dist < ambiguity_radius:
                             skip = True
                             break
@@ -380,7 +307,7 @@ def _assign_new_faces(
             sub_labels = cluster_faces(leftover_embs, threshold=threshold)
 
         next_id = max_existing + 1
-        used_ids = set(centroids.keys())
+        used_ids = set(cids)
         sub_remap: dict[int, int] = {}
         for sl in sub_labels:
             if sl == CLUSTER_UNASSIGNED:

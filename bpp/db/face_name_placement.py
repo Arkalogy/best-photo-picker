@@ -58,6 +58,7 @@ from bpp.db.face_switch_record import (  # noqa: F401  (re-exported for callers 
     stash_unplaced_tags,
     switch_pending,
 )
+from bpp.db.sql_batches import rows_in
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -169,8 +170,9 @@ def move_named_albums(
     """
     from bpp.db.face_identity_remap import _is_default_person_name
 
-    by_cid = _person_albums(conn)
-    names = {aid: name for aid, name in by_cid.values()}
+    rows = _person_album_rows(conn)
+    by_cid = {cid: (aid, name) for aid, name, cid in rows}
+    names = {aid: name for aid, name, _cid in rows}  # unplaced ones included
     accepted: dict[int, int] = {}
     taken: set[int] = set()
     for aid, new_cid in moves:
@@ -234,8 +236,10 @@ def begin_switch(
     completed) is carried over with its original evidence, under synthetic
     keys, so switching twice loses nothing.
     """
+    from bpp.db.face_feedback import clear_cluster_feedback
     from bpp.db.face_identity_remap import _is_default_person_name
 
+    clear_cluster_feedback(conn)  # the groups they name are about to go
     previous = load_pending(conn)
     names: dict[Key, str] = {}
     albums: dict[Key, int] = {}
@@ -296,9 +300,8 @@ def begin_switch(
             albums[cid] = aid
     if from_unplaced:
         aids = list(from_unplaced)
-        ph = ",".join("?" * len(aids))
-        for aid, pid in conn.execute(
-            f"SELECT album_id, photo_id FROM album_photos WHERE album_id IN ({ph})", aids
+        for aid, pid in rows_in(
+            conn, "SELECT album_id, photo_id FROM album_photos WHERE album_id IN ({ph})", aids
         ):
             evidence.setdefault(from_unplaced[int(aid)], set()).add(int(pid))
         for aid, pids in pop_unplaced_tags(conn, aids).items():
@@ -329,103 +332,6 @@ def begin_switch(
         len(carried),
         len(tags),
     )
-
-
-def place_final(
-    conn: sqlite3.Connection, pending: PendingNames, new_cluster_photos: dict[int, set[int]]
-) -> None:
-    """Place every pending name and tag from the complete clusters of a
-    finished run, in the caller's transaction (``finish_switch`` commits
-    it with the rest of the end of the switch, or rolls it all back).
-
-    Names are placed once, here, never batch by batch: an early batch sees
-    only part of the photos (a group photo whose other person was found
-    first would point a name at the wrong cluster). Strongest overlap
-    first, a tie decided for no one; tagged clusters nobody named last, so
-    a tag match never takes a cluster a name wants. A default album the
-    refresh made for a target cluster meanwhile yields to the name; a
-    parked album the user deleted meanwhile counts as placed and displaces
-    nothing. Names displaced on the way are recorded in ``pending.dropped``.
-    """
-    from bpp.db.face_identity_remap import _match_named_clusters, _match_tag_clusters
-
-    pending.placed = {}  # decided here and only here, from the complete run
-    remap: dict[Key, int] = {}
-    claimed: set[int] = set()
-    # A name whose photos include one the new model could not read is not
-    # placed: its own face there is missing, and a group shot's other face
-    # could take the name. It is kept unplaced, with its evidence.
-    # Nor a name whose album is still held from an earlier switch.
-    held = held_albums(conn, list(pending.albums.values()))
-    names = {
-        k: n
-        for k, n in pending.unplaced_names().items()
-        if not pending.evidence(k) & pending.failed and pending.albums.get(k) not in held
-    }
-    _match_named_clusters(
-        names, {k: pending.evidence(k) for k in names}, new_cluster_photos, remap, claimed
-    )
-    tag_only = {c for c in pending.unplaced_tags() if c not in pending.names}
-    # Nor a cluster a name left undecided (tied) has photos in: that name
-    # may still be placed there by a later refresh.
-    waiting = (
-        set().union(*(pending.evidence(k) for k in names if k not in remap)) if names else set()
-    )
-    claimed |= {cid for cid, photos in new_cluster_photos.items() if photos & waiting}
-    _match_tag_clusters(
-        tag_only,
-        {c: pending.evidence(c) for c in tag_only},  # its faces, else its tags
-        new_cluster_photos,
-        remap,
-        claimed,
-        TAG_MIN_JACCARD,
-    )
-
-    sitting = {aid for aid, _name, _cid in _person_album_rows(conn)}
-    moves: list[tuple[int, int]] = []
-    for key, new_cid in remap.items():
-        pending.placed[key] = new_cid
-        aid = pending.albums.get(key)
-        if aid is None:
-            continue  # a tag-only cluster: tags follow below
-        if aid in sitting:
-            moves.append((aid, new_cid))
-        else:
-            log.info(
-                "Person '%s' was deleted during the face-model switch; "
-                "cluster %d keeps its default name",
-                names.get(key, "?"),
-                new_cid,
-            )
-    _, displaced = move_named_albums(conn, moves, displace_named=True)
-    if displaced:
-        # A user-named album made meanwhile on a cluster a parked name
-        # claims: kept unplaced, its tags stashed (off the cluster, which is
-        # someone else now) and its tagged photos as its evidence.
-        from bpp.db.face_name_relocate import _tags_of
-
-        sitter_tags = _tags_of(conn, [cid for _a, _n, cid in displaced])
-        stash_unplaced_tags(conn, {aid: sitter_tags.get(cid, set()) for aid, _n, cid in displaced})
-        conn.executemany(
-            "DELETE FROM photo_person_tags WHERE photo_id=? AND cluster_id=?",
-            [(pid, cid) for _a, _n, cid in displaced for pid in sitter_tags.get(cid, ())],
-        )
-        set_album_evidence(conn, {aid: sitter_tags.get(cid, set()) for aid, _n, cid in displaced})
-        pending.dropped.extend(name for _aid, name, _cid in displaced)
-    # A tagged photo deleted meanwhile has no row to point at (the tag
-    # table's foreign key would refuse it): its tag is gone with it.
-    alive = alive_photo_ids(conn, {pid for key in remap for pid in pending.tags.get(key, ())})
-    tag_rows = [
-        (pid, remap[key])
-        for key, pids in pending.tags.items()
-        if key in remap
-        for pid in sorted(pids & alive)
-    ]
-    if tag_rows:
-        conn.executemany(
-            "INSERT OR IGNORE INTO photo_person_tags (photo_id, cluster_id) VALUES (?, ?)",
-            tag_rows,
-        )
 
 
 def finish_switch(

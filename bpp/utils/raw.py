@@ -7,6 +7,7 @@ import threading
 import time
 from typing import TYPE_CHECKING
 
+from bpp.constants import RAW_EXTENSIONS
 from bpp.utils.fresh_file import replace_fresh
 from bpp.utils.logging import get_logger
 
@@ -16,9 +17,6 @@ if TYPE_CHECKING:
 
 log = get_logger(__name__)
 
-RAW_EXTENSIONS = frozenset(
-    {".cr2", ".cr3", ".nef", ".arw", ".orf", ".raf", ".rw2", ".dng", ".pef", ".srw", ".x3f"}
-)
 
 # Check if rawpy is available (optional dependency)
 _RAWPY_IMPORT_ERROR: str | None = None

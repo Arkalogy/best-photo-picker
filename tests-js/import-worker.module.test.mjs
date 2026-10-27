@@ -112,6 +112,11 @@ describe("_showImportSummary", () => {
     expect(lastToast()?.textContent).toContain("import the folder again");
   });
 
+  test("an import stopped before any photo was added does not claim photos are kept", () => {
+    _showImportSummary({ imported: 0, adopted: 0, cancelled: true });
+    expect(lastToast()?.textContent).toBe("Import stopped before any photos were added.");
+  });
+
   test("appends skipped + errors as parens-list", () => {
     _showImportSummary({ imported: 5, skipped: 3, errors: 2 });
     expect(lastToast()?.textContent).toContain("3 duplicates skipped");

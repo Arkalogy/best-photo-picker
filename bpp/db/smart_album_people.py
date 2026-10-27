@@ -22,10 +22,10 @@ from bpp.db.face_name_placement import is_parked
 from bpp.db.face_switch_record import (
     HAS_STASH_SQL,
     held_albums,
-    restore_unplaced_tags,
     set_album_evidence,
     single_face_photos,
 )
+from bpp.db.sql_batches import in_batches, rows_in
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -163,12 +163,10 @@ def _gather_orphan_photo_lists(
     if not user_named_orphans:
         return []
     named_ids = [a[0] for a in user_named_orphans]
-    ph = ",".join("?" * len(named_ids))
     album_photos_map: dict[int, list[int]] = {}
-    for r in conn.execute(
-        f"SELECT album_id, photo_id FROM album_photos WHERE album_id IN ({ph})",
-        named_ids,
-    ).fetchall():
+    for r in rows_in(
+        conn, "SELECT album_id, photo_id FROM album_photos WHERE album_id IN ({ph})", named_ids
+    ):
         album_photos_map.setdefault(r[0], []).append(r[1])
     out: list[tuple[int, str, int, list[int]]] = []
     for album_id, album_name, cid in user_named_orphans:
@@ -182,9 +180,9 @@ def _delete_orphan_albums(conn: sqlite3.Connection, orphan_album_ids: list[int])
     """Batch-delete every orphan album row + its album_photos rows."""
     if not orphan_album_ids:
         return
-    ph = ",".join("?" * len(orphan_album_ids))
-    conn.execute(f"DELETE FROM album_photos WHERE album_id IN ({ph})", orphan_album_ids)
-    conn.execute(f"DELETE FROM albums WHERE id IN ({ph})", orphan_album_ids)
+    for ph, batch in in_batches(list(dict.fromkeys(orphan_album_ids))):
+        conn.execute(f"DELETE FROM album_photos WHERE album_id IN ({ph})", batch)
+        conn.execute(f"DELETE FROM albums WHERE id IN ({ph})", batch)
 
 
 def _transfer_orphan_names(
@@ -203,53 +201,50 @@ def _transfer_orphan_names(
     person's named album is never overwritten) and its manual tags
     follow without clobbering the target's own tags.
     """
-    from bpp.db.face_identity_remap import _match_named_clusters
-    from bpp.db.face_name_placement import move_named_albums
     from bpp.db.face_name_relocate import _move_tags, _tags_of
+    from bpp.db.people_placement import Person, place_people
 
-    # Albums held by unreadable photos are not placed automatically.
-    held = held_albums(conn, [aid for aid, _n, _c, _p in orphan_names])
-    orphan_names = [o for o in orphan_names if o[0] not in held]
-    # Keyed by album id: several unplaced albums share one cluster id.
-    named = {aid: name for aid, name, _old_cid, _pids in orphan_names}
-    old_photos = {aid: set(pids) for aid, _name, _old_cid, pids in orphan_names}
-    old_cid_of = {aid: old_cid for aid, _name, old_cid, _pids in orphan_names}
-    remap: dict[int, int] = {}
     # Only photos with a single face count: in a group photo, photo overlap
-    # cannot tell which face is whose (a person whose own face was
-    # unreadable would land on the other person in the shot). Someone seen
-    # only in group photos stays unplaced until named again.
-    solo = single_face_photos(conn, set().union(*old_photos.values()) if old_photos else set())
-    _match_named_clusters(
-        named,
-        {aid: pids & solo for aid, pids in old_photos.items()},
-        {cid: pids & solo for cid, pids in cluster_photo_map.items()},
-        remap,
-        set(),
+    # cannot tell which face is whose. Someone seen only in group photos
+    # stays unplaced until named again. Albums held by unreadable photos
+    # are not placed automatically.
+    every = (
+        set().union(*(set(pids) for _a, _n, _c, pids in orphan_names)) if orphan_names else set()
     )
-    accepted, _ = move_named_albums(conn, list(remap.items()), displace_named=False)
-    moved_albums = {aid for aid, _ in accepted}
-    restore_unplaced_tags(conn, dict(accepted))  # an unplaced person's tags come back
+    solo = single_face_photos(conn, every)
+    held = held_albums(conn, [aid for aid, _n, _c, _p in orphan_names])
+    people = [
+        Person(key=aid, name=name, album_id=aid, evidence=set(pids) & solo, held=aid in held)
+        for aid, name, _old_cid, pids in orphan_names
+    ]
+    clusters = {cid: pids & solo for cid, pids in cluster_photo_map.items()}
+    # The album itself moves (a default album on the target gives way,
+    # another person's named album is never overwritten); its stashed tags
+    # come back; the rest stay as they are, kept for a later refresh.
+    outcome = place_people(
+        conn, people, clusters, displace_named=False, keep_unplaced=False, restore_stash=True
+    )
+    accepted = [(aid, cid) for aid, cid in outcome.placed.items()]
+    old_cid_of = {aid: old_cid for aid, _name, old_cid, _pids in orphan_names}
     _move_tags(
         conn,
-        [
-            (old_cid_of[aid], n)
-            for aid, n in remap.items()
-            if aid in moved_albums and old_cid_of[aid] >= 0
-        ],
+        [(old_cid_of[aid], cid) for aid, cid in accepted if old_cid_of[aid] >= 0],
         set(),
         clear_targets=False,
     )
     # The moved album still lists its old photos: give it its new
     # cluster's faces and manual tags now, not at the next refresh.
     if accepted:
-        tagged = _tags_of(conn, [n for _aid, n in accepted])
+        tagged = _tags_of(conn, [cid for _aid, cid in accepted])
         set_album_evidence(
             conn,
-            {aid: cluster_photo_map.get(n, set()) | tagged.get(n, set()) for aid, n in accepted},
+            {
+                aid: cluster_photo_map.get(cid, set()) | tagged.get(cid, set())
+                for aid, cid in accepted
+            },
             active_only=True,
         )
-    return moved_albums
+    return {aid for aid, _ in accepted}
 
 
 def _create_tag_only_clusters(conn: sqlite3.Connection, embedding_cluster_ids: set[int]) -> None:
@@ -333,12 +328,15 @@ def _refresh_person_albums(conn: sqlite3.Connection) -> None:
     orphan_names = _gather_orphan_photo_lists(conn, user_named_orphans)
     transferred_ids = _transfer_orphan_names(conn, orphan_names, cluster_photo_map)
     untransferred_named = {a[0] for a in user_named_orphans} - transferred_ids
-    if untransferred_named:
+    # A person kept unplaced was reported when it happened; only names still
+    # sitting on a number that lost its faces are worth a warning here.
+    stale = sorted(a[0] for a in user_named_orphans if a[0] in untransferred_named and a[2] >= 0)
+    if stale:
         log.warning(
             "Keeping %d user-named person album(s) with no overlap target "
             "(album ids %s) — names preserved on their stale clusters",
-            len(untransferred_named),
-            sorted(untransferred_named),
+            len(stale),
+            stale,
         )
     # Default orphans go; a moved album is no orphan any more.
     _delete_orphan_albums(

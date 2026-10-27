@@ -13,6 +13,7 @@ from PIL import Image
 
 from bpp.constants import (
     JPEG_QUALITY_SPRITE,
+    VIDEO_EXTENSIONS,
     VIDEO_SPRITE_END,
     VIDEO_SPRITE_FRAMES,
     VIDEO_SPRITE_START,
@@ -22,10 +23,6 @@ from bpp.utils.fresh_file import replace_fresh
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
-
-VIDEO_EXTENSIONS = frozenset(
-    {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v", ".3gp", ".wmv", ".flv"}
-)
 
 
 def is_video_file(filepath: str) -> bool:
