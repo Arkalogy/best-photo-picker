@@ -54,6 +54,10 @@ const RULES = [
   // ── Import ────────────────────────────────────────────────────────────
   { re: /^Import starting/i, text: "Importing photos…" },
   {
+    re: /^Import complete: (\d+) imported.*; cancelled/i,
+    text: (m) => `Import stopped after ${fmtNum(m[1])} ${plural(m[1], "photo")}`,
+  },
+  {
     re: /^Import complete: (\d+) imported/i,
     text: (m) => `Imported ${fmtNum(m[1])} ${plural(m[1], "photo")}`,
   },
@@ -104,6 +108,17 @@ const RULES = [
   { re: /^Downloading YOLO\w* model/i, text: "Downloading pet-detection model…" },
   { re: /^CLIP model download failed/i, level: "WARNING", text: "Some photo features are unavailable" },
   { re: /^Downloading .* model/i, text: "Downloading AI model…" },
+
+  // ── People: a name that no cluster matched any more ───────────────────
+  // One WARNING per name that could not be placed (face_name_placement
+  // ._UNPLACED). The reason is "re-clustering (…)" or "the face-model
+  // switch to <model>".
+  {
+    re: /^Could not place the name '(.+?)' after (re-clustering|the face-model switch)/i,
+    level: "WARNING",
+    text: (m) =>
+      `Couldn’t find “${m[1]}” after ${m[2] === "re-clustering" ? "re-clustering" : "the face-model switch"} — the name comes back when their photos are found again`,
+  },
 
   // ── Startup / backfill / recovery noise (all hidden) ──────────────────
   { re: /backfill/i, hide: true },

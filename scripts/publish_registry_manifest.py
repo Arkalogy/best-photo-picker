@@ -27,14 +27,14 @@ the app keeps the highest number it has applied and refuses anything
 lower — a reused or lowered number is a manifest nobody receives.
 
 Defaults: no entries (empty overlay, baseline ships unchanged), output
-at ``/tmp/registry.json``, maintainer ``"Arkalogy LLC"``. Move the
-output into the ``bppicker-registry`` repo and ``git push`` to
-publish via GitHub Pages.
+at ``./registry.json`` in the current directory (``--out`` to choose),
+maintainer ``"Arkalogy LLC"``. Move the output into the
+``bppicker-registry`` repo and ``git push`` to publish via GitHub Pages.
 
 Single-signer only. Dual-signature manifests (restriction-class
 downgrades) go through ``scripts/sign_registry_manifest.py`` because
-that flow needs both key files at the same moment, which Apple
-Passwords can't supply.
+that flow needs both key files at the same moment, which the
+interactive one-key prompt here can't supply.
 """
 
 from __future__ import annotations

@@ -18,7 +18,8 @@ def get_library_stats(conn: sqlite3.Connection) -> dict:
         "COALESCE(SUM(file_size), 0) AS total_size, "
         "COALESCE(SUM(CASE WHEN is_video=1 THEN 1 ELSE 0 END), 0) AS video_count, "
         "COALESCE(SUM(CASE WHEN is_raw=1 THEN 1 ELSE 0 END), 0) AS raw_count, "
-        "COALESCE(SUM(CASE WHEN is_video=0 AND is_raw=0 THEN 1 ELSE 0 END), 0) AS photo_count "
+        "COALESCE(SUM(CASE WHEN COALESCE(is_video, 0)=0 AND COALESCE(is_raw, 0)=0"
+        " THEN 1 ELSE 0 END), 0) AS photo_count "
         "FROM photos WHERE deleted_at IS NULL AND is_live_photo_sidecar = 0"
     ).fetchone()
 

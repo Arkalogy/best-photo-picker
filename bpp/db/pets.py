@@ -11,6 +11,7 @@ from bpp.constants import (
     PET_DISPLAY_CONFIDENCE,
     active_photo_sql,
 )
+from bpp.db.sql_batches import in_batches, rows_in
 from bpp.utils.retry import retry_io
 
 
@@ -150,15 +151,15 @@ def bulk_upsert_pet_detections(
     if not items:
         return 0
     photo_ids = [pid for pid, _ in items]
-    placeholders = ",".join(["?"] * len(photo_ids))
 
     # Snapshot existing detections per photo for IoU matching
     old_by_photo: dict[int, list[dict]] = {}
-    for row in conn.execute(
+    for row in rows_in(
+        conn,
         "SELECT photo_id, class, cluster_id, bbox_x, bbox_y, bbox_w, bbox_h"
-        f" FROM pet_detections WHERE photo_id IN ({placeholders})",
+        " FROM pet_detections WHERE photo_id IN ({ph}) ORDER BY id",
         photo_ids,
-    ).fetchall():
+    ):
         old_by_photo.setdefault(row[0], []).append(
             {
                 "class": row[1],
@@ -170,10 +171,8 @@ def bulk_upsert_pet_detections(
             }
         )
 
-    conn.execute(
-        f"DELETE FROM pet_detections WHERE photo_id IN ({placeholders})",
-        photo_ids,
-    )
+    for placeholders, batch in in_batches(list(dict.fromkeys(photo_ids))):
+        conn.execute(f"DELETE FROM pet_detections WHERE photo_id IN ({placeholders})", batch)
     all_rows: list[tuple] = []
     for photo_id, detections in items:
         old_dets = old_by_photo.get(photo_id, [])

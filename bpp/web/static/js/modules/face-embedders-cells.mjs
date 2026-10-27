@@ -147,16 +147,40 @@ const _UNAVAILABLE_STATUS = {
   tip: "This model has been withdrawn or blocked in the model registry, so it can’t be used or downloaded. Files already on this device can be uninstalled.",
 };
 
+//: The user switched the model off for analysis (its ``model_*`` toggle).
+//: Shown on top of the lifecycle: a blocker that also applies is named in
+//: the sub-line so the real fix is not hidden behind "Off".
+const _OFF_STATUS = {
+  main: "Off",
+  sub: "skipped in analysis",
+  cls: "fe-status-muted",
+  tip: "You switched this model off, so analysis skips it. Open ⋯ → “Use in analysis” to turn it back on.",
+};
+
+/** @type {Set<string>} */
+const _RUNNABLE = new Set([
+  ROW_LIFECYCLE.RUNNING,
+  ROW_LIFECYCLE.READY,
+  ROW_LIFECYCLE.BACKUP_AVAILABLE,
+]);
+
 /**
  * Pure: the status badge descriptor for a derived row state.
  *
- * @param {{lifecycle: string, needsReaccept?: boolean, needsCommercialRights?: boolean, unavailable?: boolean}} state
+ * @param {{lifecycle: string, needsReaccept?: boolean, needsCommercialRights?: boolean, unavailable?: boolean, switchedOff?: boolean}} state
  * @returns {{main: string, sub: string | null, cls: string, tip: string}}
  */
 export function _statusFor(state) {
   // The server's own license decisions come first: they don't rest on
   // anything that may have failed to load (withdrawn is withdrawn).
   if (state.unavailable) return _UNAVAILABLE_STATUS;
+  if (state.switchedOff) {
+    const base = _STATUS_BY_LIFECYCLE[state.lifecycle];
+    if (base && !_RUNNABLE.has(state.lifecycle)) {
+      return { ..._OFF_STATUS, sub: `also: ${base.main.toLowerCase()}`, tip: `${_OFF_STATUS.tip} ${base.tip}` };
+    }
+    return _OFF_STATUS;
+  }
   if (state.needsCommercialRights) return _COMMERCIAL_RIGHTS_STATUS;
   if (state.needsReaccept) return _REACCEPT_STATUS;
   return _STATUS_BY_LIFECYCLE[state.lifecycle];

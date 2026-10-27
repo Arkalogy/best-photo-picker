@@ -6,7 +6,7 @@ import os
 from collections.abc import Mapping
 from typing import Any
 
-from bpp.constants import CLIP_MODEL_NAME, FACE_CLUSTER_THRESHOLD_FALLBACK, MODEL_TOGGLE_KEYS
+from bpp.constants import CLIP_MODEL_NAME, MEDIA_EXTENSIONS, MODEL_TOGGLE_KEYS
 from bpp.scoring.registry import get_weight_defaults
 
 DEFAULTS: dict[str, Any] = {
@@ -31,8 +31,6 @@ DEFAULTS: dict[str, Any] = {
     "face_embedding_confidence": 0.65,  # min quality for embedding (0.0-1.0)
     "min_face_area_pct": 0.20,  # min face area as % of image (0.05-1.0)
     "min_embedding_quality": 0.25,  # min quality score for embedding (0.1-0.5)
-    # clustering distance (0.3-1.2, lower=stricter); the value lives in constants
-    "face_cluster_threshold": FACE_CLUSTER_THRESHOLD_FALLBACK,
     "face_selection_boost": 0.15,  # score boost for selected faces (0.0-1.0)
     # Groups (people who appear together)
     "group_min_photos": 3,  # photos two people must share to form a group (1-10)
@@ -63,12 +61,10 @@ DEFAULTS: dict[str, Any] = {
     "dedupe_strategy": None,
     # Security
     "follow_symlinks": False,  # whether to follow symlinks during scan
-    # File extensions accepted by import / scan / serve. Comma-separated
-    # string so YAML can override cleanly. was hardcoded in
-    # WebAppState.__init__ + bpp/io_scan.py + bpp/cli.py — moved here so
-    # plugin contributors who add (say) AVIF support can extend via
-    # config rather than patching three call sites.
-    "scan_extensions": "jpg,jpeg,png,heic",
+    # File extensions accepted by import / scan / serve: photos, camera
+    # RAW and video. Comma-separated string so YAML can override cleanly
+    # (a plugin adding, say, AVIF support extends it there).
+    "scan_extensions": ",".join(sorted(e.lstrip(".") for e in MEDIA_EXTENSIONS)),
     # Model toggles (all enabled by default)
     **{k: True for k in MODEL_TOGGLE_KEYS},
 }

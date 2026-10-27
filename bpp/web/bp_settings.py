@@ -243,5 +243,11 @@ def api_settings_put() -> tuple[Response, int]:
         raise ValidationError("Use the Share controls for these settings", fields=guarded)
     ctx = get_ctx()
     conn = ctx.get_conn()
+    if "face_embedding_method" in data:
+        # The stored faces keep their own model's grouping distance until
+        # analysis re-makes them; an older library has no record of it yet.
+        from bpp.scoring.face_threshold import remember_faces_method
+
+        remember_faces_method(conn)
     set_settings(conn, data)
     return jsonify({"status": "saved"}), 200

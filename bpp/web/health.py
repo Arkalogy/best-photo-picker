@@ -127,6 +127,11 @@ def start_health_checks(
         try:
             if stop_event.is_set():
                 return
+            # Half-copies a killed import left in any batch folder.
+            from bpp.db.library_copy import remove_stale_import_tmp
+
+            if dirs.get("photos") and os.path.isdir(dirs["photos"]):
+                remove_stale_import_tmp(dirs["photos"])
             conn = get_conn()
             if get_photo_count(conn) == 0:
                 return

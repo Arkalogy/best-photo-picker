@@ -1,6 +1,6 @@
 """Incremental face assignment compares each new face against every
-centroid in one vector op. The result must match the plain per-centroid
-loop it replaces."""
+cluster's faces in one vector op (mean distance, as Regroup's linkage).
+The result must match the plain per-cluster loop."""
 
 from __future__ import annotations
 
@@ -9,37 +9,32 @@ import numpy as np
 from bpp.constants import CLUSTER_UNASSIGNED
 
 
-def _reference(assigned, unassigned, threshold, hard_negatives, min_px, bbox_quality):
+def _reference(assigned, unassigned, threshold, hard_negatives, min_px):
     from bpp.scoring.face_cluster import cluster_faces
 
-    cluster_embs: dict[int, list] = {}
-    for _fp, _pid, _fi, emb, cid, bw, quality in assigned:
-        q = quality if quality is not None else bbox_quality(bw)
-        cluster_embs.setdefault(cid, []).append((emb, q))
-    centroids = {}
-    for cid, pairs in cluster_embs.items():
-        embs = np.stack([e for e, _ in pairs])
-        w = np.array([max(q, 0.1) for _, q in pairs])
-        centroids[cid] = np.average(embs, axis=0, weights=w / w.sum())
-    max_existing = max(centroids) if centroids else -1
+    members: dict[int, list] = {}
+    for _fp, _pid, _fi, emb, cid, _bw, _quality in assigned:
+        members.setdefault(cid, []).append(emb.astype(np.float64))
+
+    def mean_dist(emb, cid):
+        return float(np.mean([np.linalg.norm(emb - m) for m in members[cid]]))
+
+    max_existing = max(members) if members else -1
     labels, leftover = [], []
     for i, (_fp, _pid, _fi, emb, bw, _q) in enumerate(unassigned):
-        if bw < min_px or not centroids:
+        if bw < min_px or not members:
             labels.append(CLUSTER_UNASSIGNED)
             leftover.append(i)
             continue
         best_cid, best = CLUSTER_UNASSIGNED, float("inf")
-        for cid, c in centroids.items():
-            d = float(np.linalg.norm(emb - c))
+        for cid in members:
+            d = mean_dist(emb.astype(np.float64), cid)
             if d < best:
                 best, best_cid = d, cid
         if best < threshold:
             skip = False
             for neg in hard_negatives.get(best_cid, set()):
-                if (
-                    neg in centroids
-                    and float(np.linalg.norm(emb - centroids[neg])) < threshold * 1.5
-                ):
+                if neg in members and mean_dist(emb.astype(np.float64), neg) < threshold * 1.5:
                     skip = True
                     break
             if skip:
@@ -53,7 +48,7 @@ def _reference(assigned, unassigned, threshold, hard_negatives, min_px, bbox_qua
     if leftover:
         embs = [unassigned[i][3] for i in leftover]
         sub = [0] if len(embs) == 1 else cluster_faces(embs, threshold=threshold)
-        next_id, used, remap = max_existing + 1, set(centroids), {}
+        next_id, used, remap = max_existing + 1, set(members), {}
         for sl in sub:
             if sl not in remap:
                 while next_id in used:
@@ -90,5 +85,5 @@ def test_vectorized_assignment_matches_the_loop():
     hard = {0: {1}, 1: {0}, 5: {6}}
 
     got = fir._assign_new_faces(assigned, unassigned, 0.6, hard_negatives=hard)
-    want = _reference(assigned, unassigned, 0.6, hard, fir._MIN_ASSIGN_PX, fir._bbox_quality)
+    want = _reference(assigned, unassigned, 0.6, hard, fir._MIN_ASSIGN_PX)
     assert got == want

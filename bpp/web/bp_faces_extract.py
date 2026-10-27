@@ -26,6 +26,7 @@ from flask import Blueprint, Response, jsonify
 from bpp.errors import BppError, ConflictError, FeatureUnavailableError, NotFoundError
 from bpp.scoring.face_embed import is_available as face_recognition_available
 from bpp.utils.logging import get_logger
+from bpp.web.face_lock import allow_during_face_switch
 from bpp.web.share import requires_local_app
 from bpp.web.sse import captured_device_fingerprint, stream_worker_progress
 from bpp.web.state import get_ctx, with_face_lock
@@ -38,6 +39,7 @@ bp = Blueprint("faces_extract", __name__)
 @bp.post("/api/v1/faces/extract")
 @requires_local_app
 @with_face_lock
+@allow_during_face_switch
 def api_faces_extract() -> tuple[Response, int]:
     """Start the face-extraction worker over the current analysis set.
 
@@ -73,6 +75,7 @@ def api_faces_extract() -> tuple[Response, int]:
 @bp.post("/api/v1/faces/retry")
 @requires_local_app
 @with_face_lock
+@allow_during_face_switch
 def api_faces_retry() -> tuple[Response, int]:
     """Wipe existing face embeddings and crop cache, then restart the
     face-extraction worker from scratch. Used when detection settings
@@ -152,10 +155,21 @@ def _wipe_faces_and_restart(ctx: Any, analysis: Any) -> None:
         )
 
     try:
+        # Names and manual tags are parked, not deleted: the re-extraction
+        # places them like a face-model switch does (face_name_placement).
+        from bpp.db.face_identity_remap import _snapshot_cluster_photos
+        from bpp.db.face_name_placement import begin_switch
+        from bpp.scoring.face_embed import embedding_method
+
+        begin_switch(conn, embedding_method(conn), _snapshot_cluster_photos(conn))
         conn.execute("DELETE FROM face_embeddings")
-        conn.execute("DELETE FROM photo_person_tags")
         conn.commit()
-    except Exception as e:
+    except BaseException as e:
+        # Nothing of the half-done park-and-wipe may stay on the pooled
+        # connection for a later commit to pick up.
+        conn.rollback()
+        if not isinstance(e, Exception):
+            raise
         raise BppError(
             "Failed to clear existing face data",
             user_message="Failed to clear existing face data",

@@ -512,11 +512,11 @@
       </div>
     </div>
     <div class="import-option-row">
-      <label class="setting-toggle import-option-toggle" title="iPhone Live Photos export as two files: the still you took and a motion-component sidecar (IMG_xxxx_1.HEIC). Sidecars are visually identical to their parent and are hidden from the grid. Uncheck (recommended) to skip them entirely — they add no picking value and double your photo count.">
+      <label class="setting-toggle import-option-toggle" title="iPhone Live Photos export as two files: the still you took and a motion-component sidecar (IMG_xxxx_1.HEIC). Sidecars are visually identical to their parent and are hidden from the grid. Uncheck (recommended) to skip them entirely — they add no picking value and double your photo count. The same goes for the short motion clip saved next to each photo (IMG_xxxx.MOV); with this on, those clips import as videos.">
         <input type="checkbox" id="import-live-photo-sidecars">
         <span class="toggle-track"></span>
       </label>
-      <span class="import-option-label">Import Live Photo motion sidecars <span class="tip" data-tip="iPhone Live Photos export as two files — the still you took (IMG_4214.HEIC) and a near-identical motion sidecar (IMG_4214_1.HEIC). Sidecars are hidden from the grid and picking views. Recommended: leave off — they add no picking value and double your photo count.">i</span></span>
+      <span class="import-option-label">Import Live Photo motion sidecars <span class="tip" data-tip="iPhone Live Photos export as two files — the still you took (IMG_4214.HEIC) and a near-identical motion sidecar (IMG_4214_1.HEIC). Sidecars are hidden from the grid and picking views. Recommended: leave off — they add no picking value and double your photo count. With this on, the short motion clip next to each photo (IMG_4214.MOV) also imports, as a video.">i</span></span>
     </div>
     <div class="modal-flex-row">
       {% if not serve_mode %}
@@ -898,6 +898,12 @@
             faces stay attached to photos, but who they're grouped with may change.
           </p>
           <p class="setting-learned-threshold" id="face-learned-threshold" style="display:none"></p>
+          <div class="setting-nudge" id="face-dlib-note" style="display:none">
+            <span>Faces are grouped with dlib, which splits each person into many small groups
+              in family photos and misses more faces. SFace groups them far better; set it up
+              under Models.</span>
+            <button class="preset-btn" data-action="switchSettingsTab" data-arg0="models">Open Models</button>
+          </div>
           <div class="setting-nudge" id="face-recluster-nudge" style="display:none">
             <span>Your corrections suggest regrouping might improve accuracy.</span>
             <button class="preset-btn" data-action="dismissFaceNudge">Dismiss</button>

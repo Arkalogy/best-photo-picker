@@ -6,6 +6,145 @@ this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-10-24
+
+### Fixed
+- **Faces are grouped far more accurately, with each face model.** All
+  three face models shared one grouping distance (0.80); on 365 hand-labelled
+  family photos (889 faces of 74 people) it put most people together with
+  someone else on SFace, and nearly everyone into two groups on dlib. Each
+  model now has its own measured default (SFace 0.70, dlib 0.40, the
+  optional research-only model 0.75), and a value picked in Regroup is
+  kept for that model only, so a
+  model switch never inherits a number on another model's scale. Of the
+  face pairs grouped together, the share that are one person went from
+  14% to 84% (SFace), 2% to 92% (dlib) and 77% to 94% (research-only); a
+  person may be split over a few groups, which Merge fixes. dlib has no
+  setting that is both clean and complete on family photos, so a library
+  grouped with dlib now shows a note in Settings suggesting SFace.
+- **Analysis groups faces the way Regroup does.** New faces joined the
+  group whose average face was nearest, a looser test than Regroup's
+  (near the group's faces on average), so analysis mixed people that
+  Regroup kept apart, and much more so when photos arrived in small
+  batches. Both now use the same rule.
+- **Two faces of one photo grouped together are no longer deleted.** After
+  grouping, every face of a photo that shared a group with another face of
+  that photo was deleted, meant for one face detected twice. When two
+  people were grouped by mistake, one of them lost that face for good (on
+  dlib, more than half of all faces). Overlapping boxes are still dropped
+  as a double detection; any other face now gets a group of its own.
+- **Corrections no longer loosen grouping or outlive their groups.**
+  Merges could raise the learned distance past the point where strangers
+  merge; corrections now only make grouping stricter. They are cleared
+  when the groups are rebuilt (Regroup, Retry, a model switch), since they
+  name groups by numbers that then belong to other people.
+- **Re-cluster and switching the face model work in the Mac app.** The
+  app's build left out the part of a scientific library that groups faces
+  (it is loaded indirectly, which the packager cannot see), so in the Mac
+  app Re-cluster failed and a face-model switch removed the faces and then
+  could not group the new ones. The build now includes it, refuses to build
+  without it, and a test keeps every indirectly loaded module in the build.
+- **A photo where the face model finds no face is not marked unreadable.**
+  When SFace found no face, a second try with dlib ran; where dlib is not
+  installed (the Mac app) or its license is not accepted, that try failed
+  and marked the photo unreadable, which also kept people's names from
+  being placed after a model switch. A photo without a face found by SFace
+  now simply has no face, and an SFace library no longer gets dlib's
+  vectors, which are on another scale.
+- **People keep their names when clusters are renumbered.** Re-clustering
+  (a new threshold) and switching the face model both give clusters new
+  numbers. The names were moved one at a time while the new numbers
+  reused the old ones, so two people who swapped numbers lost both
+  names, and a name could land on a different person. Albums now move
+  in one order-independent pass, and a name whose cluster has no match
+  is kept, with its manual tags, as a person without faces rather than
+  left on a stranger or deleted; the activity feed says so. Two people
+  with equally strong evidence are not guessed; a person kept this way
+  is placed later only by photos where they are the only face. A
+  re-clustering renumbers the faces and moves the names in one database
+  transaction, so one that is interrupted or cannot move a name changes
+  nothing.
+- **A face-model switch keeps every name, not just the first chunk's.**
+  The switch re-extracts faces in batches of 250 photos; only the first
+  batch knew which photos each named person had, so people who appeared
+  later lost their names. The names are now parked in the same database
+  transaction as the wipe and placed once, from the complete evidence,
+  when the last batch is done (people show as "Person N" until then), so
+  a group photo seen early cannot leave a name on the wrong person. While
+  a switch is still placing names,
+  every face edit (re-cluster, merge, split, dismiss, tags, face boxes)
+  and a person rename answer 409 (`blocker: face_switch`) until the
+  analysis has run to its last batch; a name that still matched no
+  cluster is kept, with its manual tags, as a person without faces (not
+  shown until the next refresh finds their photos), and the activity feed
+  says so.
+- **People found in different batches of one face run no longer merge.**
+  Face extraction works in batches of 250 photos; each batch numbered
+  its new clusters without knowing the clusters earlier batches had
+  made, so a person first seen in a later batch could take another
+  person's number. Each batch now clusters its new faces against the
+  whole library.
+- **A model switched off for analysis shows as "Off" and can be turned
+  back on.** Libraries set up on 0.1.x could carry a stored "skip pets /
+  content filter / CLIP" switch from the old Settings list; analysis
+  honoured it, the model picker showed the model as ready, and no screen
+  could flip it back. The picker now shows "Off — skipped in analysis"
+  for such a model and offers "Use in analysis" / "Skip in analysis" in
+  its row menu. The install confirms now name the packages they will
+  install, and that package list is owner-only like the rest of the
+  install state.
+- **An import survives being interrupted.** The database rows were
+  written only after the whole copy, and quitting the desktop app kills
+  the server after three seconds, so an import stopped late left
+  thousands of copied files with no record, and the next import copied
+  them all again under numbered names. Rows are now written as the copy
+  goes, a file an interrupted import had copied is recorded instead of
+  copied again, Cancel stops the copy between files and keeps what is
+  done, and half-copied `.tmp` files are cleaned up.
+- **A camera RAW with saved edits is shown edited.** The full-size view
+  and the thumbnail of a RAW file showed the plain conversion; the edits
+  step never ran for that format. Edits now apply on top of the
+  conversion, as for every other format (the editor still gets the
+  original), and saving an edit no longer throws the slow RAW conversion
+  away.
+- **Import takes camera RAW photos and videos.** The app's Import picked
+  up only JPEG, PNG and HEIC files: a folder of RAW photos or videos
+  imported nothing ("0 found"), with no setting to change it. Import,
+  scan and analysis now take every supported photo, RAW and video format
+  by default; `scan_extensions` in the config file still narrows it,
+  now for `bpp analyze` too (it used to ignore the file's list). The short
+  motion clip an iPhone Live Photo exports next to each photo
+  (`IMG_4214.HEIC` + `IMG_4214.MOV`) is skipped like the other Live Photo
+  sidecars unless "Import Live Photo motion sidecars" is on.
+- **A camera RAW exports as JPEG, PNG or at a smaller size.** Those export
+  choices opened a RAW with the plain image reader, which can't decode
+  it, so the photo failed the export. They now use the RAW reader, as the
+  default export did; a RAW comes out as JPEG unless PNG is chosen. With
+  metadata kept, the RAW's date, camera and location go along (a maker
+  note too large for a JPEG is left out), and a smaller export decodes the
+  RAW at half size.
+- **A resized HEIC export no longer keeps its location.** Exporting a HEIC
+  in its original format at a smaller size kept the owner's name, GPS
+  location and other metadata although metadata removal was on, and the
+  export reported it clean. Removal now drops all of it for every format,
+  and a resized HEIC comes out as JPEG, as the metadata-removal copy
+  already made it (writing HEIC could also crash the app).
+- **Exports keep the colour profile and, when asked, all the metadata.**
+  Converted or resized JPEG and WebP exports lost the photo's colour
+  profile (wide-colour phone photos came out dull). With metadata kept,
+  converted photos lost their XMP (captions, credits) and resized TIFFs
+  lost their EXIF. With metadata removal on, the full-size copy and the
+  gallery thumbnails kept a photo's embedded comment, and a CMYK photo
+  couldn't be exported as PNG. Every exported image now keeps its colour
+  profile (unless its pixels change colour space), and keeps or drops the
+  EXIF, XMP and comment together, as chosen, PNG included. A resized
+  export in the original format now uses the chosen quality (it was
+  always 75).
+- **RAW photos stay marked as RAW.** Scoring a photo blanked the RAW mark
+  the import gave it, so imported RAW photos were missing from the RAW
+  filter, and the library statistics counted no plain photos. A photo's
+  RAW and video marks now always follow its file type.
+
 ## [0.2.1] — 2026-10-23
 
 ### Fixed
@@ -445,7 +584,8 @@ External calls are limited to documented features:
   desktop wrapper currently builds only the macOS bundle.
 - Python 3.11 only (CI tests this version; 3.12+ is unvalidated).
 
-[Unreleased]: https://github.com/Arkalogy/best-photo-picker/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/Arkalogy/best-photo-picker/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/Arkalogy/best-photo-picker/releases/tag/v0.2.2
 [0.2.1]: https://github.com/Arkalogy/best-photo-picker/releases/tag/v0.2.1
 [0.2.0]: https://github.com/Arkalogy/best-photo-picker/releases/tag/v0.2.0
 [0.1.2]: https://github.com/Arkalogy/best-photo-picker/releases/tag/v0.1.2

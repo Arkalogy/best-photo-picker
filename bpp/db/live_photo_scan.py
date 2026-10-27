@@ -217,10 +217,21 @@ def filter_sidecar_paths(paths: list[str]) -> tuple[list[str], list[str]]:
     filename) is ALSO in the input list.  This avoids silently dropping
     files when the user imports only the sidecar and not the parent.
 
+    A video named like a photo in the same folder (``IMG_4214.HEIC`` +
+    ``IMG_4214.MOV``, how iPhone Live Photos export) is that photo's
+    motion clip and is skipped the same way.
+
     Returns:
         non_sidecars: paths to import normally
         sidecars: paths that were identified as sidecars and skipped
     """
+    from bpp.constants import PHOTO_EXTENSIONS, RAW_EXTENSIONS, VIDEO_EXTENSIONS
+
+    stills = {
+        (os.path.dirname(p), os.path.splitext(os.path.basename(p))[0].lower())
+        for p in paths
+        if os.path.splitext(p)[1].lower() in PHOTO_EXTENSIONS | RAW_EXTENSIONS
+    }
     # Build a set of (dir, lower_filename) for fast parent lookup
     all_names: set[tuple[str, str]] = set()
     for p in paths:
@@ -233,6 +244,10 @@ def filter_sidecar_paths(paths: list[str]) -> tuple[list[str], list[str]]:
 
     for p in paths:
         filename = os.path.basename(p)
+        stem, ext = os.path.splitext(filename)
+        if ext.lower() in VIDEO_EXTENSIONS and (os.path.dirname(p), stem.lower()) in stills:
+            sidecars.append(p)  # a Live Photo's motion clip
+            continue
         result = is_live_photo_sidecar_filename(filename)
         if result is None:
             non_sidecars.append(p)

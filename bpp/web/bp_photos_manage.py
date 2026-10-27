@@ -168,7 +168,7 @@ def api_enhance_photos() -> tuple[Response, int]:
         # Invalidate cached full photo and thumbnail
         if ctx.thumbs:
             h = ctx.thumbs.get_hash(fp)
-            invalidate_photo_cache(ctx, h, content_hash=sha256_map.get(fp))
+            invalidate_photo_cache(ctx, h, content_hash=sha256_map.get(fp), edits_only=True)
         enhanced += 1
 
     ctx.invalidate_enhanced_cache()
@@ -210,7 +210,7 @@ def api_reset_edits() -> tuple[Response, int]:
         reset += reset_photo_edits(conn, photo_id)
         if ctx.thumbs:
             h = ctx.thumbs.get_hash(fp)
-            invalidate_photo_cache(ctx, h, content_hash=sha256_map.get(fp))
+            invalidate_photo_cache(ctx, h, content_hash=sha256_map.get(fp), edits_only=True)
 
     ctx.invalidate_enhanced_cache()
     _refresh_edit_albums(conn)
@@ -319,7 +319,7 @@ def api_save_edits() -> tuple[Response, int]:
         h = ctx.thumbs.get_hash(filepath)
         sha = photo.get("sha256") or ""
         c_hash = sha[:HASH_PREFIX_LEN] if sha else None
-        invalidate_photo_cache(ctx, h, content_hash=c_hash)
+        invalidate_photo_cache(ctx, h, content_hash=c_hash, edits_only=True)
 
     return jsonify({"status": "ok"}), 200
 

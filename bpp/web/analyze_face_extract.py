@@ -389,6 +389,8 @@ def run_face_extraction_subprocess(
             progress_total=total,
             cancel_event=cancel_event,
         )
+        cancelled = parent_token is not None and parent_token.is_set()
+        _finish_name_placement(db_path, completed=_ok and not cancelled)
         return faces_found, face_clusters, pid
 
     # Architecture #1: chunked subprocesses (memory-safe for the
@@ -414,6 +416,8 @@ def _run_chunked(
     total_faces = 0
     last_clusters = 0
     last_pid: int | None = None
+    cancelled = False
+    all_ok = True
 
     for start in range(0, total, chunk_size):
         # Between-chunk cancel check. Without this, a 5,000-photo
@@ -425,6 +429,7 @@ def _run_chunked(
                 (start // chunk_size) + 1,
                 (total + chunk_size - 1) // chunk_size,
             )
+            cancelled = True
             break
         chunk = with_faces[start : start + chunk_size]
         log.info(
@@ -443,11 +448,9 @@ def _run_chunked(
             cancel_event=cancel_event,
         )
         last_pid = pid
-        # Each chunk re-runs clustering over ALL embeddings in the DB
-        # (extract_and_cluster_faces is incremental-cluster aware), so
-        # the LAST chunk's cluster count is the authoritative number.
-        # `faces_found` accumulates across chunks because it counts
-        # newly-extracted faces in each call.
+        all_ok = all_ok and ok
+        # Each chunk clusters against the whole library (phase 6): the LAST
+        # chunk's cluster count is authoritative; faces_found accumulates.
         total_faces += chunk_faces
         # Only update cluster count when the chunk actually found faces —
         # a trailing chunk with 0 faces returns 0 clusters, which would
@@ -456,8 +459,7 @@ def _run_chunked(
             last_clusters = chunk_clusters
         if not ok:
             log.warning(
-                "Face extraction chunk %d failed — continuing with next chunk. "
-                "Already-written embeddings are kept; the user can retry.",
+                "Face extraction chunk %d failed — continuing; written embeddings are kept",
                 (start // chunk_size) + 1,
             )
 
@@ -467,4 +469,31 @@ def _run_chunked(
         total_faces,
         last_clusters,
     )
+    cancelled = cancelled or (parent_token is not None and parent_token.is_set())
+    _finish_name_placement(db_path, completed=all_ok and not cancelled)
     return total_faces, last_clusters, last_pid
+
+
+def _finish_name_placement(db_path: str, *, completed: bool) -> None:
+    """After a face-model switch: once every chunk of the run succeeded and
+    nothing was cancelled, place what the complete evidence decides, keep
+    the rest as people without faces and clear the record. A cancelled or
+    partly failed run keeps it: photos never processed say nothing about
+    their people, and the next extraction (allowed while pending) resumes."""
+    from bpp.db.face_name_placement import switch_pending
+
+    try:
+        from bpp.db.connection import get_db
+
+        conn = get_db(db_path)
+        if not switch_pending(conn):
+            return
+        if not completed:
+            log.info("Face-model switch not finished; names still to place are kept")
+            return
+        from bpp.db.face_identity_remap import _snapshot_cluster_photos
+        from bpp.db.face_name_placement import finish_switch
+
+        finish_switch(conn, _snapshot_cluster_photos(conn))
+    except Exception:
+        log.warning("Could not finish placing the names after the face run", exc_info=True)

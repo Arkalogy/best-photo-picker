@@ -371,14 +371,36 @@ def extract_face_embeddings(
     if result is not None:
         return result
 
-    # Fall back to dlib (uses detect_faces_with_confidence which includes SCRFD)
-    return _extract_dlib(
-        image,
-        min_confidence,
-        embedding_confidence,
-        min_quality=min_embedding_quality,
-        model_toggles=model_toggles,
-    )
+    # SFace itself is unavailable (no faces is an empty list): dlib
+    # instead (uses detect_faces_with_confidence, which includes SCRFD).
+    # A dlib whose license is not accepted cannot run either: the photo
+    # simply has no face found, it is not unreadable (an unreadable photo
+    # holds back the people a face-model switch could place).
+    from bpp.registry.policy import ModelLoadBlockedError
+
+    try:
+        return _extract_dlib(
+            image,
+            min_confidence,
+            embedding_confidence,
+            min_quality=min_embedding_quality,
+            model_toggles=model_toggles,
+        )
+    except ModelLoadBlockedError as exc:
+        if _get_sface_recognizer() is None:
+            raise  # SFace itself is missing: this photo was not processed at all
+        _log_fallback_blocked_once(exc)
+        return []
+
+
+_fallback_blocked_logged = False
+
+
+def _log_fallback_blocked_once(exc: Exception) -> None:
+    global _fallback_blocked_logged
+    if not _fallback_blocked_logged:
+        _fallback_blocked_logged = True
+        log.info("SFace found no face; the dlib second try is not available (%s)", exc)
 
 
 _unknown_method_warned: set[str] = set()
@@ -421,6 +443,15 @@ def _embed_not_directly_callable(*_args, **_kwargs):
     )
 
 
+# Default grouping distance per built-in embedder, measured on 365 family
+# photos (15 shoots, 889 hand-labelled faces of 74 people): the loosest
+# value at which nearly every face pair grouped together is one person.
+# Splitting a person is fixed with a merge; a group that mixes two people
+# puts the wrong photos under a name, so these lean strict.
+SFACE_CLUSTER_THRESHOLD = 0.70
+DLIB_CLUSTER_THRESHOLD = 0.40
+BUFFALO_S_CLUSTER_THRESHOLD = 0.75
+
 register_embedder(
     FaceEmbedder(
         name="sface",
@@ -428,6 +459,7 @@ register_embedder(
         embedding_dim=128,
         registry_id="sface_yunet",
         description="OpenCV SFace — primary, fast",
+        cluster_threshold=SFACE_CLUSTER_THRESHOLD,
     ),
     builtin=True,
 )
@@ -438,6 +470,7 @@ register_embedder(
         embedding_dim=128,
         registry_id="dlib_face_recognition_resnet_v1",
         description="face_recognition / dlib fallback (requires bppicker[faces])",
+        cluster_threshold=DLIB_CLUSTER_THRESHOLD,
     ),
     builtin=True,
 )
@@ -448,6 +481,7 @@ register_embedder(
         embedding_dim=512,
         registry_id="insightface_buffalo_s",
         description="InsightFace buffalo_s — MobileFaceNet ArcFace (512-d)",
+        cluster_threshold=BUFFALO_S_CLUSTER_THRESHOLD,
     ),
     builtin=True,
 )

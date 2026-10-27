@@ -99,6 +99,24 @@ describe("_showImportSummary", () => {
     expect(lastToast()?.textContent).toContain('from "vacation_2024"');
   });
 
+  test("files recovered from an interrupted import count as imported and are named", () => {
+    _showImportSummary({ imported: 0, adopted: 4, skipped: 2 });
+    expect(lastToast()?.textContent).toBe(
+      "Imported 4 photos (4 recovered from an interrupted import, 2 duplicates skipped)"
+    );
+  });
+
+  test("a cancelled import says it stopped and that the copies are kept", () => {
+    _showImportSummary({ imported: 2, cancelled: true });
+    expect(lastToast()?.textContent).toContain("Import stopped after 2 photos");
+    expect(lastToast()?.textContent).toContain("import the folder again");
+  });
+
+  test("an import stopped before any photo was added does not claim photos are kept", () => {
+    _showImportSummary({ imported: 0, adopted: 0, cancelled: true });
+    expect(lastToast()?.textContent).toBe("Import stopped before any photos were added.");
+  });
+
   test("appends skipped + errors as parens-list", () => {
     _showImportSummary({ imported: 5, skipped: 3, errors: 2 });
     expect(lastToast()?.textContent).toContain("3 duplicates skipped");

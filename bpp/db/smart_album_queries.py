@@ -20,6 +20,7 @@ from __future__ import annotations
 import sqlite3
 
 from bpp.constants import ACTIVE_PHOTO_SQL, active_photo_sql
+from bpp.db.sql_batches import rows_in
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -267,11 +268,7 @@ def _get_document_ids(conn: sqlite3.Connection, _rule: dict) -> list[int]:
     ]
     if not matching:
         return []
-    placeholders = ", ".join(["?"] * len(matching))
-    rows = conn.execute(
-        f"SELECT id FROM photos WHERE id IN ({placeholders}) AND {_ACTIVE}",
-        matching,
-    ).fetchall()
+    rows = rows_in(conn, f"SELECT id FROM photos WHERE id IN ({{ph}}) AND {_ACTIVE}", matching)
     return [r[0] for r in rows]
 
 

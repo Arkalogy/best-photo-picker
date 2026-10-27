@@ -19,7 +19,7 @@ from bpp.errors import BppError, ForbiddenError, NotFoundError, ValidationError
 from bpp.media_types import MediaKind, media_kind_from_path
 from bpp.utils.logging import get_logger
 from bpp.web.media_support import raw_full_jpeg_path, raw_preview_error
-from bpp.web.photo_cache import invalidate_photo_cache
+from bpp.web.photo_cache import cached_variant_path, invalidate_photo_cache
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx
 
@@ -70,7 +70,7 @@ def serve_thumbnail(path_hash: str) -> Response | tuple[Response, int]:
     # Fast path: if an edited thumbnail cache file exists, serve it without DB query.
     # Only query DB for edits when the cache file is missing or stale.
     cache_dir = ctx.thumbs.cache_dir
-    edited_path = os.path.join(cache_dir, f"{path_hash}{PHOTO_CACHE_SUFFIX_EDITED_THUMB}.jpg")
+    edited_path = cached_variant_path(cache_dir, path_hash, PHOTO_CACHE_SUFFIX_EDITED_THUMB)
     if os.path.exists(edited_path):
         stale = False
         with contextlib.suppress(OSError):
@@ -82,8 +82,12 @@ def serve_thumbnail(path_hash: str) -> Response | tuple[Response, int]:
     edits = _get_edits_for_path(ctx, filepath)
 
     if edits:
-        # Generate edited thumbnail
-        ok = _generate_cached_image(filepath, edited_path, edits=edits, thumb_size=True)
+        # Generate edited thumbnail (a camera RAW's edits apply to its
+        # full-size conversion, which PIL can open; the RAW itself it can't)
+        source = _edit_source(ctx, path_hash, filepath)
+        ok = source is not None and _generate_cached_image(
+            source, edited_path, edits=edits, thumb_size=True
+        )
         if not ok:
             log.warning("Edited thumbnail failed for %s, serving unedited", path_hash)
             # Fall back to unedited thumbnail
@@ -123,6 +127,17 @@ def api_thumbnails_clear() -> tuple[Response, int]:
     return jsonify({"status": "cleared", "count": count}), 200
 
 
+def _edit_source(ctx: Any, path_hash: str, filepath: str) -> str | None:
+    """The image a photo's edits are applied to: the file itself, or for a
+    camera RAW its cached full-size conversion (None when that can't be
+    made). One answer for the thumbnail and the full view."""
+    if media_kind_from_path(filepath) is not MediaKind.RAW:
+        return filepath
+    from bpp.utils.raw import ensure_raw_jpeg
+
+    return ensure_raw_jpeg(filepath, raw_full_jpeg_path(ctx, path_hash))
+
+
 @bp.get("/photo/<path_hash>")
 def serve_full_photo(path_hash: str) -> Response | tuple[Response, int]:
     """Serve a full-resolution JPEG for a photo, applying stored edits
@@ -148,7 +163,7 @@ def serve_full_photo(path_hash: str) -> Response | tuple[Response, int]:
     if ext in (".heic", ".jpg", ".jpeg", ".png"):
         cache_dir = ctx.thumbs.cache_dir if ctx.thumbs else ctx.ensure_workdir()
         cache_suffix = PHOTO_CACHE_SUFFIX_EDITED if edits else PHOTO_CACHE_SUFFIX_FULL
-        jpeg_path = os.path.join(cache_dir, f"{path_hash}{cache_suffix}.jpg")
+        jpeg_path = cached_variant_path(cache_dir, path_hash, cache_suffix)
         needs_gen = not os.path.exists(jpeg_path)
         if not needs_gen:
             with contextlib.suppress(OSError):
@@ -164,14 +179,35 @@ def serve_full_photo(path_hash: str) -> Response | tuple[Response, int]:
                 )
         return _safe_send_file(jpeg_path, mimetype="image/jpeg")
 
-    # RAW files: convert to JPEG via rawpy (cached)
+    # RAW files: convert to JPEG via rawpy (cached), then the saved edits
+    # on top of that conversion, like any other format.
     if media_kind_from_path(filepath) is MediaKind.RAW:
         from bpp.utils.raw import ensure_raw_jpeg
 
         jpeg_path = raw_full_jpeg_path(ctx, path_hash)
         if ensure_raw_jpeg(filepath, jpeg_path) is None:
             raise raw_preview_error(path_hash, filepath)
-        return _safe_send_file(jpeg_path, mimetype="image/jpeg")
+        if not edits:
+            return _safe_send_file(jpeg_path, mimetype="image/jpeg")
+        edited_path = cached_variant_path(
+            os.path.dirname(jpeg_path), path_hash, PHOTO_CACHE_SUFFIX_EDITED
+        )
+        ok = _generate_cached_image(jpeg_path, edited_path, edits=edits)
+        if not ok and ensure_raw_jpeg(filepath, jpeg_path) is not None:
+            # The conversion was swept between the two steps (a save on
+            # another tab): redo it once, then the edits.
+            ok = _generate_cached_image(jpeg_path, edited_path, edits=edits)
+        if not ok:
+            from bpp.utils.raw import CHECK_FILE_RECOVERY
+
+            raise BppError(
+                "Cannot convert image",
+                user_message="the saved edits couldn't be applied to this photo's converted image",
+                diagnostic_message=f"edited RAW generation failed for {filepath}",
+                path_hash=path_hash,
+                recovery=CHECK_FILE_RECOVERY,
+            )
+        return _safe_send_file(edited_path, mimetype="image/jpeg")
 
     return _safe_send_file(filepath, mimetype="image/jpeg")
 

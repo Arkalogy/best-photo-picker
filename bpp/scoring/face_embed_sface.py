@@ -41,8 +41,8 @@ def _extract_sface(
     deduplication.  Stops when all detections are confident, no new
     faces are found, or we hit ``FACE_CONFIDENCE_FLOOR``.
 
-    Returns list of {bbox, embedding, quality} dicts, or None if SFace
-    unavailable.
+    Returns list of {bbox, embedding, quality} dicts (empty when the
+    photo shows no face), or None if SFace is unavailable.
     """
     from bpp.scoring.face_embed_detect import detect_face_rows, detect_inverted_face
 
@@ -60,7 +60,10 @@ def _extract_sface(
     )
 
     if not all_raw:
-        return None  # no faces found — let caller try dlib fallback
+        # No face. Never a dlib second try: its vectors are on another
+        # scale (the library groups with SFace's distance), and a missing
+        # dlib install would turn every faceless photo into a failure.
+        return []
 
     if len(all_raw) > MAX_FACES_PER_PHOTO:
         log.info(

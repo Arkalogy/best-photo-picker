@@ -158,10 +158,11 @@ intended call timing for `setup()`:
     raises is logged once at WARNING and skipped. A `toggle_key` (a
     detector's or a scorer's) is a real switch: `POST
     /api/v1/models/toggle` accepts it, the analysis run reads it from
-    the library's settings, and the Settings → ML Models list shows
-    the switch on the plugin model's row when the model file's legal
-    entry is the one the detector names in `registry_id` (a scorer:
-    set `ScorerDef.registry_id`).
+    the library's settings, and the model picker (Settings → Models)
+    shows "Skip in analysis" / "Use in analysis" in the plugin model's
+    row menu, and an "Off" status while it is switched off, when the
+    model file's legal entry is the one the detector names in
+    `registry_id` (a scorer: set `ScorerDef.registry_id`).
   - A **face embedder** runs when the library's `face_embedding_method`
     setting is set to its `name`: BPP detects faces as usual and calls
     `embed(image, (x, y, w, h))` for each one. Embeddings from one

@@ -11,10 +11,10 @@
 
 import { FACE_EMBEDDER_METHOD_VALUE, LEGACY_FEATURE_MAP } from "./face-embedders-catalog.mjs";
 import { _withoutGuesses } from "./face-embedders-guesses.mjs";
+import { _onDiskFacts } from "./face-embedders-row-facts.mjs";
 import { licenseBlocker, licenseFacts } from "./face-embedders-license.mjs";
 import { feState } from "./face-embedders-state.mjs";
 import { _formatBytes } from "./format-helpers.mjs";
-import { escapeAttr, esc } from "./text-format.mjs";
 
 // Status + size cells live in face-embedders-cells.mjs (500-LOC cap).
 
@@ -119,6 +119,10 @@ export const ROW_LIFECYCLE = Object.freeze({
  *   installLabel: string,
  *   installStatus: string | undefined,
  *   installHint: string | undefined,
+ *   toggleKey: string | null,
+ *   switchedOff: boolean,
+ *   speedImpact: string,
+ *   qualityImpact: string,
  *   sizeBytes: number,
  *   expectedSize: number,
  * }}
@@ -165,25 +169,11 @@ export function _deriveRowState(entry, install) {
     licenseUnknown,
   } = licenseFacts(entry?.id, restricted, loadState);
 
-  const files = Array.isArray(install?.files) ? install.files : [];
-  const hasDownloadable = files.some((f) => f && f.name);
-  const filesOnDisk = files.some((f) => f && f.exists && f.name);
-  const isCatalog = !install;
-  // Authoritative "weights come via the catalog ensure-weights endpoint"
-  // signal from the backend. Independent of whether a (fileless) legacy
-  // install record is attached — LaMa / NudeNet have BOTH a legacy row
-  // (empty file list) AND catalog fetch, so the old `!install` inference
-  // misrouted them and dropped their Download action.
-  const isCatalogEntry = live?.is_catalog_entry === true;
-  const catalogOnDisk = entry?.catalog_on_disk === true;
-  // OR, not "isCatalog && catalogOnDisk": catalog_on_disk is the real
-  // on-disk truth for catalog entries and is false for non-catalog ones,
-  // so consult it regardless of whether a legacy record is attached.
-  // The old guard ignored it whenever a fileless legacy row existed,
-  // leaving LaMa / NudeNet stuck at "Not downloaded" even once fetched.
-  // Weights shipped inside an installed library (the Haar cascade in
-  // opencv-python) are always present.
-  const onDisk = filesOnDisk || catalogOnDisk || entry?.ships_with_runtime === true;
+  const { files, hasDownloadable, isCatalog, isCatalogEntry, onDisk } = _onDiskFacts(
+    entry,
+    install,
+    live,
+  );
 
   // Lifecycle: exactly one value. Order matters — the picked-row
   // states take priority over the not-picked equivalents because
@@ -197,6 +187,13 @@ export function _deriveRowState(entry, install) {
   const installUnknown = !!feState.unknown.install && !!legacyLabel;
   const methodUnknown = !!feState.unknown.method && isFaceEmbedder && methodValue !== undefined;
   const unknown = installUnknown || methodUnknown || licenseUnknown;
+  // The run toggle (``model_pets`` …) is one setting the analysis honours
+  // for every model that has one; the server reports it on the install
+  // record as ``enabled``. It is a flag on top of the lifecycle, not a
+  // lifecycle: a switched-off model keeps showing what else blocks it
+  // (runtime, download, license) so the menu keeps offering the fix.
+  const toggleKey = typeof install?.toggle_key === "string" ? install.toggle_key : null;
+  const switchedOff = toggleKey !== null && install?.enabled === false;
 
   /** @type {RowLifecycle} */
   let lifecycle;
@@ -258,6 +255,10 @@ export function _deriveRowState(entry, install) {
     installLabel: install?.label || entry?.display_name || "",
     installStatus: install?.status,
     installHint: install?.install_hint,
+    toggleKey,
+    switchedOff,
+    speedImpact: typeof install?.speed_impact === "string" ? install.speed_impact : "",
+    qualityImpact: typeof install?.quality_impact === "string" ? install.quality_impact : "",
     sizeBytes:
       install && typeof install.size_bytes === "number"
         ? install.size_bytes
@@ -284,7 +285,11 @@ export function _deriveRowState(entry, install) {
  *      RUNNING-eligible. "In use ✓" shows only when actually RUNNING;
  *      a picked-but-blocked row gets a disabled "Use this model" with
  *      the specific blocker spelled out in the sub-line.
- *   4. Uninstall — enabled when weights are on disk.
+ *   4. Run switch (rows with a ``model_*`` toggle) — "Use in analysis"
+ *      while switched off (unless the model is withdrawn), "Skip in
+ *      analysis" only while it is RUNNING; nothing for a row that can't
+ *      run anyway.
+ *   5. Uninstall — enabled when weights are on disk.
  *
  * @param {object} entry  registry entry
  * @param {ReturnType<typeof _deriveRowState>} state
@@ -396,7 +401,35 @@ export function _buildMenuFromState(entry, state) {
     }
   }
 
-  // 4. Uninstall — enabled when weights are on disk.
+  // 4. Run switch — models with a ``model_*`` toggle. Off → offer to turn
+  //    it back on (the only way back since the old Settings list went),
+  //    unless the model is withdrawn and can't run; on and RUNNING →
+  //    offer to skip it, saying what the analysis loses. A row that is
+  //    not running for another reason gets no switch to mislead with.
+  if (state.toggleKey) {
+    const name = entry?.display_name || state.installLabel;
+    if (state.switchedOff && !state.unavailable) {
+      items.push({
+        label: "Use in analysis",
+        sub: _speedSub(state.speedImpact),
+        needs: ["install"],
+        action: "setModelRunToggle",
+        args: [state.toggleKey, "true", name],
+        enabled: true,
+      });
+    } else if (!state.switchedOff && lc === ROW_LIFECYCLE.RUNNING) {
+      items.push({
+        label: "Skip in analysis",
+        sub: state.qualityImpact ? `Loses: ${state.qualityImpact}` : null,
+        needs: ["install"],
+        action: "setModelRunToggle",
+        args: [state.toggleKey, "false", name],
+        enabled: true,
+      });
+    }
+  }
+
+  // 5. Uninstall — enabled when weights are on disk.
   items.push({
     label: "Uninstall",
     sub: state.onDisk ? null : "Not installed",
@@ -408,6 +441,17 @@ export function _buildMenuFromState(entry, state) {
   });
 
   return _withoutGuesses(items, state);
+}
+
+/**
+ * The server's ``speed_impact`` ("low" / "medium" / "high") as a sub-line
+ * for turning a model back on.
+ * @param {string} impact
+ * @returns {string | null}
+ */
+function _speedSub(impact) {
+  const words = { low: "a little", medium: "some", high: "a lot of" }[impact];
+  return words ? `Adds ${words} analysis time` : null;
 }
 
 /**
@@ -424,35 +468,4 @@ export function _buildMenuFromState(entry, state) {
  */
 export function _buildActionMenu(entry, install, ..._legacyArgs) {
   return _buildMenuFromState(entry, _deriveRowState(entry, install));
-}
-
-/**
- * Render one ⋯-menu item from a descriptor produced by
- * ``_buildActionMenu``. Disabled items carry no ``data-action`` (so a
- * click is a true no-op) and a muted sub-line explaining why they're
- * unavailable; completed items get a ✓.
- *
- * @param {object} item
- * @returns {string}
- */
-export function _renderMenuItem(item) {
-  const cls = [
-    "fe-menu-item",
-    item.danger && item.enabled ? "fe-menu-danger" : "",
-    item.done ? "fe-menu-done" : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-  const check = item.done ? ' <span class="fe-menu-check">✓</span>' : "";
-  const labelHtml = `<span class="fe-menu-label">${esc(item.label)}${check}</span>`;
-  const subHtml = item.sub
-    ? `<span class="fe-menu-sub">${esc(item.sub)}</span>`
-    : "";
-  if (!item.enabled) {
-    return `<button class="${cls}" disabled>${labelHtml}${subHtml}</button>`;
-  }
-  const args = (item.args || [])
-    .map((a, i) => `data-arg${i}="${escapeAttr(String(a))}"`)
-    .join(" ");
-  return `<button class="${cls}" data-action="${escapeAttr(item.action)}" ${args}>${labelHtml}${subHtml}</button>`;
 }

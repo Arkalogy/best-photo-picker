@@ -40,8 +40,9 @@ const RESTRICTED_NON_FACE_ENTRY_ID = "ultralytics_yolov11n_pets";
 async function openModelsTab(page) {
   await page.locator("#btn-settings-toolbar").click();
   await expect(page.locator("#settings-overlay")).toBeVisible({ timeout: 5000 });
-  // The Models picker is its own Settings tab.
-  await page.locator("[data-action='switchSettingsTab'][data-arg0='models']").click();
+  // The Models picker is its own Settings tab (the tab button: the dlib
+  // note's "Open Models" button switches to it too).
+  await page.locator(".settings-tab[data-tab='models']").click();
   await expect(page.locator("#face-embedder-picker tr.fe-row").first()).toBeVisible({
     timeout: 10000,
   });

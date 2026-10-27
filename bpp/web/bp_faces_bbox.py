@@ -34,6 +34,7 @@ from bpp.db.face_cluster_ops import sync_face_count as _sync_face_count
 from bpp.db.photos import get_photo_id_by_path
 from bpp.db.smart_albums import get_affected_album_types, refresh_smart_albums
 from bpp.errors import BppError, NotFoundError, ValidationError
+from bpp.scoring.face_threshold import face_threshold
 from bpp.utils.logging import get_logger
 
 # Five named helpers extracted to face_create_helpers.py to keep this
@@ -143,7 +144,7 @@ def api_faces_create() -> tuple[Response, int]:
     new_quality = float(result["quality"])
 
     # 3. Duplicate guard.
-    emb_thresh = float(cfg_get(ctx.config, "face_cluster_threshold"))
+    emb_thresh = face_threshold(conn)
     _detect_duplicate_face(conn, photo_id, new_bbox, new_emb, emb_thresh)
 
     # 4. Insert face row (+ optional smart_person album), commit.

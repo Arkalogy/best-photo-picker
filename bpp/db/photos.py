@@ -8,6 +8,7 @@ from typing import Any
 
 from bpp.constants import ACTIVE_PHOTO_SQL, visible_photo_conditions
 from bpp.db.sql_batches import in_batches
+from bpp.media_types import media_flags
 from bpp.scoring.registry import get_score_db_columns
 from bpp.utils.logging import get_logger
 from bpp.utils.retry import retry_io
@@ -127,8 +128,6 @@ def upsert_photo(conn: sqlite3.Connection, photo: dict[str, Any]) -> int:
         "exif_json",
         "gps_lat",
         "gps_lon",
-        "is_video",
-        "is_raw",
         "video_duration",
         "video_width",
         "video_height",
@@ -137,6 +136,7 @@ def upsert_photo(conn: sqlite3.Connection, photo: dict[str, Any]) -> int:
     ):
         if col in photo:
             values[col] = photo[col]
+    values.update(media_flags(photo))
 
     # Live Photo sidecar columns — default to 0 / NULL so callers that
     # predate v33 (analysis.json importers, test fixtures, etc.) don't
@@ -382,15 +382,14 @@ def bulk_upsert_photos(conn: sqlite3.Connection, photos: list[dict[str, Any]]) -
             "exif_json",
             "gps_lat",
             "gps_lon",
-            "is_video",
             "video_duration",
             "video_width",
             "video_height",
             "video_fps",
             "video_codec",
-            "is_raw",
         ):
             values[col] = photo.get(col)
+        values.update(media_flags(photo))
         # same lift-from-exif fallback as upsert_photo
         _maybe_lift_gps_from_exif(values)
         # Live Photo sidecar — default 0 for callers that predate v33

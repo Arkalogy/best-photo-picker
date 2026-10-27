@@ -117,6 +117,34 @@ def api_album_get(album_id: int) -> tuple[Response, int]:
     return jsonify({"album": album}), 200
 
 
+def _rename_person_identity(ctx: Any, conn: Any, album_id: int, name: str) -> dict[str, Any]:
+    """A person rename writes identity labels onto the faces of the album's
+    cluster. The album and the pending-switch check are read again under
+    the database write lock and the labels written before it is released:
+    a face-model switch (which may start in another process) cannot slip
+    in between and leave the name on whoever its cluster number means
+    then. Refuses (409) while a switch is pending. Commits."""
+    from bpp.db.smart_albums import SmartAlbumRegistry
+    from bpp.web.face_lock import refuse_while_switch_pending
+
+    if conn.in_transaction:
+        conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        album = get_album(conn, album_id)
+        if not album:
+            raise NotFoundError("Album not found", album_id=album_id)
+        refuse_while_switch_pending(ctx)
+        on_rename = SmartAlbumRegistry.get_on_rename("smart_person")
+        if on_rename is not None:
+            on_rename(conn, album, name)  # commits, ending the locked section
+    except BaseException:
+        if conn.in_transaction:
+            conn.rollback()
+        raise
+    return album
+
+
 @bp.put("/api/v1/albums/<int:album_id>")
 @requires_local_app
 def api_album_update(album_id: int) -> tuple[Response, int]:
@@ -132,6 +160,7 @@ def api_album_update(album_id: int) -> tuple[Response, int]:
         raise NotFoundError("Album not found", album_id=album_id)
     data = request.get_json(silent=True) or {}
     kwargs: dict[str, Any] = {}
+    person_rename = "name" in data and album.get("album_type") == "smart_person"
     if "name" in data:
         n = str(data["name"]).strip()
         if len(n) > 255:
@@ -153,13 +182,16 @@ def api_album_update(album_id: int) -> tuple[Response, int]:
     if "parent_id" in data:
         pid = data["parent_id"]
         kwargs["parent_id"] = int(pid) if pid is not None else None
+    if person_rename:
+        album = _rename_person_identity(ctx, conn, album_id, kwargs["name"])
     if kwargs:
         update_album(conn, album_id, **kwargs)
 
     # Smart album rename hook — registry-driven so a new album type
     # with cascading rename logic registers its callback in
-    # SmartAlbumRegistry instead of being hard-coded here.
-    if "name" in kwargs:
+    # SmartAlbumRegistry instead of being hard-coded here. (A person's
+    # hook ran above, under the write lock.)
+    if "name" in kwargs and not person_rename:
         from bpp.db.smart_albums import SmartAlbumRegistry
 
         on_rename = SmartAlbumRegistry.get_on_rename(album.get("album_type", ""))

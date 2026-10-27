@@ -62,7 +62,7 @@ from bpp.constants import (
     CLUSTER_DISMISSED,
 )
 from bpp.db.face_embedding_safety import decode_embedding
-from bpp.db.sql_batches import in_batches
+from bpp.db.sql_batches import in_batches, rows_in
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -273,14 +273,14 @@ def capture_dismissed_slots(
     extract_pids = {pid for _i, _fp, pid in need_extract}
     if not extract_pids:
         return frozenset()
-    ph = ",".join("?" * len(extract_pids))
     slots = {
         (r[0], r[1])
-        for r in conn.execute(
-            f"SELECT photo_id, face_index FROM face_embeddings "
-            f"WHERE photo_id IN ({ph}) AND cluster_id = {CLUSTER_DISMISSED}",
-            list(extract_pids),
-        ).fetchall()
+        for r in rows_in(
+            conn,
+            "SELECT photo_id, face_index FROM face_embeddings "
+            f"WHERE photo_id IN ({{ph}}) AND cluster_id = {CLUSTER_DISMISSED}",
+            extract_pids,
+        )
     }
     if slots:
         log.info("Preserving %d dismissed face slots during re-extraction", len(slots))
@@ -348,12 +348,24 @@ def reconstruct_identities(
     outside the SAVEPOINT because they're best-effort and already
     wrapped in their own try/except.
     """
+    from bpp.db.face_name_placement import switch_pending
+
     conn.execute("SAVEPOINT phase7_reconstruct")
     try:
         reconstruct_identities_fn(conn)
 
-        # Legacy fallback: remap by photo-overlap if identity labels not available
-        if snapshot.old_cluster_photos is not None:
+        # During a face-model switch the names stay parked: they are placed
+        # once, from the complete clusters, when the whole run has finished
+        # (finish_switch), never batch by batch.
+        if (
+            not switch_pending(conn)
+            and snapshot.old_cluster_photos is not None
+            and not snapshot.method_changed
+        ):
+            # Stale photos re-extracted without a switch: remap by overlap.
+            # (After a switch the record owns the names; once it is gone
+            # the placement happened, and a replay of this phase after a
+            # crash must not remap the already-moved albums again.)
             new_cluster_photos = _snapshot_cluster_photos(conn)
             remap_names_and_tags_fn(conn, snapshot.old_cluster_photos, new_cluster_photos)
     except Exception:

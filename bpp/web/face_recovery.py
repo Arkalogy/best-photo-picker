@@ -37,6 +37,29 @@ from bpp.utils.logging import get_logger
 log = get_logger(__name__)
 
 
+def _finish_switch_now(conn: sqlite3.Connection) -> None:
+    """End a pending face-model switch on the clusters as they are now."""
+    from bpp.db.face_identity_remap import _snapshot_cluster_photos
+    from bpp.db.face_name_placement import finish_switch
+
+    finish_switch(conn, _snapshot_cluster_photos(conn))
+
+
+def _give_up_run(conn: sqlite3.Connection, run_id: str) -> None:
+    """Stop retrying a run. The switch it was placing ends first (names
+    kept, guard lifted, nothing placed from a run that never completed); a
+    failure there leaves both the switch and the run for the next startup."""
+    from bpp.db.face_name_placement import finish_switch
+    from bpp.web import face_extraction_journal as journal
+
+    try:
+        finish_switch(conn)
+    except Exception:
+        log.warning("Recovery: could not end the face-model switch", exc_info=True)
+        return
+    journal.force_complete_after_retries(conn, run_id)
+
+
 def recover_pending_face_extractions(
     conn: sqlite3.Connection, *, ctx: Any = None, cancel_event: Any = None
 ) -> int:
@@ -90,7 +113,7 @@ def recover_pending_face_extractions(
                 run_id,
                 journal.MAX_RECOVERY_RETRIES,
             )
-            journal.force_complete_after_retries(conn, run_id)
+            _give_up_run(conn, run_id)
             continue
 
         try:
@@ -114,7 +137,10 @@ def recover_pending_face_extractions(
                 continue
             with_faces = [a for a in analysis if (a.get("face_count") or 0) > 0]
             if not with_faces:
-                # Nothing to recover — close the row.
+                # Nothing to recover: a switch the run was placing names
+                # for ends (nothing left to find), then the row closes; a
+                # failed finish leaves the row for the next startup.
+                _finish_switch_now(conn)
                 journal.complete_run(conn, run_id)
                 continue
             from bpp.db.photos import get_photo_id_map_by_paths
@@ -161,6 +187,8 @@ def recover_pending_face_extractions(
                 break
             resumed += 1
             log.info("Recovery: resumed face extraction run %s to completion", run_id)
+            # A switch interrupted by the crash ends with the resumed run.
+            _finish_switch_now(conn)
         except BppError as e:
             # A deliberate stop (model changed or unavailable), not a crash.
             log.warning("Recovery: face extraction run %s stopped: %s", run_id, e.user_message)

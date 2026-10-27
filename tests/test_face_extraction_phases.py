@@ -40,6 +40,7 @@ def _build_schema(conn: sqlite3.Connection) -> None:
         f" cluster_id INTEGER NOT NULL DEFAULT {CLUSTER_UNASSIGNED},"
         " extraction_max_long_side INTEGER,"  # v40 bbox-scale hardening
         " producing_model_id TEXT,"  # v41 derived-data purge
+        " user_confirmed INTEGER DEFAULT 0,"
         " UNIQUE(photo_id, face_index)"
         ")"
     )

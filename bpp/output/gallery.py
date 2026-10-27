@@ -18,6 +18,7 @@ except ImportError:
 
 from bpp import APP_NAME
 from bpp.constants import JPEG_QUALITY_THUMB, THUMBNAIL_MAX_SIZE
+from bpp.output.export_pixels import scrubbed
 from bpp.utils.fresh_file import replace_fresh
 from bpp.utils.logging import get_logger
 from bpp.utils.paths import safe_join
@@ -95,8 +96,12 @@ def _make_thumbnail(src: str, dest: str, size: int = THUMBNAIL_MAX_SIZE) -> bool
                 raw.thumbnail((size, size), Image.LANCZOS)
                 img = ImageOps.exif_transpose(raw)
         img.thumbnail((size, size), Image.LANCZOS)
+        # A shared gallery carries no metadata, only the colour profile.
+        keep = scrubbed(img, to_mode="RGB")
         img = img.convert("RGB")
-        _save_atomically(img, dest, "JPEG", quality=JPEG_QUALITY_THUMB)
+        if not keep:
+            img.info.pop("icc_profile", None)
+        _save_atomically(img, dest, "JPEG", quality=JPEG_QUALITY_THUMB, **keep)
         return True
     except Exception as e:
         log.debug("Thumbnail failed for %s: %s", src, e)

@@ -408,16 +408,10 @@ def _preprocess(
     return arr.transpose(2, 0, 1)[None]
 
 
-#: Distance-scale factor applied to the L2-normalized embedding so
-#: the resulting Euclidean distances land in the same numeric range
-#: as SFace's scaled output. This lets the existing
-#: FACE_CLUSTER_THRESHOLD_FALLBACK work for buffalo_s without
-#: a per-method config knob. Calibrated heuristically: same value
-#: SFace uses (see SFACE_DISTANCE_SCALE in face_embed.py). May want
-#: separate tuning once a real photo library is available — ArcFace
-#: intra-class similarity is typically slightly tighter than SFace's,
-#: so the one cluster threshold still separates same-person from different-person
-#: clusters reliably.
+#: Distance-scale factor applied to the L2-normalized embedding (the
+#: value SFace uses) so distances sit inside the Regroup slider's range.
+#: The grouping default is measured separately per model
+#: (BUFFALO_S_CLUSTER_THRESHOLD in face_embed.py).
 _BUFFALO_S_DISTANCE_SCALE = 0.65
 
 

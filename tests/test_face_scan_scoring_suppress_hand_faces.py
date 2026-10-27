@@ -154,7 +154,7 @@ class TestExtractFaceEmbeddings:
                 return_value=[fake_encoding],
             ),
         ):
-            result = extract_face_embeddings(img)
+            result = extract_face_embeddings(img, method="dlib")
         assert len(result) == 1
         assert result[0]["embedding"].shape == (128,)
         # bbox should be (left, top, right-left, bottom-top) = (50,50,100,100)

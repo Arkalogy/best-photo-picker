@@ -81,6 +81,51 @@ def get_face_feedback(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     ]
 
 
+def clear_cluster_feedback(conn: sqlite3.Connection) -> None:
+    """Forget the corrections made against the current faces. Does NOT commit.
+
+    For a rebuild from new faces (Retry, a model switch): the hard
+    negatives name groups by cluster ids that will belong to other
+    people, and the feedback distances are on the old embedder's scale.
+    The caller clears both in the same transaction as the wipe.
+    """
+    conn.execute("DELETE FROM face_cluster_feedback")
+    conn.execute("DELETE FROM face_hard_negatives")
+
+
+def carry_hard_negatives(
+    conn: sqlite3.Connection,
+    old_faces: dict[int, set[int]],
+    new_faces: dict[int, set[int]],
+) -> None:
+    """Move each "not the same person" pair onto the clusters that now hold
+    most of its two groups' faces (Regroup renumbers, the faces stay). A
+    pair whose groups now share a cluster, or whose faces are gone, is
+    dropped. Does NOT commit: the caller's renumbering transaction does."""
+    from collections import Counter
+
+    owner = {fid: cid for cid, fids in new_faces.items() for fid in fids}
+
+    def follow(old_cid: int) -> int | None:
+        counts = Counter(owner[f] for f in old_faces.get(old_cid, ()) if f in owner)
+        return counts.most_common(1)[0][0] if counts else None
+
+    carried: dict[tuple[int, int], int] = {}
+    for a, b, n in conn.execute(
+        "SELECT cluster_id_a, cluster_id_b, count FROM face_hard_negatives"
+    ).fetchall():
+        na, nb = follow(a), follow(b)
+        if na is None or nb is None or na == nb:
+            continue
+        key = (min(na, nb), max(na, nb))
+        carried[key] = carried.get(key, 0) + n
+    conn.execute("DELETE FROM face_hard_negatives")
+    conn.executemany(
+        "INSERT INTO face_hard_negatives (cluster_id_a, cluster_id_b, count) VALUES (?, ?, ?)",
+        [(a, b, n) for (a, b), n in carried.items()],
+    )
+
+
 # ── Hard negatives ──
 
 
@@ -244,6 +289,13 @@ def compute_adaptive_face_threshold(
     info["confidence"] = round(alpha, 2)
 
     threshold = alpha * computed + (1.0 - alpha) * default
+    # Corrections may make grouping stricter, never looser than ``default``
+    # (the user's pick or the embedder's measured value): one merge of two
+    # far-apart groups would otherwise lift it to where strangers merge.
+    # Capped, nothing was learned, and the UI must not offer it as a suggestion.
+    if threshold >= default:
+        info["source"] = "default"
+        return default, info
     return round(threshold, 4), info
 
 

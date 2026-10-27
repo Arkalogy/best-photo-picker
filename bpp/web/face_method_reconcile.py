@@ -145,9 +145,10 @@ def reconcile_method(
     Without a change, only rows of the wrong size are removed (debris);
     the table is never wiped for a size mismatch alone.
 
-    Side effects: ``DELETE FROM face_embeddings`` if the method changed;
-    records ``current_method`` as both the setting and the extracted
-    method.
+    Side effects: ``DELETE FROM face_embeddings`` if the method changed,
+    with the person names parked in a pending record in the same
+    transaction (``face_name_placement.begin_switch``); records
+    ``current_method`` as both the setting and the extracted method.
     """
     stored_method, method_changed = detect_model_switch(conn, current_method)
     old_cluster_photos: dict[int, set[int]] | None = None
@@ -159,14 +160,23 @@ def reconcile_method(
             stored_method or "earlier rows",
             current_method,
         )
+        from bpp.db.face_name_placement import begin_switch
         from bpp.web.face_extraction_phases import _snapshot_cluster_photos
 
         old_cluster_photos = _snapshot_cluster_photos(conn)
-        conn.execute("DELETE FROM face_embeddings")
-
-    conn.executemany(
-        "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
-        [("face_embedding_method", current_method), (EXTRACTED_METHOD_KEY, current_method)],
-    )
-    conn.commit()
+    try:
+        if method_changed:
+            # The names are parked in the same transaction as the wipe: a
+            # crash between the two cannot lose them, and the end of the
+            # run places them from this record, not from memory.
+            begin_switch(conn, current_method, old_cluster_photos or {})
+            conn.execute("DELETE FROM face_embeddings")
+        conn.executemany(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+            [("face_embedding_method", current_method), (EXTRACTED_METHOD_KEY, current_method)],
+        )
+        conn.commit()
+    except BaseException:
+        conn.rollback()  # never a half-done park-and-wipe on the connection
+        raise
     return stored_method, method_changed, old_cluster_photos

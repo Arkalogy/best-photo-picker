@@ -294,6 +294,8 @@ function _applyStatus(st) {
       if (slider) slider.value = String(st.face_cluster_threshold);
       updateFaceThresholdLabel(st.face_cluster_threshold);
     }
+    const dlibNote = document.getElementById("face-dlib-note");
+    if (dlibNote) dlibNote.style.display = st.face_embedding_method === "dlib" ? "flex" : "none";
   }
 }
 

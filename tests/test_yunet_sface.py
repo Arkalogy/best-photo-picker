@@ -258,6 +258,11 @@ class TestEmbeddingVersionMigration:
             "  photo_id INTEGER, cluster_id INTEGER, created_at TEXT,"
             "  PRIMARY KEY (photo_id, cluster_id))"
         )
+        # Cleared when the groups are rebuilt (face_feedback.clear_cluster_feedback)
+        conn.execute("CREATE TABLE face_cluster_feedback (id INTEGER PRIMARY KEY)")
+        conn.execute(
+            "CREATE TABLE face_hard_negatives (cluster_id_a INTEGER, cluster_id_b INTEGER)"
+        )
         conn.commit()
         return conn
 

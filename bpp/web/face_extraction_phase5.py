@@ -71,6 +71,10 @@ class ExtractionOutput:
     all_records: list[tuple[str, int, int, np.ndarray]]
     cancelled_early: bool
     extracted_count: int
+    #: Photos the extractor could not process (unreadable, or crashed) —
+    #: not photos that simply have no face. A face-model switch must not
+    #: treat them as covered.
+    failed_photo_ids: frozenset[int] = frozenset()
 
 
 def extract_new_embeddings(
@@ -103,6 +107,7 @@ def extract_new_embeddings(
     all_records: list[tuple[str, int, int, np.ndarray]] = list(partition.cached_records)
     cancelled_early = False
     extracted_count = 0
+    failed: set[int] = set()
 
     need_extract = partition.need_extract
     total = progress_total
@@ -190,6 +195,8 @@ def extract_new_embeddings(
                         fp,
                     )
                     faces = None
+                if faces is None:
+                    failed.add(int(photo_id))
                 if faces:
                     extracted_count += _store_faces(
                         conn,
@@ -218,6 +225,7 @@ def extract_new_embeddings(
         all_records=all_records,
         cancelled_early=cancelled_early,
         extracted_count=extracted_count,
+        failed_photo_ids=frozenset(failed),
     )
 
 

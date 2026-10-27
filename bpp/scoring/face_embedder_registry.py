@@ -38,6 +38,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from bpp.constants import FACE_CLUSTER_THRESHOLD_FALLBACK
 from bpp.scoring._registry_base import _ScoringRegistry
 from bpp.utils.logging import get_logger
 
@@ -75,6 +76,12 @@ class FaceEmbedder:
         embedder's weights. The license is read from that entry.
 
     ``description``: one-line tooltip text. Optional.
+
+    ``cluster_threshold``: the grouping distance used when the user has
+        not picked one for this embedder (same metric as the stored
+        embeddings, lower = stricter). Each embedder spreads faces
+        differently, so one shared default groups well for some and
+        merges strangers for others; measure yours on labelled photos.
     """
 
     name: str
@@ -82,6 +89,7 @@ class FaceEmbedder:
     embedding_dim: int
     registry_id: str
     description: str = ""
+    cluster_threshold: float = FACE_CLUSTER_THRESHOLD_FALLBACK
 
     @property
     def license_label(self) -> str:

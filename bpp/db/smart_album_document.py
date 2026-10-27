@@ -18,6 +18,7 @@ import sqlite3
 
 from bpp.constants import ACTIVE_PHOTO_SQL
 from bpp.db.smart_album_queries import DOCUMENT_CLIP_THRESHOLD, DOCUMENT_PROMPT
+from bpp.db.sql_batches import rows_in
 from bpp.utils.logging import get_logger
 
 # _ensure_smart_album / _remove_smart_album_if_exists are imported lazily
@@ -62,11 +63,9 @@ def _refresh_document_album(conn: sqlite3.Connection) -> None:
 
     # Filter to active photos only
     if matching_ids:
-        placeholders = ", ".join(["?"] * len(matching_ids))
-        rows = conn.execute(
-            f"SELECT id FROM photos WHERE id IN ({placeholders}) AND {_ACTIVE}",
-            matching_ids,
-        ).fetchall()
+        rows = rows_in(
+            conn, f"SELECT id FROM photos WHERE id IN ({{ph}}) AND {_ACTIVE}", matching_ids
+        )
         photo_ids = [r[0] for r in rows]
     else:
         photo_ids = []

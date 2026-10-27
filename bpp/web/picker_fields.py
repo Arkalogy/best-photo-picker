@@ -57,6 +57,16 @@ def picker_fields(entry: Any) -> dict[str, Any]:
             if getattr(scorer, "registry_id", None) == entry.id and scorer.toggle_key:
                 toggle = scorer.toggle_key
                 break
+    if not builtin and toggle is not None and label is None:
+        # A plugin model file's row in /api/v1/models carries its switch
+        # (toggle_key, enabled) under this label; the picker joins its row
+        # to that record by it, so the plugin's switch shows and works.
+        from bpp.scoring.model_lifecycle import fetchable_legal_id, plugin_model_entries
+
+        for model in plugin_model_entries():
+            if fetchable_legal_id(model) == entry.id:
+                label = f"Plugin model: {model.name}"
+                break
     method = None
     if entry.kind == "face_embedder":
         for emb in list_embedders():

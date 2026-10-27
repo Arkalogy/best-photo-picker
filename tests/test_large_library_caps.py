@@ -100,7 +100,10 @@ def test_face_assignment_keeps_the_new_faces_in_float32(monkeypatch):
     monkeypatch.setattr(fc, "_CHUNK_BUDGET_BYTES", 8 * 3 * 5)  # 5 rows per chunk
     labels = fir._assign_new_faces(assigned, unassigned, 0.8)
     assert labels == [i % 3 for i in range(30)]
-    assert max(sizes) <= 5, sizes
+    # One float64 copy of the clusters' sample faces, then the new faces
+    # a chunk at a time.
+    assert sizes[0] == len(assigned), sizes
+    assert max(sizes[1:]) <= 5, sizes
 
 
 def test_pass_two_block_is_bounded_by_bytes():

@@ -43,6 +43,7 @@ import {
   redownloadFaceEmbedderEntry,
   setActiveFaceEmbedder,
   setFaceEmbedderUseContext,
+  setModelRunToggle,
   uninstallFaceEmbedderEntry,
 } from "./face-embedders-actions.mjs";
 import { KIND_LABELS, KIND_ORDER, LEGACY_FEATURE_MAP } from "./face-embedders-catalog.mjs";
@@ -56,8 +57,8 @@ import {
   _buildActionMenu,
   _buildMenuFromState,
   _deriveRowState,
-  _renderMenuItem,
 } from "./face-embedders-rowstate.mjs";
+import { _renderMenuItem } from "./face-embedders-menu-render.mjs";
 import { _sizeCell, _statusCell, licenseBadge } from "./face-embedders-cells.mjs";
 import {
   _collectAcceptedIds,
@@ -90,6 +91,7 @@ export {
   ensureCatalogWeights,
   redownloadFaceEmbedderEntry,
   setActiveFaceEmbedder,
+  setModelRunToggle,
   uninstallFaceEmbedderEntry,
   ROW_LIFECYCLE,
   _buildActionMenu,
@@ -455,6 +457,7 @@ registerAction("redownloadFaceEmbedderEntry", redownloadFaceEmbedderEntry);
 registerAction("ensureCatalogWeights", ensureCatalogWeights);
 registerAction("setFaceEmbedderUseContext", setFaceEmbedderUseContext);
 registerAction("setActiveFaceEmbedder", setActiveFaceEmbedder);
+registerAction("setModelRunToggle", setModelRunToggle);
 registerAction("_feOverflowToggle", _feOverflowToggle);
 registerAction("_feLicenseInfoToggle", _feLicenseInfoToggle);
 

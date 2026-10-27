@@ -131,7 +131,7 @@ Application status and feature availability.
   "face_extraction_done": true,
   "face_needs_clustering": false,
   "face_extracting": false,
-  "face_cluster_threshold": 0.8,
+  "face_cluster_threshold": 0.7,
   "clip_available": true,
   "clip_installable": false,
   "clip_ready": true,
@@ -535,7 +535,7 @@ Export selected photos to a directory.
 |-------|------|---------|-------------|
 | `outdir` | string | **required** | Output directory path |
 | `selected_paths` | string[] | **required** | Filepaths of photos to export |
-| `fmt` | string | `"original"` | Output format: `"original"`, `"jpeg"`, `"png"` |
+| `fmt` | string | `"original"` | Output format: `"original"`, `"jpeg"`, `"png"`. A HEIC or camera RAW that is resized or converted comes out as JPEG under `"original"`. |
 | `mode` | string | `"copy"` | `"copy"`, `"hardlink"`, `"symlink"`, or `"zip"` (bundle the processed photos into a single `best-photos.zip`; honors `fmt`/`max_size`/`strip_metadata`; gallery is skipped) |
 | `max_size` | int | null | Max dimension in pixels (min 100) |
 | `quality` | int | 85 | JPEG quality 1-100 |
@@ -1176,8 +1176,8 @@ progress stream emits `cancelled` and closes.
 ### GET /api/v1/models/content-filter
 
 Whether automatic sensitive-photo detection is on right now — NudeNet's
-license is accepted (current terms, current use context) and its weights are
-on disk. A small call: the sidebar re-reads it after any model or license
+license is accepted (current terms, current use context), its weights are on
+disk and its `model_nudity` switch is on. A small call: the sidebar re-reads it after any model or license
 change instead of fetching the whole `/api/v1/status` snapshot.
 
 **Response:** `{"active": true}`
@@ -1309,8 +1309,8 @@ Owner-only. Install a whitelisted pip package at runtime (e.g.
 
 ### GET /api/v1/install/:key/info
 
-The exact pip specs the install endpoint will run for `key` — powers
-the consent dialog.
+Owner-only. The exact pip specs the install endpoint will run for
+`key` — powers the consent dialog.
 
 ### GET /api/v1/install/:key/progress
 

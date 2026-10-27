@@ -166,6 +166,7 @@ class ImportWorker(BackgroundWorker):
             batch_name=batch_name,
             on_progress=on_import_progress,
             import_live_photo_sidecars=import_live_photo_sidecars,
+            cancel_check=self._cancelled.is_set,
         )
 
         self._emit(
@@ -174,9 +175,21 @@ class ImportWorker(BackgroundWorker):
                 "imported": result.imported,
                 "skipped": result.skipped,
                 "errors": result.errors,
+                "adopted": result.adopted,
+                "cancelled": result.cancelled,
                 "batch_name": result.batch_name,
             }
         )
+
+        if result.cancelled:
+            # The copy stopped at the user's cancel; the rows written so
+            # far stay and must show (reload the analysis, end first-run),
+            # and the next Analyze scores them.
+            from bpp.web.analyze_finalize import finalize_import_in_worker
+
+            finalize_import_in_worker(self.ctx)
+            self._emit({"type": "cancelled"})
+            return
 
         if not result.imported_paths:
             self._emit(
@@ -251,6 +264,7 @@ class ImportWorker(BackgroundWorker):
                 "type": "done",
                 "finalized": self.ctx is not None,  # the stream's backstop can skip
                 "imported": result.imported,
+                "adopted": result.adopted,
                 "skipped": result.skipped,
                 "analyzed": len(valid),
             }
