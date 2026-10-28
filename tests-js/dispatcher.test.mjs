@@ -374,9 +374,7 @@ describe("dispatcher resilience: non-Element targets must not throw", () => {
   test("keydown with non-Element target is a silent no-op", () => {
     const ev = new KeyboardEvent("keydown", { key: "Escape", bubbles: true });
     Object.defineProperty(ev, "target", {
-      value: {
-        /* no closest */
-      },
+      value: {/* no closest */},
     });
     expect(() => document.dispatchEvent(ev)).not.toThrow();
   });
@@ -384,9 +382,7 @@ describe("dispatcher resilience: non-Element targets must not throw", () => {
   test("input with non-Element target is a silent no-op", () => {
     const ev = new Event("input", { bubbles: true });
     Object.defineProperty(ev, "target", {
-      value: {
-        /* no closest */
-      },
+      value: {/* no closest */},
     });
     expect(() => document.dispatchEvent(ev)).not.toThrow();
   });
@@ -395,9 +391,7 @@ describe("dispatcher resilience: non-Element targets must not throw", () => {
     for (const type of ["change", "mousedown", "mouseup", "contextmenu", "dblclick"]) {
       const ev = new Event(type, { bubbles: true });
       Object.defineProperty(ev, "target", {
-        value: {
-          /* no closest */
-        },
+        value: {/* no closest */},
       });
       expect(() => document.dispatchEvent(ev)).not.toThrow();
     }
