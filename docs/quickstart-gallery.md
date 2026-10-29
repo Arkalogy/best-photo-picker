@@ -14,9 +14,9 @@ That generates a synthetic library and launches the full UI locally. Your photos
 
 ---
 
-*The screenshots show a sample library built from stock photos of models
-([Pexels](https://www.pexels.com/license/)) plus generated test images
-(`scripts/generate_demo_library.py`), not the author's family.*
+*The screenshots show a sample library of stock photos
+([Pexels](https://www.pexels.com/license/)) and generated test images
+(`scripts/generate_demo_library.py`).*
 
 ## 1. Library grid
 
@@ -40,7 +40,7 @@ Press space or click a thumbnail to open the lightbox. Keyboard navigation (arro
 
 ![Editor](screenshots/tauri/08-editor.png)
 
-Non-destructive editing on top of the original file — crop, straighten, redeye removal, optional AI inpainting via [`bppicker[inpaint]`]. Edits are saved as a side-channel record, not written into the source bytes; the lightbox shows the edited preview but the original file on disk is untouched. The Reset button reverts; the Save button bakes the edit into a separate output when you export.
+Non-destructive editing on top of the original file — light and color adjustments (shown), auto-enhance, crop, straighten, red-eye removal, and optional object removal via [`bppicker[inpaint]`]. Edits are saved as a side-channel record, not written into the source bytes; the lightbox shows the edited preview but the original file on disk is untouched. The Reset button reverts; the Save button bakes the edit into a separate output when you export.
 
 ## 5. Face clustering
 
@@ -52,7 +52,7 @@ BPP detects faces during analysis (YuNet + BlazeFace, with dlib as a fallback an
 
 ![Calendar](screenshots/tauri/06-calendar.png)
 
-For navigating by "I know it was around July." Photos grouped by month with thumbnail previews; click a day to filter the grid to that day. The temporal-diversity logic in Picks uses the same calendar data — it tries to include at least one photo from every month.
+For navigating by "I know it was around July." Each month shows its days, shaded by how many photos were taken; click a day to filter the grid to that day. The temporal-diversity logic in Picks uses the same calendar data — it tries to include at least one photo from every month.
 
 ## 7. Map view
 
@@ -82,7 +82,7 @@ App-level settings (theme, update check, product tour) and library-level setting
 
 ## Next steps
 
-- **Try the demo** — `pip install "bppicker[web]" && bpp demo` boots a synthetic library and the full UI. No photos of yours, no setup, no install of optional ML extras required. The first analysis asks before downloading the on-device models (up to ~660 MB); they're cached after that. bpp still checks its signed model registry and (unless you turn it off) GitHub for updates when the app opens — see the README's [Privacy](../README.md#privacy) section.
+- **Try the demo** — `pip install "bppicker[web]" && bpp demo` boots a synthetic library and the full UI. No photos of yours, no setup, no install of optional ML extras required. The first analysis asks before downloading the on-device models (about 660 MB for the default set; optional features fetch their own later); they're cached after that. bpp still checks its signed model registry and (unless you turn it off) GitHub for updates when the app opens — see the README's [Privacy](../README.md#privacy) section.
 - **Install for real** — `pip install "bppicker[web,faces]"` then `bpp serve --library ~/Pictures/MyLibrary`. See the [README](../README.md) for details on optional extras (HEIC, RAW, AI inpainting). The on-device nudity filter needs no extra — accept the NudeNet model in Settings → Models to turn it on.
 - **Read the architecture** — `docs/adr/` captures the load-bearing decisions; `docs/API.md` covers the HTTP surface for anyone integrating against the local server.
 - **Contribute** — `CONTRIBUTING.md` for the workflow, `docs/plugins.md` for the registered extension points.

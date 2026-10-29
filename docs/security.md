@@ -22,6 +22,10 @@ bpp is designed for **single-user, local-network** deployments:
   networks** — or deploy bpp behind a TLS-terminating reverse proxy
   (see *Extension hooks → 1. HTTPS* below). HTTP cleartext is a
   deliberate scope choice for the home-LAN use case, not an oversight.
+- To show the share address, bpp finds its LAN IP by "connecting" a UDP
+  socket to `8.8.8.8:53` and reading which local address the OS picked
+  (`detect_lan_ip` in `bpp/web/share_runtime.py`). UDP has no handshake,
+  so no packet leaves the machine; it is not a network call.
 
 ## Threats addressed (on a trusted LAN)
 

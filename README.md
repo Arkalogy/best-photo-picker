@@ -5,20 +5,22 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/Arkalogy/best-photo-picker/blob/main/LICENSE)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-green.svg)](https://www.python.org/downloads/)
 
-**Drowning in 15,000 family photos?** Apple Photos and Google Photos bury your best shots in their feed. Best Photo Picker runs entirely on your machine, scores every photo on sharpness, lighting, faces, and composition, and lets you curate the perfect 50 in minutes once it's analyzed — no cloud, no subscription, no compromise.
+Best Photo Picker scores a photo library on your own computer (sharpness, exposure, faces, composition), groups faces into people, folds near-duplicates, and gives you the best photos of the people you choose. Free, MIT, no account.
 
 It **auto-scores your whole library for curation without uploading anything**, **clusters the near-duplicates**, and lets you **boost specific people** so the final pick favors the faces that matter — your kid, for the grandparents.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Arkalogy/best-photo-picker/main/docs/screenshots/demo.gif" width="720" alt="Demo: a library of thousands of photos, open one child's photos, BPP Picks narrows them to her best shots, then the top pick opens with its sharpness, exposure, faces and composition scores">
-  <br><sub>The recording and the screenshots show a sample library built from stock photos of models (<a href="https://www.pexels.com/license/">Pexels</a>) plus generated test images, not the author's family.</sub>
+  <img src="https://raw.githubusercontent.com/Arkalogy/best-photo-picker/main/docs/screenshots/demo.gif" width="800" alt="Demo: a library of 3,848 photos; Mia is picked from Faces and BPP Picks narrows her 26 photos to her best 7; the Family group gives its best 5; the winning photo opens with its sharpness, exposure, faces and composition scores">
+  <br><sub>The recording and the screenshots show a sample library of stock photos (<a href="https://www.pexels.com/license/">Pexels</a>) and generated test images.</sub>
 </p>
 
 > **Try it — no photos needed** (needs Python 3.11: `brew install python@3.11` on a Mac, or use the [desktop app](#desktop-app-macos-apple-silicon)):
 > ```bash
-> pipx install --python python3.11 "bppicker[web]" && bpp demo
+> pipx install --python 3.11 "bppicker[web]" && bpp demo
 > ```
-> Generates a sample library, runs the full UI locally, and deletes the sample library when you stop it (Ctrl+C). **The first analysis asks before downloading the on-device AI models (up to ~660 MB, mostly CLIP for visual search); they're cached, so that's a one-time download.** Your photos are never uploaded. bpp still makes a few small network calls of its own (a signed model-registry check at startup, an update check, map tiles) — all listed under [Privacy](#privacy).
+> Generates a sample library, runs the full UI locally, and deletes the sample library when you stop it (Ctrl+C). **The first analysis asks before downloading the on-device AI models (about 660 MB for the default set, mostly CLIP for visual search; optional features fetch their own later); they're cached, so that's a one-time download.** Your photos are never uploaded. bpp still makes a few small network calls of its own (a signed model-registry check at startup, an update check, map tiles) — all listed under [Privacy](#privacy).
+
+**[Website and Mac download →](https://arkalogy.github.io/best-photo-picker/)**
 
 *By Arkadiy Birger at [Arkalogy](https://arkalogy.com) — a PM-directed, AI-built product; the architectural decisions are captured in [`docs/adr/`](https://github.com/Arkalogy/best-photo-picker/tree/main/docs/adr). [Why & how it was built →](#about)*
 
@@ -31,10 +33,12 @@ More screenshots (faces, calendar, map, duplicates, the editor) and an annotated
 Where it fits next to what you already use:
 
 - **Apple Photos / Google Photos** are great at storing and browsing. bpp ranks and curates — and runs alongside them.
-- **Lightroom, Aftershoot, Excire** are built for photographers culling a shoot. bpp is built for a family library that spans years — and it's free and open source.
+- **Lightroom, Aftershoot, Narrative Select, Excire** are built for photographers culling a shoot. bpp is built for a family library that spans years — and it's free and open source.
 - **digiKam / Immich** organize and manage your collection. bpp answers one question: which fifty are the best of *this person*?
 
 If you live in the Apple/Google ecosystem and your collection fits their feeds, those tools work great. **bpp exists for the case they're bad at: you have thousands of photos of a specific subject — your kid, your dog, last summer's trip — and you want to find the actual best fifty without uploading anything anywhere.**
+
+<sub>Other product names are trademarks of their respective owners; bpp is not affiliated with or endorsed by them.</sub>
 
 ## How it's built
 
@@ -49,7 +53,7 @@ Claude writes the code. I own the product and the architecture, and nothing ship
 
 - The pip install needs Python 3.11 exactly
 - The Mac app is Apple Silicon only; Windows should work via pip but hasn't been tested end to end
-- The first analysis downloads up to about 660 MB of models (it asks first); after that they're cached
+- The first analysis downloads about 660 MB of models (it asks first; optional features fetch their own later); after that they're cached
 - Face detection occasionally finds a face in a dog, a plate of food, or a flower bed. One click on **Not a face** fixes it.
 
 ## Features
@@ -59,7 +63,8 @@ Claude writes the code. I own the product and the architecture, and nothing ship
 - **Temporal diversity** — per-day caps and monthly coverage for balanced selection
 - **Face recognition** — automatic clustering, per-person smart albums, merge, dismiss, reassign, drag-to-fix mis-detected bboxes
 - **Library management** — import by copying to managed library with SHA-256 dedup
-- **Album system** — manual + 20 smart album types (person, time, score, duplicates, pets, etc.)
+- **Album system** — manual + 19 smart album types (person, time, score, duplicates, pets, etc.)
+- **Sensitive-photo check (opt-in)** — an optional NudeNet model, downloaded only after you accept its license, flags photos that may be sensitive (bath time, the beach) into a Sensitive album; set Settings → Scoring → Sensitive photos to Exclude to keep them out of auto-picks you plan to share
 - **Interactive web UI** — real-time slider tuning, photo grid, lightbox, compare view, batch operations
 - **Desktop app** — native macOS app via Tauri v2 (wraps the web UI in a native window)
 - **Soft delete** — 30-day recovery, Recently Deleted album
@@ -80,13 +85,13 @@ Recommended — [pipx](https://pipx.pypa.io/) keeps bpp in its own
 environment and makes updating one command:
 
 ```bash
-pipx install --python python3.11 "bppicker[web]"
+pipx install --python 3.11 "bppicker[web,heic,raw]"
 
 # Update to the latest release later:
 pipx upgrade bppicker
 ```
 
-`--python python3.11` matters: pipx otherwise uses whatever Python it
+`--python 3.11` matters: pipx otherwise uses whatever Python it
 was installed with (Homebrew's is newer), and the install ends with
 "No matching distribution found for bppicker".
 
@@ -126,7 +131,7 @@ update, download the newer `.dmg` the same way; your photo library and
 settings live outside the app and carry over untouched.
 
 > Apple Silicon (M1/M2/M3 and later) only. On an Intel Mac, or on
-> Windows/Linux, use the `pipx install --python python3.11 "bppicker[web]"` path above.
+> Windows/Linux, use the `pipx install --python 3.11 "bppicker[web,heic,raw]"` path above.
 
 ### Try the Demo
 
@@ -139,7 +144,8 @@ Generates sample photos and launches the web UI — no configuration needed.
 ### Library Mode (Recommended)
 
 ```bash
-# Start the photo management server (default library: ~/Pictures/BestPhotoPicker)
+# Start the photo management server (default: the library you used last, or
+# BestPhotoPicker inside the Pictures folder of your home directory, on every OS)
 bpp serve
 
 # Or specify a custom library path
