@@ -9,6 +9,7 @@
  */
 
 import { apiFetch } from "./api-client.mjs";
+import { NO_PICKER_LIBRARY_MESSAGE, pickFolder } from "./native-pick.mjs";
 import { focusInto, restoreFocusFrom } from "./dialog-focus.mjs";
 import { appConfirm, appPrompt } from "./dialogs.mjs";
 import { formatDate } from "./date-format.mjs";
@@ -169,16 +170,12 @@ export async function switchLibrary(path) {
 /** Open the native folder picker, register the chosen folder. */
 export async function addExistingLibrary() {
   try {
-    const data = await apiFetch("/api/v1/pick", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: "folder" }),
-    });
-    if (!data.path) return;
+    const path = await pickFolder(NO_PICKER_LIBRARY_MESSAGE);
+    if (!path) return;
     const addData = await apiFetch("/api/v1/libraries", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: data.path }),
+      body: JSON.stringify({ path }),
     });
     if (addData.error) {
       toast(addData.error, true);
@@ -194,16 +191,12 @@ export async function addExistingLibrary() {
 /** Pick a folder, register it, then immediately switch to it. */
 export async function createNewLibrary() {
   try {
-    const data = await apiFetch("/api/v1/pick", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: "folder" }),
-    });
-    if (!data.path) return;
+    const path = await pickFolder(NO_PICKER_LIBRARY_MESSAGE);
+    if (!path) return;
     const lib = await apiFetch("/api/v1/libraries", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: data.path }),
+      body: JSON.stringify({ path }),
     });
     if (lib.error) {
       toast(lib.error, true);

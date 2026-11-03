@@ -121,6 +121,13 @@ class Phase(Protocol[I, O]):
         ...
 
 
+def _from_fork_context(event: Any) -> bool:
+    """True unless *event* is known to come from a non-fork context. A
+    fork-context lock can't be handed to a spawn child (RuntimeError at
+    start), so such an event is bridged instead; unknown counts as fork."""
+    return bool(getattr(getattr(event, "_flag", None), "_is_fork_ctx", True))
+
+
 class BoundedSubprocessRunner(Generic[I, O]):
     """Drive a :class:`Phase` in a memory-bounded subprocess.
 
@@ -199,8 +206,13 @@ class BoundedSubprocessRunner(Generic[I, O]):
         # forever in this long-lived parent process.
         child_cancel_event, bridge_stop = self._prepare_cancel_event(cancel_event)
 
-        result_queue: multiprocessing.Queue = multiprocessing.Queue()
-        proc = multiprocessing.Process(
+        # spawn on every OS, as macOS defaults to: Linux's fork would copy
+        # the server's running mediapipe / onnxruntime thread pools, and
+        # the child can block forever on a lock one of them held (face
+        # extraction then hung until its timeout with no faces).
+        mp_ctx = multiprocessing.get_context("spawn")
+        result_queue: multiprocessing.Queue = mp_ctx.Queue()
+        proc = mp_ctx.Process(
             target=self.phase.target(),
             args=self.phase.build_args(payload, result_queue, child_cancel_event),
             daemon=self.daemon,
@@ -278,9 +290,11 @@ class BoundedSubprocessRunner(Generic[I, O]):
             return ProcessCancellation().event, None
         if isinstance(token, ProcessCancellation):
             return token.event, None
-        if _is_raw_mp_event(cancel_event):
+        if _is_raw_mp_event(cancel_event) and not _from_fork_context(cancel_event):
             return cancel_event, None
-        # ThreadCancellation, raw threading.Event, or wrapped — bridge.
+        # ThreadCancellation, raw threading.Event, an mp.Event made in the
+        # fork context (Linux's default: the spawn child can't take it),
+        # or wrapped — bridge.
         bridge_target = ProcessCancellation()
         bridge_stop = threading.Event()
         mirror_token_to_process_event(token, bridge_target, stop_event=bridge_stop)

@@ -477,3 +477,24 @@ other OS users and sandboxed apps, can then read the owner token from
 the index page. Not for shared machines.
 
 The reader lives in `bpp/commands/serve.py`.
+
+## `BPP_MEDIAPIPE_CPU_OK`
+
+**Default:** *(unset)* — on Linux x86-64, the first mediapipe use of a
+run loads its native library in a throwaway process and stores the
+answer here.
+
+**Type:** `1` (this processor can run mediapipe) or `0` (it can't).
+
+**What it does:** mediapipe's Linux x86-64 library needs AVX; on a
+processor without it (many NAS Celerons and Atoms, emulators) loading it
+kills the process. With `0`, the pose, expression, hand,
+subject-segmentation and BlazeFace short-range scorers are skipped with
+one warning instead. Worker processes inherit the value, so each run
+checks once. Other systems never check. Set it yourself only to skip the
+check (`1`) or to turn those scorers off (`0`).
+
+**Trust / safety implications:** none; a wrong `1` on a processor
+without AVX brings the crash back.
+
+The reader lives in `bpp/scoring/cpu_support.py`.

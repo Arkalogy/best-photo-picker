@@ -11,6 +11,7 @@ metadata, the update check, and `recheck-missing`.
 from __future__ import annotations
 
 import hmac
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -387,11 +388,10 @@ def api_pick() -> tuple[Response, int]:
     """Open a native macOS file/folder picker via osascript and return
     the selected POSIX path. ``mode='file'`` filters to archive types;
     anything else picks a folder. Returns ``{cancelled: true}`` when
-    the user dismisses the dialog.
-
-    LOCAL_APP-only — spawns a native UI dialog on the owner's
-    desktop. A LAN device triggering this would pop UI on the host
-    out of the user's control."""
+    the user dismisses the dialog, plus ``unsupported`` off macOS.
+    LOCAL_APP-only: a LAN device must not pop UI on the host."""
+    if shutil.which("osascript") is None:
+        return jsonify({"cancelled": True, "unsupported": True}), 200
     data = request.get_json(silent=True) or {}
     mode = data.get("mode", "folder")
 

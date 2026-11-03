@@ -204,7 +204,9 @@ Note that `BPP_TRUSTED_PROXIES` on its own (without `behind_proxy`)
 does something different: requests whose direct peer is in one of the
 listed ranges are treated as loopback, i.e. as the owner. The bundled
 `Dockerfile` relies on this (it trusts the Docker bridge ranges), which
-is why its container must be published to host loopback only.
+is why its container must be published to host loopback only and keeps
+the boot key on: the ranges also cover every other container on the
+same Docker network.
 
 **`behind_proxy` requires `BPP_TRUSTED_PROXIES` to be set.** Vanilla
 ProxyFix rewrites `REMOTE_ADDR` from the `X-Forwarded-For` header

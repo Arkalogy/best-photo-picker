@@ -240,15 +240,25 @@ def refuse_if_held(module: str) -> None:
 
 def import_gated(module: str) -> Any:
     """Import *module*, unless an install touched its package (then
-    :class:`HeldForRestart`)."""
+    :class:`HeldForRestart`), or unless this processor can't run it (then
+    :class:`~bpp.scoring.cpu_support.CpuUnsupported`)."""
+    from bpp.scoring.cpu_support import refuse_if_cpu_unsupported
+
     refuse_if_held(module)
+    refuse_if_cpu_unsupported(module)
     return importlib.import_module(module)
 
 
 def requires(module: str) -> Callable[[], Any]:
     """An ``import_check`` for a ModelSingleton: import *module* through
-    :func:`import_gated`."""
-    return lambda: import_gated(module)
+    :func:`import_gated`. The check carries *module*, so a model can
+    tell, without importing it, that this processor can't run it."""
+
+    def check() -> Any:
+        return import_gated(module)
+
+    check.module = module  # type: ignore[attr-defined]
+    return check
 
 
 def importable(module: str) -> bool:

@@ -16,7 +16,7 @@ class _CountingPool:
     """A thread pool standing in for the process pool, recording the most
     jobs that were queued or running at once."""
 
-    def __init__(self, max_workers):
+    def __init__(self, max_workers, mp_context=None):
         self._pool = ThreadPoolExecutor(max_workers=max_workers)
         self._lock = threading.Lock()
         self.in_flight = 0

@@ -137,6 +137,8 @@ def _download_builtin_models(emit: EmitFn, model_toggles: dict[str, Any]) -> set
     """Face, segmentation, pose and pet models. Returns the toggle keys
     of switched-on models that couldn't be fetched."""
     from bpp.scoring import face
+    from bpp.scoring.cpu_support import WARNING as MEDIAPIPE_CPU_WARNING
+    from bpp.scoring.cpu_support import mediapipe_cpu_supported
     from bpp.scoring.face_embed import ensure_sface_model
     from bpp.scoring.face_mediapipe import ensure_mediapipe_models
     from bpp.scoring.pose import ensure_pose_model
@@ -155,10 +157,15 @@ def _download_builtin_models(emit: EmitFn, model_toggles: dict[str, Any]) -> set
     for key, warn in face.core_face_model_failures().items():
         emit({"type": "warning", "message": warn})
         failed.add(key)
+    mediapipe_ok = mediapipe_cpu_supported()
+    if not mediapipe_ok:
+        emit({"type": "warning", "message": MEDIAPIPE_CPU_WARNING})
     for warn in [*ensure_mediapipe_models(), *ensure_sface_model()]:
         emit({"type": "warning", "message": warn})
     for key, model, warning in face.OPTIONAL_FACE_MODELS:
-        if on(key) and model.ensure_model() is None and not model.license_blocked():
+        if on(key) and model.cpu_unsupported():  # no download for a model this CPU can't run
+            failed.add(key)
+        elif on(key) and model.ensure_model() is None and not model.license_blocked():
             emit({"type": "warning", "message": warning})
             failed.add(key)
 
@@ -167,6 +174,9 @@ def _download_builtin_models(emit: EmitFn, model_toggles: dict[str, Any]) -> set
         ("model_pose", ensure_pose_model),
     ):
         if not on(key):
+            continue
+        if not mediapipe_ok:  # no download for a model this CPU can't run
+            failed.add(key)
             continue
         warnings = ensure()
         for warn in warnings:

@@ -299,6 +299,14 @@ class ModelSingleton:
 
         return True
 
+    def cpu_unsupported(self) -> bool:
+        """True if this processor can't run the package *import_check*
+        loads (see :mod:`bpp.scoring.cpu_support`); nothing is downloaded then."""
+        from bpp.scoring.cpu_support import cpu_unsupported
+
+        module = getattr(self.import_check, "module", None)
+        return module is not None and cpu_unsupported(module)
+
     def ensure_model(self) -> Path | None:
         """Ensure the model file is present, downloading it if needed.
 
@@ -337,6 +345,8 @@ class ModelSingleton:
         if self.model_path is None:
             # create_fn manages the file itself
             return None, None
+        if self.cpu_unsupported():
+            return None, "this processor can't run it (it needs AVX)"
 
         if self.model_path.exists():
             # Verify cached files against the pinned SHA before

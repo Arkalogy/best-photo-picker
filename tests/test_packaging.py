@@ -138,7 +138,7 @@ class TestPublishWorkflow:
 
 
 class TestDockerWorkflow:
-    """The Docker Hub publish workflow shares the same explicit-button
+    """The Docker image publish workflow shares the same explicit-button
     safety pattern as the PyPI one. Pin the structural invariants so
     a future refactor can't quietly weaken them."""
 
@@ -182,7 +182,7 @@ class TestDockerWorkflow:
 
     def test_workflow_login_is_conditional(self):
         """Login must be gated by `do_push` so a smoke-test build
-        without DOCKERHUB_TOKEN configured still works."""
+        never touches the registry."""
         text = _read_docker_workflow()
         # The login step must have an `if:` immediately above its uses
         login_idx = text.find("docker/login-action")
@@ -193,13 +193,44 @@ class TestDockerWorkflow:
             "docker/login-action must be guarded by `if: env.do_push == 'true'`"
         )
 
+    def test_latest_and_version_tags_move_only_on_purpose(self):
+        """A manual push from a branch must not retag `latest` or the
+        app version (users would pull unreleased code), and a prerelease
+        must not take `latest`. Every such tag hangs off `release_tags`,
+        and metadata-action's own `latest=auto` is switched off: under
+        auto it adds `latest` to any tag-ref run, prerelease or not."""
+        import yaml
+
+        job = yaml.safe_load(_read_docker_workflow())["jobs"]["build"]
+        gate = job["env"]["release_tags"]
+        assert "!github.event.release.prerelease" in gate
+        assert "github.ref == 'refs/heads/main'" in gate
+        steps = {s.get("id"): s for s in job["steps"] if s.get("id")}
+        order = [s.get("id") for s in job["steps"]]
+        assert order.index("ver") < order.index("meta")
+        meta = steps["meta"]["with"]
+        assert meta["flavor"] == "latest=false", meta
+        enable = ",enable=${{ env.release_tags == 'true' }}"
+        for line in meta["tags"].strip().splitlines():
+            if line.strip().startswith(("type=raw", "type=semver")):
+                assert line.strip().endswith(enable), f"{line!r} moves without release_tags"
+
+    def test_release_tag_must_match_app_version(self):
+        """A release tagged before pyproject is bumped would push the
+        old version's tag with new code."""
+        import yaml
+
+        job = yaml.safe_load(_read_docker_workflow())["jobs"]["build"]
+        names = [s.get("name", "") for s in job["steps"]]
+        assert "Verify the release tag matches the app version" in names
+
     def test_workflow_image_path_uses_dist_name(self):
         """The Docker image name must match the PyPI distribution
         name (`bppicker`) so users find the same name in both
         registries. Drift here means `pip install bppicker` and
         `docker pull arkalogy/bpp` — confusing."""
         text = _read_docker_workflow()
-        # Image line should be `<USERNAME>/bppicker`
+        # Image line should be `ghcr.io/arkalogy/bppicker`
         assert "/bppicker" in text, (
             "Docker image path should end in `/bppicker` (matches PyPI dist name)"
         )
@@ -220,7 +251,7 @@ class TestDockerWorkflow:
 
 
 class TestDockerfile:
-    """The Dockerfile installs `.[web,faces,...]` from the local
+    """The Dockerfile installs `.[web,heic,raw]` from the local
     source — extras keys come from pyproject's
     [project.optional-dependencies] section, which is renamed-immune
     by virtue of the keys being `web`, `faces`, etc. (not the dist
@@ -243,6 +274,40 @@ class TestDockerfile:
                     f"pyproject.toml's optional-dependencies. "
                     f"Available: {sorted(extras)}"
                 )
+
+    def test_dockerfile_faces_subset_matches_pyproject(self):
+        """The image installs `faces` minus the parts that need a
+        compiler (face_recognition) or only serve it (setuptools<81),
+        retyped as bare specs; they must stay equal to pyproject's."""
+        faces = _read_pyproject()["project"]["optional-dependencies"]["faces"]
+        expected = {
+            spec.split(";")[0].strip()
+            for spec in faces
+            if not spec.startswith(("face_recognition", "setuptools"))
+        }
+        dockerfile = (REPO_ROOT / "Dockerfile").read_text()
+        install = dockerfile[dockerfile.index('".[web,heic,raw]"') :].split("&&")[0]
+        got = set(re.findall(r'"([a-z][\w.-]*[<>=!~][^"]*)"', install))
+        assert got == expected, f"Dockerfile faces subset {sorted(got)} != {sorted(expected)}"
+
+    def test_dockerfile_loads_mediapipe_native_library_at_build(self):
+        """mediapipe's Tasks library links EGL / GLES; python:3.11-slim
+        lacks both, and without them every mediapipe scorer quietly
+        fails at runtime. The build must install them and prove the
+        library loads."""
+        dockerfile = (REPO_ROOT / "Dockerfile").read_text()
+        assert "libegl1" in dockerfile and "libgles2" in dockerfile
+        from bpp.scoring.cpu_support import _PROBE
+
+        assert "exec(_PROBE)" in dockerfile  # the app's own load check
+        assert "ctypes.CDLL(" in _PROBE and "libmediapipe.so" in _PROBE
+
+    def test_dockerfile_ships_license_notices(self):
+        """The image redistributes GPL / LGPL native libraries inside
+        the wheels; NOTICE.txt (with the written source offer) and the
+        license must travel with it."""
+        dockerfile = (REPO_ROOT / "Dockerfile").read_text()
+        assert "COPY LICENSE NOTICE.txt /usr/share/doc/bppicker/" in dockerfile
 
     def test_dockerfile_uses_bpp_serve_cmd(self):
         """The CLI binary stays `bpp` (not `bppicker`). The CMD line

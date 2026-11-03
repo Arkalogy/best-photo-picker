@@ -343,6 +343,10 @@ def main(argv: list[str] | None = None) -> int:
         "model": cmd_model,
         "db": cmd_db,
     }
+    if args.command in ("serve", "web", "demo", "run", "analyze", "pick"):
+        from bpp.scoring.cpu_support import probe_before_threads
+
+        probe_before_threads()
     if args.command in ("serve", "web", "demo"):
         return dispatch[args.command](args)  # the app owns the plugin lifecycle
     try:

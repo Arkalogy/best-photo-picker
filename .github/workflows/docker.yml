@@ -1,40 +1,36 @@
 name: Publish Docker image
 
-# Manual-only — a published Docker image is on the roadmap, not part of
-# the documented install path yet (users install via pip or the macOS
-# DMG). This workflow has never been run, so the image has never been
-# built in CI and nothing has been pushed to Docker Hub. The release
-# trigger is intentionally omitted so a release doesn't attempt a
-# Docker Hub push. Re-add:
-#     release:
-#       types: [published]
-# once Docker Hub publishing goes live (DOCKERHUB_TOKEN + DOCKERHUB_USERNAME
-# var + the arkalogy/bppicker repo). Until then it runs on demand only.
+# Builds the self-hosting image for amd64 + arm64 and, when asked,
+# pushes it to the GitHub Container Registry as
+# ghcr.io/arkalogy/bppicker. It runs on a published GitHub Release
+# (always pushing, like publish.yml does for PyPI), or by hand from the
+# Actions tab, where publish=false gives a build-only check.
+#
+# Which tags move: a manual push gets only the commit tag (sha-xxxxxxx),
+# plus the ref name when run from a tag, unless release_tags=true is set
+# on purpose from main, whose app code is the released version. A prerelease gets its release tag and the
+# commit tag only; `latest` and the version tags never move on one
+# (`flavor: latest=false` below keeps metadata-action from adding
+# `latest` on its own).
+# Pushing uses the workflow's own GITHUB_TOKEN, so there are no
+# secrets to set up. After the first push, set the package's
+# visibility to public once (Packages -> bppicker -> Package settings).
 permissions:
   contents: read
 
 on:
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       publish:
-        description: "Push to Docker Hub? (false = build-only smoke test)"
+        description: "Push to ghcr.io? (false = build-only smoke test)"
         required: true
         default: "false"
-
-# One-time setup (the repo owner does these once before the first
-# real publish):
-#   1. Repository Variables (Settings → Secrets and variables →
-#      Actions → Variables tab):
-#        DOCKERHUB_USERNAME = your Docker Hub user/org (e.g. `arkalogy`)
-#   2. Repository Secrets (Settings → Secrets and variables → Actions
-#      → Secrets tab):
-#        DOCKERHUB_TOKEN = an access token from
-#        https://hub.docker.com/settings/security with the
-#        "Read, Write, Delete" scope on the `bppicker` repo only.
-#   3. Create the Docker Hub repo `<DOCKERHUB_USERNAME>/bppicker` (the
-#      first push to a non-existent repo is rejected if the user has
-#      "Restricted" auto-create permissions; auto-create is the
-#      default but spelling it out lets us know).
+      release_tags:
+        description: "Also move `latest` and the app-version tag? Only when the app code here is the released version."
+        required: true
+        default: "false"
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -43,11 +39,17 @@ jobs:
   build:
     name: Build multi-arch image
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
 
     # Only attempt to log in / push when explicitly publishing.
     # `do_push` is the single source of truth used in three steps below.
     env:
-      do_push: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true') }}
+      do_push: ${{ github.event_name == 'release' || github.event.inputs.publish == 'true' }}
+      # `latest` and the version tag: a stable release, or a manual push
+      # that asked for them.
+      release_tags: ${{ (github.event_name == 'release' && !github.event.release.prerelease) || (github.event.inputs.publish == 'true' && github.event.inputs.release_tags == 'true' && github.ref == 'refs/heads/main') }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -63,37 +65,59 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
-      # Login is conditional so a workflow_dispatch smoke test
-      # (publish=false) doesn't even need DOCKERHUB_TOKEN to be set.
-      - name: Login to Docker Hub
+      # Login only when pushing; a build-only run never touches the registry.
+      - name: Login to the GitHub Container Registry
         if: env.do_push == 'true'
         uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Compute tags + labels in one place. metadata-action handles
-      # the "use the release tag verbatim plus latest plus semver
-      # major/minor" pattern that's standard for OSS Docker repos.
+      # The app version from pyproject.toml, so an image built from main
+      # is tagged with the release it contains (e.g. 0.2.3) even though
+      # the run is not on a tag ref.
+      - name: Read the app version
+        id: ver
+        run: |
+          v=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "minor=$(echo "$v" | cut -d. -f1,2)" >> "$GITHUB_OUTPUT"
+
+      - name: Say when release_tags is ignored
+        if: github.event.inputs.release_tags == 'true' && env.release_tags != 'true'
+        run: echo "::warning::release_tags=true needs publish=true and a run from main; ignored here"
+
+      # A release must contain the version it is named after, or its
+      # image would overwrite another version's tag (publish.yml checks
+      # the same for PyPI).
+      - name: Verify the release tag matches the app version
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          if [ "${TAG#v}" != "$VERSION" ]; then
+            echo "::error::release tag $TAG does not match pyproject version $VERSION"
+            exit 1
+          fi
+
       - name: Extract image metadata
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
-          # Image path: `<dockerhub-user>/bppicker`. If the user var
-          # isn't configured, the metadata action emits an empty path
-          # and the build/push step below fails loudly — better than
-          # silently pushing nowhere.
-          images: ${{ vars.DOCKERHUB_USERNAME }}/bppicker
+          images: ghcr.io/arkalogy/bppicker
+          flavor: latest=false
           # `type=sha` guarantees at least one tag on a manual run from a
-          # branch: the tag/semver rules only fire on tag refs and
+          # branch: the ref rule only fires on tag refs and
           # `latest` only when pushing, so without it a build-only smoke
           # test from a branch emits zero tags and the check below fails.
           tags: |
             type=ref,event=tag
             type=sha
-            type=raw,value=latest,enable=${{ env.do_push == 'true' }}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ env.release_tags == 'true' }}
+            type=raw,value=${{ steps.ver.outputs.version }},enable=${{ env.release_tags == 'true' }}
+            type=raw,value=${{ steps.ver.outputs.minor }},enable=${{ env.release_tags == 'true' }}
 
       - name: Build and (optionally) push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
@@ -107,22 +131,20 @@ jobs:
           push: ${{ env.do_push == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # GHA layer cache so repeat builds skip unchanged layers (the
-          # dlib compile is the slow one). Build times are unmeasured —
-          # this workflow has not been run yet.
+          # GHA layer cache so repeat builds skip unchanged layers.
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Sanity step that runs even on smoke-test (publish=false): hits
-      # the docker manifest to confirm the build emitted the expected
-      # tag set. Catches the case where metadata-action silently emits
-      # no tags (e.g. user var missing).
+      # Runs on build-only runs too: prints the tags metadata-action
+      # computed and fails if there are none.
       - name: Show resulting tags
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
         run: |
           echo "do_push: $do_push"
           echo "tags emitted by metadata-action:"
-          echo "${{ steps.meta.outputs.tags }}"
-          if [ -z "${{ steps.meta.outputs.tags }}" ]; then
-            echo "::error::metadata-action produced no tags — check vars.DOCKERHUB_USERNAME"
+          echo "$TAGS"
+          if [ -z "$TAGS" ]; then
+            echo "::error::metadata-action produced no tags"
             exit 1
           fi

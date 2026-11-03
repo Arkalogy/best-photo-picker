@@ -12,6 +12,7 @@
  */
 
 import { apiFetch, authEventSource } from "./api-client.mjs";
+import { pickFolder } from "./native-pick.mjs";
 import { appConfirm } from "./dialogs.mjs";
 import { reviewSensitiveBeforeExport } from "./sensitive.mjs";
 import { esc, escapeJsAttr } from "./text-format.mjs";
@@ -418,14 +419,10 @@ export async function openBrowser() {
   /** @type {any} */
   const win = window;
   try {
-    const data = await apiFetch("/api/v1/pick", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: "folder" }),
-    });
-    if (data.path) {
+    const path = await pickFolder();
+    if (path) {
       const inp = /** @type {HTMLInputElement | null} */ (document.getElementById("input-dir"));
-      if (inp) inp.value = data.path;
+      if (inp) inp.value = path;
       win.validateInput?.();
     }
   } catch (e) {
@@ -435,15 +432,11 @@ export async function openBrowser() {
 
 export async function openExportBrowser() {
   try {
-    const data = await apiFetch("/api/v1/pick", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: "folder" }),
-    });
-    if (data.path) {
+    const path = await pickFolder();
+    if (path) {
       const inp = /** @type {HTMLInputElement | null} */ (document.getElementById("export-dir"));
       if (inp) {
-        inp.value = data.path;
+        inp.value = path;
         // Programmatic value assignment does NOT fire 'input' in any
         // browser, so the modal's #export-dir listener (which enables /
         // disables the Export button based on emptiness) wouldn't see

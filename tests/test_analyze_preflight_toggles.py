@@ -28,6 +28,9 @@ class _FakeModel:
     def license_blocked(self) -> bool:
         return False
 
+    def cpu_unsupported(self) -> bool:
+        return False
+
 
 def _builtin_preflight(monkeypatch, toggles, *, fr_ok=True, core_failures=None):
     from bpp.scoring import face
