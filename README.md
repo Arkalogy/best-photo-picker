@@ -386,6 +386,10 @@ writes are yours, and Docker would otherwise create missing folders
 owned by root, which the container then can't write to. There are two
 ways to use it.
 
+Built and run on Linux x86-64 and arm64 machines; it has not yet been
+tried on a Synology, QNAP or Unraid box, so reports from one are welcome
+in GitHub issues.
+
 **Headless, on a NAS or server.** Point it at a photo folder and the
 best photos are copied into another folder; your originals are
 mounted read-only. Accept the free-license face models once (this

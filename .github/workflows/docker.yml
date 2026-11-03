@@ -74,11 +74,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Compute tags + labels in one place: the release tag verbatim,
-      # plus `latest`, the app version and its major.minor (all from
-      # pyproject, which the check below ties to the release tag).
       # The app version from pyproject.toml, so an image built from main
-      # is tagged with the release it contains (e.g. 0.2.2) even though
+      # is tagged with the release it contains (e.g. 0.2.3) even though
       # the run is not on a tag ref.
       - name: Read the app version
         id: ver
@@ -138,10 +135,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Sanity step that runs even on smoke-test (publish=false): hits
-      # the docker manifest to confirm the build emitted the expected
-      # tag set. Catches the case where metadata-action silently emits
-      # no tags (e.g. user var missing).
+      # Runs on build-only runs too: prints the tags metadata-action
+      # computed and fails if there are none.
       - name: Show resulting tags
         env:
           TAGS: ${{ steps.meta.outputs.tags }}

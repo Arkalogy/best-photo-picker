@@ -6,9 +6,12 @@ this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-11-03
+
 ### Added
-- **A ready-made Docker image for servers and NAS boxes**,
-  `ghcr.io/arkalogy/bppicker`, for Intel and 64-bit ARM. Run it headless
+- **A ready-made Docker image for Linux servers**,
+  `ghcr.io/arkalogy/bppicker`, for Intel and 64-bit ARM (not yet
+  tried on a NAS). Run it headless
   (`bpp run` copies the best photos of a folder into another one) or run
   the full app, published to the server's loopback and opened with the
   keyed link in `docker logs`. The README's Docker section has the
@@ -615,7 +618,8 @@ External calls are limited to documented features:
   desktop wrapper currently builds only the macOS bundle.
 - Python 3.11 only (CI tests this version; 3.12+ is unvalidated).
 
-[Unreleased]: https://github.com/Arkalogy/best-photo-picker/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/Arkalogy/best-photo-picker/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/Arkalogy/best-photo-picker/releases/tag/v0.2.3
 [0.2.2]: https://github.com/Arkalogy/best-photo-picker/releases/tag/v0.2.2
 [0.2.1]: https://github.com/Arkalogy/best-photo-picker/releases/tag/v0.2.1
 [0.2.0]: https://github.com/Arkalogy/best-photo-picker/releases/tag/v0.2.0
