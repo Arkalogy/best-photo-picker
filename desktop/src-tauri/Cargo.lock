@@ -152,7 +152,7 @@ dependencies = [
 name = "bpp-desktop"
 version = "0.2.3"
 dependencies = [
- "getrandom 0.2.17",
+ "getrandom 0.4.2",
  "portpicker",
  "serde",
  "serde_json",
