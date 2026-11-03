@@ -10,8 +10,11 @@ LAN device must never be able to trigger it.
 from __future__ import annotations
 
 import contextlib
+import os
 import shutil
+import site
 import sys
+import sysconfig
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -133,7 +136,12 @@ def _pip_available() -> bool:
     """Return True if pip is callable from the current Python."""
     if getattr(sys, "frozen", False):
         return False  # frozen desktop app: sys.executable is the server, not Python
-    return shutil.which(sys.executable) is not None
+    if shutil.which(sys.executable) is None:
+        return False
+    # pip needs somewhere to write: site-packages, or the user site it
+    # falls back to. The Docker image has neither (read-only for the
+    # app's user, PYTHONNOUSERSITE=1), so it offers no installs.
+    return os.access(sysconfig.get_paths()["purelib"], os.W_OK) or site.ENABLE_USER_SITE is True
 
 
 def install_refusal(*, left_running: bool | None = None) -> ConflictError | None:

@@ -16,6 +16,7 @@ module path.
 
 from __future__ import annotations
 
+import multiprocessing
 import os
 import sqlite3
 from collections.abc import Callable
@@ -146,7 +147,7 @@ def extract_new_embeddings(
     max_inflight_cap = max(1, n_workers * 4)
     toggles = toggles_from_config(config)  # Settings' detector switches apply here too
 
-    with Pool(max_workers=n_workers) as pool:
+    with _open_pool(Pool, n_workers) as pool:
 
         def _submit_next() -> bool:
             """Submit one more item from ``needs_iter``. Returns False
@@ -240,6 +241,14 @@ def _pool_for(config: dict[str, Any]) -> tuple[type, int]:
     ).lower()
     pool = ProcessPoolExecutor if pool_kind == "process" and n_workers > 1 else ThreadPoolExecutor
     return pool, n_workers
+
+
+def _open_pool(pool: type, n_workers: int) -> Any:
+    """A process pool spawns its workers, not Linux's fork: see
+    BoundedSubprocessRunner.run."""
+    if pool is ProcessPoolExecutor:
+        return pool(max_workers=n_workers, mp_context=multiprocessing.get_context("spawn"))
+    return pool(max_workers=n_workers)
 
 
 def _store_faces(

@@ -103,8 +103,8 @@ updates:
       - "desktop"
 
   # Docker base image — the runtime python:3.11-slim and the
-  # apt-installed system libs ship to every container user. CVEs
-  # in libopenblas / libheif / etc. land here.
+  # apt-installed system libs (libgl1, libglib2.0, libegl1, libgles2)
+  # ship to every container user; their CVEs land here.
   - package-ecosystem: "docker"
     directory: "/"
     schedule:

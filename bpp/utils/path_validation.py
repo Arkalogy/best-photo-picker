@@ -66,5 +66,9 @@ def build_library_allowlist(
     if workdir:
         out.append(os.path.realpath(workdir))
     if include_home:
-        out.append(os.path.realpath(os.path.expanduser("~")))
+        home = os.path.realpath(os.path.expanduser("~"))
+        # A service account or a container uid without a passwd entry
+        # can have HOME=/ — trusting it would allow every path.
+        if home != os.path.realpath(os.sep):
+            out.append(home)
     return out

@@ -6,6 +6,7 @@
  */
 
 import { apiFetch, setLibraryId } from "./api-client.mjs";
+import { pickFolder } from "./native-pick.mjs";
 import { esc, escapeAttr } from "./text-format.mjs";
 import { toastError } from "./toast.mjs";
 import { USE_CONTEXT_OPTIONS } from "./use-context-options.mjs";
@@ -206,24 +207,20 @@ export function _checkCloudPath(path) {
 /** Open the native folder picker; update the input + cloud-warn check on success. */
 export async function _onboardingBrowse() {
   try {
-    const data = await apiFetch("/api/v1/pick", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: "folder" }),
-    });
-    if (data.path) {
+    const path = await pickFolder();
+    if (path) {
       const input = /** @type {HTMLInputElement | null} */ (
         document.getElementById("onboarding-lib-path")
       );
-      if (input) input.value = data.path;
+      if (input) input.value = path;
       const display = document.getElementById("onboarding-lib-path-display");
       if (display) {
-        display.textContent = data.path;
+        display.textContent = path;
         const wrap = display.closest(".onboarding-path-display");
-        if (wrap) wrap.setAttribute("title", data.path);
+        if (wrap) wrap.setAttribute("title", path);
       }
-      _onboardingLibPath = data.path;
-      _checkCloudPath(data.path);
+      _onboardingLibPath = path;
+      _checkCloudPath(path);
     }
   } catch (e) {
     toastError("open the folder picker", e);

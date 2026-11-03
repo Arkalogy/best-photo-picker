@@ -23,6 +23,9 @@ Trust model summary
 - **Desktop app (.app / DMG)**: built with the optional extras
   installed, so it DOES contain those LGPL / GPL components.
   See "Desktop app (.app / DMG)" below.
+- **Docker image**: built with the HEIC and RAW extras and most of
+  `faces`, so it contains the same kind of LGPL / GPL components.
+  See "Docker image" below.
 - **Downloaded at first-use**: ML model weights fetched on demand,
   some from the original publisher and some from third-party
   re-hosts (listed per model below), never from Arkalogy. Some
@@ -284,6 +287,37 @@ Arkalogy will provide, to anyone who asks, the complete corresponding
 source code for any GPL- or LGPL-licensed component listed in that
 release's inventory, for no more than the cost of providing it. Email
 support@arkalogy.com with the release version and the component name.
+
+================================================================
+Docker image (ghcr.io/arkalogy/bppicker)
+================================================================
+
+The self-hosting image is built from `python:3.11-slim` (Debian) with
+`pip install ".[web,heic,raw]"` plus mediapipe, ai-edge-litert and
+SciPy from the `faces` extra (not face_recognition or dlib). Like the
+desktop app, it therefore contains the optional runtime components
+and the native libraries their Linux wheels bundle, among others:
+
+- pillow-heif with libx265 (GPL-2.0), libheif and libde265 (LGPL-3.0)
+- rawpy with LibRaw (LGPL-2.1)
+- FFmpeg libraries from the OpenCV wheels (LGPL-2.1), including
+  opencv-contrib-python, which mediapipe requires; that wheel also
+  bundles Qt 5 (LGPL-3.0) with the X11 / xcb libraries it uses, and
+  its full list and license texts ship in the image as
+  `opencv_contrib_python-*.dist-info/LICENSE-3RD-PARTY.txt`
+- the Debian packages of the base image and the ones the image adds
+  (libgl1, libglib2.0-0, libegl1, libgles2), each under its own
+  license, listed in the image under /usr/share/doc/
+
+This file and LICENSE are in the image at /usr/share/doc/bppicker/.
+No model weights other than the two bundled detectors above are in
+the image; the rest download at first use.
+
+Written offer. For at least three years after each image is
+published, Arkalogy will provide, to anyone who asks, the complete
+corresponding source code for any GPL- or LGPL-licensed component in
+that image, for no more than the cost of providing it. Email
+support@arkalogy.com with the image tag and the component name.
 
 Build toolchain
 ---------------

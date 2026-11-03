@@ -238,7 +238,7 @@ crashing. Ordering matters — providers are tried in the order listed.
 |---|---|---|---|
 | **macOS arm64** (M1/M2/M3) — CPU | no (tested locally on the dev Mac) | yes | Primary dev target. Tauri desktop app ships only this. |
 | **Linux x86_64** — CPU | yes (`ubuntu-latest`) | yes | Default for PyPI install. |
-| **Linux arm64** — CPU | no | yes | A Dockerfile ships, but the image has never been built in CI; runtime not exercised in CI. |
+| **Linux arm64** — CPU | image build at each release | yes | The Docker image is built for arm64 when a release is published; the arm64 test suite runs on demand only. |
 | **Windows** — CPU | no | yes | Code path exists; never run end-to-end. Reports welcome via GitHub issues. |
 | **macOS arm64** — CoreMLExecutionProvider (ANE) | no | yes | Code path exists. Expected 5-10× face inference speedup; correctness depends on the specific ONNX graph and ONNX Runtime version. |
 | **Linux x86_64** — CUDAExecutionProvider | no | yes | Requires `pip install onnxruntime-gpu` (replaces base `onnxruntime`). Free-tier CI doesn't have a GPU runner. |
@@ -367,22 +367,86 @@ A double-clickable launcher template ships at
 window with the documented default library path. Override via
 `BPP_LIBRARY` env var.
 
-A `Dockerfile` ships at the repo root for self-hosters who want to
-build their own image (`docker build -t bppicker .`). No prebuilt
-image is published and the Dockerfile is not built in CI, so treat
-it as untested. It's a multi-stage build that installs the
-`[web,faces,heic]` extras, and it keeps downloaded models and
-model-license acceptances on the `/data` volume
-(`BPP_CACHE_DIR=/data/.cache/bpp`, `XDG_CONFIG_HOME=/data/.config`)
-so they survive re-creating the container. The server binds
-`0.0.0.0` inside the container (needed for port mapping); publish
-only to host loopback:
-`docker run -p 127.0.0.1:5001:5001 -v /path/to/library:/data bppicker`.
-The image sets `BPP_TRUSTED_PROXIES` to the Docker bridge ranges, so
-requests through that mapping are treated as the owner — publishing
-to all interfaces (`-p 5001:5001`) can give other machines on your
-network owner access. LAN sharing is not supported from a container.
-Behind a reverse proxy, `X-Forwarded-For` is honored only if you also
+### Docker
+
+A self-hosting image is published to the GitHub Container Registry
+for `linux/amd64` and `linux/arm64`:
+
+```bash
+docker pull ghcr.io/arkalogy/bppicker
+```
+
+It has the web, HEIC and camera RAW support and every scorer except
+the legacy dlib face backend. Apart from two small detectors that ship
+inside the packages, models download on first use into the `/data`
+volume, along with your model-license acceptances, so both survive
+re-creating the container. Create the host folders you mount before
+the first run: `--user` runs the container as you, so the files it
+writes are yours, and Docker would otherwise create missing folders
+owned by root, which the container then can't write to. There are two
+ways to use it.
+
+**Headless, on a NAS or server.** Point it at a photo folder and the
+best photos are copied into another folder; your originals are
+mounted read-only. Accept the free-license face models once (this
+shows the terms and asks you to confirm), then run picks as often as
+you like:
+
+```bash
+docker run --rm -it --no-healthcheck --user "$(id -u):$(id -g)" \
+    -v /path/to/bpp-data:/data ghcr.io/arkalogy/bppicker \
+    bpp model accept-attribution
+docker run --rm --no-healthcheck --user "$(id -u):$(id -g)" \
+    -v /path/to/bpp-data:/data \
+    -v /path/to/photos:/photos:ro -v /path/to/best:/best \
+    ghcr.io/arkalogy/bppicker \
+    bpp run --input /photos --k 50 --out /best --copy
+```
+
+Use `--copy` rather than `--symlink` here: a link made inside the
+container points at `/photos/...`, which doesn't exist on the host.
+`--no-healthcheck` because the image's health check watches the
+app's web server, which a headless run doesn't start.
+
+**The full app.** `bpp serve` is the image's default command. Publish
+the port to the host's loopback only, and mount your photos so you
+can import them from `/photos`:
+
+```bash
+docker run -d --name bpp --user "$(id -u):$(id -g)" -p 127.0.0.1:5001:5001 \
+    -v /path/to/library:/data -v /path/to/photos:/photos:ro \
+    ghcr.io/arkalogy/bppicker
+docker logs bpp 2>&1 | grep 'Open Best Photo Picker at' | tail -1
+```
+
+The second command shows the link to open, which carries a key the
+server makes at each start (`http://127.0.0.1:5001/?_boot=...`); after
+a restart, run it again for the new one. If you publish a different
+host port (`-p 127.0.0.1:8080:5001`), change the port in the link to
+match.
+Without the key the app shows a locked page, so other containers and
+other users on the server can't get in. On the same machine, open the
+link. From another computer, start an SSH tunnel first (`ssh -L
+5001:127.0.0.1:5001 you@your-server`), then open the same link there.
+A reload keeps working; a new tab or browser session needs the link
+again. In the app, type `/photos` into the import box (the folder
+picker only works on a Mac), and export into a folder under `/data`,
+which is your library folder on the host. Reaching the app directly
+from another computer on your network, with a login, is planned for a
+later release.
+
+Why loopback only: the image sets `BPP_TRUSTED_PROXIES` to the Docker
+bridge ranges, so requests through that mapping count as local, and
+only the key stands between them and owner access. Publishing to all
+interfaces (`-p 5001:5001`) lets other machines on your network reach
+that locked page too. Don't put the container behind a reverse proxy
+for the same reason. LAN sharing (phone pairing) is not supported from
+a container, and neither is installing extra features from inside the
+app (such as object removal): the image's packages are fixed.
+
+To build the image yourself: `docker build -t bppicker .`
+
+Running natively behind a reverse proxy, `X-Forwarded-For` is honored only if you also
 set `behind_proxy: true` in the config, and the proxy's host name must
 be listed in `BPP_TRUSTED_HOSTS` (the server answers only to its own
 addresses); see

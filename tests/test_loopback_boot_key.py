@@ -366,7 +366,10 @@ class TestRepoHardening:
         assert "getElementById('pair-cta').addEventListener('click'" in src
 
     def test_docker_and_docs_follow_the_locked_index(self):
-        assert '"--open-loopback"]' in (ROOT / "Dockerfile").read_text()
+        # The image keeps the boot key: its trusted bridge ranges also
+        # cover every other container on the same Docker network.
+        cmd = [ln for ln in (ROOT / "Dockerfile").read_text().splitlines() if ln.startswith("CMD")]
+        assert len(cmd) == 1 and "--open-loopback" not in cmd[0], cmd
         assert "--open-loopback" in (ROOT / "docs" / "API.md").read_text()
         readme = (ROOT / "README.md").read_text()
         assert "Open http://127.0.0.1:5001 in your browser" not in readme

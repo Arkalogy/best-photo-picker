@@ -716,7 +716,7 @@
           </div>
           <div class="opt">
             <h3>On a server or NAS</h3>
-            <p>After the same install, run it without the app window: point it at a photo folder and it links the best ones into another folder, leaving your originals where they are. The first command accepts the free-license face models once; the command line then downloads the models it needs without asking. A Dockerfile is included but untested, and there is no published image yet.</p>
+            <p>After the same install, run it without the app window: point it at a photo folder and it links the best ones into another folder, leaving your originals where they are. The first command accepts the free-license face models once; the command line then downloads the models it needs without asking. Prefer Docker? There is a ready-made image for Intel and 64-bit ARM servers; the <a class="text-link" href="https://github.com/Arkalogy/best-photo-picker#docker">Docker guide</a> has the commands.</p>
             <div class="cmd">
               <code id="runCmd">bpp model accept-attribution &amp;&amp; bpp run --input /photos --k 50 --out ~/best --symlink</code>
               <button type="button" data-copy="runCmd" aria-label="Copy the server command">Copy</button>

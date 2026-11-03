@@ -190,7 +190,7 @@ def ensure_face_models(model_toggles: dict[str, Any] | None = None) -> list[str]
     toggles = model_toggles or {}
     warnings = ensure_core_face_models()
     for key, model, warning in OPTIONAL_FACE_MODELS:
-        if not toggles.get(key, True):
+        if not toggles.get(key, True) or model.cpu_unsupported():
             continue
         if model.ensure_model() is None and not model.license_blocked():
             warnings.append(warning)

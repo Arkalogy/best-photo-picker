@@ -83,7 +83,9 @@ def _get_mediapipe_detector():
 
 def ensure_mediapipe_models() -> list[str]:
     """Pre-download BlazeFace models. Returns list of warnings for unavailable models."""
-    warnings = []
+    warnings: list[str] = []
+    if _mp_blazeface.cpu_unsupported():
+        return warnings  # cpu_support.WARNING says so once
     path = _mp_blazeface.ensure_model()
     if path is None and not _mp_blazeface.license_blocked():
         warnings.append("BlazeFace short-range model unavailable — face detection degraded")

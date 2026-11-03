@@ -41,7 +41,15 @@ def do_model_accept_attribution(args: argparse.Namespace) -> int:
 
     (cb_id, cb_text), *_ = bundle.required_checkboxes
     if not args.yes:
-        answer = input(f"{cb_text} [y/N] ").strip().lower()
+        try:
+            answer = input(f"{cb_text} [y/N] ").strip().lower()
+        except EOFError:
+            print(
+                "\nNo terminal to confirm on: re-run in a terminal (with Docker,"
+                " `docker run -it`), or pass --yes to accept the terms above.",
+                file=sys.stderr,
+            )
+            return 1
         if answer not in {"y", "yes"}:
             print("No acceptance recorded.", file=sys.stderr)
             return 1

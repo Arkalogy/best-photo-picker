@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import multiprocessing
 import os
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
@@ -77,7 +78,10 @@ def parallel_map(
     next_idx = 0
     finished = 0
     try:
-        with ProcessPoolExecutor(max_workers=n_workers) as pool:
+        # spawn, not Linux's fork: a forked child inherits the parent's
+        # native thread pools (onnxruntime, OpenMP) mid-state and can hang.
+        spawn = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(max_workers=n_workers, mp_context=spawn) as pool:
             while next_idx < len(items) or pending:
                 # Top the queue up to the window, then wait for any job to end.
                 while next_idx < len(items) and len(pending) < window:

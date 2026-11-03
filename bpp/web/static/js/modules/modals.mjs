@@ -7,6 +7,7 @@
  */
 
 import { apiFetch, authEventSource } from "./api-client.mjs";
+import { pickFolder } from "./native-pick.mjs";
 import { loadFaceEmbedderPicker } from "./modals-face-embedders.mjs";
 import { esc, escapeAttr } from "./text-format.mjs";
 import { _formatBytes, parseSSE } from "./format-helpers.mjs";
@@ -72,16 +73,12 @@ export function validateImportModal() {
 
 export async function openImportBrowser() {
   try {
-    const data = await apiFetch("/api/v1/pick", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: "folder" }),
-    });
-    if (data.path) {
+    const path = await pickFolder();
+    if (path) {
       const inp = /** @type {HTMLInputElement | null} */ (
         document.getElementById("import-dir-input")
       );
-      if (inp) inp.value = data.path;
+      if (inp) inp.value = path;
       validateImportModal();
     }
   } catch (e) {

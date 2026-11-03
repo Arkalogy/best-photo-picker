@@ -6,6 +6,37 @@ this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **A ready-made Docker image for servers and NAS boxes**,
+  `ghcr.io/arkalogy/bppicker`, for Intel and 64-bit ARM. Run it headless
+  (`bpp run` copies the best photos of a folder into another one) or run
+  the full app, published to the server's loopback and opened with the
+  keyed link in `docker logs`. The README's Docker section has the
+  commands. The image keeps the boot key on, so other containers and
+  users on the server get a locked page.
+
+### Fixed
+- **Face grouping no longer hangs on Linux.** Worker processes were
+  started by copying the running server, background threads and all,
+  and the face-extraction worker could wait forever, ending after ten
+  minutes with no faces. Workers now start fresh on every system, as
+  they already did on macOS.
+- **Intel processors without AVX** (many NAS Celerons and Atoms) no
+  longer crash analysis. MediaPipe's library needs AVX; the app now
+  checks once at start-up, skips the MediaPipe scorers (pose,
+  expression, hand, subject segmentation, BlazeFace short-range) with
+  one warning, and doesn't download their models.
+- **No install buttons where installs can't work.** When pip can't
+  write anywhere (the Docker image), the app no longer offers in-app
+  installs that would fail.
+- **Browse buttons say when there is no folder picker.** Off macOS the
+  button failed with an error; it now asks you to type the path.
+- **`bpp model accept-attribution` without a terminal** explains how to
+  confirm instead of ending in a traceback.
+- **Export and open-folder no longer trust a home folder of `/`**, which
+  a service account or a container user can have; it would have
+  allowed every path.
+
 ## [0.2.2] — 2026-10-24
 
 ### Fixed
