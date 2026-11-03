@@ -1,6 +1,6 @@
 # Best Photo Picker
 
-[![CI](https://github.com/Arkalogy/best-photo-picker/actions/workflows/ci.yml/badge.svg)](https://github.com/Arkalogy/best-photo-picker/actions/workflows/ci.yml)
+[![CI](https://github.com/Arkalogy/best-photo-picker/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Arkalogy/best-photo-picker/actions/workflows/ci.yml)
 [![PyPI version](https://img.shields.io/pypi/v/bppicker.svg)](https://pypi.org/project/bppicker/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/Arkalogy/best-photo-picker/blob/main/LICENSE)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-green.svg)](https://www.python.org/downloads/)

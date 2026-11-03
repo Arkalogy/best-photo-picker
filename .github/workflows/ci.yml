@@ -1,5 +1,6 @@
-# CI runs only on pull requests targeting main (release gate);
-# feature branches are tested locally with the same gates.
+# CI runs on pull requests targeting main (the release gate) and on
+# every push to main, which is what the README badge shows; feature
+# branches are tested locally with the same gates.
 #
 # Gates (lint job):
 #   - Python: version sync, ruff check, ruff format --check
@@ -23,6 +24,8 @@ permissions:
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
 
 # Opt into Node.js 24 for all actions (checkout, setup-python, setup-node).
 # GitHub deprecated the Node.js 20 runner for actions with a forced switch
@@ -33,7 +36,9 @@ env:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # A newer push to a PR replaces its run; runs on main always finish,
+  # so the badge never shows a cancelled run.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   lint:
