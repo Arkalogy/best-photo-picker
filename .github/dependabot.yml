@@ -17,6 +17,12 @@ version: 2
 #
 # Takes effect once Dependabot alerts and version updates are
 # enabled in Settings → Code security.
+#
+# Version-update PRs are paused: every `open-pull-requests-limit` is 0
+# while the project is not under active development. Security updates
+# are configured separately in Settings and are not affected. To resume,
+# restore the limits (pip 5, actions 5, npm 3, desktop npm 3, cargo 3,
+# docker 2).
 
 updates:
   # Python — the runtime install + the dev-extra pin live in
@@ -27,7 +33,7 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     labels:
       - "dependencies"
       - "python"
@@ -48,7 +54,7 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     labels:
       - "dependencies"
       - "github-actions"
@@ -65,7 +71,7 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 0
     labels:
       - "dependencies"
       - "javascript"
@@ -85,7 +91,7 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 0
     labels:
       - "dependencies"
       - "javascript"
@@ -96,7 +102,7 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 0
     labels:
       - "dependencies"
       - "rust"
@@ -110,7 +116,7 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 2
+    open-pull-requests-limit: 0
     labels:
       - "dependencies"
       - "docker"
