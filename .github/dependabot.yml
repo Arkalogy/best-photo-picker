@@ -18,11 +18,10 @@ version: 2
 # Takes effect once Dependabot alerts and version updates are
 # enabled in Settings → Code security.
 #
-# Version-update PRs are paused: every `open-pull-requests-limit` is 0
-# while the project is not under active development. Security updates
-# are configured separately in Settings and are not affected. To resume,
-# restore the limits (pip 5, actions 5, npm 3, desktop npm 3, cargo 3,
-# docker 2).
+# Version-update PRs are paused: every `open-pull-requests-limit` is 0.
+# Security updates are configured separately in Settings and are not
+# affected. To resume, restore the limits (pip 5, actions 5, npm 3,
+# desktop npm 3, cargo 3, docker 2).
 
 updates:
   # Python — the runtime install + the dev-extra pin live in
