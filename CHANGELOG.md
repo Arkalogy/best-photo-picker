@@ -6,6 +6,8 @@ this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.4] — 2026-11-14
+
 ### Fixed
 - **The Mac app starts again on Macs where its server took longer than
   30 seconds** ("Server failed to start"). The server used to unpack
@@ -643,7 +645,8 @@ External calls are limited to documented features:
   desktop wrapper currently builds only the macOS bundle.
 - Python 3.11 only (CI tests this version; 3.12+ is unvalidated).
 
-[Unreleased]: https://github.com/Arkalogy/best-photo-picker/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/Arkalogy/best-photo-picker/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/Arkalogy/best-photo-picker/releases/tag/v0.2.4
 [0.2.3]: https://github.com/Arkalogy/best-photo-picker/releases/tag/v0.2.3
 [0.2.2]: https://github.com/Arkalogy/best-photo-picker/releases/tag/v0.2.2
 [0.2.1]: https://github.com/Arkalogy/best-photo-picker/releases/tag/v0.2.1
