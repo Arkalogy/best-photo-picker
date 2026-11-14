@@ -1,102 +1,60 @@
 #!/usr/bin/env bash
-# Build the Python bpp server as a standalone binary using PyInstaller.
-# The output goes to src-tauri/binaries/ where Tauri expects sidecars.
+# Build the desktop app's Python bpp server with PyInstaller.
+#
+# Output: src-tauri/helpers/bpp-server.app, a background-only helper app
+# that tauri.conf.json copies to Contents/Helpers/ in the Mac app. The
+# build itself is desktop/bpp-server.spec (layout, hidden imports,
+# excluded modules and signing are explained there).
 #
 # Usage:
 #   cd desktop && ./build-sidecar.sh
 #
 # Prerequisites:
-#   pip install pyinstaller
+#   pip install ".[web,heic,faces,raw,inpaint]" pyinstaller
+#
+# Signing: set BPP_CODESIGN_IDENTITY to a Developer ID identity in the
+# keychain to sign for distribution; without it the build is ad-hoc
+# signed, which is enough to run it on this Mac.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-BINARIES_DIR="$SCRIPT_DIR/src-tauri/binaries"
+HELPERS_DIR="$SCRIPT_DIR/src-tauri/helpers"
 
-# Detect target triple for Tauri sidecar naming
-ARCH="$(uname -m)"
-OS="$(uname -s)"
+# The desktop app ships for macOS only; other platforms use the pip install.
+if [ "$(uname -s)" != "Darwin" ]; then
+  echo "The desktop app's server builds on macOS only."
+  exit 1
+fi
 
-case "$OS" in
-  Darwin)
-    case "$ARCH" in
-      arm64) TARGET="aarch64-apple-darwin" ;;
-      x86_64) TARGET="x86_64-apple-darwin" ;;
-      *) echo "Unsupported arch: $ARCH"; exit 1 ;;
-    esac
-    ;;
-  Linux)
-    case "$ARCH" in
-      x86_64) TARGET="x86_64-unknown-linux-gnu" ;;
-      aarch64) TARGET="aarch64-unknown-linux-gnu" ;;
-      *) echo "Unsupported arch: $ARCH"; exit 1 ;;
-    esac
-    ;;
-  *)
-    echo "Unsupported OS: $OS"; exit 1
-    ;;
-esac
-
-SIDECAR_NAME="bpp-server-${TARGET}"
-
-echo "Building sidecar for target: $TARGET"
+echo "Building the server helper app ($(uname -m))"
 echo "Project root: $PROJECT_ROOT"
 
-# Run PyInstaller from the project root
 cd "$PROJECT_ROOT"
 
-# Files PyInstaller's import analysis can't see, so they must be named:
-#  - mediapipe's Tasks API loads mediapipe/tasks/c/libmediapipe.dylib via
-#    ctypes at runtime (BlazeFace, landmarks, pose, segmentation). Without
-#    it every MediaPipe detector fails to load in the app.
-#  - bpp's last-resort face detector reads OpenCV's frontal-face Haar
-#    cascade from cv2.data.haarcascades; OpenCV's hook doesn't collect it.
-# Deliberately left out:
-#  - dlib / face_recognition / face_recognition_models. face_recognition
-#    loads the face_recognition_models weights at import time, and one of
-#    them (the 68-point landmark model) was trained on the iBUG 300-W
-#    dataset, whose creators ask that it not be used in commercial
-#    products. Arkalogy doesn't redistribute those weights, so the app
-#    leaves this optional face path out entirely; bpp treats it as not
-#    installed. pip installs can still add it with bppicker[faces].
-HAAR_CASCADE="$(python -c 'import cv2, os; print(os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml"))')"
-test -f "$HAAR_CASCADE" || { echo "Haar cascade not found at $HAAR_CASCADE"; exit 1; }
-
-# Modules bpp loads indirectly (import_gated / importlib) are invisible to
-# PyInstaller's import scan and must be named here, or the app fails at the
-# first use (re-clustering and the face-model switch need scipy's linkage).
-# tests/test_sidecar_hidden_imports.py keeps this list in step with the code.
-# A hidden import PyInstaller cannot find is only a warning, so check that
-# each one imports here first: a build without it must fail, not ship.
+# A hidden import PyInstaller cannot find is only a warning, so check
+# that each one bpp needs at runtime imports here first: a build without
+# it must fail, not ship. tests/test_sidecar_hidden_imports.py checks that
+# every scipy hidden import in the spec is checked here.
 python -c "import scipy.cluster.hierarchy" || { echo "scipy is required for the app build (re-clustering)"; exit 1; }
-python -m PyInstaller \
-  --onefile \
-  --name "bpp-server" \
-  --specpath "build/pyinstaller" \
-  --hidden-import "bpp" \
-  --hidden-import "bpp.web" \
-  --hidden-import "bpp.web.app" \
-  --hidden-import "bpp.db" \
-  --hidden-import "flask" \
-  --hidden-import "scipy.cluster.hierarchy" \
-  --collect-all "bpp" \
-  --collect-binaries "mediapipe" \
-  --add-data "${HAAR_CASCADE}:cv2/data" \
-  --exclude-module "face_recognition" \
-  --exclude-module "face_recognition_models" \
-  --exclude-module "dlib" \
-  --exclude-module "_dlib_pybind11" \
+python -c 'import cv2, os, sys; sys.exit(0 if os.path.isfile(os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")) else 1)' \
+  || { echo "OpenCV's Haar cascade is missing (the last-resort face detector needs it)"; exit 1; }
+
+python -m PyInstaller desktop/bpp-server.spec \
+  --distpath dist \
+  --workpath build/pyinstaller \
   --noconfirm \
   --clean \
-  --log-level WARN \
-  desktop/sidecar_entry.py
+  --log-level WARN
 
-# Copy to Tauri binaries dir with target-triple suffix
-mkdir -p "$BINARIES_DIR"
-cp "dist/bpp-server" "$BINARIES_DIR/$SIDECAR_NAME"
-chmod +x "$BINARIES_DIR/$SIDECAR_NAME"
+# Stage the helper app where tauri.conf.json picks it up. ditto keeps the
+# bundle's symlinks and signatures intact.
+rm -rf "$HELPERS_DIR/bpp-server.app"
+mkdir -p "$HELPERS_DIR"
+ditto "dist/bpp-server.app" "$HELPERS_DIR/bpp-server.app"
+codesign --verify --deep --strict "$HELPERS_DIR/bpp-server.app"
 
 echo ""
-echo "Sidecar built: $BINARIES_DIR/$SIDECAR_NAME"
-echo "Size: $(du -sh "$BINARIES_DIR/$SIDECAR_NAME" | cut -f1)"
+echo "Server built: $HELPERS_DIR/bpp-server.app"
+echo "Size: $(du -sh "$HELPERS_DIR/bpp-server.app" | cut -f1)"

@@ -472,6 +472,10 @@ bpp model {list|accept|accept-attribution|accepted|use-context|byom|remove|regis
                    `accept-attribution` accepts every built-in
                    Apache 2.0 / BSD-style model in one step.
 bpp db restore-backup --library PATH [--previous] [--yes] [--accept-stale] [--force]
+bpp selfcheck [--require-all]
+                 — loads the native libraries the desktop app bundles
+                   (opens no photo library) and names any that is missing
+                   or won't load. The optional dlib backend isn't checked.
 
 Global: --extensions STR (default: every supported photo, camera RAW and video format)
 ```
@@ -591,7 +595,7 @@ cd desktop && npm run dev
 For a standalone `.app` bundle (launchable from Finder/Spotlight):
 
 ```bash
-# Build sidecar (PyInstaller-bundled Python server)
+# Build the server (PyInstaller-bundled Python server, as a helper app)
 cd desktop && ./build-sidecar.sh
 
 # Build .app + .dmg
@@ -599,7 +603,7 @@ npm run build
 # Output: desktop/src-tauri/target/release/bundle/
 ```
 
-The sidecar binary lands at `desktop/src-tauri/binaries/bpp-server-{target-triple}` (e.g., `bpp-server-aarch64-apple-darwin`).
+The server lands at `desktop/src-tauri/helpers/bpp-server.app`, and the app carries it in `Contents/Helpers/`. `desktop/bpp-server.spec` is the PyInstaller build (layout, hidden imports, signing).
 
 > **Note:** A build you make yourself isn't signed with an Apple Developer ID, so Gatekeeper will block it the first time. To open it: right-click → Open → Open (once). The release DMG and the app inside are signed with a Developer ID and notarized by Apple, so they open normally.
 
@@ -636,7 +640,7 @@ bpp/
     templates/index.html    # Single-page HTML shell
 desktop/
   src-tauri/                # Tauri v2 Rust app
-  build-sidecar.sh          # PyInstaller sidecar build
+  build-sidecar.sh          # builds the server helper app (bpp-server.spec)
   scripts/dev-macos.sh      # Dev launcher
 ```
 

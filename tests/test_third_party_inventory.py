@@ -334,6 +334,97 @@ def test_bundled_files_attributed_to_dist_runtime_or_pyinstaller(site):
     assert result["unattributed"] == ["libmystery.1.dylib", "module zz_unknown_mod"]
 
 
+def _fake_helper_app(tmp_path: Path) -> Path:
+    """A one-folder helper app laid out the way PyInstaller's BUNDLE
+    writes it: binaries in Frameworks, data in Resources, symlinks
+    between them, and the app's own icon in Resources."""
+    import os
+    import plistlib
+
+    app = tmp_path / "bpp-server.app"
+    (app / "Contents" / "MacOS").mkdir(parents=True)
+    fw = app / "Contents" / "Frameworks"
+    res = app / "Contents" / "Resources"
+    (fw / "rawpy").mkdir(parents=True)
+    (res / "cv2" / "data").mkdir(parents=True)
+    (app / "Contents" / "Info.plist").write_bytes(
+        plistlib.dumps({"CFBundleExecutable": "bpp-server", "CFBundleIconFile": "icon.icns"})
+    )
+    (app / "Contents" / "MacOS" / "bpp-server").write_bytes(bytes.fromhex("cffaedfe") + b"exe")
+    (fw / "rawpy" / "libraw_r.25.dylib").write_bytes(bytes.fromhex("cffaedfe") + b"lib")
+    os.symlink("rawpy/libraw_r.25.dylib", fw / "libraw_r.25.dylib")  # alias, listed once
+    (res / "cv2" / "data" / "haar.xml").write_text("<xml/>")
+    (fw / "cv2").mkdir()
+    os.symlink("../../Resources/cv2/data", fw / "cv2" / "data")  # cross-link
+    (res / "icon.icns").write_bytes(b"icns")
+    # a dotted folder, renamed by PyInstaller, linked under its own name
+    dyn = fw / "python3__dot__11" / "lib-dynload"
+    dyn.mkdir(parents=True)
+    (dyn / "_ssl.cpython-311-darwin.so").write_bytes(bytes.fromhex("cffaedfe") + b"ssl")
+    os.symlink("python3__dot__11", fw / "python3.11")
+    return app
+
+
+def test_bundle_lists_every_packed_file_once_with_its_kind(tmp_path, monkeypatch):
+    app = _fake_helper_app(tmp_path)
+    seen = []
+
+    def fake_archive(exe):
+        seen.append(exe)
+        return {"pyiboot01_bootstrap": (0, 0, 0, 1, "s"), "PYZ.pyz": (0, 0, 0, 1, "z")}, ["json"]
+
+    monkeypatch.setattr(bnd_mod, "read_archive", fake_archive)
+    toc, modules = bnd_mod.read_bundle(app)
+    assert seen == [app / "Contents" / "MacOS" / "bpp-server"]
+    assert modules == ["json"]
+    assert toc["rawpy/libraw_r.25.dylib"] == ("b",)
+    assert toc["cv2/data/haar.xml"] == ("x",)
+    assert "libraw_r.25.dylib" not in toc, "a symlink alias is not a second file"
+    assert "icon.icns" not in toc, "the helper app's icon is bpp's own"
+    assert toc["pyiboot01_bootstrap"][-1] == "s"
+    # the server's own name for a renamed dotted folder, once
+    assert toc["python3.11/lib-dynload/_ssl.cpython-311-darwin.so"] == ("b",)
+    assert not any(path.startswith("python3__dot__11") for path in toc)
+
+
+def test_only_folders_pyinstaller_renamed_get_their_dotted_name_back(tmp_path, monkeypatch):
+    """A literal ``__dot__`` without PyInstaller's link from the dotted
+    name, a file name, and a Resources path keep their names: no entry is
+    renamed onto another or credited to the wrong owner."""
+    app = _fake_helper_app(tmp_path)
+    fw = app / "Contents" / "Frameworks"
+    res = app / "Contents" / "Resources"
+    (fw / "literal__dot__pkg").mkdir()
+    (fw / "literal__dot__pkg" / "native.so").write_bytes(bytes.fromhex("cffaedfe"))
+    (fw / "pkg").mkdir()
+    (fw / "pkg" / "lib.one.so").write_bytes(bytes.fromhex("cffaedfe") + b"1")
+    (fw / "pkg" / "lib__dot__one.so").write_bytes(bytes.fromhex("cffaedfe") + b"2")
+    (res / "data.set").mkdir()
+    (res / "data.set" / "item.txt").write_text("a")
+    (res / "data__dot__set").mkdir()
+    (res / "data__dot__set" / "item.txt").write_text("b")
+    monkeypatch.setattr(bnd_mod, "read_archive", lambda exe: ({}, []))
+    toc, _ = bnd_mod.read_bundle(app)
+    for rel in (
+        "literal__dot__pkg/native.so",
+        "pkg/lib.one.so",
+        "pkg/lib__dot__one.so",
+        "data.set/item.txt",
+        "data__dot__set/item.txt",
+        "python3.11/lib-dynload/_ssl.cpython-311-darwin.so",
+    ):
+        assert rel in toc, rel
+    assert "literal.pkg/native.so" not in toc
+
+
+def test_bundle_digest_covers_every_file_and_link(tmp_path):
+    app = _fake_helper_app(tmp_path)
+    first = bnd_mod.tree_sha256(app)
+    assert first == bnd_mod.tree_sha256(app)
+    (app / "Contents" / "Resources" / "cv2" / "data" / "haar.xml").write_text("<changed/>")
+    assert bnd_mod.tree_sha256(app) != first
+
+
 # ── workflow / build wiring ──────────────────────────────────────────
 
 
@@ -354,11 +445,16 @@ def test_workflow_extras_and_asset_names_match_script_and_notice():
 
 
 def test_sidecar_build_collects_files_import_analysis_misses():
-    script = _repo_file("desktop/build-sidecar.sh").read_text()
-    assert '--collect-binaries "mediapipe"' in script  # ctypes-loaded libmediapipe
-    assert ":cv2/data" in script  # Haar cascade for the last-resort detector
+    spec = _repo_file("desktop/bpp-server.spec").read_text()
+    assert 'collect_dynamic_libs("mediapipe")' in spec  # ctypes-loaded libmediapipe
+    assert '(HAAR_CASCADE, "cv2/data")' in spec  # Haar cascade for the last-resort detector
     for mod in ("face_recognition", "face_recognition_models", "dlib"):
-        assert f'--exclude-module "{mod}"' in script, mod
+        assert f'"{mod}"' in spec.split("EXCLUDES = [")[1].split("]")[0], mod
+
+
+def test_workflow_inventories_the_helper_app_it_ships():
+    wf = _repo_file(".github/workflows/release-desktop.yml").read_text()
+    assert "--binary dist/bpp-server.app" in wf
 
 
 def test_download_refuses_a_dest_outside_the_output_folder(tmp_path, monkeypatch):

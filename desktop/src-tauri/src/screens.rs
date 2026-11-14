@@ -76,19 +76,22 @@ pub(crate) fn hide_reconnecting_overlay(handle: &AppHandle) {
     }
 }
 
-/// The 30-second start-up timeout screen. ``port_held``: something
+/// The start-up timeout screen (after `SERVER_START_TIMEOUT_SECS`). ``port_held``: something
 /// else answers on the port (a `bpp serve`, a sidecar we could not
 /// reclaim), so the message names it and Try Again restarts the app.
 pub(crate) fn show_start_failure(handle: &AppHandle, port_held: bool) {
         let (title, detail) = if port_held {
             (
                 "Another copy is already running",
-                "Something else is using port 5001 on this Mac: another copy of Best Photo Picker, or `bpp serve` in a Terminal window. Quit it, then click Try Again.",
+                "Something else is using port 5001 on this Mac: another copy of Best Photo Picker, or `bpp serve` in a Terminal window. Quit it, then click Try Again.".to_string(),
             )
         } else {
             (
                 "Server failed to start",
-                "Best Photo Picker server did not respond within 30 seconds.",
+                format!(
+                    "Best Photo Picker server did not respond within {}.",
+                    crate::boot::SERVER_START_TIMEOUT_TEXT
+                ),
             )
         };
         if let Some(window) = handle.get_webview_window("main") {

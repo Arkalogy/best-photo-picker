@@ -8,3 +8,4 @@ build/
 *.AppImage
 *.deb
 *.msi
+src-tauri/helpers/

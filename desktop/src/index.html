@@ -47,6 +47,15 @@
       margin-top: -8px;
     }
 
+    .status-note {
+      font-size: 12px;
+      color: rgba(255,255,255,0.4);
+      max-width: 280px;
+      text-align: center;
+      line-height: 1.5;
+      visibility: hidden;
+    }
+
     .progress-track {
       width: 200px;
       height: 2px;
@@ -83,7 +92,19 @@
     <div class="product-name">Best Photo Picker</div>
     <div class="status">Starting&hellip;</div>
     <div class="progress-track"><div class="progress-bar"></div></div>
+    <div class="status-note" id="status-note">Still starting. The first start after installing or updating takes longer.</div>
   </div>
+  <script>
+    // A start takes about a second. If the splash is still up after a
+    // few seconds, say it is still starting and why that is usual
+    // (macOS checks the new files once after an install or update)
+    // instead of leaving a bare "Starting…". No number here: the app's
+    // own wait (SERVER_START_TIMEOUT_SECS in boot.rs) is the limit.
+    setTimeout(function () {
+      var note = document.getElementById("status-note");
+      if (note) note.style.visibility = "visible";
+    }, 8000);
+  </script>
   <div class="footer">Arkalogy</div>
 </body>
 </html>

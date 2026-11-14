@@ -15,6 +15,7 @@ import os
 from typing import Any
 
 from bpp.utils.logging import get_logger, setup_logging
+from bpp.web.wsgi_bind import bind_without_reverse_dns
 
 
 def do_web(args: argparse.Namespace) -> int:
@@ -54,6 +55,7 @@ def do_web(args: argparse.Namespace) -> int:
     # ``--debug`` means verbose logging (setup_logging above), never
     # Werkzeug's interactive debugger: that would hand a traceback page
     # and a code console to anyone who can reach the port.
+    bind_without_reverse_dns()
     app.run(host=host, port=port, debug=False, threaded=True)
     return 0
 
@@ -133,6 +135,7 @@ def do_serve(args: argparse.Namespace) -> int:
     # Werkzeug's interactive debugger: with sharing on the server binds the
     # LAN, and the debugger's traceback pages and console would be reachable
     # by any device that can send a loopback Host header.
+    bind_without_reverse_dns()
     app.run(
         host=host,
         port=port,
