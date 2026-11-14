@@ -357,6 +357,11 @@ def _fake_helper_app(tmp_path: Path) -> Path:
     (fw / "cv2").mkdir()
     os.symlink("../../Resources/cv2/data", fw / "cv2" / "data")  # cross-link
     (res / "icon.icns").write_bytes(b"icns")
+    # a dotted folder, renamed by PyInstaller, linked under its own name
+    dyn = fw / "python3__dot__11" / "lib-dynload"
+    dyn.mkdir(parents=True)
+    (dyn / "_ssl.cpython-311-darwin.so").write_bytes(bytes.fromhex("cffaedfe") + b"ssl")
+    os.symlink("python3__dot__11", fw / "python3.11")
     return app
 
 
@@ -377,6 +382,39 @@ def test_bundle_lists_every_packed_file_once_with_its_kind(tmp_path, monkeypatch
     assert "libraw_r.25.dylib" not in toc, "a symlink alias is not a second file"
     assert "icon.icns" not in toc, "the helper app's icon is bpp's own"
     assert toc["pyiboot01_bootstrap"][-1] == "s"
+    # the server's own name for a renamed dotted folder, once
+    assert toc["python3.11/lib-dynload/_ssl.cpython-311-darwin.so"] == ("b",)
+    assert not any(path.startswith("python3__dot__11") for path in toc)
+
+
+def test_only_folders_pyinstaller_renamed_get_their_dotted_name_back(tmp_path, monkeypatch):
+    """A literal ``__dot__`` without PyInstaller's link from the dotted
+    name, a file name, and a Resources path keep their names: no entry is
+    renamed onto another or credited to the wrong owner."""
+    app = _fake_helper_app(tmp_path)
+    fw = app / "Contents" / "Frameworks"
+    res = app / "Contents" / "Resources"
+    (fw / "literal__dot__pkg").mkdir()
+    (fw / "literal__dot__pkg" / "native.so").write_bytes(bytes.fromhex("cffaedfe"))
+    (fw / "pkg").mkdir()
+    (fw / "pkg" / "lib.one.so").write_bytes(bytes.fromhex("cffaedfe") + b"1")
+    (fw / "pkg" / "lib__dot__one.so").write_bytes(bytes.fromhex("cffaedfe") + b"2")
+    (res / "data.set").mkdir()
+    (res / "data.set" / "item.txt").write_text("a")
+    (res / "data__dot__set").mkdir()
+    (res / "data__dot__set" / "item.txt").write_text("b")
+    monkeypatch.setattr(bnd_mod, "read_archive", lambda exe: ({}, []))
+    toc, _ = bnd_mod.read_bundle(app)
+    for rel in (
+        "literal__dot__pkg/native.so",
+        "pkg/lib.one.so",
+        "pkg/lib__dot__one.so",
+        "data.set/item.txt",
+        "data__dot__set/item.txt",
+        "python3.11/lib-dynload/_ssl.cpython-311-darwin.so",
+    ):
+        assert rel in toc, rel
+    assert "literal.pkg/native.so" not in toc
 
 
 def test_bundle_digest_covers_every_file_and_link(tmp_path):

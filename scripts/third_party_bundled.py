@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.metadata as md
+import os
 import re
 import sys
 from collections.abc import Iterable, Mapping
@@ -131,7 +132,11 @@ def read_bundle(app: Path) -> tuple[dict, list[str]]:
     """(TOC-shaped entries for every packed file plus the executable's own
     archive entries, module names in the embedded PYZ) for a one-folder
     helper app. Symlinks are aliases of a file listed once; the app's own
-    icon is bpp's and is skipped."""
+    icon is bpp's and is skipped. PyInstaller renames a dotted folder in
+    Contents/Frameworks (``python3.11``, ``cv2/.dylibs``) to ``__dot__``
+    and links the original name to it; entries keep the original name,
+    the one the running server sees and the distributions record (see
+    ``_original_rel``)."""
     import plistlib
 
     info = plistlib.loads((app / "Contents" / "Info.plist").read_bytes())
@@ -143,18 +148,36 @@ def read_bundle(app: Path) -> tuple[dict, list[str]]:
         for path in _walk(root):
             if path.is_symlink() or not path.is_file():
                 continue
-            rel = path.relative_to(root).as_posix()
+            rel = _original_rel(root, path)
             if root.name == "Resources" and icon and rel == icon:
                 continue
             toc.setdefault(rel, ("b" if _is_binary(path) else "x",))
     return toc, modules
 
 
+def _original_rel(root: Path, path: Path) -> str:
+    """*path* relative to *root*, with each Frameworks folder PyInstaller
+    renamed (``.`` → ``__dot__``) given back its original name. A folder
+    counts as renamed only when its parent holds PyInstaller's link from
+    the original name to it; file names, Resources paths and a literal
+    ``__dot__`` without that link are kept as they are."""
+    parts = list(path.relative_to(root).parts)
+    if root.name != "Frameworks":
+        return "/".join(parts)
+    base = root
+    for i, part in enumerate(parts[:-1]):
+        here = base / part
+        if "__dot__" in part:
+            alias = base / part.replace("__dot__", ".")
+            if alias.is_symlink() and Path(os.readlink(alias)) == Path(part):
+                parts[i] = alias.name
+        base = here
+    return "/".join(parts)
+
+
 def _walk(root: Path) -> list[Path]:
     """Every entry under *root*, sorted, without following symlinks (a
     linked folder is listed as the link, not walked twice)."""
-    import os
-
     out: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
         base = Path(dirpath)
