@@ -1,9 +1,11 @@
 """Record what PyInstaller actually packed into the frozen sidecar.
 
-Used by ``third_party_inventory.py bundled``. Reads the sidecar's
-archive table of contents (PyInstaller's own reader, so it must run in
-the build environment) and attributes every packed file and module to
-its owner:
+Used by ``third_party_inventory.py bundled``. The sidecar is the
+``bpp-server.app`` helper app (a one-folder build): its files are read
+from the bundle on disk and its Python modules from the archive inside
+the executable (PyInstaller's own reader, so it must run in the build
+environment). A one-file binary (up to 0.2.3) is still read from its
+archive alone. Every packed file and module is attributed to its owner:
 
 * a distribution, via the files its RECORD lists or the top-level
   import names it provides;
@@ -106,6 +108,74 @@ def read_archive(binary: Path) -> tuple[dict, list[str]]:
     return reader.toc, modules
 
 
+_MACHO_MAGIC = {
+    bytes.fromhex(m)
+    for m in ("feedface", "cefaedfe", "feedfacf", "cffaedfe", "cafebabe", "bebafeca")
+}
+
+
+def _is_binary(path: Path) -> bool:
+    with path.open("rb") as fh:
+        head = fh.read(4)
+    return head in _MACHO_MAGIC or head == b"\x7fELF"
+
+
+def bundle_roots(app: Path) -> list[Path]:
+    """Where a helper app's packed files live: PyInstaller puts binaries
+    in Contents/Frameworks and data in Contents/Resources, each relative
+    to the same root (sys._MEIPASS), with symlinks between the two."""
+    return [app / "Contents" / "Frameworks", app / "Contents" / "Resources"]
+
+
+def read_bundle(app: Path) -> tuple[dict, list[str]]:
+    """(TOC-shaped entries for every packed file plus the executable's own
+    archive entries, module names in the embedded PYZ) for a one-folder
+    helper app. Symlinks are aliases of a file listed once; the app's own
+    icon is bpp's and is skipped."""
+    import plistlib
+
+    info = plistlib.loads((app / "Contents" / "Info.plist").read_bytes())
+    exe = app / "Contents" / "MacOS" / info["CFBundleExecutable"]
+    toc, modules = read_archive(exe)
+    toc = dict(toc)
+    icon = info.get("CFBundleIconFile")
+    for root in bundle_roots(app):
+        for path in _walk(root):
+            if path.is_symlink() or not path.is_file():
+                continue
+            rel = path.relative_to(root).as_posix()
+            if root.name == "Resources" and icon and rel == icon:
+                continue
+            toc.setdefault(rel, ("b" if _is_binary(path) else "x",))
+    return toc, modules
+
+
+def _walk(root: Path) -> list[Path]:
+    """Every entry under *root*, sorted, without following symlinks (a
+    linked folder is listed as the link, not walked twice)."""
+    import os
+
+    out: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        base = Path(dirpath)
+        out.extend(base / n for n in dirnames + filenames)
+    return sorted(out)
+
+
+def tree_sha256(app: Path) -> str:
+    """One digest over every file and link of the helper app (path +
+    content or target), so the inventory names exactly the build it
+    describes."""
+    h = hashlib.sha256()
+    for path in _walk(app):
+        rel = path.relative_to(app).as_posix()
+        if path.is_symlink():
+            h.update(f"L {rel} -> {path.readlink()}\n".encode())
+        elif path.is_file():
+            h.update(f"F {rel} {_sha256(path)}\n".encode())
+    return h.hexdigest()
+
+
 def attribute(toc: Mapping[str, tuple], modules: Iterable[str], attributor: Attributor) -> dict:
     owners: dict[str, dict] = {}
     unattributed: list[str] = []
@@ -153,7 +223,8 @@ def _sha256(path: Path) -> str:
 def record_bundled(inv: dict, binary: Path, dists: Mapping[str, md.Distribution]) -> None:
     from third_party_inventory import canon, dist_record
 
-    toc, modules = read_archive(binary)
+    is_bundle = binary.is_dir()
+    toc, modules = read_bundle(binary) if is_bundle else read_archive(binary)
     result = attribute(toc, modules, Attributor(dists, inv["root"]["name"]))
     listed = {canon(d["name"]) for d in inv["distributions"]}
     special = {CPYTHON, PYINSTALLER, inv["root"]["name"]}
@@ -173,7 +244,8 @@ def record_bundled(inv: dict, binary: Path, dists: Mapping[str, md.Distribution]
     inv["distributions"].sort(key=lambda r: r["name"].lower())
     inv["sidecar"] = {
         "binary": binary.name,
-        "sha256": _sha256(binary),
+        "layout": "one-folder helper app" if is_bundle else "one-file binary",
+        "sha256": tree_sha256(binary) if is_bundle else _sha256(binary),
         "archive_entries": len(toc),
         "pyz_modules": len(modules),
         "added_by_pyinstaller": sorted(added),

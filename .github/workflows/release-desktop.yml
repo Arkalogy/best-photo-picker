@@ -142,19 +142,60 @@ jobs:
             echo "::warning::Couldn't fetch the pinned HEIC/RAW sources — attach $SOURCES_ASSET to the release by hand"
           fi
 
+      - name: Import the signing certificate for the server build
+        # PyInstaller signs every binary in the server helper app with the
+        # Developer ID, the hardened runtime and a secure timestamp, as
+        # notarization requires: the Tauri bundler does not sign what it
+        # copies into Contents/Helpers. This keychain is deleted again
+        # right after the server build, before the Tauri build imports the
+        # same certificate into its own, so codesign never finds the
+        # identity twice. Without the secrets (a fork) the server is
+        # ad-hoc signed and the app stays unsigned, as before.
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "::warning::No signing secrets — the server is ad-hoc signed"
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/bpp-server-signing.keychain-db"
+          password="$(openssl rand -hex 24)"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/server-cert.p12"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/server-cert.p12" -k "$keychain" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/server-cert.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" > /dev/null
+          existing="$(security list-keychains -d user | sed -e 's/^ *"//' -e 's/"$//')"
+          # shellcheck disable=SC2086 # one keychain path per word
+          security list-keychains -d user -s "$keychain" $existing
+          echo "SERVER_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+
       - name: Build sidecar (PyInstaller)
+        # desktop/bpp-server.spec: a one-folder build wrapped in the
+        # bpp-server.app helper, so nothing is unpacked at launch.
+        env:
+          BPP_CODESIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: bash desktop/build-sidecar.sh
 
+      - name: Remove the server-build keychain
+        if: always() && env.SERVER_KEYCHAIN != ''
+        run: security delete-keychain "$SERVER_KEYCHAIN"
+
       - name: Record what PyInstaller bundled
-        # Offline. Reads the frozen sidecar's archive and adds, to the
-        # inventory, every packed file attributed to its distribution /
+        # Offline. Reads the server helper app (its files and the module
+        # archive in its executable) and adds, to the inventory, every
+        # packed file attributed to its distribution /
         # the Python runtime / PyInstaller, plus any distribution
         # PyInstaller collected outside the dependency closure.
         id: bundled
         if: steps.inventory.outputs.ok == '1'
         run: |
           if python scripts/third_party_inventory.py bundled \
-              --out third-party --binary dist/bpp-server; then
+              --out third-party --binary dist/bpp-server.app; then
             echo "ok=1" >> "$GITHUB_OUTPUT"
           else
             echo "::warning::Couldn't read the sidecar archive — the inventory lacks the bundled-file list"
@@ -197,42 +238,79 @@ jobs:
           ls -lh "$OUT"
           echo "ARTIFACT=$OUT" >> "$GITHUB_ENV"
 
-      - name: Verify the signed sidecar starts and serves
-        # The sidecar is signed with the hardened runtime inside the app.
-        # If its entitlements are wrong, macOS refuses to load its own
-        # Python (or a library the server loads later) and the app can
-        # never reach the server; running it from the DMG is the only
-        # check that sees the signed binary as a user would. Both steps
-        # are time-bounded (macOS runners have no `timeout`), the verdict
-        # is printed before the image is detached, and the step hard-fails
-        # the release before anything is uploaded.
+      - name: Verify the signed server starts fast and loads its libraries
+        # The server runs signed, with the hardened runtime, as a helper
+        # app inside the app. If a signature or an entitlement is wrong,
+        # macOS refuses to load its Python or a library it loads later,
+        # and the app can never reach the server; if its start is slow,
+        # the app gives up waiting (0.2.3 unpacked itself on every launch
+        # and took 30-45 s). Running it as installed from the DMG is the
+        # only check that sees the signed build as a user would. Every
+        # step is time-bounded (macOS runners have no `timeout`), the
+        # verdict is printed, and the step hard-fails the release before
+        # anything is uploaded.
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
           mount="$RUNNER_TEMP/dmg-mount"
+          apps="$RUNNER_TEMP/Applications"
           lib="$RUNNER_TEMP/gate-library"
-          mkdir -p "$mount" "$lib"
+          mkdir -p "$mount" "$apps" "$lib"
           hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$ARTIFACT"
-          server="$mount/Best Photo Picker.app/Contents/MacOS/bpp-server"
-          ok=1
-          # 1. the runtime loads
-          version="$(perl -e 'alarm 120; exec @ARGV' "$server" --version 2>&1 || true)"
-          echo "$version" | tail -3
-          echo "$version" | grep -q "^bpp " || { ok=0; echo "::error::the signed sidecar does not start"; }
-          # 2. the server comes up and answers (the lazily loaded libraries)
-          if [ "$ok" = 1 ]; then
-            "$server" serve --library "$lib" --no-browser --open-loopback --port 5099 > "$RUNNER_TEMP/gate-serve.log" 2>&1 &
-            pid=$!
-            up=0
-            for _ in $(seq 1 120); do
-              if curl -sf -o /dev/null http://127.0.0.1:5099/; then up=1; break; fi
-              kill -0 "$pid" 2>/dev/null || break
-              sleep 1
-            done
-            kill "$pid" 2>/dev/null || true
-            wait "$pid" 2>/dev/null || true
-            tail -5 "$RUNNER_TEMP/gate-serve.log"
-            [ "$up" = 1 ] || { ok=0; echo "::error::the signed sidecar did not serve a page within 120 s"; }
-          fi
+          # Installed the way a user drags it out of the DMG.
+          ditto "$mount/Best Photo Picker.app" "$apps/Best Photo Picker.app"
           hdiutil detach "$mount" -quiet || true
+          app="$apps/Best Photo Picker.app"
+          server="$app/Contents/Helpers/bpp-server.app/Contents/MacOS/bpp-server"
+          ok=1
+          # 1. every signature holds: the whole app when the release signs
+          #    it; without the signing secrets (a fork) Tauri leaves the app
+          #    unsigned, so only the (ad-hoc signed) server helper is checked
+          if [ -n "$APPLE_SIGNING_IDENTITY" ]; then signed="$app"; else signed="$app/Contents/Helpers/bpp-server.app"; fi
+          codesign --verify --deep --strict --verbose=2 "$signed" \
+            || { ok=0; echo "::error::the code signature of $signed does not verify"; }
+          # 2. how long the server takes to answer: the first start after
+          #    install (macOS checks the new files once) and a second start
+          #    (what every later launch costs). The app waits 120 s. Timed
+          #    offline (no model-registry fetch, whose own 10 s timeout
+          #    would measure the network, not the build).
+          start_secs() {
+            BPP_DISABLE_REMOTE_REGISTRY=1 "$server" serve --library "$lib" --no-browser \
+              --open-loopback --port 5099 > "$RUNNER_TEMP/gate-serve-$1.log" 2>&1 &
+            local pid=$! t0=$SECONDS up=0
+            for _ in $(seq 1 240); do
+              if curl -sf --max-time 2 -o /dev/null http://127.0.0.1:5099/; then up=1; break; fi
+              kill -0 "$pid" 2>/dev/null || break
+              sleep 0.5
+            done
+            local secs=$((SECONDS - t0))
+            kill "$pid" 2>/dev/null || true
+            for _ in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done
+            kill -9 "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+            tail -3 "$RUNNER_TEMP/gate-serve-$1.log" >&2
+            if [ "$up" = 1 ]; then echo "$secs"; else echo "never"; fi
+          }
+          if [ "$ok" = 1 ]; then
+            first="$(start_secs first)"
+            second="$(start_secs second)"
+            echo "server start: first ${first} s, second ${second} s"
+            if [ "$first" = never ] || [ "$first" -gt 60 ]; then
+              ok=0; echo "::error::the signed server's first start took ${first} s (limit 60)"
+            fi
+            if [ "$second" = never ] || [ "$second" -gt 10 ]; then
+              ok=0; echo "::error::the signed server's second start took ${second} s (limit 10)"
+            fi
+          fi
+          # 3. the runtime loads and every bundled native library loads in
+          #    the signed server (not only the ones serving / touches)
+          if [ "$ok" = 1 ]; then
+            version="$(perl -e 'alarm 120; exec @ARGV' "$server" --version 2>&1 || true)"
+            echo "$version" | tail -3
+            echo "$version" | grep -q "^bpp " || { ok=0; echo "::error::the signed server does not start"; }
+            BPP_DISABLE_REMOTE_REGISTRY=1 perl -e 'alarm 300; exec @ARGV' "$server" selfcheck --require-all \
+              || { ok=0; echo "::error::a bundled library does not load in the signed server"; }
+          fi
           [ "$ok" = 1 ]
 
       - name: Notarize and staple the DMG
@@ -264,6 +342,13 @@ jobs:
         run: |
           spctl -a -t open --context context:primary-signature -vv "$ARTIFACT" 2>&1 | tee spctl.txt
           grep -q "source=Notarized Developer ID" spctl.txt
+          # The app inside, with its helper, as Gatekeeper sees it at launch.
+          mount="$RUNNER_TEMP/dmg-spctl"
+          mkdir -p "$mount"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$ARTIFACT"
+          spctl -a -t exec -vv "$mount/Best Photo Picker.app" 2>&1 | tee spctl-app.txt || true
+          hdiutil detach "$mount" -quiet || true
+          grep -q "source=Notarized Developer ID" spctl-app.txt
 
       - name: Stage release assets
         # Builds the upload list from what actually exists: the DMG

@@ -13,6 +13,14 @@ use crate::screens::{show_fatal_error, show_reconnecting_overlay, show_start_fai
 
 pub(crate) const MAX_RESPAWN_ATTEMPTS: u32 = 5;
 
+/// The server, relative to the app's own executable (Contents/MacOS):
+/// a background-only helper app the bundle carries in Contents/Helpers
+/// (tauri.conf.json `bundle.macOS.files`, built by build-sidecar.sh).
+/// It is a one-folder build, so nothing is unpacked when it starts. The
+/// executable keeps the name `bpp-server`, which the port reclaim and
+/// orphan checks in boot.rs match on.
+pub(crate) const SERVER_EXECUTABLE: &str = "../Helpers/bpp-server.app/Contents/MacOS/bpp-server";
+
 // Startup-failure diagnosis codes, shared from the sidecar stderr scanner
 // to the failure screens. A blind TCP-poll timeout can't tell the user WHY
 // the server never came up; these let us turn a deterministic, non-retryable
@@ -71,7 +79,7 @@ pub(crate) fn spawn_sidecar(
     let my_generation = generation.load(Ordering::SeqCst);
     let sidecar = handle
         .shell()
-        .sidecar("bpp-server")
+        .sidecar(SERVER_EXECUTABLE)
         .expect("failed to create sidecar command")
         .args(["serve", "--no-browser", "--port", &port.to_string()])
         // The loopback index renders the owner token only to a caller
@@ -187,18 +195,20 @@ pub(crate) fn restart_server(handle: &AppHandle) {
     let startup_failure = rs.startup_failure.clone();
     let generation = rs.generation.clone();
 
-    // Kill existing child; its Terminated handler sees the flag and
-    // leaves the respawn to us.
-    {
+    // A new generation: the old child's Terminated handler sees it and
+    // stands down, whether the kill lands or the handle is stale. The
+    // child is taken out under the lock but stopped after it is released,
+    // so a Quit meanwhile (whose exit handler takes the same lock on the
+    // main thread) is not held up by the stop.
+    let my_generation = generation.fetch_add(1, Ordering::SeqCst) + 1;
+    let old_child = {
         let state = handle.state::<Mutex<ServerState>>();
         let mut guard = state.lock().unwrap();
-        // A new generation: the old child's Terminated handler sees it
-        // and stands down, whether the kill lands or the handle is stale.
-        generation.fetch_add(1, Ordering::SeqCst);
-        if let Some(child) = guard.child.take() {
-            eprintln!("[restart] Stopping existing server");
-            stop_child(child, port, 5);
-        }
+        guard.child.take()
+    };
+    if let Some(child) = old_child {
+        eprintln!("[restart] Stopping existing server");
+        stop_child(child, port, 5);
     }
 
     // Reset respawn + diagnosis bookkeeping for the fresh attempt.
@@ -207,8 +217,14 @@ pub(crate) fn restart_server(handle: &AppHandle) {
     startup_failure.store(STARTUP_OK, Ordering::SeqCst);
     show_reconnecting_overlay(handle);
 
-    // Brief pause for port release, then spawn
+    // Brief pause for port release, then spawn, unless the app began to
+    // quit meanwhile (its exit handler bumped the generation): a server
+    // started now would outlive the app.
     std::thread::sleep(Duration::from_millis(500));
+    if generation.load(Ordering::SeqCst) != my_generation {
+        eprintln!("[restart] The app is quitting; not starting a new server");
+        return;
+    }
     spawn_sidecar(handle, port, respawning, respawn_count, startup_failure, generation);
 
     // Health-check loop will detect server is back and reload the page
@@ -216,12 +232,16 @@ pub(crate) fn restart_server(handle: &AppHandle) {
 }
 
 
-/// Stop a sidecar child: SIGTERM to the bootloader (it forwards the
-/// signal to the Python server, which shuts down and frees the port),
-/// wait up to `wait_secs` for the port to be released, then SIGKILL as
-/// the last resort. A plain kill() only ends the PyInstaller bootloader
-/// and leaves the server process holding the port and the serving lock,
-/// so the replacement could never start.
+/// Stop a sidecar child: SIGTERM to the server, then wait up to
+/// `wait_secs` for the process to exit, which also frees the port and
+/// clears the library's serving lock (the server closes its port before
+/// its exit hooks clear the lock, so a free port alone is too early: a
+/// replacement started then refuses the still-held lock). SIGKILL is the
+/// last resort. The kill also ends the port's listener when it is this
+/// child's own (a server started behind a PyInstaller bootloader, as in
+/// the one-file builds up to 0.2.3, keeps the port when only the
+/// bootloader is killed); a listener another running copy started is
+/// never touched, e.g. when this child already died on the held port.
 pub(crate) fn stop_child(child: tauri_plugin_shell::process::CommandChild, port: u16, wait_secs: u64) {
     let pid = child.pid();
     let termed = std::process::Command::new("kill")
@@ -232,17 +252,31 @@ pub(crate) fn stop_child(child: tauri_plugin_shell::process::CommandChild, port:
     if termed {
         let deadline = std::time::Instant::now() + Duration::from_secs(wait_secs);
         while std::time::Instant::now() < deadline {
-            if !crate::boot::port_is_held(port) {
-                eprintln!("[sidecar] server {} stopped and released port {}", pid, port);
+            if !process_alive(pid) && !crate::boot::port_is_held(port) {
+                eprintln!("[sidecar] server {} exited and released port {}", pid, port);
                 return;
             }
             std::thread::sleep(Duration::from_millis(200));
         }
-        eprintln!("[sidecar] server {} did not release port {} in time — killing it", pid, port);
+        eprintln!("[sidecar] server {} did not exit in time — killing it", pid);
     }
-    // kill() ends the bootloader only; the server it started keeps the
-    // port unless it is ended by name.
+    // If the child is a bootloader, kill() ends only it; the server it
+    // started keeps the port. Find that server first, while it is still
+    // the child's child.
+    let listener = crate::boot::own_listener(port, pid);
     let _ = child.kill();
-    std::thread::sleep(Duration::from_millis(200));
-    crate::boot::kill_sidecar_listener(port);
+    if let Some(server) = listener.filter(|&l| l != pid) {
+        std::thread::sleep(Duration::from_millis(200));
+        crate::boot::kill_own_listener(server);
+    }
+}
+
+/// Whether a process still exists (`kill -0`).
+fn process_alive(pid: u32) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }

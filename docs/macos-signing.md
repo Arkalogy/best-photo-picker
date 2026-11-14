@@ -5,6 +5,13 @@ One-time setup so `release-desktop.yml` produces a DMG that is
 the DMG and the app inside it — so it opens on double-click with no
 Gatekeeper "Open Anyway" detour.
 
+What gets signed first: the app's server is a helper app
+(`Contents/Helpers/bpp-server.app`) that the Tauri bundler copies in but
+does not sign, so the workflow imports the same certificate into a
+temporary keychain and PyInstaller signs every binary in the helper with
+it (hardened runtime, secure timestamp) before the Tauri build. That
+keychain is deleted again before Tauri imports the certificate itself.
+
 What gets notarized: Tauri signs the `.app`, submits it to Apple's
 notary service, staples the ticket to the `.app`, then builds the DMG
 around it and signs the DMG. Tauri does not notarize the DMG itself, so
@@ -95,5 +102,6 @@ build-only path to exercise the full CI build before tagging.)
 ## Fallback behavior
 
 If the secrets are absent (e.g. a fork), the workflow still builds an
-**unsigned** DMG instead of failing — only Arkalogy's releases are signed.
+**unsigned** DMG instead of failing (the server helper is ad-hoc signed)
+— only Arkalogy's releases are signed.
 A fork's users would see the old Gatekeeper warning; Arkalogy's don't.

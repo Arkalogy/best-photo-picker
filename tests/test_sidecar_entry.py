@@ -8,10 +8,12 @@ import pathlib
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
-def test_build_script_uses_sidecar_entry():
+def test_build_uses_sidecar_entry():
     script = (ROOT / "desktop" / "build-sidecar.sh").read_text()
-    assert "desktop/sidecar_entry.py" in script
-    assert "\n  bpp/cli.py\n" not in script
+    assert "PyInstaller desktop/bpp-server.spec" in script
+    spec = (ROOT / "desktop" / "bpp-server.spec").read_text()
+    assert '[str(DESKTOP / "sidecar_entry.py")]' in spec
+    assert "cli.py" not in spec
 
 
 def test_freeze_support_runs_before_bpp_import():

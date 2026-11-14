@@ -36,6 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
         _add_pick,
         _add_model,
         _add_db,
+        _add_selfcheck,
     ):
         add(sub)
     return parser
@@ -252,6 +253,19 @@ def _add_db(sub: argparse._SubParsersAction) -> None:
     )
 
 
+def _add_selfcheck(sub: argparse._SubParsersAction) -> None:
+    """`bpp selfcheck`: load the native libraries bpp uses."""
+    p = sub.add_parser(
+        "selfcheck",
+        help="Check that the native libraries the desktop app bundles load (no photo library)",
+    )
+    p.add_argument(
+        "--require-all",
+        action="store_true",
+        help="Also fail when an optional part isn't installed (the desktop app has them all)",
+    )
+
+
 def cmd_analyze(args: argparse.Namespace) -> int:
     """Scan images, extract features, and compute quality scores."""
     from bpp.commands import do_analyze
@@ -324,6 +338,12 @@ def cmd_db(args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_selfcheck(args: argparse.Namespace) -> int:
+    from bpp.commands.selfcheck import do_selfcheck
+
+    return do_selfcheck(args)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -342,6 +362,7 @@ def main(argv: list[str] | None = None) -> int:
         "pick": cmd_pick,
         "model": cmd_model,
         "db": cmd_db,
+        "selfcheck": cmd_selfcheck,
     }
     if args.command in ("serve", "web", "demo", "run", "analyze", "pick"):
         from bpp.scoring.cpu_support import probe_before_threads

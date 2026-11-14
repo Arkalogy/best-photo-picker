@@ -6,6 +6,31 @@ this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **The Mac app starts again on Macs where its server took longer than
+  30 seconds** ("Server failed to start"). The server used to unpack
+  itself, about 1 GB, into a temporary folder on every launch, and macOS
+  checked those new files each time. It now ships ready to run inside
+  the app, so a start takes about a second; the first start after an
+  install or update takes longer while macOS checks the new files. The
+  app now waits up to two minutes and says when a first start takes a
+  while.
+- **The server no longer waits on a network name lookup before it opens
+  its port.** On macOS that lookup could hold the start for about 35
+  seconds.
+- **Try Again on the "failed to start" screen starts over cleanly.** It
+  used to leave the previous server running, so the new one collided
+  with it.
+- **Quitting the Mac app stops its server.** Quitting with ⌘Q, the app
+  menu or the Dock left the server running in the background until the
+  next launch.
+
+### Added
+- `bpp selfcheck` loads the native libraries the desktop app bundles and
+  reports any that is missing or won't load. The Mac app's release check
+  runs it in the signed app, along with a check that the server starts
+  quickly.
+
 ## [0.2.3] — 2026-11-03
 
 ### Added

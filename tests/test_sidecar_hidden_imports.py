@@ -7,11 +7,24 @@ switch once failed this way)."""
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 INDIRECT = re.compile(r"""\b(?:import_gated|requires|importable)\(\s*["']([\w.]+)["']""")
+SPEC = ROOT / "desktop" / "bpp-server.spec"
+
+
+def spec_list(name: str) -> list[str]:
+    """A module-level list literal from the app build's PyInstaller spec."""
+    tree = ast.parse(SPEC.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == name for t in node.targets
+        ):
+            return list(ast.literal_eval(node.value))
+    raise AssertionError(f"{name} not found in {SPEC.name}")
 
 
 def _sources() -> dict[Path, str]:
@@ -29,9 +42,8 @@ def _imported_normally(module: str, sources: dict[Path, str]) -> bool:
 
 
 def test_every_indirectly_loaded_module_is_bundled_or_excluded():
-    script = (ROOT / "desktop" / "build-sidecar.sh").read_text(encoding="utf-8")
-    hidden = set(re.findall(r'--hidden-import "([\w.]+)"', script))
-    excluded = set(re.findall(r'--exclude-module "([\w.]+)"', script))
+    hidden = set(spec_list("HIDDEN_IMPORTS"))
+    excluded = set(spec_list("EXCLUDES"))
     sources = _sources()
     indirect = {m for text in sources.values() for m in INDIRECT.findall(text)}
     assert "scipy.cluster.hierarchy" in indirect, "the scan found the known indirect import"
@@ -42,10 +54,12 @@ def test_every_indirectly_loaded_module_is_bundled_or_excluded():
         and not any(m == x or m.startswith(x + ".") for x in excluded)
         and not _imported_normally(m, sources)
     )
-    assert not missing, f"add --hidden-import for {missing} in desktop/build-sidecar.sh"
+    assert not missing, f"add {missing} to HIDDEN_IMPORTS in desktop/bpp-server.spec"
 
 
 def test_every_hidden_import_is_checked_before_the_build():
     script = (ROOT / "desktop" / "build-sidecar.sh").read_text(encoding="utf-8")
-    for module in re.findall(r'--hidden-import "(scipy[\w.]*)"', script):
+    scipy = [m for m in spec_list("HIDDEN_IMPORTS") if m.startswith("scipy")]
+    assert scipy, "the spec names scipy's linkage"
+    for module in scipy:
         assert f'import {module}"' in script, f"the build must fail without {module}"

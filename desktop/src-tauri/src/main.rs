@@ -18,7 +18,7 @@ mod sidecar;
 
 use boot::{
     boot_secret, port_is_held, reclaim_port_from_stale_sidecar, server_is_alive,
-    server_knows_boot_secret, wait_for_server,
+    server_knows_boot_secret, wait_for_server, SERVER_START_TIMEOUT_SECS,
 };
 use menu::install_menu;
 use screens::{hide_reconnecting_overlay, show_reconnecting_overlay, show_start_failure, show_update_required};
@@ -50,10 +50,14 @@ fn exit_app(app: AppHandle) {
 
 /// "Try Again" on a start-up failure screen: a page reload would only
 /// redraw the splash (the wait thread has already given up), so start
-/// the whole app over, orphan reclaim included.
+/// the whole app over, orphan reclaim included. `request_restart` goes
+/// through the exit event, whose handler stops the server first.
+/// (`restart()` called here, on the main thread where a sync command
+/// runs, skips that event: the old server kept running and the new one
+/// collided with it.)
 #[tauri::command]
 fn restart_app(app: AppHandle) {
-    app.restart();
+    app.request_restart();
 }
 
 /// Open one of our own https links in the user's browser; the webview
@@ -123,7 +127,7 @@ fn main() {
                         );
                     }
 
-                    if !wait_for_server(port, 30, &startup_failure_nav) {
+                    if !wait_for_server(port, SERVER_START_TIMEOUT_SECS, &startup_failure_nav) {
                         // If the sidecar already told us WHY (newer-schema DB),
                         // show the actionable update screen instead of the
                         // generic "did not respond" timeout. The stderr scanner
@@ -140,8 +144,8 @@ fn main() {
                         let port_held = startup_failure_nav.load(Ordering::SeqCst) == STARTUP_PORT_IN_USE
                             || port_is_held(port);
                         eprintln!(
-                            "Server failed to start within 30 seconds (port held by another process: {})",
-                            port_held
+                            "Server failed to start within {} seconds (port held by another process: {})",
+                            SERVER_START_TIMEOUT_SECS, port_held
                         );
                         show_start_failure(&handle_nav, port_held);
                         return;
@@ -311,19 +315,26 @@ fn main() {
                     let _ = window.set_focus();
                 }
             }
-            RunEvent::ExitRequested { .. } => {
-                // Stop the sidecar on exit: a graceful stop frees the port
-                // and the serving lock (a bare kill left the Python server
-                // running after the app was gone).
-                let rs = app_handle.state::<RestartState>();
-                let port = rs.port;
-                rs.generation.fetch_add(1, Ordering::SeqCst); // no respawn on exit
-                let state = app_handle.state::<Mutex<ServerState>>();
-                let mut guard = state.lock().unwrap();
-                if let Some(child) = guard.child.take() {
-                    crate::sidecar::stop_child(child, port, 3);
-                }
-            }
+            // Stop the server on every way out. app.exit() and
+            // request_restart() (Try Again) arrive as ExitRequested; a macOS
+            // Quit (⌘Q, the app menu, the Dock, logging out) arrives only as
+            // Exit (applicationWillTerminate), and used to leave the server
+            // running after the app was gone. The second call finds no child.
+            RunEvent::ExitRequested { .. } | RunEvent::Exit => stop_server_on_exit(app_handle),
             _ => {}
         });
+}
+
+/// Stop the sidecar when the app ends: a graceful stop frees the port and
+/// the serving lock (a bare kill left the Python server running after the
+/// app was gone). No respawn follows.
+fn stop_server_on_exit(app_handle: &AppHandle) {
+    let rs = app_handle.state::<RestartState>();
+    let port = rs.port;
+    rs.generation.fetch_add(1, Ordering::SeqCst); // no respawn on exit
+    let state = app_handle.state::<Mutex<ServerState>>();
+    let mut guard = state.lock().unwrap();
+    if let Some(child) = guard.child.take() {
+        crate::sidecar::stop_child(child, port, 3);
+    }
 }

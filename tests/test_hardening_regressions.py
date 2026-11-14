@@ -102,9 +102,9 @@ def test_tauri_webview_does_not_expose_shell_plugin_to_js():
 def test_tauri_conf_targets_match_advertised_platform():
     """README:18 advertises a "native macOS app" but
     tauri.conf.json bundle.targets used to be "all" (mac/win/linux).
-    The sidecar binary is macOS-only (`bpp-server-aarch64-apple-darwin`),
-    the build instructions are macOS-only, and the signing notes are
-    macOS-specific — so "all" was a build-matrix lie.
+    The server helper app is macOS-only (desktop/build-sidecar.sh builds
+    on macOS only), the build instructions are macOS-only, and the signing
+    notes are macOS-specific — so "all" was a build-matrix lie.
 
     Pin targets to macOS bundle types only so a future contributor who
     flips `bundle.targets = "all"` and starts shipping Windows/Linux

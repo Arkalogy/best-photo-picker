@@ -7,6 +7,15 @@ use std::time::Duration;
 
 use crate::sidecar::STARTUP_OK;
 
+/// How long the app waits for the server before the "failed to start"
+/// screen. A start takes about a second; the first one after an install
+/// or update is slower while macOS checks the new files once, more so on
+/// a busy or older Mac. The splash says it is still starting after a few
+/// seconds (desktop/src/index.html). `SERVER_START_TIMEOUT_TEXT` is the same
+/// span in words, for the failure screen.
+pub(crate) const SERVER_START_TIMEOUT_SECS: u64 = 120;
+pub(crate) const SERVER_START_TIMEOUT_TEXT: &str = "2 minutes";
+
 /// Poll until the sidecar proves itself, or give up: at the timeout,
 /// or as soon as the sidecar's own output names a final failure (a
 /// newer-schema library, a port held by another process).
@@ -116,20 +125,24 @@ pub(crate) fn port_is_held(port: u16) -> bool {
 /// copy's live sidecar: that one also fails our probe (different
 /// secret), but its parent shell is alive — that case ends on the
 /// held-port screen.
-/// SIGKILL the sidecar server process that still holds `port` after its
-/// bootloader was killed (the one-file bootloader is a separate process;
-/// killing it alone leaves the server listening). Only a process named
-/// bpp-server is touched.
-pub(crate) fn kill_sidecar_listener(port: u16) {
-    let Some(pid) = listener_pid(port) else {
-        return;
-    };
-    let name = process_name(pid).unwrap_or_default();
-    if !name.ends_with("bpp-server") && !name.ends_with("bpp-server.exe") {
-        eprintln!("[sidecar] port {} is held by pid {} ({}); leaving it alone", port, pid, name);
-        return;
+/// The process listening on `port` if it is `child` itself or a child of
+/// it (a server started behind a PyInstaller bootloader, as in the
+/// one-file builds up to 0.2.3). Never another copy's server: one that
+/// another running app started holds the same port when this app's own
+/// server could not start. Read before `child` is killed, while the
+/// parent link still points at it.
+pub(crate) fn own_listener(port: u16, child: u32) -> Option<u32> {
+    let pid = listener_pid(port)?;
+    if pid == child || parent_pid(pid) == Some(child) {
+        Some(pid)
+    } else {
+        None
     }
-    eprintln!("[sidecar] killing orphaned server pid {} on port {}", pid, port);
+}
+
+/// SIGKILL our own server process found by `own_listener`.
+pub(crate) fn kill_own_listener(pid: u32) {
+    eprintln!("[sidecar] killing server pid {}", pid);
     let _ = std::process::Command::new("kill").args(["-KILL", &pid.to_string()]).status();
 }
 
@@ -208,10 +221,10 @@ fn process_name(pid: u32) -> Option<String> {
     }
 }
 
-/// Is the listening sidecar an orphan — its shell gone? The one-file
-/// PyInstaller build runs as a bootloader parent plus the child that
-/// binds the port, so the chain is walked past every ancestor that is
-/// itself `bpp-server`; the first other ancestor must be launchd (pid 1).
+/// Is the listening sidecar an orphan — its shell gone? The chain is
+/// walked past every ancestor that is itself `bpp-server` (a one-file
+/// server from 0.2.3 or earlier runs behind a bootloader parent of that
+/// name); the first other ancestor must be launchd (pid 1).
 fn sidecar_is_orphaned(pid: u32) -> bool {
     let mut cur = pid;
     for _ in 0..4 {

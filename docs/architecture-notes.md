@@ -9,7 +9,7 @@ deep dives.
 
 ```
  Mac app (Tauri shell, desktop/)          Browser (bpp serve / bpp demo)
-   spawns `bpp-server` (PyInstaller)         opens the printed ?_boot= link
+   spawns `bpp-server` (PyInstaller helper)  opens the printed ?_boot= link
             │ boot key, port 5001                   │
             ▼                                       ▼
  ┌──────────────────── Flask app (bpp/web) ─────────────────────┐
@@ -42,8 +42,11 @@ deep dives.
   and Playwright against the same endpoints.
 - **Why a Tauri sidecar.** The desktop app is the same server frozen
   with PyInstaller and a thin Rust shell that starts it, proves the
-  port is ours (a boot key), and shows the page. Python is pinned to
-  3.11 because the frozen runtime is; the pip install matches it.
+  port is ours (a boot key), and shows the page. The server is a
+  one-folder build in a background-only helper app
+  (`Contents/Helpers/bpp-server.app`, `desktop/bpp-server.spec`), so
+  nothing is unpacked at launch. Python is pinned to 3.11 because the
+  frozen runtime is; the pip install matches it.
 - **Long work is a job, not a request.** Analyze and face extraction
   run in subprocesses with journaled progress, so a crash or a quit
   resumes on the next start; cheaper background work (hash backfill,
