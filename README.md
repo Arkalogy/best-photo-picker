@@ -152,7 +152,7 @@ bpp serve
 bpp serve --library ~/Photos/2024
 ```
 
-Your browser opens the app. If it doesn't, use the link the terminal prints: it carries a one-time key, so other programs on the machine can't open your library (pass `--open-loopback` to skip the key). Import folders, adjust scoring weights with sliders, and export your curated selection.
+Your browser opens the app. If it doesn't, use the link the terminal prints: it carries a key for this run only, so other programs on the machine can't open your library (pass `--open-loopback` to skip the key). Import folders, adjust scoring weights with sliders, and export your curated selection.
 
 ### CLI Mode (Batch Processing)
 

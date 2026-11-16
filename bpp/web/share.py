@@ -322,11 +322,10 @@ def authorize_request(request: object, ctx: object) -> AuthResult:
             return AuthResult(AuthDecision.DENY)
         if is_app:
             return AuthResult(AuthDecision.ALLOW, Principal(kind=PRINCIPAL_LOCAL_APP))
-        # Share token from loopback: power-user escape hatch.
-        # Treated as LOCAL_APP because it's the dev machine.
-        if is_loopback:
-            return AuthResult(AuthDecision.ALLOW, Principal(kind=PRINCIPAL_LOCAL_APP))
-        # Share token from LAN: must be a paired, trusted device.
+        # The share token is a device's credential wherever the request
+        # comes from: every invited device has it, and other accounts on
+        # this computer can reach loopback. Only the app token (behind
+        # the boot key) makes the owner. So: a paired, trusted device.
         fp = cookies.get(FP_COOKIE_NAME)
         if not fp:
             return AuthResult(AuthDecision.PAIR_REQUIRED)

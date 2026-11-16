@@ -18,10 +18,33 @@ Then run:
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import sys
 import tempfile
 from pathlib import Path
+
+MARKER = ".bpp-e2e-fixture"
+
+
+def _unsafe_library(library: Path, *, reset: bool) -> str | None:
+    """Why this script must not write into (or wipe) *library*, or None.
+
+    The default location is a fixed name in the shared temp folder, where
+    another account can put a link or a folder of its own first. So the
+    path itself must be a real folder of ours, and ``--reset`` only wipes
+    a folder this script made (it carries the marker file)."""
+    if library.is_symlink():
+        return "it is a link"
+    if not library.exists():
+        return None
+    if not library.is_dir():
+        return "it is not a folder"
+    if hasattr(os, "getuid") and library.stat().st_uid != os.getuid():
+        return "it belongs to another account"
+    if reset and any(library.iterdir()) and not (library / MARKER).is_file():
+        return f"--reset only wipes a folder this script made (no {MARKER} in it)"
+    return None
 
 
 def main() -> int:
@@ -45,18 +68,32 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    library = args.library.expanduser().resolve()
+    library = args.library.expanduser()
+    refusal = _unsafe_library(library, reset=args.reset)
+    if refusal:
+        print(f"  Refusing to use {library}: {refusal}", file=sys.stderr)
+        return 2
+    # The path as given, made absolute: resolving it would follow a link
+    # swapped in after the check above. (rmtree itself refuses a link.)
+    library = Path(os.path.abspath(library))
 
     if args.reset and library.exists():
-        print(f"  Removing existing library at {library}")
-        shutil.rmtree(library)
+        print(f"  Emptying existing library at {library}")
+        # The marker goes last (it stays): an interrupted reset can be run again.
+        for child in library.iterdir():
+            if child.name == MARKER:
+                continue
+            if child.is_dir() and not child.is_symlink():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
 
     library.mkdir(parents=True, exist_ok=True)
     # Sentinel — server publishes its presence at /api/v1/_diag/is_e2e_fixture
     # so the playwright mutation helpers can refuse to run against a real
     # user library (which is how 5 __e2e_album_* rows ended up in the demo
     # library before this guard existed).
-    (library / ".bpp-e2e-fixture").write_text(
+    (library / MARKER).write_text(
         "This file marks the directory as a synthetic e2e test library.\n"
         "Created by scripts/setup_e2e_library.py.\n"
     )

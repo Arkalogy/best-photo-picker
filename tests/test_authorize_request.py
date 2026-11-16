@@ -272,15 +272,11 @@ class TestPrincipalIdentity:
         assert result.principal is not None
         assert result.principal.kind == PRINCIPAL_ANONYMOUS
 
-    def test_share_token_from_loopback_treated_as_local_app(self, ctx):
-        """The loopback escape hatch lets a local dev test the share
-        flow without a phone. The principal kind reflects who's actually
-        on the line — local dev machine — not 'lan_device'."""
-        from bpp.web.share import (
-            PRINCIPAL_LOCAL_APP,
-            AuthDecision,
-            get_share_token,
-        )
+    def test_share_token_from_loopback_is_still_a_device_credential(self, ctx):
+        """The share token is what every invited device holds, and other
+        accounts on the computer can reach loopback: from there it must
+        pair like any device, never act as the owner."""
+        from bpp.web.share import AuthDecision, get_share_token
 
         with ctx._test_app.app_context():
             share_token = get_share_token(ctx.get_conn())
@@ -291,9 +287,8 @@ class TestPrincipalIdentity:
             headers={"X-Auth-Token": share_token},
         )
         result = _authorize(ctx, req)
-        assert result.decision == AuthDecision.ALLOW
-        assert result.principal is not None
-        assert result.principal.kind == PRINCIPAL_LOCAL_APP
+        assert result.decision == AuthDecision.PAIR_REQUIRED
+        assert result.principal is None
 
     def test_deny_results_have_no_principal(self, ctx):
         from bpp.web.share import AuthDecision

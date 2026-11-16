@@ -21,10 +21,6 @@ import pytest
 from bpp import commands
 
 
-def _dummy_timer(*_a, **_kw):
-    return type("T", (), {"start": lambda self: None})()
-
-
 @pytest.fixture
 def fake_library(tmp_path):
     """Build the minimum on-disk skeleton `do_serve` needs to run."""
@@ -55,7 +51,6 @@ def _run_serve(library, **arg_overrides):
     with (
         patch("flask.Flask.run", _capture),
         patch("webbrowser.open", lambda *_a, **_kw: True),
-        patch("threading.Timer", lambda *_a, **_kw: type("T", (), {"start": lambda self: None})()),
     ):
         commands.do_serve(args_ns)
     return captured.get("host")
@@ -168,7 +163,6 @@ class TestWebCommandHost:
         with (
             patch("flask.Flask.run", _cap),
             patch("webbrowser.open", lambda *_a, **_kw: True),
-            patch("threading.Timer", _dummy_timer),
         ):
             commands.do_web(args)
 
@@ -195,7 +189,6 @@ class TestWebCommandHost:
         with (
             patch("flask.Flask.run", _cap),
             patch("webbrowser.open", lambda *_a, **_kw: True),
-            patch("threading.Timer", _dummy_timer),
         ):
             commands.do_web(args)
 

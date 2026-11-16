@@ -7,7 +7,7 @@ Best Photo Picker exposes a full REST API on `localhost:5001`. All endpoints are
 **Authentication.** Every `/api/v1/*` request must carry a valid token in the `X-Auth-Token` header (or the `_token=` query string for `<img>` / `<video>` URLs that can't send custom headers). Two tokens are accepted:
 
 - **App session token** — generated fresh on every server boot, embedded in the index page's `<meta name="auth-token">` tag for the local Tauri app to read.
-- **Persistent share token** — DB-backed, used by phones via the LAN share URL. From a non-loopback address it is only accepted when the device's fingerprint cookie maps to a *trusted* `share_devices` row. From loopback it is accepted as the local owner (a power-user escape hatch on the host machine).
+- **Persistent share token** — DB-backed, used by phones via the LAN share URL. It is only accepted when the device's fingerprint cookie maps to a *trusted* `share_devices` row, from any address: on the host machine too it is a device's credential, never the owner's.
 
 Responses to a paired device never carry the owner's real paths: `filepath` and every other path-shaped string is library-relative, `~/…` for the home folder, or an opaque `@ext/<hash>/<name>` for a photo outside both; the device's path-based lookups accept those forms. `/boot-check` (outside `/api`) exists for the desktop app's start-up probe and is not part of the API.
 

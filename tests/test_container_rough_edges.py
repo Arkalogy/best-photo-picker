@@ -118,7 +118,7 @@ def test_readme_finds_the_keyed_link_the_server_prints():
 
     root = Path(__file__).resolve().parents[1]
     banner = "Open Best Photo Picker at"
-    assert banner in (root / "bpp" / "commands" / "serve.py").read_text()
+    assert banner in (root / "bpp" / "commands" / "serve_launch.py").read_text()
     assert f"grep '{banner}' | tail -1" in (root / "README.md").read_text()
 
 

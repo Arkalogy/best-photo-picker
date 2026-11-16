@@ -37,6 +37,7 @@ from bpp.scoring.nudity import is_active as nudenet_active
 from bpp.scoring.nudity import is_available as nudenet_available
 from bpp.scoring.pets import is_available as pets_available
 from bpp.utils.logging import get_logger
+from bpp.web.boot_key import presents_boot_key
 from bpp.web.face_worker import has_face_data, needs_face_clustering
 from bpp.web.install_status import install_status_fields
 from bpp.web.share import (
@@ -44,7 +45,6 @@ from bpp.web.share import (
     FP_COOKIE_NAME,
     _device_name_from_ua,
     _sanitize_device_name,  # re-exported for tests/test_share_cookie.py
-    _token_equals,
     principal_is_local_app,
     requires_local_app,
 )
@@ -99,18 +99,6 @@ def _asset_version() -> str:
         return str(int(max(mtimes)))
     except OSError:
         return "0"
-
-
-def _presents_boot_secret(ctx: Any) -> bool:
-    """Whether this loopback request carries the boot secret as the
-    ``_boot`` query parameter. Never a cookie: browsers send cookies to
-    every port of 127.0.0.1, which would hand the key to any other
-    local listener. The page keeps the key in ``sessionStorage`` (scoped
-    to the origin, port included) and re-presents it on reload."""
-    secret = ctx.boot_secret
-    if not secret:
-        return True
-    return _token_equals(request.args.get("_boot") or "", secret)
 
 
 @bp.get("/boot-check")
@@ -237,7 +225,7 @@ def index() -> Response:
         # caller that presents it (the launcher's first navigation, or
         # the page re-presenting it from sessionStorage) gets the token;
         # others get a locked page.
-        booted = _presents_boot_secret(ctx)
+        booted = presents_boot_key(ctx)
         if ctx.boot_secret and not booted:
             resp = make_response(render_template("loopback_locked.html"), 403)
             resp.headers["Referrer-Policy"] = "no-referrer"

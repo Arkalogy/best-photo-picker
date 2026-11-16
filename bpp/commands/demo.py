@@ -58,14 +58,11 @@ def do_demo(args: argparse.Namespace) -> int:
     port = getattr(args, "port", 5001)
     app = create_app(workdir=demo_lib, library_path=demo_lib)
 
-    from bpp.commands.serve import _configure_loopback_boot
+    from bpp.commands.serve_launch import configure_loopback_boot, open_browser_when_ours
 
-    launch_url = _configure_loopback_boot(app.extensions["bpp"], port, args)
+    launch_url = configure_loopback_boot(app.extensions["bpp"], port, args)
     if not getattr(args, "no_browser", False):
-        import threading
-        import webbrowser
-
-        threading.Timer(1.0, webbrowser.open, args=[launch_url]).start()
+        open_browser_when_ours(launch_url, port, app.extensions["bpp"].boot_secret)
 
     log.info("Starting demo at http://127.0.0.1:%d", port)
     # ``--debug`` means verbose logging (setup_logging above), never

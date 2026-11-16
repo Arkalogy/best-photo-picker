@@ -127,6 +127,13 @@ const RULES = [
     text: "Sharing was turned off: this library’s sharing settings were made on another computer or account. Turn it on again in Settings → Share",
   },
 
+  // ── File permissions had no effect: the database is readable ──────────
+  {
+    re: /^This library's database can be read by other accounts/i,
+    level: "WARNING",
+    text: "Other accounts on this computer can read this library’s database, sharing link included: its file permissions could not be restricted",
+  },
+
   // ── Startup / backfill / recovery noise (all hidden) ──────────────────
   { re: /backfill/i, hide: true },
   { re: /^Smart album/i, hide: true },

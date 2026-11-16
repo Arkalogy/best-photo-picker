@@ -47,7 +47,7 @@ hardening path.
 | Owner accidentally shares URL with the wrong person | "Revoke link" rotates the share token; all current URLs die |
 | Token leaks via browser history | `history.replaceState` strips `?_token=` after first paint |
 | Token leaks via Referer (outbound clicks) | `Referrer-Policy: no-referrer` on the index page |
-| Another local user or a sandboxed app reads the index page on 127.0.0.1 | Boot key: `bpp serve` prints a one-time `?_boot=` URL (the desktop app passes its own key to the sidecar); without it the page is a 403 with no token. `--open-loopback` restores the open page for single-user setups |
+| Another local user or a sandboxed app reads the index page on 127.0.0.1 | Boot key: `bpp serve` prints a `?_boot=` URL whose key is good for that run only (the desktop app passes its own key to the sidecar); without it the page is a 403 with no token. On Linux, where other accounts can read the browser launcher's arguments, the key is refused on a connection the system's socket table shows another account made (not checked inside a container, which cannot see the host's sockets, or behind a reverse proxy). On macOS, while the server listens on every interface (LAN sharing on), it also holds `127.0.0.1` itself so no other program can take that address. `--open-loopback` restores the open page for single-user setups |
 | A paired phone learns the owner's folder layout | Every JSON response to a device is rewritten: library paths become relative, home becomes `~/…`, anything else becomes an opaque `@ext/<hash>/<name>` the device can still look the photo up by |
 | XSS exfiltrates the fingerprint cookie | `HttpOnly` cookie attribute |
 | CSRF via cross-origin form | `SameSite=Lax` cookie + custom `X-Auth-Token` header check |
@@ -111,7 +111,7 @@ Current kinds:
 
 | Kind | When | Notes |
 |------|------|-------|
-| `PRINCIPAL_LOCAL_APP` | Tauri / loopback with app token, or share token from loopback (escape hatch) | The dev machine. Full access. |
+| `PRINCIPAL_LOCAL_APP` | The app session token (Tauri window, or the owner page on loopback) | The owner. Full access. The share token never gives this, from any address. |
 | `PRINCIPAL_LAN_DEVICE` | Phone via share token + trusted device fingerprint | `principal.fingerprint` set; logged in `share_access_log` automatically. |
 | `PRINCIPAL_ANONYMOUS` | Static, index, `/api/v1/share/pair/{status,request}` | No identity required to load these. |
 
