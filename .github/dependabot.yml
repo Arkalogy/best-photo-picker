@@ -15,6 +15,16 @@ version: 2
 #     existing GitHub label set covers Dependabot PRs without
 #     manual relabeling.
 #
+#   - Every ecosystem targets `develop` for version updates. Only
+#     `develop` may merge into `main` (see
+#     workflows/main-source-guard.yml), so an update opened against
+#     `main` cannot be merged there.
+#   - Security updates are the exception: Dependabot always opens them
+#     against the default branch (`main`) and ignores any entry that
+#     sets `target-branch`, so they also skip the groups and labels
+#     below. Change such a pull request's base to `develop` before
+#     merging it.
+#
 # Takes effect once Dependabot alerts and version updates are
 # enabled in Settings → Code security.
 #
@@ -29,6 +39,7 @@ updates:
   # PEP 621 schema directly under the `pip` ecosystem name.
   - package-ecosystem: "pip"
     directory: "/"
+    target-branch: "develop"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -50,6 +61,7 @@ updates:
   # accidentally introduce one.
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: "develop"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -67,6 +79,7 @@ updates:
   # CI gates; nothing ships to users from this manifest.
   - package-ecosystem: "npm"
     directory: "/"
+    target-branch: "develop"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -87,6 +100,7 @@ updates:
   # side ride along under the `cargo` ecosystem below.
   - package-ecosystem: "npm"
     directory: "/desktop"
+    target-branch: "develop"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -98,6 +112,7 @@ updates:
 
   - package-ecosystem: "cargo"
     directory: "/desktop/src-tauri"
+    target-branch: "develop"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -112,6 +127,7 @@ updates:
   # ship to every container user; their CVEs land here.
   - package-ecosystem: "docker"
     directory: "/"
+    target-branch: "develop"
     schedule:
       interval: "weekly"
       day: "monday"
