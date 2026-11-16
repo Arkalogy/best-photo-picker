@@ -1,0 +1,39 @@
+# Only `develop` may merge into `main`.
+#
+# Feature and fix branches merge into `develop`; `main` takes a pull
+# request from `develop` when a release is ready. This check fails any
+# other pull request into `main`, and the branch rule on `main`
+# requires it, so such a pull request cannot be merged.
+#
+# It checks out nothing and uses no actions: it compares the branch and
+# repository names GitHub supplies for the pull request.
+
+name: Main takes develop only
+
+permissions: {}
+
+on:
+  pull_request:
+    branches: [main]
+    # `edited` covers a pull request whose base is changed to `main`
+    # after it was opened; the default types would not re-run for that.
+    types: [opened, synchronize, reopened, edited]
+
+jobs:
+  source-branch:
+    name: source branch is develop
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require the pull request to come from develop in this repository
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+        run: |
+          if [ "$HEAD_REF" = "develop" ] && [ "$HEAD_REPO" = "$BASE_REPO" ]; then
+            echo "OK: develop -> main"
+            exit 0
+          fi
+          echo "::error::Pull requests into main must come from develop in this repository. Open this one against develop instead."
+          exit 1
