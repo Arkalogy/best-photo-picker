@@ -310,7 +310,12 @@ document.addEventListener("change", function _bppChangeDispatch(e) { if (!e || !
   if (!el) return;
   var fn = window[el.dataset.onchange];
   if (typeof fn !== "function") return;
-  fn.call(el, el.value, e);
+  // Read the control that changed: it may sit inside the element that
+  // names the handler (radio cards in a wrapper), which has no value.
+  // A checkbox reports whether it is ticked; its `value` is "on" either
+  // way, which every handler written for a boolean read as "enabled".
+  var src = "value" in _t ? _t : el;
+  fn.call(el, src.type === "checkbox" ? src.checked : src.value, e);
 });
 document.addEventListener("keydown", function _bppKeydownDispatch(e) { if (!e || !e.target) return; var _t = typeof e.target.closest === "function" ? e.target : (e.target.parentElement || null); if (!_t) return;
   // An element acting as a button (photo cards, sidebar rows, the zoom

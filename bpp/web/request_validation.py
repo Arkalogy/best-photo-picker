@@ -42,6 +42,7 @@ from typing import Any
 
 from flask import Response, jsonify, request
 
+from bpp.errors import ValidationError
 from bpp.utils.logging import get_logger
 
 _log = get_logger(__name__)
@@ -129,10 +130,12 @@ def validate_json(**schema: JsonField) -> Callable[[Callable[..., Any]], Callabl
                         try:
                             validated[key] = _coerce(key, raw, fld.type)
                         except (TypeError, ValueError):
-                            return _bad_request(
-                                fld.error_message
-                                or f"{key} must be coercible to {fld.type.__name__}"
-                            ), 400
+                            wanted = (
+                                "true or false"
+                                if fld.type is bool
+                                else f"coercible to {fld.type.__name__}"
+                            )
+                            return _bad_request(fld.error_message or f"{key} must be {wanted}"), 400
                     else:
                         validated[key] = raw
                 elif fld.required:
@@ -159,9 +162,10 @@ def _coerce(key: str, raw: Any, target: type) -> Any:
     types we refuse non-matching inputs up front rather than letting
     Python's permissive ctor produce surprising values.
 
-    Scalar coercion (int, float, bool, str) keeps the previous
-    permissive shape — ``int("42")`` and ``str(42)`` are documented
-    `@validate_json(type=int|str)` behaviors.
+    Scalar coercion (int, float, str) keeps the previous permissive
+    shape — ``int("42")`` and ``str(42)`` are documented
+    `@validate_json(type=int|str)` behaviors. ``bool`` is strict: only a
+    JSON true/false is accepted.
     """
     if target is list and not isinstance(raw, list):
         raise TypeError(f"{key} must be a JSON array, got {type(raw).__name__}")
@@ -169,7 +173,32 @@ def _coerce(key: str, raw: Any, target: type) -> Any:
         raise TypeError(f"{key} must be a JSON object, got {type(raw).__name__}")
     if target is tuple and not isinstance(raw, (list, tuple)):
         raise TypeError(f"{key} must be a JSON array, got {type(raw).__name__}")
+    if target is bool:
+        # bool("false") and bool("off") are True: a flag must be a JSON boolean.
+        if not isinstance(raw, bool):
+            raise TypeError(f"{key} must be true or false, got {type(raw).__name__}")
+        return raw
     return target(raw)
+
+
+def json_bool(
+    body: dict[str, Any], key: str, *, default: bool | None = None, missing_message: str = ""
+) -> bool:
+    """A JSON true/false from a request body, or ``default`` when the key is absent.
+
+    bool() reads any non-empty string as true, so "false", "off" or a
+    checkbox's "on" would switch a flag ON. Anything that is not a JSON
+    boolean raises ValidationError (HTTP 400). With no default, a
+    missing key raises too (``missing_message`` replaces the stock text).
+    """
+    if key not in body:
+        if default is None:
+            raise ValidationError(missing_message or f"missing '{key}' field", field=key)
+        return default
+    value = body[key]
+    if not isinstance(value, bool):
+        raise ValidationError(f"'{key}' must be true or false", field=key)
+    return value
 
 
 def _bad_request(message: str) -> Response:

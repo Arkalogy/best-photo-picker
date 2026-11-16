@@ -49,6 +49,7 @@ from bpp.db.settings import (
 from bpp.errors import NotFoundError, ValidationError
 from bpp.utils.logging import get_logger
 from bpp.web.clip_cap import clip_cap_status
+from bpp.web.request_validation import json_bool
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx
 
@@ -73,7 +74,7 @@ def api_set_clip_max_override() -> tuple[Response, int]:
     ctx = get_ctx()
     conn = ctx.get_conn()
     data = request.get_json(silent=True) or {}
-    enable = bool(data.get("enable"))
+    enable = json_bool(data, "enable")
     if enable:
         set_setting(conn, CLIP_MAX_OVERRIDE_KEY, CLIP_MAX_OVERRIDE_BYPASS)
         log.info("CLIP cap override enabled by user — semantic dedup will load all embeddings")

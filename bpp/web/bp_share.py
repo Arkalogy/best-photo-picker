@@ -14,6 +14,7 @@ from __future__ import annotations
 from flask import Blueprint, Response, jsonify, request
 
 from bpp.errors import NotFoundError, RateLimitedError, ValidationError
+from bpp.web.request_validation import json_bool
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx
 
@@ -84,9 +85,9 @@ def api_share_toggle() -> tuple[Response, int]:
     from bpp.web.share import set_lan_sharing_enabled
 
     body = request.get_json(silent=True) or {}
-    if "enabled" not in body:
-        raise ValidationError("missing 'enabled' field", field="enabled")
-    enabled = bool(body["enabled"])
+    # Only a JSON true/false: bool() would read "on", "off" or "false" as
+    # true, so a malformed request to turn sharing off would leave it on.
+    enabled = json_bool(body, "enabled")
     ctx = get_ctx()
 
     # Loopback-only bind + enable request = restart-required 409.

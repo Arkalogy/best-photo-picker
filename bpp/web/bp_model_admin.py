@@ -24,6 +24,7 @@ from bpp.registry import (
     remove_model_with_derived_choice,
 )
 from bpp.utils.logging import get_logger
+from bpp.web.request_validation import json_bool
 from bpp.web.share import requires_local_app
 
 log = get_logger(__name__)
@@ -165,13 +166,15 @@ def api_remove_model() -> tuple[Any, int]:
     model_id = (body.get("model_id") or "").strip()
     if not model_id:
         raise ValidationError("model_id is required")
-    if "purge_derived" not in body:
-        raise ValidationError(
+    purge_derived = json_bool(
+        body,
+        "purge_derived",
+        missing_message=(
             "purge_derived is required (true or false). The endpoint "
             "fails closed because a silent default that leaves "
             "biometric data behind would undercut the privacy posture."
-        )
-    purge_derived = bool(body.get("purge_derived"))
+        ),
+    )
     ctx = get_ctx()
     conn = ctx.get_conn()
     try:

@@ -18,6 +18,7 @@ from bpp.db.registry import (
 from bpp.errors import BppError, ConflictError, NotFoundError, ValidationError
 from bpp.utils.logging import get_logger
 from bpp.web.bp_install import no_install_during
+from bpp.web.request_validation import json_bool
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx
 
@@ -100,7 +101,7 @@ def api_libraries_rename() -> tuple[Response, int]:
     data = request.get_json(silent=True) or {}
     path = os.path.abspath(data.get("path", "").strip())
     name = data.get("name", "").strip()
-    rename_folder = data.get("rename_folder", False)
+    rename_folder = json_bool(data, "rename_folder", default=False)
     if not path or not name:
         raise ValidationError("path and name are required")
     if "/" in name or "\\" in name or ".." in name or os.sep in name:

@@ -108,6 +108,28 @@ class TestShareToggleEndpoint:
         r = share_app.test_client().post("/api/v1/share/toggle", json={})
         assert r.status_code == 400
 
+    @pytest.mark.parametrize("value", ["on", "off", "false", "true", "", 1, 0, None, [], {}])
+    def test_non_boolean_enabled_is_refused_and_changes_nothing(self, share_app, value):
+        """Only a JSON true/false is accepted.
+
+        A checkbox's text value is "on" whether it is ticked or not; when
+        that reached this route, bool("on") kept sharing enabled and the
+        switch could not turn it off.
+        """
+        share_app.extensions["bpp"].bound_host = "0.0.0.0"
+        client = share_app.test_client()
+        client.post("/api/v1/share/toggle", json={"enabled": True})
+
+        r = client.post("/api/v1/share/toggle", json={"enabled": value})
+
+        assert r.status_code == 400, f"enabled={value!r} was accepted: {r.get_json()}"
+        from bpp.web.share_runtime import is_lan_sharing_enabled
+
+        ctx = share_app.extensions["bpp"]
+        assert is_lan_sharing_enabled(ctx.get_conn()) is True, (
+            f"enabled={value!r} changed the stored flag"
+        )
+
 
 # ─── Refuse enable while loopback-bound ──────────────────────
 

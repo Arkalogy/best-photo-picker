@@ -14,6 +14,7 @@ from bpp.db.settings import get_all_settings
 from bpp.db.smart_albums import get_affected_album_types, refresh_smart_albums
 from bpp.errors import ConflictError, ValidationError
 from bpp.utils.logging import get_logger
+from bpp.web.request_validation import json_bool
 from bpp.web.share import requires_local_app
 from bpp.web.sse import captured_device_fingerprint, stream_worker_progress
 from bpp.web.state import get_ctx, refuse_while_face_recovery
@@ -40,7 +41,7 @@ def api_analyze() -> tuple[Response, int]:
     ctx = get_ctx()
     data = request.get_json(silent=True) or {}
     input_dir = data.get("input_dir") or ctx.input_dir
-    recursive = data.get("recursive", False)
+    recursive = json_bool(data, "recursive", default=False)
 
     archive_exts = (".zip", ".tar.gz", ".tgz", ".tar.bz2", ".tar")
     is_archive = (
@@ -337,7 +338,7 @@ def api_import() -> tuple[Response, int]:
     # User opt-in: include Live Photo motion sidecars in the import.
     # Default False — sidecars are filtered at scan time when the parent
     # exists in the same source directory.  See bpp/db/live_photo.py.
-    import_live_photo_sidecars = bool(data.get("import_live_photo_sidecars", False))
+    import_live_photo_sidecars = json_bool(data, "import_live_photo_sidecars", default=False)
     from bpp.web.base_worker import raise_if_blocked
 
     raise_if_blocked(ctx.import_worker)  # before preparing the library
