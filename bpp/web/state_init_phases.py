@@ -23,6 +23,7 @@ Each helper is unit-testable in isolation; see
 from __future__ import annotations
 
 import atexit
+import contextlib
 import os
 import threading
 from typing import TYPE_CHECKING, Any
@@ -210,7 +211,7 @@ def import_from_legacy_caches(conn: Any, wd: str, lib_root: str, photo_count: in
         for search_dir in (wd, lib_root):
             json_path = os.path.join(search_dir, "analysis.json")
             if search_dir and os.path.exists(json_path):
-                import_from_analysis_json(conn, json_path)
+                _import_analysis_json_or_set_aside(conn, json_path)
                 break
 
     if photo_count == 0:
@@ -224,6 +225,31 @@ def import_from_legacy_caches(conn: Any, wd: str, lib_root: str, photo_count: in
         presets_json = os.path.join(config_home, "bpp", "presets.json")
         if os.path.exists(presets_json):
             import_presets_from_json(conn, presets_json)
+
+
+def _import_analysis_json_or_set_aside(conn: Any, json_path: str) -> None:
+    """Best-effort: a failed import must not stop this launch. A file
+    whose content can't be imported is set aside (kept, under another
+    name) so it doesn't fail the next launch too."""
+    from bpp.utils.json_utils import move_aside
+
+    try:
+        import_from_analysis_json(conn, json_path)
+    except (ValueError, TypeError, KeyError, AttributeError, OverflowError):
+        # What the file says can't be imported: it would fail again.
+        log.error("Could not import %s; setting it aside", json_path, exc_info=True)
+        with contextlib.suppress(Exception):
+            conn.rollback()
+        try:
+            move_aside(json_path, context="analysis.json")
+        except OSError:
+            log.error("Could not set %s aside", json_path, exc_info=True)
+    except Exception:
+        # Not the file's fault (a busy database, a full disk): keep it for
+        # the next launch.
+        log.error("Could not import %s this time", json_path, exc_info=True)
+        with contextlib.suppress(Exception):
+            conn.rollback()
 
 
 def backfill_dup_clusters_and_refresh(

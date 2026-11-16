@@ -23,7 +23,12 @@ def conn(tmp_path):
 
     db_path = str(tmp_path / "devices.db")
     init_db(db_path)
-    return get_db(db_path)
+    conn = get_db(db_path)
+    # As in the app: devices can only ask once the owner turned sharing on.
+    from bpp.web.share import set_lan_sharing_enabled
+
+    set_lan_sharing_enabled(conn, True)
+    return conn
 
 
 # ─── Pending creation + idempotence ────────────────────────────────
@@ -222,6 +227,9 @@ class TestApproveRevokeAtomic:
         db_path = str(tmp_path / "race.db")
         init_db(db_path)
         setup_conn = get_db(db_path)
+        from bpp.web.share import set_lan_sharing_enabled
+
+        set_lan_sharing_enabled(setup_conn, True)  # as in the app, before any device asks
         d = find_or_create_pending_device(setup_conn, "fp-A", "iPhone", "192.168.1.5")
         device_id = d["id"]
 

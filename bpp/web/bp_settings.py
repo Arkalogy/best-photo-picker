@@ -58,7 +58,15 @@ log = get_logger(__name__)
 bp = Blueprint("settings_presets", __name__)
 
 #: Settings only the share endpoints may write (see PUT /api/v1/settings).
-_SHARE_ONLY_KEYS = frozenset({"lan_share_token", "lan_sharing_enabled"})
+_SHARE_ONLY_KEYS = frozenset(
+    {
+        "lan_share_token",
+        "lan_sharing_enabled",
+        "lan_share_seal",
+        "lan_share_seal_id",
+        "lan_share_seal_n",
+    }
+)
 
 
 @bp.post("/api/v1/settings/clip_max_override")
@@ -163,6 +171,11 @@ def api_presets_delete(name: str) -> tuple[Response, int]:
 _SENSITIVE_SETTING_KEYS: frozenset[str] = frozenset(
     {
         "lan_share_token",
+        # The seal over the sharing state (bpp.web.share_seal): a device
+        # that could read it could carry it into another library file.
+        "lan_share_seal",
+        "lan_share_seal_id",
+        "lan_share_seal_n",
     }
 )
 

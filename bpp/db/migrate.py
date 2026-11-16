@@ -50,7 +50,17 @@ def import_from_analysis_json(conn: sqlite3.Connection, json_path: str) -> int:
     if data is None:  # load_json_file already logged why
         return 0
 
-    count = bulk_upsert_photos(conn, [d for d in data if isinstance(d, dict)])
+    # Each row is keyed on its path: an entry without a usable one is skipped.
+    rows = [
+        d
+        for d in data
+        if isinstance(d, dict) and isinstance(d.get("filepath"), str) and d["filepath"]
+    ]
+    if len(rows) < len(data):
+        log.warning(
+            "Skipped %d entries without a file path in %s", len(data) - len(rows), json_path
+        )
+    count = bulk_upsert_photos(conn, rows)
     log.info("Imported %d photos from %s", count, json_path)
     return count
 

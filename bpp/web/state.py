@@ -86,6 +86,14 @@ class WebAppState(_LegacyDelegateMixin):
     so monkey-patching ``ctx.<method>`` still works.
     """
 
+    #: Folders the owner analyzed in place (or named at launch) while this
+    #: library is open: the only folders outside the library an export may
+    #: read. Emptied on a library switch.
+    export_source_dirs: set[str]
+    #: False from a library switch until the new library's sharing state
+    #: has been checked (share_seal): devices are refused meanwhile.
+    share_state_checked: bool = True
+
     def __init__(
         self,
         input_dir: str | None = None,
@@ -115,10 +123,8 @@ class WebAppState(_LegacyDelegateMixin):
             dirs=get_library_dirs(lib_path),
         )
 
-        #: Folders the owner analyzed in place (or named at launch) while
-        #: this library is open: the only folders outside the library an
-        #: export may read. Emptied on a library switch.
-        self.export_source_dirs: set[str] = {self.paths.input_dir} - {""}
+        # Folders outside the library an export may read (see the class attrs).
+        self.export_source_dirs = {self.paths.input_dir} - {""}
 
         self.state: AppState = {
             "input_dir": self.paths.input_dir or None,

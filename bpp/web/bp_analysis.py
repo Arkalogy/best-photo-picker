@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import os
 from typing import Any
 
@@ -104,10 +103,8 @@ def run_config_for_analyze(ctx: Any, conn: Any) -> dict[str, Any]:
 
     db_settings = get_all_settings(conn)
     merged_config = dict(ctx.config)
-    for key in ("face_detection_confidence", "face_embedding_confidence", "max_long_side"):
-        if key in db_settings:
-            with contextlib.suppress(ValueError, TypeError):
-                merged_config[key] = float(db_settings[key])
+    # dict(ctx.config) already carries the library's stored tuning, each
+    # value checked against the limits its setting declares.
     # Model toggle settings (stored as "true"/"false" strings in DB)
     for key in all_toggle_keys():
         if key in db_settings:

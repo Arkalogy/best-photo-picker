@@ -120,6 +120,13 @@ const RULES = [
       `Couldn’t find “${m[1]}” after ${m[2] === "re-clustering" ? "re-clustering" : "the face-model switch"} — the name comes back when their photos are found again`,
   },
 
+  // ── Sharing: settings that came with a library folder were removed ────
+  {
+    re: /^Sharing was turned off for this library/i,
+    level: "WARNING",
+    text: "Sharing was turned off: this library’s sharing settings were made on another computer or account. Turn it on again in Settings → Share",
+  },
+
   // ── Startup / backfill / recovery noise (all hidden) ──────────────────
   { re: /backfill/i, hide: true },
   { re: /^Smart album/i, hide: true },

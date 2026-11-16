@@ -178,10 +178,39 @@ def _resolve_library(args: argparse.Namespace) -> tuple[str, dict[str, str]]:
     except OSError:
         pass  # non-fatal; proceed even if stat fails
 
+    _warn_if_state_inside_library(library_path)
+    # Before the library is registered: the sharing key's first creation
+    # lists the libraries already in use (see bpp.web.share_seal).
+    from bpp.web.share_seal import ensure_installation
+
+    ensure_installation()
     # Auto-register library in the registry
     add_library(library_path)
     set_active_library(library_path)
     return library_path, dirs
+
+
+def _warn_if_state_inside_library(library_path: str) -> None:
+    """Per-user state (licence acceptances, the sharing key, models) is
+    this installation's. Kept inside a library folder it would travel
+    with, and be supplied by, that folder."""
+    from bpp.db.registry import get_registry_path
+    from bpp.utils.path_validation import is_path_under_any
+    from bpp.utils.paths import cache_dir
+
+    for what, path in (
+        ("config", os.path.dirname(get_registry_path())),
+        ("cache", str(cache_dir())),
+    ):
+        if is_path_under_any(path, [library_path]):
+            get_logger(__name__).warning(
+                "The app's own %s folder (%s) is inside the library folder (%s). "
+                "Keep it elsewhere: set XDG_CONFIG_HOME / BPP_CACHE_DIR to a "
+                "folder outside the library.",
+                what,
+                path,
+                library_path,
+            )
 
 
 def _startup_integrity_gate(db_path: str) -> None:
@@ -449,7 +478,9 @@ def _ssl_context(config: dict[str, Any]) -> Any:
     "adhoc", an actual SSLContext) pass through.
     """
     ssl_context = config.get("ssl_context")
-    if isinstance(ssl_context, list) and len(ssl_context) == 2:
+    if ssl_context is None or ssl_context == "adhoc":
+        return ssl_context
+    if isinstance(ssl_context, (list, tuple)) and len(ssl_context) == 2:
         return tuple(ssl_context)
     if isinstance(ssl_context, list):
         get_logger(__name__).error(
@@ -458,4 +489,8 @@ def _ssl_context(config: dict[str, Any]) -> Any:
             len(ssl_context),
         )
         return None
-    return ssl_context
+    get_logger(__name__).error(
+        "config.ssl_context must be 'adhoc' or [cert_path, key_path]; got %s. Disabling SSL.",
+        type(ssl_context).__name__,
+    )
+    return None

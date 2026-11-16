@@ -209,3 +209,17 @@ describe("humanizeActivity — a person's name could not be placed", () => {
     );
   });
 });
+
+describe("sharing settings removed from an opened library", () => {
+  test("the owner is told, with the way to turn it back on", () => {
+    const out = humanizeActivity(
+      e(
+        "Sharing was turned off for this library: its sharing settings were not made by this installation. The share link and approved devices it carried were removed. Turn sharing on again in Settings > Share if you want it.",
+        "WARNING"
+      )
+    );
+    expect(out?.level).toBe("WARNING");
+    expect(out?.text).toContain("Sharing was turned off");
+    expect(out?.text).toContain("Settings → Share");
+  });
+});

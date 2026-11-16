@@ -20,13 +20,11 @@ def group_min_photos(conn: sqlite3.Connection) -> int:
     falls back to the DEFAULTS value. Floored at 1.
     """
     from bpp.config import DEFAULTS
-    from bpp.db.settings import get_setting
+    from bpp.config_resolver import checked_setting
 
-    raw = get_setting(conn, "group_min_photos")
-    try:
-        return max(1, int(raw)) if raw is not None else int(DEFAULTS["group_min_photos"])
-    except (TypeError, ValueError):
-        return int(DEFAULTS["group_min_photos"])
+    # Inside the setting's declared limits, or the default.
+    value = checked_setting(conn, "group_min_photos")
+    return max(1, value) if isinstance(value, int) else int(DEFAULTS["group_min_photos"])
 
 
 def _significant_clusters(conn: sqlite3.Connection) -> set[int]:

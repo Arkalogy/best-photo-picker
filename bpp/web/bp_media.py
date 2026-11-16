@@ -211,7 +211,22 @@ def serve_full_photo(path_hash: str) -> Response | tuple[Response, int]:
             )
         return send_cache_file(edited_path, mimetype="image/jpeg")
 
+    # Any other type is sent as it is, so it has to be an image: the path
+    # comes from a library row, which can name any file.
+    if not _is_image(filepath):
+        raise NotFoundError("Photo not found", path_hash=path_hash)
     return _safe_send_file(filepath, mimetype="image/jpeg")
+
+
+def _is_image(filepath: str) -> bool:
+    """True when the file's own header says it is an image."""
+    from PIL import Image
+
+    try:
+        with Image.open(filepath):
+            return True
+    except Exception:
+        return False
 
 
 _VIDEO_MIMETYPES = {
@@ -240,6 +255,9 @@ def serve_video(path_hash: str) -> Response | tuple[Response, int]:
     if filepath is None or not os.path.isfile(filepath):
         raise NotFoundError("Video not found", path_hash=path_hash)
 
+    # Only a video: the path comes from a library row, which can name any file.
+    if media_kind_from_path(filepath) is not MediaKind.VIDEO:
+        raise NotFoundError("Video not found", path_hash=path_hash)
     ext = os.path.splitext(filepath)[1].lower()
     mimetype = _VIDEO_MIMETYPES.get(ext, "video/mp4")
     return _safe_send_file(filepath, mimetype=mimetype)

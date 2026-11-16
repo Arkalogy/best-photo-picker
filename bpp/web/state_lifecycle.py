@@ -246,6 +246,8 @@ def _adopt_library(ctx: WebAppState, new_path: str, new_dirs: dict[str, str], wo
         ctx.library_id = secrets.token_hex(8)
         # Folders analyzed in place belong to the library that was open.
         ctx.export_source_dirs = set()
+        # Devices wait until this library's sharing state has been checked.
+        ctx.share_state_checked = False
         # keep `ctx.dirs` consistent with the immutable
         # mapping `ctx.paths.dirs` now wraps. Pre-fix this
         # assigned the raw dict directly, so callers could

@@ -74,12 +74,13 @@ class TestHostDefault:
     def test_zero_bind_when_lan_sharing_on(self, fake_library):
         """Default: sharing ON → 0.0.0.0 so paired phones can connect."""
         from bpp.db.connection import close_all_connections, init_db
-        from bpp.db.settings import set_setting
+        from bpp.web.share import set_lan_sharing_enabled
 
-        # Pre-init the library DB and enable sharing.
+        # Pre-init the library DB and enable sharing the way the owner
+        # does: a bare settings row is not honoured (see share_seal).
         db_path = str(fake_library / "data" / "photopicker.db")
         conn = init_db(db_path)
-        set_setting(conn, "lan_sharing_enabled", "1")
+        set_lan_sharing_enabled(conn, True)
         close_all_connections()
 
         host = _run_serve(fake_library)

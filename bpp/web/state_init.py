@@ -91,6 +91,12 @@ def init_app_db(ctx: WebAppState) -> None:
     photo_count = get_photo_count(conn)
     lib_root = ctx.state.get("library_path", "")
 
+    # Sharing state this installation didn't make is not honoured.
+    from bpp.web.share_seal import check_on_open
+
+    check_on_open(conn)
+    ctx.share_state_checked = True
+
     # Phase 4 — sidecar backfill + legacy-cache import. The "true"
     # return from 4a forces the smart-album refresh in 5 even when no
     # new dup clusters are assigned, because sidecar linking moves

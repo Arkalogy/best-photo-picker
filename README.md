@@ -262,7 +262,9 @@ on Apple Silicon (roughly 0.5 s/photo). Two config knobs let operators
 trade RAM for time:
 
 ```yaml
-# settings table or YAML config
+# YAML config file (--config). These describe the computer, not a
+# library, so they are not read from a library's settings table.
+# Workers are capped at 8 and at the number of CPU cores.
 _face_extract_workers: 4        # number of parallel workers
 _face_extract_pool: process     # "process" | "thread"
 ```
@@ -380,9 +382,11 @@ docker pull ghcr.io/arkalogy/bppicker
 
 It has the web, HEIC and camera RAW support and every scorer except
 the legacy dlib face backend. Apart from two small detectors that ship
-inside the packages, models download on first use into the `/data`
+inside the packages, models download on first use into the `/state`
 volume, along with your model-license acceptances, so both survive
-re-creating the container. Create the host folders you mount before
+re-creating the container. `/state` is this installation's own folder
+and is kept apart from the library folder (`/data`). Create the host
+folders you mount before
 the first run: `--user` runs the container as you, so the files it
 writes are yours, and Docker would otherwise create missing folders
 owned by root, which the container then can't write to. There are two
@@ -400,10 +404,10 @@ you like:
 
 ```bash
 docker run --rm -it --no-healthcheck --user "$(id -u):$(id -g)" \
-    -v /path/to/bpp-data:/data ghcr.io/arkalogy/bppicker \
+    -v /path/to/bpp-state:/state ghcr.io/arkalogy/bppicker \
     bpp model accept-attribution
 docker run --rm --no-healthcheck --user "$(id -u):$(id -g)" \
-    -v /path/to/bpp-data:/data \
+    -v /path/to/bpp-state:/state \
     -v /path/to/photos:/photos:ro -v /path/to/best:/best \
     ghcr.io/arkalogy/bppicker \
     bpp run --input /photos --k 50 --out /best --copy
@@ -414,13 +418,21 @@ container points at `/photos/...`, which doesn't exist on the host.
 `--no-healthcheck` because the image's health check watches the
 app's web server, which a headless run doesn't start.
 
+Upgrading from an image that kept everything under `/data`: for
+headless use, mount the same host folder at `/state` instead of
+`/data`. For the full app, move the `.config` and `.cache` folders out
+of your library folder into a new folder and mount that at `/state`.
+Without the move, models download again, the license questions are
+asked again, and sharing settings stored in the library are turned off.
+
 **The full app.** `bpp serve` is the image's default command. Publish
 the port to the host's loopback only, and mount your photos so you
 can import them from `/photos`:
 
 ```bash
 docker run -d --name bpp --user "$(id -u):$(id -g)" -p 127.0.0.1:5001:5001 \
-    -v /path/to/library:/data -v /path/to/photos:/photos:ro \
+    -v /path/to/library:/data -v /path/to/bpp-state:/state \
+    -v /path/to/photos:/photos:ro \
     ghcr.io/arkalogy/bppicker
 docker logs bpp 2>&1 | grep 'Open Best Photo Picker at' | tail -1
 ```

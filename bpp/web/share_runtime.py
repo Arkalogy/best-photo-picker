@@ -37,8 +37,7 @@ log = get_logger(__name__)
 # DB settings key for the LAN sharing on/off toggle. Mirrors the
 # parallel _KEY_SHARE_TOKEN in share.py — both are stored as strings
 # in the generic key/value settings table.
-_KEY_LAN_ENABLED = "lan_sharing_enabled"
-
+from bpp.web.share_seal import KEY_LAN_ENABLED as _KEY_LAN_ENABLED  # noqa: E402
 
 # ──────────────────────────────────────────────────────────────────
 # Rate limiting
@@ -180,9 +179,9 @@ def is_lan_sharing_enabled(conn: sqlite3.Connection) -> bool:
 
 def set_lan_sharing_enabled(conn: sqlite3.Connection, enabled: bool) -> None:
     """Persist the on/off toggle. Survives restarts."""
-    from bpp.db.settings import set_setting
+    from bpp.web.share_seal import set_sealed
 
-    set_setting(conn, _KEY_LAN_ENABLED, "1" if enabled else "0")
+    set_sealed(conn, _KEY_LAN_ENABLED, "1" if enabled else "0")
 
 
 def detect_lan_ip() -> str | None:

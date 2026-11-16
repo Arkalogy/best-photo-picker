@@ -47,9 +47,14 @@ def conn(tmp_path):
             revoked_at INTEGER,
             prev_revoked INTEGER DEFAULT 0
         );
+        CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
         """
     )
     c.commit()
+    # As in the app: devices can only ask once the owner turned sharing on.
+    from bpp.web.share import set_lan_sharing_enabled
+
+    set_lan_sharing_enabled(c, True)
     return c
 
 
