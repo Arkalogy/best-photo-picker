@@ -19,6 +19,12 @@ const globalsSource = readFileSync("bpp/web/static/js/globals.js", "utf8");
 
 beforeAll(() => {
   new Function("window", "document", globalsSource)(window, document);
+  // These tests exercise the dispatch mechanics with stand-in handler
+  // names; which names the app allows is tested in event-handlers.test.mjs.
+  /** @type {any} */ (window).eventHandler = (
+    /** @type {string} */ _kind,
+    /** @type {string} */ name
+  ) => /** @type {any} */ (window)[name];
 });
 
 beforeEach(() => {

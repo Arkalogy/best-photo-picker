@@ -11,7 +11,7 @@
  * Re-exported from deleted.mjs.
  */
 
-import { apiFetch, authedSrc } from "./api-client.mjs";
+import { apiFetch, thumbUrl } from "./api-client.mjs";
 import { toast, toastError } from "./toast.mjs";
 
 /**
@@ -59,7 +59,7 @@ export async function enhancePhotos(filepaths) {
         cardImg.appendChild(badge);
       }
       const img = /** @type {HTMLImageElement | null} */ (card.querySelector("img"));
-      if (img && p.thumb_hash) img.src = authedSrc(`/thumb/${p.thumb_hash}?t=${Date.now()}`);
+      if (img && p.thumb_hash) img.src = thumbUrl(p.thumb_hash, Date.now());
       if (win.vgrid?._cardCache) {
         const idx = parseInt(card.dataset.idx || "-1", 10);
         if (idx >= 0) win.vgrid._cardCache.delete(idx);
@@ -112,7 +112,7 @@ export async function revertEnhance(filepaths) {
       if (!card) continue;
       card.querySelector(".edited-badge")?.remove();
       const img = /** @type {HTMLImageElement | null} */ (card.querySelector("img"));
-      if (img && p.thumb_hash) img.src = authedSrc(`/thumb/${p.thumb_hash}?t=${Date.now()}`);
+      if (img && p.thumb_hash) img.src = thumbUrl(p.thumb_hash, Date.now());
       if (win.vgrid?._cardCache) {
         const idx = parseInt(card.dataset.idx || "-1", 10);
         if (idx >= 0) win.vgrid._cardCache.delete(idx);

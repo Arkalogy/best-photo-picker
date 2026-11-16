@@ -14,7 +14,7 @@ import { apiFetch, faceCropUrl } from "./api-client.mjs";
 import { state } from "./state.mjs";
 import { appPrompt as _appPrompt } from "./dialogs.mjs";  // unused — re-export safety
 import { applySettings, showPresetSaveForm } from "./presets.mjs";
-import { esc, shortCount } from "./text-format.mjs";
+import { esc, shortCount, escVal } from "./text-format.mjs";
 import { getSetting, saveSetting } from "./settings-client.mjs";
 import { removeNudge, showNudge } from "./nudges.mjs";
 import { toastError } from "./toast.mjs";
@@ -81,10 +81,10 @@ export function wizardStep1() {
   let chipsHtml = '<div class="wiz-faces">';
   for (const c of clusters.slice(0, 16)) {
     const rep = c.representative;
-    chipsHtml += `<div class="face-chip" id="wiz-chip-${c.cluster_id}"
-      data-action="wizToggleFace" data-arg0="${c.cluster_id}" title="${c.photo_count} photos">
+    chipsHtml += `<div class="face-chip" id="wiz-chip-${escVal(c.cluster_id)}"
+      data-action="wizToggleFace" data-arg0="${escVal(c.cluster_id)}" title="${escVal(c.photo_count)} photos">
       <img src="${faceCropUrl(rep.thumb_hash, rep.face_index)}" loading="lazy">
-      <span class="face-count">${shortCount(c.photo_count)}</span>
+      <span class="face-count">${escVal(shortCount(c.photo_count))}</span>
     </div>`;
   }
   chipsHtml += "</div>";
@@ -162,9 +162,9 @@ export async function wizardStep2() {
     }
     resultHtml += `<strong>${(b.avg_quality * 100).toFixed(0)}%</strong> average photo quality<br>`;
     if (b.face_photos_selected !== undefined) {
-      resultHtml += `<strong>${b.face_photos_selected}</strong> of ${b.total_selected} selected photos have faces`;
+      resultHtml += `<strong>${escVal(b.face_photos_selected)}</strong> of ${escVal(b.total_selected)} selected photos have faces`;
     } else {
-      resultHtml += `<strong>${b.total_selected}</strong> photos selected`;
+      resultHtml += `<strong>${escVal(b.total_selected)}</strong> photos selected`;
     }
     resultHtml += `</div>`;
     body.innerHTML =

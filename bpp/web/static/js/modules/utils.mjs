@@ -15,7 +15,7 @@ import { apiFetch, authEventSource } from "./api-client.mjs";
 import { pickFolder } from "./native-pick.mjs";
 import { appConfirm } from "./dialogs.mjs";
 import { reviewSensitiveBeforeExport } from "./sensitive.mjs";
-import { esc, escapeJsAttr } from "./text-format.mjs";
+import { esc, escapeAttr } from "./text-format.mjs";
 import { toast, toastError } from "./toast.mjs";
 
 // Large exports (100+ photos with format conversion) used to run
@@ -262,7 +262,7 @@ export async function doExport() {
   if (statusEl) {
     statusEl.innerHTML =
       `<span class="export-result-msg">${esc(msg)}</span>` +
-      `<button class="btn-open-folder" data-action="_openExportFolder" data-arg0="${escapeJsAttr(data.outdir)}">Open Folder</button>`;
+      `<button class="btn-open-folder" data-action="_openExportFolder" data-arg0="${escapeAttr(data.outdir)}">Open Folder</button>`;
     statusEl.className = "export-status success";
   }
   _toastExportResult(data, msg);

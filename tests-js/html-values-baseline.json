@@ -1,0 +1,100 @@
+{
+  "bpp/web/static/js/modules/action-registry.mjs": {
+    "prev.name": 1
+  },
+  "bpp/web/static/js/modules/albums-render-smart.mjs": {
+    "_navFolderOpenAttr(\"section:faces\", !!faceOpen)": 1,
+    "_navFolderOpenAttr(\"section:groups\", !!groupOpen)": 1,
+    "_navFolderOpenAttr(\"section:tags\", !!tagOpen)": 1,
+    "_navFolderOpenAttr(\"section:timeline\", !!timeOpen)": 1,
+    "_navFolderOpenAttr(yearKey, _isActive(ctx, album))": 1
+  },
+  "bpp/web/static/js/modules/albums-render.mjs": {
+    "_navFolderOpenAttr(`album:${album.id}`, hasActiveChild || isCurrent)": 1
+  },
+  "bpp/web/static/js/modules/analysis-recompute.mjs": {
+    "Array.from( { length: n }, () => `<div class=\"skeleton-card\"> <div class=\"skeleton-img\"></div> <div class=\"skeleton-text\"> <div class=\"skeleton-line\"></div> <div class=\"skeleton-line\"></div> </div> </div>` )": 1
+  },
+  "bpp/web/static/js/modules/compare.mjs": {
+    "barColor(s.v)": 1,
+    "labels[s.key]": 1,
+    "q.color": 1,
+    "s.key": 1
+  },
+  "bpp/web/static/js/modules/deleted-ctx-menu.mjs": {
+    "shortcut.outerHTML": 1
+  },
+  "bpp/web/static/js/modules/dialogs.mjs": {
+    "bodyHTML": 1,
+    "dialogHTML": 1
+  },
+  "bpp/web/static/js/modules/editor-crop.mjs": {
+    "win._renderCropControls()": 1
+  },
+  "bpp/web/static/js/modules/editor-rendering.mjs": {
+    "ar.label": 1,
+    "s.icon": 1,
+    "s.label": 1,
+    "s.section": 2,
+    "win._renderRemoveControls?.()": 1
+  },
+  "bpp/web/static/js/modules/editor-styles.mjs": {
+    "STYLE_COLORS": 1,
+    "STYLE_TONES": 1,
+    "_renderSliders()": 1,
+    "f.name": 1,
+    "params.brightness": 2,
+    "params.contrast": 2,
+    "params.saturation": 2
+  },
+  "bpp/web/static/js/modules/face-embedders-cells.mjs": {
+    "s.cls": 1
+  },
+  "bpp/web/static/js/modules/lightbox-actions.mjs": {
+    "btn.innerHTML": 1,
+    "svg.outerHTML": 1
+  },
+  "bpp/web/static/js/modules/lightbox-open.mjs": {
+    "SCORE_LABELS[s.key]": 1,
+    "q.text": 1
+  },
+  "bpp/web/static/js/modules/map.mjs": {
+    "q.color": 2,
+    "q.text": 2
+  },
+  "bpp/web/static/js/modules/modals-face-embedders.mjs": {
+    "menu.map(_renderMenuItem)": 1
+  },
+  "bpp/web/static/js/modules/nudges.mjs": {
+    "def.action.fn": 1,
+    "def.action.label": 1,
+    "def.message": 1,
+    "id": 2
+  },
+  "bpp/web/static/js/modules/people-review-card.mjs": {
+    "actionHTML": 1,
+    "avatarHTML": 1,
+    "extraAttrs": 1,
+    "samplesHTML": 1
+  },
+  "bpp/web/static/js/modules/photos-card.mjs": {
+    "momentClasses(p, win.momentKeepers)": 1,
+    "s.l": 1,
+    "scoreBadgeBg(score)": 1
+  },
+  "bpp/web/static/js/modules/photos-vgrid.mjs": {
+    "renderCardHTML(this.items[0], 0)": 1,
+    "this._cachedRender(this.items[i], i)": 3
+  },
+  "bpp/web/static/js/modules/search-results-html.mjs": {
+    "actionIcons[a.icon]": 1,
+    "badge": 1
+  },
+  "bpp/web/static/js/modules/toolbar.mjs": {
+    "svg": 1
+  },
+  "bpp/web/static/js/modules/tour.mjs": {
+    "step.text": 2,
+    "step.title": 2
+  }
+}

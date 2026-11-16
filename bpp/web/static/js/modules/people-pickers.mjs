@@ -10,7 +10,7 @@
 import { apiFetch, faceCropUrl } from "./api-client.mjs";
 import { state } from "./state.mjs";
 import { appConfirm } from "./dialogs.mjs";
-import { esc, escapeAttr } from "./text-format.mjs";
+import { esc, escapeAttr, escVal } from "./text-format.mjs";
 import { loadAlbumList, switchAlbum } from "./albums.mjs";
 import { loadFaceClusters } from "./faces.mjs";
 import { toast, toastError } from "./toast.mjs";
@@ -108,7 +108,7 @@ export async function showSplitPicker(clusterId) {
       const n = personDisplayName(c.cluster_id) || `Person ${c.cluster_id + 1}`;
       const rep = c.representative;
       const src = faceCropUrl(rep.thumb_hash, rep.face_index);
-      return `<div class="review-ac-item" style="display:flex;align-items:center;gap:8px;padding:6px 8px;cursor:pointer" data-cid="${c.cluster_id}"><img src="${escapeAttr(src)}" style="width:28px;height:28px;border-radius:50%;object-fit:cover"><span>${esc(n)}</span></div>`;
+      return `<div class="review-ac-item" style="display:flex;align-items:center;gap:8px;padding:6px 8px;cursor:pointer" data-cid="${escVal(c.cluster_id)}"><img src="${escapeAttr(src)}" style="width:28px;height:28px;border-radius:50%;object-fit:cover"><span>${esc(n)}</span></div>`;
     }).join("");
     /** @type {NodeListOf<HTMLElement>} */ (
       mergeDropdown.querySelectorAll(".review-ac-item")
@@ -257,7 +257,7 @@ export function showMergePicker(sourceClusterId) {
       item.innerHTML =
         (avatarUrl ? `<img class="merge-picker-avatar" src="${avatarUrl}" alt="">` : `<div class="merge-picker-avatar"></div>`) +
         `<div class="merge-picker-info"><div class="merge-picker-name">${esc(name)}</div>` +
-        `<div class="merge-picker-count">${c.photo_count} photo${c.photo_count === 1 ? '' : 's'}</div></div>`;
+        `<div class="merge-picker-count">${escVal(c.photo_count)} photo${c.photo_count === 1 ? '' : 's'}</div></div>`;
       item.onclick = async () => {
         closeMergePicker();
         if (bulk) {
@@ -349,7 +349,7 @@ export async function showAvatarPicker(clusterId) {
   const header = document.createElement("div");
   header.className = "merge-picker-header";
   const sampleNote = totalFaces > faces.length ? ` (showing ${faces.length} of ${totalFaces})` : "";
-  header.innerHTML = `Choose avatar for "${esc(name)}"<small>Click a face to set it as the avatar${sampleNote}</small>`;
+  header.innerHTML = `Choose avatar for "${esc(name)}"<small>Click a face to set it as the avatar${escVal(sampleNote)}</small>`;
   picker.appendChild(header);
 
   const grid = document.createElement("div");

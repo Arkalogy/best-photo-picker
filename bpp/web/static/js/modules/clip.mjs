@@ -14,7 +14,7 @@
  * still reference these names.
  */
 
-import { apiFetch, authEventSource, authedSrc } from "./api-client.mjs";
+import { apiFetch, authEventSource, thumbUrl } from "./api-client.mjs";
 import { parseSSE } from "./format-helpers.mjs";
 import { escapeAttr } from "./text-format.mjs";
 import { showToast, toast, toastError } from "./toast.mjs";
@@ -306,12 +306,12 @@ export function updateLightboxSimilar(p) {
       strip.classList.add("lb-moment-strip");
       strip.innerHTML =
         `<div class="lb-similar-item lb-moment-current" title="This photo">` +
-        `<img src="${authedSrc("/thumb/" + p.thumb_hash)}" alt="" data-onerror="_bppThumbBroken"></div>` +
+        `<img src="${thumbUrl(p.thumb_hash)}" alt="" data-onerror="_bppThumbBroken"></div>` +
         p.similar_photos
           .map(
             (s, i) =>
               `<div class="lb-similar-item" data-action="_openSiblingCompare" data-arg0="${i}" title="Compare with this shot">
-        <img src="${authedSrc("/thumb/" + s.thumb_hash)}" alt="" data-onerror="_bppThumbBroken">
+        <img src="${thumbUrl(s.thumb_hash)}" alt="" data-onerror="_bppThumbBroken">
       </div>`,
           )
           .join("");
@@ -328,7 +328,7 @@ export function updateLightboxSimilar(p) {
             ? `${(s.similarity * 100).toFixed(0)}% similar — click to compare`
             : "Similar shot — click to compare";
           return `<div class="lb-similar-item" data-action="_openSiblingCompare" data-arg0="${i}" title="${escapeAttr(title)}">
-        <img src="${authedSrc("/thumb/" + s.thumb_hash)}" alt="" data-onerror="_bppThumbBroken">
+        <img src="${thumbUrl(s.thumb_hash)}" alt="" data-onerror="_bppThumbBroken">
         <span class="lb-similar-pct">${pct}</span>
       </div>`;
         })

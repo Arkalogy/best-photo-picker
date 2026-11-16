@@ -19,6 +19,7 @@ from bpp.db.album_photos import (  # noqa: F401  (re-exported for callers)
 from bpp.db.photos import PHOTO_COLS_PREFIXED, PHOTO_COLS_SLIM_PREFIXED
 from bpp.utils.json_utils import safe_json_loads
 from bpp.utils.logging import get_logger
+from bpp.utils.typed_values import as_int
 
 log = get_logger(__name__)
 
@@ -141,6 +142,27 @@ def _public_config(raw: str | None) -> dict[str, Any] | None:
     return cfg
 
 
+#: Fields of a smart album's rule that the page uses as numbers.
+_NUMERIC_RULE_KEYS = ("year", "month", "days", "cluster_id", "tag_id", "top_percent")
+
+
+def _is_number(value: Any) -> bool:
+    """A whole number, or the digits of one (a year is stored as text)."""
+    if isinstance(value, str):
+        return value.isascii() and value.isdigit() and len(value) <= 9
+    return as_int(value) is not None
+
+
+def _public_rule(raw: str | None) -> dict[str, Any] | None:
+    """An album's rule as the API shows it. The fields the page treats as
+    numbers are numbers, or absent: the stored JSON can hold any text."""
+    rule = safe_json_loads(raw, context="album rule", expected_type=dict)
+    if not isinstance(rule, dict):
+        return rule
+    bad = [key for key in _NUMERIC_RULE_KEYS if key in rule and not _is_number(rule[key])]
+    return {k: v for k, v in rule.items() if k not in bad} if bad else rule
+
+
 def _config_json_keeping_stash(
     conn: sqlite3.Connection, album_id: int, config: dict[str, Any] | None
 ) -> str | None:
@@ -187,7 +209,7 @@ def list_albums(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     for r in rows:
         d = dict(r)
         d["config"] = _public_config(d["config_json"])
-        d["rule"] = safe_json_loads(d["rule_json"], context="album rule", expected_type=dict)
+        d["rule"] = _public_rule(d["rule_json"])
         del d["config_json"]
         del d["rule_json"]
         result.append(d)
@@ -215,7 +237,7 @@ def get_album(conn: sqlite3.Connection, album_id: int) -> dict[str, Any] | None:
         return None
     d = dict(row)
     d["config"] = _public_config(d["config_json"])
-    d["rule"] = safe_json_loads(d["rule_json"], context="album rule", expected_type=dict)
+    d["rule"] = _public_rule(d["rule_json"])
     del d["config_json"]
     del d["rule_json"]
     return d

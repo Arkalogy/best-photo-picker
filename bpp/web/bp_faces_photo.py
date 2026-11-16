@@ -26,6 +26,7 @@ from bpp.errors import NotFoundError
 from bpp.media_types import MediaKind, media_kind_from_path
 from bpp.utils import raw as raw_support
 from bpp.utils.logging import get_logger
+from bpp.utils.typed_values import as_int
 from bpp.web.box_crop import RawUnreadable
 from bpp.web.face_worker import generate_face_crop
 from bpp.web.media_support import crop_failure_error, raw_full_jpeg_path, raw_preview_error
@@ -193,8 +194,9 @@ def api_faces_for_photo(path_hash: str) -> tuple[Response, int]:
                 (photo_id,),
             ).fetchall()
             for tr in tag_rows:
-                cid = tr["cluster_id"]
-                person_tags.append({"cluster_id": cid, "name": name_map.get(cid)})
+                cid = as_int(tr["cluster_id"])
+                if cid is not None:
+                    person_tags.append({"cluster_id": cid, "name": name_map.get(cid)})
     except Exception as e:
         log.warning("Failed to load person tags for photo: %s", e)
 

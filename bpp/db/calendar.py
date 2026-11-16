@@ -7,6 +7,7 @@ from datetime import date
 from typing import Any
 
 from bpp.constants import ACTIVE_PHOTO_SQL
+from bpp.utils.typed_values import as_hash
 
 
 def get_daily_counts(conn: sqlite3.Connection, year: int, month: int) -> list[dict[str, Any]]:
@@ -41,7 +42,7 @@ def get_daily_counts(conn: sqlite3.Connection, year: int, month: int) -> list[di
         ") WHERE rn = 1",
         (month_prefix,),
     ).fetchall()
-    top_map = {r["day"]: r["sha256"] for r in top_rows}
+    top_map = {r["day"]: as_hash(r["sha256"]) for r in top_rows}
 
     return [
         {"day": r["day"], "count": r["count"], "top_hash": top_map.get(r["day"])}

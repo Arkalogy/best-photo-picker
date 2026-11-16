@@ -16,7 +16,7 @@
 
 import { apiFetch } from "./api-client.mjs";
 import { appPrompt } from "./dialogs.mjs";
-import { esc, escapeJsAttr } from "./text-format.mjs";
+import { esc, escapeAttr, escVal } from "./text-format.mjs";
 import { toast, toastError } from "./toast.mjs";
 
 /** @typedef {{ id: number, name: string, count?: number }} Tag */
@@ -117,7 +117,7 @@ export function _renderLightboxTags(p, tags, opts) {
 
   if (!tags.length && !showInput) {
     container.innerHTML =
-      `<button class="lb-tag-add-btn" data-action="lbShowTagInput" data-arg0="${p.id}" ` +
+      `<button class="lb-tag-add-btn" data-action="lbShowTagInput" data-arg0="${escVal(p.id)}" ` +
       'title="Tag this photo (e.g. birthday, beach)">+ Add tag</button>';
     return;
   }
@@ -129,9 +129,9 @@ export function _renderLightboxTags(p, tags, opts) {
       '<span class="lb-tag-chip">' +
       esc(t.name) +
       '<button class="lb-tag-remove" data-action="removeLbTag" data-arg0="' +
-      p.id +
+      escVal(p.id) +
       '" data-arg1="' +
-      t.id +
+      escVal(t.id) +
       '" title="Remove tag">&times;</button>' +
       "</span>";
   }
@@ -140,13 +140,13 @@ export function _renderLightboxTags(p, tags, opts) {
       '<span class="lb-tag-add-wrap">' +
       '<input type="text" class="lb-tag-input" id="lb-tag-input" placeholder="Add tag..." ' +
       'data-oninput="onTagInput" data-onkeydown="onTagKeydown" data-arg0="' +
-      p.id +
+      escVal(p.id) +
       '" autocomplete="off">' +
       '<div class="lb-tag-suggest hidden" id="lb-tag-suggest"></div>' +
       "</span>";
   } else {
     html +=
-      `<button class="lb-tag-add-btn lb-tag-add-btn--chip" data-action="lbShowTagInput" data-arg0="${p.id}" ` +
+      `<button class="lb-tag-add-btn lb-tag-add-btn--chip" data-action="lbShowTagInput" data-arg0="${escVal(p.id)}" ` +
       'title="Add another tag">+</button>';
   }
   html += "</div>";
@@ -234,11 +234,11 @@ export function onTagInput(input) {
   for (const m of matches) {
     html +=
       '<div class="lb-tag-option" data-onmousedown="pickTagSuggestion" data-arg0="' +
-      escapeJsAttr(m.name) +
+      escapeAttr(m.name) +
       '">' +
       esc(m.name) +
       ' <span class="lb-tag-count">(' +
-      (m.count || 0) +
+      (escVal(m.count || 0)) +
       ")</span></div>";
   }
   suggest.innerHTML = html;
@@ -393,15 +393,15 @@ export function renderTagsSidebar() {
       '<div class="nav-item' +
       active +
       '" role="button" tabindex="0" data-key-activate="true" data-action="applyTagFilter" data-arg0="' +
-      t.id +
+      escVal(t.id) +
       '" data-arg1="' +
-      escapeJsAttr(t.name) +
+      escapeAttr(t.name) +
       '">' +
       "<span>" +
       esc(t.name) +
       "</span>" +
       '<span class="nav-count">' +
-      (t.count || 0) +
+      (escVal(t.count || 0)) +
       "</span>" +
       "</div>";
   }

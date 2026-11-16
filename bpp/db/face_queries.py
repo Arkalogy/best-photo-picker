@@ -25,6 +25,7 @@ from bpp.db.face_embedding_safety import active_embedding_dim, decode_embedding
 from bpp.errors import ResourceExhaustedError as _ResourceExhaustedError
 from bpp.scoring.face_cluster import pick_representative
 from bpp.utils.logging import get_logger
+from bpp.utils.typed_values import as_int
 
 log = get_logger(__name__)
 
@@ -169,6 +170,10 @@ def load_face_clusters(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 
     clusters: dict[int, list[dict]] = {}
     for fp, fi, bx, by, bw, bh, cid, quality in rows:
+        # Text in the id column sorts above every number, so it passes
+        # the ">= 0" filter: only real ids make a person.
+        if as_int(cid) is None or as_int(fi) is None:
+            continue
         clusters.setdefault(cid, []).append(
             {"filepath": fp, "face_index": fi, "bbox": (bx, by, bw, bh), "quality": quality}
         )

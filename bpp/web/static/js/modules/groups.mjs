@@ -11,7 +11,7 @@
  */
 
 import { apiFetch, faceCropUrl } from "./api-client.mjs";
-import { esc, escapeAttr } from "./text-format.mjs";
+import { esc, escapeAttr, escVal } from "./text-format.mjs";
 import { toastError } from "./toast.mjs";
 
 /**
@@ -246,7 +246,7 @@ export function showGroupsView() {
       </div>
       <div class="person-label" id="group-label-${idx}">
         <div class="${nameCls}" title="${escapeAttr(name)}" data-stop-propagation="true" data-action="startGroupRename" data-arg0="_getFaceGroups()[${idx}]" data-arg1="this.parentElement">${esc(name)}</div>
-        <div class="person-count">${g.photo_count} photo${g.photo_count === 1 ? "" : "s"}</div>
+        <div class="person-count">${escVal(g.photo_count)} photo${g.photo_count === 1 ? "" : "s"}</div>
       </div>
     </div>`;
     })
@@ -284,7 +284,7 @@ export async function _renderGroupsMergeNudge(view) {
   banner.className = "groups-merge-nudge";
   banner.innerHTML =
     `<span>Some people may be split into duplicates, which makes these group counts look low. ` +
-    `<strong>${n}</strong> pair${n === 1 ? "" : "s"} look like the same person.</span>` +
+    `<strong>${escVal(n)}</strong> pair${n === 1 ? "" : "s"} look like the same person.</span>` +
     `<button class="preset-btn save" data-action="startFacePairReview">Review merges</button>`;
   view.insertBefore(banner, view.firstChild);
 }

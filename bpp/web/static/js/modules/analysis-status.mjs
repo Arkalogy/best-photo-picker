@@ -16,7 +16,7 @@
 
 import { apiFetch } from "./api-client.mjs";
 import { fetchAllPages } from "./paging.mjs";
-import { escapeAttr } from "./text-format.mjs";
+import { escapeAttr, escVal } from "./text-format.mjs";
 import { MONTHS_SHORT, formatDate } from "./date-format.mjs";
 import { loadAlbumList } from "./albums.mjs";
 import { switchAlbum } from "./albums-switch.mjs";
@@ -103,12 +103,12 @@ export function updateStatusSummary(s) {
     '<rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><circle cx="5.5" cy="6" r="1.2"/><path d="M1.5 11l3.5-3.5 2 2 3-3.5 4.5 5"/>'
   );
   const parts = [
-    _statusLink(imgIcon + `${s.total.toLocaleString()} photos`, "switchToLibrary"),
+    _statusLink(imgIcon + `${escVal(s.total.toLocaleString())} photos`, "switchToLibrary"),
   ];
   if (s.after_dedupe !== undefined) {
     parts.push(
       _statusLink(
-        `${s.after_dedupe.toLocaleString()} unique`,
+        `${escVal(s.after_dedupe.toLocaleString())} unique`,
         "_navigateToSmartAlbum",
         "smart_duplicates"
       )
@@ -117,7 +117,7 @@ export function updateStatusSummary(s) {
   if (s.total_selected) {
     parts.push(
       _statusLink(
-        `<strong>${s.total_selected}</strong> selected`,
+        `<strong>${escVal(s.total_selected)}</strong> selected`,
         "_navigateToSmartAlbum",
         "smart_score"
       )
@@ -148,7 +148,7 @@ export function updateStatusSummary(s) {
       "date-asc": "Oldest",
     };
     parts.push(
-      _si('<path d="M5 3v10M3 5l2-2 2 2M11 13V3M9 11l2 2 2-2"/>') + (sortLabels[sortVal] || sortVal)
+      _si('<path d="M5 3v10M3 5l2-2 2 2M11 13V3M9 11l2 2 2-2"/>') + escVal(sortLabels[sortVal] || sortVal)
     );
   }
   if (filterVal && filterVal !== "all") {
@@ -164,7 +164,7 @@ export function updateStatusSummary(s) {
       deleted: "Deleted",
     };
     parts.push(
-      _si('<path d="M2 3h12M4 6.5h8M6 10h4M7 13.5h2"/>') + (filterLabels[filterVal] || filterVal)
+      _si('<path d="M2 3h12M4 6.5h8M6 10h4M7 13.5h2"/>') + escVal(filterLabels[filterVal] || filterVal)
     );
   }
 
@@ -239,7 +239,7 @@ export async function _refreshStatusRight() {
           _si(
             '<rect x="2" y="3" width="12" height="11" rx="1.5"/><line x1="2" y1="7" x2="14" y2="7"/><line x1="5" y1="1.5" x2="5" y2="4.5"/><line x1="11" y1="1.5" x2="11" y2="4.5"/>',
             "0 0 16 16"
-          ) + dateRange,
+          ) + escVal(dateRange),
           "Date range of photos in this album"
         )
       );
@@ -249,7 +249,7 @@ export async function _refreshStatusRight() {
           _si(
             '<path d="M4 2h8l2 4v7a1 1 0 01-1 1H3a1 1 0 01-1-1V6l2-4z"/><path d="M2 6h12"/>',
             "0 0 16 16"
-          ) + _formatSize(data.disk_size),
+          ) + escVal(_formatSize(data.disk_size)),
           "Total disk size of photos in this album"
         )
       );
@@ -269,7 +269,7 @@ export async function _refreshStatusRight() {
           _si(
             '<circle cx="8" cy="5" r="2.5"/><path d="M3 14c0-2.76 2.24-5 5-5s5 2.24 5 5"/>',
             "0 0 16 16"
-          ) + `${data.people_count} people`,
+          ) + `${escVal(data.people_count)} people`,
           "Number of recognized people in this album"
         )
       );
@@ -279,7 +279,7 @@ export async function _refreshStatusRight() {
           _si(
             '<path d="M8 1.5C5.5 1.5 3.5 3.5 3.5 6c0 3.5 4.5 8.5 4.5 8.5s4.5-5 4.5-8.5c0-2.5-2-4.5-4.5-4.5z"/><circle cx="8" cy="6" r="1.5"/>',
             "0 0 16 16"
-          ) + `${data.gps_count} with GPS`,
+          ) + `${escVal(data.gps_count)} with GPS`,
           "Photos with GPS location data"
         )
       );

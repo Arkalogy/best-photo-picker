@@ -13,12 +13,12 @@
  * (vgrid.setItems), as the Memories and calendar views use it.
  */
 
-import { apiFetch, authedSrc } from "./api-client.mjs";
+import { apiFetch, thumbUrl } from "./api-client.mjs";
 import { appConfirm, appPrompt } from "./dialogs.mjs";
 import { menuClosed, menuOpened, wireMenuActions } from "./menu-a11y.mjs";
 import { renderGridFromItems } from "./memories.mjs";
 import { fetchAllPages } from "./paging.mjs";
-import { esc, escapeAttr } from "./text-format.mjs";
+import { esc, escapeAttr, escVal } from "./text-format.mjs";
 import { toast, toastError } from "./toast.mjs";
 
 /** @type {Array<{id:number,name:string,count:number,cover_thumb_hash:string|null}>} */
@@ -74,14 +74,14 @@ export function showTagsView() {
   view.innerHTML = withPhotos
     .map((t, idx) => {
       const cover = t.cover_thumb_hash
-        ? `<img src="${authedSrc("/thumb/" + t.cover_thumb_hash)}" alt="">`
+        ? `<img src="${thumbUrl(t.cover_thumb_hash)}" alt="">`
         : `<div class="tag-card-cover-empty">${ICONS.tag || ""}</div>`;
-      return `<div class="person-card tag-card" data-action="navigateToTagPhotos" data-arg0="${t.id}"
+      return `<div class="person-card tag-card" data-action="navigateToTagPhotos" data-arg0="${escVal(t.id)}"
       data-oncontextmenu="_tagCardCtxMenu" data-tag-idx="${idx}">
       <div class="tag-card-cover">${cover}</div>
       <div class="person-label">
         <div class="person-name" title="${escapeAttr(t.name)}">${esc(t.name)}</div>
-        <div class="person-count">${t.count} photo${t.count === 1 ? "" : "s"}</div>
+        <div class="person-count">${escVal(t.count)} photo${t.count === 1 ? "" : "s"}</div>
       </div>
     </div>`;
     })

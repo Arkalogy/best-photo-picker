@@ -18,7 +18,7 @@
 import { apiFetch, faceCropUrl } from "./api-client.mjs";
 import { state } from "./state.mjs";
 import { appConfirm } from "./dialogs.mjs";
-import { esc, escapeAttr } from "./text-format.mjs";
+import { esc, escapeAttr, escVal } from "./text-format.mjs";
 import { loadAlbumList, renderAlbumNav } from "./albums.mjs";
 import { loadFaceClusters } from "./faces.mjs";
 import { toast, toastError } from "./toast.mjs";
@@ -221,8 +221,8 @@ export async function expandDismissedSection() {
     cell.innerHTML =
       `<img class="dismissed-face-img review-clickable" src="${faceCropUrl(f.thumb_hash, f.face_index)}" loading="lazy" data-action="openPhotoPreview" data-arg0="${escapeAttr(f.thumb_hash)}" data-arg1="${escapeAttr(f.filename || "")}" data-arg2="${escapeAttr(f.date || "")}" data-arg3="${escapeAttr(f.score == null ? "" : String(f.score))}" title="Click to see the full photo">` +
       `<div class="dismissed-face-actions">` +
-      `<button class="dismissed-face-restore" data-stop-propagation="true" data-action="restoreFace" data-arg0="${f.face_id}" title="Restore this face">&#x21A9;</button>` +
-      `<button class="dismissed-face-delete" data-stop-propagation="true" data-action="deleteFacePermanently" data-arg0="${f.face_id}" title="Delete permanently">\u2715</button>` +
+      `<button class="dismissed-face-restore" data-stop-propagation="true" data-action="restoreFace" data-arg0="${escVal(f.face_id)}" title="Restore this face">&#x21A9;</button>` +
+      `<button class="dismissed-face-delete" data-stop-propagation="true" data-action="deleteFacePermanently" data-arg0="${escVal(f.face_id)}" title="Delete permanently">\u2715</button>` +
       `</div>`;
     grid.appendChild(cell);
   }

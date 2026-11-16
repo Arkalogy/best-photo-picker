@@ -19,7 +19,7 @@
 import { apiFetch } from "./api-client.mjs";
 import { appConfirm, appPrompt } from "./dialogs.mjs";
 import { menuClosed, menuOpened, wireMenuActions } from "./menu-a11y.mjs";
-import { esc, escapeAttr } from "./text-format.mjs";
+import { esc, escapeAttr, escVal } from "./text-format.mjs";
 import { showToast, toast, toastError } from "./toast.mjs";
 import { saveSetting } from "./settings-client.mjs";
 import { _getTimelineFilter, _setTimelineFilter } from "./timeline.mjs";
@@ -111,9 +111,9 @@ export async function loadYearMonths(detailsEl) {
       const filterVal = `${year}-${mo}`;
       const active =
         win.currentAlbumId === albumId && _getTimelineFilter() === filterVal ? " active" : "";
-      html += `<div class="nav-item nav-month-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchToMonth" data-arg0="${albumId}" data-arg1="${filterVal}">
+      html += `<div class="nav-item nav-month-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchToMonth" data-arg0="${albumId}" data-arg1="${escVal(filterVal)}">
         <span>${MONTHS_SHORT[m.month - 1]}</span>
-        <span class="nav-count">${m.count}</span>
+        <span class="nav-count">${escVal(m.count)}</span>
       </div>`;
     }
     container.innerHTML = html;
@@ -186,12 +186,12 @@ export function showAlbumMoveMenu(event, albumId) {
 
   let html = `<div class="ctx-header">Move "${esc(album.name)}"</div>`;
   if (album.parent_id) {
-    html += `<div class="ctx-item" data-action="moveAlbumTo" data-arg0="${albumId}" data-arg1="null">Top level</div>`;
+    html += `<div class="ctx-item" data-action="moveAlbumTo" data-arg0="${escVal(albumId)}" data-arg1="null">Top level</div>`;
   }
   for (const a of manualAlbums) {
     if (a.id === album.parent_id) continue;
     if (a.parent_id === albumId) continue;
-    html += `<div class="ctx-item" data-action="moveAlbumTo" data-arg0="${albumId}" data-arg1="${a.id}">${esc(a.name)}</div>`;
+    html += `<div class="ctx-item" data-action="moveAlbumTo" data-arg0="${escVal(albumId)}" data-arg1="${escVal(a.id)}">${esc(a.name)}</div>`;
   }
   if (manualAlbums.length === 0 && !album.parent_id) {
     html += `<div class="ctx-item disabled">No albums to move into</div>`;
@@ -264,8 +264,8 @@ export function showSmartAlbumMenu(event, albumId, albumName) {
   menu.id = "smart-album-ctx";
   menu.className = "ctx-menu";
   menu.innerHTML =
-    `<div class="ctx-item" data-action="renameSmartAlbum" data-arg0="${albumId}" data-arg1="${escapeAttr(albumName)}">Rename</div>` +
-    `<div class="ctx-item ctx-item-danger" data-action="removeSmartAlbum" data-arg0="${albumId}" data-arg1="${escapeAttr(albumName)}">Remove</div>`;
+    `<div class="ctx-item" data-action="renameSmartAlbum" data-arg0="${escVal(albumId)}" data-arg1="${escapeAttr(albumName)}">Rename</div>` +
+    `<div class="ctx-item ctx-item-danger" data-action="removeSmartAlbum" data-arg0="${escVal(albumId)}" data-arg1="${escapeAttr(albumName)}">Remove</div>`;
   menu.style.position = "fixed";
   menu.style.left = event.clientX + "px";
   menu.style.top = event.clientY + "px";
@@ -365,8 +365,8 @@ export function showTagAlbumMenu(event, albumId, albumName, tagId) {
   menu.id = "smart-album-ctx";
   menu.className = "ctx-menu";
   menu.innerHTML =
-    `<div class="ctx-item" data-action="renameSmartAlbum" data-arg0="${albumId}" data-arg1="${escapeAttr(albumName)}">Rename</div>` +
-    `<div class="ctx-item ctx-item-danger" data-action="removeTagAlbum" data-arg0="${albumId}" data-arg1="${escapeAttr(albumName)}" data-arg2="${tagId}">Delete tag</div>`;
+    `<div class="ctx-item" data-action="renameSmartAlbum" data-arg0="${escVal(albumId)}" data-arg1="${escapeAttr(albumName)}">Rename</div>` +
+    `<div class="ctx-item ctx-item-danger" data-action="removeTagAlbum" data-arg0="${escVal(albumId)}" data-arg1="${escapeAttr(albumName)}" data-arg2="${escVal(tagId)}">Delete tag</div>`;
   menu.style.position = "fixed";
   menu.style.left = event.clientX + "px";
   menu.style.top = event.clientY + "px";

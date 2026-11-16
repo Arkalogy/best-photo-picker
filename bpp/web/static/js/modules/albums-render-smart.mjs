@@ -11,7 +11,7 @@
 
 import { faceCropUrl, petCropUrl } from "./api-client.mjs";
 import { _getTimelineFilter } from "./timeline.mjs";
-import { esc, escapeAttr } from "./text-format.mjs";
+import { esc, escapeAttr, escVal } from "./text-format.mjs";
 import { petDisplayName } from "./pets.mjs";
 import { smartAlbumIcon, smartAlbumTip } from "./albums-render-helpers.mjs";
 import { _navFolderOpenAttr } from "./albums.mjs";
@@ -67,11 +67,11 @@ export function renderSmartAlbums(ctx, smartAlbums) {
     const icon = smartAlbumIcon(album, ctx.ICONS);
     const active = _isActive(ctx, album) ? " active" : "";
     const tip = smartAlbumTip(album);
-    html += `<div class="nav-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${album.id}" data-album-id="${album.id}"
+    html += `<div class="nav-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${escVal(album.id)}" data-album-id="${escVal(album.id)}"
         ${tip ? `title="${escapeAttr(tip)}"` : ""}
-        data-oncontextmenu="showSmartAlbumMenu" data-arg0="${album.id}" data-arg1="${escapeAttr(album.name)}">
+        data-oncontextmenu="showSmartAlbumMenu" data-arg0="${escVal(album.id)}" data-arg1="${escapeAttr(album.name)}">
         <span><span class="nav-icon-svg">${icon || ""}</span>${esc(album.name)}</span>
-        <span class="nav-count">${album.photo_count || 0}</span>
+        <span class="nav-count">${escVal(album.photo_count || 0)}</span>
       </div>`;
   }
 
@@ -119,10 +119,10 @@ function _renderFacesFolder(ctx, faceAlbums, namedPetAlbums) {
         ? `<img class="nav-face-thumb" src="${faceCropUrl(rep.thumb_hash, rep.face_index)}" loading="lazy">`
         : `<span class="nav-face-thumb nav-face-placeholder">${ICONS.people || ""}</span>`;
     const cid = album.rule && album.rule.cluster_id;
-    html += `<div class="nav-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${album.id}" data-album-id="${album.id}"
-          data-oncontextmenu="${cid != null ? "showPersonCtxMenu" : "showSmartAlbumMenu"}" data-arg0="${cid != null ? cid : album.id}" data-arg1="${escapeAttr(album.name)}">
+    html += `<div class="nav-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${escVal(album.id)}" data-album-id="${escVal(album.id)}"
+          data-oncontextmenu="${cid != null ? "showPersonCtxMenu" : "showSmartAlbumMenu"}" data-arg0="${escVal(cid != null ? cid : album.id)}" data-arg1="${escapeAttr(album.name)}">
           <span class="nav-face-label">${thumb}<span class="nav-face-name">${esc(album.name)}</span></span>
-          <span class="nav-count">${album.photo_count || 0}</span>
+          <span class="nav-count">${escVal(album.photo_count || 0)}</span>
         </div>`;
   }
   if (hiddenCount > 0) {
@@ -138,10 +138,10 @@ function _renderFacesFolder(ctx, faceAlbums, namedPetAlbums) {
       petRep && petRep.thumb_hash
         ? `<img class="nav-face-thumb" src="${petCropUrl(petRep.thumb_hash, petRep.detection_index)}" loading="lazy">`
         : `<span class="nav-face-thumb nav-face-placeholder">${ICONS.paw || ""}</span>`;
-    html += `<div class="nav-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${album.id}" data-album-id="${album.id}"
-          data-oncontextmenu="showPetCtxMenu" data-arg0="${album.rule.cluster_id}">
+    html += `<div class="nav-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${escVal(album.id)}" data-album-id="${escVal(album.id)}"
+          data-oncontextmenu="showPetCtxMenu" data-arg0="${escVal(album.rule.cluster_id)}">
           <span class="nav-face-label">${petThumb}<span class="nav-face-name">${esc(album.name)}</span></span>
-          <span class="nav-count">${album.photo_count || 0}</span>
+          <span class="nav-count">${escVal(album.photo_count || 0)}</span>
         </div>`;
   }
   html += `<div class="nav-face-boost" id="nav-face-boost">
@@ -167,10 +167,10 @@ function _renderGroupsFolder(ctx, groupAlbums) {
         <summary><span class="nav-icon-svg">${ctx.ICONS.group || ""}</span>Groups <span class="nav-count nav-folder-count">${groupAlbums.length}</span></summary>`;
   for (const album of groupAlbums) {
     const active = _isActive(ctx, album) ? " active" : "";
-    html += `<div class="nav-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${album.id}" data-album-id="${album.id}"
-          data-oncontextmenu="showSmartAlbumMenu" data-arg0="${album.id}" data-arg1="${escapeAttr(album.name)}">
+    html += `<div class="nav-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${escVal(album.id)}" data-album-id="${escVal(album.id)}"
+          data-oncontextmenu="showSmartAlbumMenu" data-arg0="${escVal(album.id)}" data-arg1="${escapeAttr(album.name)}">
           <span>${esc(album.name)}</span>
-          <span class="nav-count">${album.photo_count || 0}</span>
+          <span class="nav-count">${escVal(album.photo_count || 0)}</span>
         </div>`;
   }
   html += `</details>`;
@@ -189,10 +189,10 @@ function _renderTagsFolder(ctx, tagAlbums) {
   for (const album of tagAlbums) {
     const active = _isActive(ctx, album) ? " active" : "";
     const tagId = album.rule && album.rule.tag_id;
-    html += `<div class="nav-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${album.id}" data-album-id="${album.id}"
-          data-oncontextmenu="showTagAlbumMenu" data-arg0="${album.id}" data-arg1="${escapeAttr(album.name)}" data-arg2="${tagId || 0}">
+    html += `<div class="nav-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${escVal(album.id)}" data-album-id="${escVal(album.id)}"
+          data-oncontextmenu="showTagAlbumMenu" data-arg0="${escVal(album.id)}" data-arg1="${escapeAttr(album.name)}" data-arg2="${escVal(tagId || 0)}">
           <span><span class="nav-icon-svg">${ctx.ICONS.tag || ""}</span>${esc(album.name)}</span>
-          <span class="nav-count">${album.photo_count || 0}</span>
+          <span class="nav-count">${escVal(album.photo_count || 0)}</span>
         </div>`;
   }
   html += `</details>`;
@@ -214,17 +214,17 @@ function _renderTimelineFolder(ctx, timeAlbums) {
     if (isYear) {
       const yearKey = `year:${album.rule.year}`;
       const yearOpen = _navFolderOpenAttr(yearKey, _isActive(ctx, album));
-      html += `<details class="nav-folder nav-year-folder"${yearOpen} data-nav-key="${yearKey}" data-year="${escapeAttr(album.rule.year)}" data-album-id="${album.id}" data-ontoggle="loadYearMonths">
-            <summary class="nav-item${active}" data-prevent-default="true" data-action="switchAlbum" data-arg0="${album.id}">
+      html += `<details class="nav-folder nav-year-folder"${yearOpen} data-nav-key="${escVal(yearKey)}" data-year="${escapeAttr(album.rule.year)}" data-album-id="${escVal(album.id)}" data-ontoggle="loadYearMonths">
+            <summary class="nav-item${active}" data-prevent-default="true" data-action="switchAlbum" data-arg0="${escVal(album.id)}">
               <span>${esc(album.name)}</span>
-              <span class="nav-item-right"><span class="nav-count">${album.photo_count || 0}</span></span>
+              <span class="nav-item-right"><span class="nav-count">${escVal(album.photo_count || 0)}</span></span>
             </summary>
             <div class="nav-year-months" id="year-months-${escapeAttr(album.rule.year)}"></div>
           </details>`;
     } else {
-      html += `<div class="nav-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${album.id}" data-album-id="${album.id}">
+      html += `<div class="nav-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${escVal(album.id)}" data-album-id="${escVal(album.id)}">
             <span>${esc(album.name)}</span>
-            <span class="nav-count">${album.photo_count || 0}</span>
+            <span class="nav-count">${escVal(album.photo_count || 0)}</span>
           </div>`;
     }
   }

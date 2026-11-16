@@ -11,7 +11,7 @@
 
 import { apiFetch, authedSrc } from "./api-client.mjs";
 import { appConfirm } from "./dialogs.mjs";
-import { esc, escapeAttr } from "./text-format.mjs";
+import { esc, escapeAttr, escVal } from "./text-format.mjs";
 import { toast, toastError } from "./toast.mjs";
 
 /**
@@ -182,8 +182,8 @@ function _devicesHTML(devices) {
             <div style="color:var(--text-secondary);font-size:0.82em">${esc(d.ip_at_pair)} · ${esc(_relTime(d.first_seen))}</div>
           </div>
           <div style="display:flex;gap:6px">
-            <button class="preset-btn save" data-action="_approveDevice" data-arg0="${d.id}" title="Approve this device">Approve</button>
-            <button class="preset-btn" data-action="_blockDevice" data-arg0="${d.id}" title="Block this device">Block</button>
+            <button class="preset-btn save" data-action="_approveDevice" data-arg0="${escVal(d.id)}" title="Approve this device">Approve</button>
+            <button class="preset-btn" data-action="_blockDevice" data-arg0="${escVal(d.id)}" title="Block this device">Block</button>
           </div>
         </div>
       `
@@ -200,7 +200,7 @@ function _devicesHTML(devices) {
             <div style="font-weight:500">${esc(d.name || "Unknown device")}${d.prev_revoked ? `<span style="color:var(--text-secondary);font-size:0.78em;margin-left:8px;font-weight:normal">re-approved after revoke</span>` : ""}</div>
             <div style="color:var(--text-secondary);font-size:0.82em">${esc(d.ip_at_pair)} · last seen ${esc(_relTime(d.last_seen))}</div>
           </div>
-          <button class="preset-btn" data-action="_revokeDevice" data-arg0="${d.id}" title="Revoke access for this device">Revoke</button>
+          <button class="preset-btn" data-action="_revokeDevice" data-arg0="${escVal(d.id)}" title="Revoke access for this device">Revoke</button>
         </div>
       `
         )

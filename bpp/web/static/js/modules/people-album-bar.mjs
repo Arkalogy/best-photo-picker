@@ -29,7 +29,7 @@
 import { apiFetch, faceCropUrl } from "./api-client.mjs";
 import { state } from "./state.mjs";
 import { appConfirm, appPrompt } from "./dialogs.mjs";
-import { esc, escapeAttr, escapeJsAttr } from "./text-format.mjs";
+import { esc, escapeAttr, escVal } from "./text-format.mjs";
 import { CLUSTER_DISMISSED } from "./constants.mjs";
 import { loadAlbumList, switchAlbum } from "./albums.mjs";
 import { loadFaceClusters } from "./faces.mjs";
@@ -81,13 +81,13 @@ export function updatePersonAlbumBar(album) {
   const exclLabel = isExcluded ? "Include in picks" : "Exclude from picks";
   const exclTitle = isExcluded ? "Re-include this person's photos in picks" : "Keep in face lists but never pick their photos";
   bar.innerHTML =
-    `<span class="people-filter-pill" data-action="_paRename" data-arg0="${album.id}" data-arg1="${escapeJsAttr(name)}" title="Give this person a name">Rename</span>` +
-    `<span class="people-filter-pill" data-action="showAvatarPicker" data-arg0="${cid}" title="Choose a different face photo as avatar">Change avatar</span>` +
-    `<span class="people-filter-pill" data-action="_paMergeWith" data-arg0="${cid}" title="Combine this person with another">Merge with\u2026</span>` +
-    `<span class="people-filter-pill" data-action="showSplitPicker" data-arg0="${cid}" title="Select wrong faces and move them to a new person">Split\u2026</span>` +
-    `<span class="people-filter-pill" data-action="_paToggleExclude" data-arg0="${cid}" title="${escapeAttr(exclTitle)}">${exclLabel}</span>` +
-    `<span class="people-filter-pill" style="color:var(--red)" data-action="_paNotAFace" data-arg0="${cid}" title="Mark as false detection — these aren't real faces">Not a face</span>` +
-    `<span class="people-filter-pill" style="color:var(--red)" data-action="_paDismiss" data-arg0="${cid}" title="Remove from sidebar, chips, and scoring. Recoverable from Ignored.">Dismiss</span>` +
+    `<span class="people-filter-pill" data-action="_paRename" data-arg0="${escVal(album.id)}" data-arg1="${escapeAttr(name)}" title="Give this person a name">Rename</span>` +
+    `<span class="people-filter-pill" data-action="showAvatarPicker" data-arg0="${escVal(cid)}" title="Choose a different face photo as avatar">Change avatar</span>` +
+    `<span class="people-filter-pill" data-action="_paMergeWith" data-arg0="${escVal(cid)}" title="Combine this person with another">Merge with\u2026</span>` +
+    `<span class="people-filter-pill" data-action="showSplitPicker" data-arg0="${escVal(cid)}" title="Select wrong faces and move them to a new person">Split\u2026</span>` +
+    `<span class="people-filter-pill" data-action="_paToggleExclude" data-arg0="${escVal(cid)}" title="${escapeAttr(exclTitle)}">${exclLabel}</span>` +
+    `<span class="people-filter-pill" style="color:var(--red)" data-action="_paNotAFace" data-arg0="${escVal(cid)}" title="Mark as false detection — these aren't real faces">Not a face</span>` +
+    `<span class="people-filter-pill" style="color:var(--red)" data-action="_paDismiss" data-arg0="${escVal(cid)}" title="Remove from sidebar, chips, and scoring. Recoverable from Ignored.">Dismiss</span>` +
     `<span class="pa-spacer"></span>` +
     `<span style="font-size:11px;color:var(--text3)">Cmd+click photos to reassign</span>`;
 
@@ -196,7 +196,7 @@ export function updatePersonPhotoSelection(selectedCount, selectedFilepaths) {
   const pName = album ? album.name : "this person";
   selBar.classList.remove("hidden");
   selBar.innerHTML =
-    `<span class="selection-count">${selectedCount} selected</span>` +
+    `<span class="selection-count">${escVal(selectedCount)} selected</span>` +
     `<span class="people-filter-pill" data-action="_paNotThisPerson">Remove from ${esc(pName)}</span>` +
     `<span class="people-filter-pill" data-action="_paMoveTo">Reassign to\u2026</span>` +
     `<span class="people-filter-pill" style="color:var(--red)" data-action="_paNotAFaceSelected">Not a face</span>` +

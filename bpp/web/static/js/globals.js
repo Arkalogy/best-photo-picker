@@ -258,6 +258,9 @@ function _bppCoerceArg(s) {
   if (s !== "" && !isNaN(+s)) return +s;
   return s;
 }
+// Events other than a click call only the handlers the app's own markup
+// names for them (modules/event-handlers.mjs); anything else is ignored.
+function _bppHandler(kind, name) { return window.eventHandler ? window.eventHandler(kind, name) : null; }
 function _bppCollectArgs(el) {
   var args = [], i = 0;
   while (el.dataset["arg" + i] !== undefined) {
@@ -301,15 +304,15 @@ document.addEventListener("click", function _bppDispatch(e) { if (!e || !e.targe
 document.addEventListener("input", function _bppInputDispatch(e) { if (!e || !e.target) return; var _t = typeof e.target.closest === "function" ? e.target : (e.target.parentElement || null); if (!_t) return;
   var el = _t.closest("[data-oninput]");
   if (!el) return;
-  var fn = window[el.dataset.oninput];
-  if (typeof fn !== "function") return;
+  var fn = _bppHandler("oninput", el.dataset.oninput);
+  if (!fn) return;
   fn.call(el, el.value, e);
 });
 document.addEventListener("change", function _bppChangeDispatch(e) { if (!e || !e.target) return; var _t = typeof e.target.closest === "function" ? e.target : (e.target.parentElement || null); if (!_t) return;
   var el = _t.closest("[data-onchange]");
   if (!el) return;
-  var fn = window[el.dataset.onchange];
-  if (typeof fn !== "function") return;
+  var fn = _bppHandler("onchange", el.dataset.onchange);
+  if (!fn) return;
   // Read the control that changed: it may sit inside the element that
   // names the handler (radio cards in a wrapper), which has no value.
   // A checkbox reports whether it is ticked; its `value` is "on" either
@@ -330,43 +333,43 @@ document.addEventListener("keydown", function _bppKeydownDispatch(e) { if (!e ||
   }
   var el = _t.closest("[data-onkeydown]");
   if (!el) return;
-  var fn = window[el.dataset.onkeydown];
-  if (typeof fn !== "function") return;
+  var fn = _bppHandler("onkeydown", el.dataset.onkeydown);
+  if (!fn) return;
   fn.call(el, e);
 });
 document.addEventListener("mousedown", function _bppMousedownDispatch(e) { if (!e || !e.target) return; var _t = typeof e.target.closest === "function" ? e.target : (e.target.parentElement || null); if (!_t) return;
   var el = _t.closest("[data-onmousedown]");
   if (!el) return;
-  var fn = window[el.dataset.onmousedown];
-  if (typeof fn !== "function") return;
+  var fn = _bppHandler("onmousedown", el.dataset.onmousedown);
+  if (!fn) return;
   fn.call(el, e);
 });
 document.addEventListener("mouseup", function _bppMouseupDispatch(e) { if (!e || !e.target) return; var _t = typeof e.target.closest === "function" ? e.target : (e.target.parentElement || null); if (!_t) return;
   var el = _t.closest("[data-onmouseup]");
   if (!el) return;
-  var fn = window[el.dataset.onmouseup];
-  if (typeof fn !== "function") return;
+  var fn = _bppHandler("onmouseup", el.dataset.onmouseup);
+  if (!fn) return;
   fn.call(el, e);
 });
 document.addEventListener("mouseleave", function _bppMouseleaveDispatch(e) { if (!e || !e.target) return; var _t = typeof e.target.closest === "function" ? e.target : (e.target.parentElement || null); if (!_t) return;
   var el = _t.closest("[data-onmouseleave]");
   if (!el) return;
-  var fn = window[el.dataset.onmouseleave];
-  if (typeof fn !== "function") return;
+  var fn = _bppHandler("onmouseleave", el.dataset.onmouseleave);
+  if (!fn) return;
   fn.call(el, e);
 }, true);
 document.addEventListener("touchstart", function _bppTouchstartDispatch(e) { if (!e || !e.target) return; var _t = typeof e.target.closest === "function" ? e.target : (e.target.parentElement || null); if (!_t) return;
   var el = _t.closest("[data-ontouchstart]");
   if (!el) return;
-  var fn = window[el.dataset.ontouchstart];
-  if (typeof fn !== "function") return;
+  var fn = _bppHandler("ontouchstart", el.dataset.ontouchstart);
+  if (!fn) return;
   fn.call(el, e);
 });
 document.addEventListener("touchend", function _bppTouchendDispatch(e) { if (!e || !e.target) return; var _t = typeof e.target.closest === "function" ? e.target : (e.target.parentElement || null); if (!_t) return;
   var el = _t.closest("[data-ontouchend]");
   if (!el) return;
-  var fn = window[el.dataset.ontouchend];
-  if (typeof fn !== "function") return;
+  var fn = _bppHandler("ontouchend", el.dataset.ontouchend);
+  if (!fn) return;
   fn.call(el, e);
 });
 
@@ -413,23 +416,23 @@ window._kbToggleTip = function(e) {
 document.addEventListener("contextmenu", function _bppContextmenuDispatch(e) { if (!e || !e.target) return; var _t = typeof e.target.closest === "function" ? e.target : (e.target.parentElement || null); if (!_t) return;
   var el = _t.closest("[data-oncontextmenu]");
   if (!el) return;
-  var fn = window[el.dataset.oncontextmenu];
-  if (typeof fn !== "function") return;
+  var fn = _bppHandler("oncontextmenu", el.dataset.oncontextmenu);
+  if (!fn) return;
   // Contextmenu handlers always receive event first, then any data-arg* values
   fn.apply(el, [e].concat(_bppCollectArgs(el)));
 }, true);
 document.addEventListener("dblclick", function _bppDblclickDispatch(e) { if (!e || !e.target) return; var _t = typeof e.target.closest === "function" ? e.target : (e.target.parentElement || null); if (!_t) return;
   var el = _t.closest("[data-ondblclick]");
   if (!el) return;
-  var fn = window[el.dataset.ondblclick];
-  if (typeof fn !== "function") return;
+  var fn = _bppHandler("ondblclick", el.dataset.ondblclick);
+  if (!fn) return;
   fn.apply(el, [e].concat(_bppCollectArgs(el)));
 }, true);
 document.addEventListener("toggle", function _bppToggleDispatch(e) { if (!e || !e.target) return; var _t = typeof e.target.closest === "function" ? e.target : (e.target.parentElement || null); if (!_t) return;
   var el = e.target.closest ? e.target : null;
   if (!el || !el.dataset || !el.dataset.ontoggle) return;
-  var fn = window[el.dataset.ontoggle];
-  if (typeof fn !== "function") return;
+  var fn = _bppHandler("ontoggle", el.dataset.ontoggle);
+  if (!fn) return;
   fn.call(el, e);
 }, true);
 // Named helpers for complex contextmenu expressions
@@ -449,14 +452,14 @@ window._bppDblclickToggle = function(e) {
 document.addEventListener("load", function _bppLoadDispatch(e) { if (!e || !e.target) return; var _t = typeof e.target.closest === "function" ? e.target : (e.target.parentElement || null); if (!_t) return;
   var el = e.target.closest ? e.target : null;
   if (!el || !el.dataset) return;
-  var fn = el.dataset.onload ? window[el.dataset.onload] : null;
-  if (typeof fn === "function") fn.call(el, e);
+  var fn = _bppHandler("onload", el.dataset.onload);
+  if (fn) fn.call(el, e);
 }, true);
 document.addEventListener("error", function _bppErrorDispatch(e) { if (!e || !e.target) return; var _t = typeof e.target.closest === "function" ? e.target : (e.target.parentElement || null); if (!_t) return;
   var el = e.target.closest ? e.target : null;
   if (!el || !el.dataset) return;
-  var fn = el.dataset.onerror ? window[el.dataset.onerror] : null;
-  if (typeof fn === "function") fn.call(el, e);
+  var fn = _bppHandler("onerror", el.dataset.onerror);
+  if (fn) fn.call(el, e);
 }, true);
 window._bppThumbLoaded = function() { this.parentElement.classList.remove("thumb-loading"); };
 window._bppThumbBroken = function() { this.parentElement.classList.add("lb-thumb-broken"); };
@@ -464,8 +467,8 @@ window._bppThumbBroken = function() { this.parentElement.classList.add("lb-thumb
 document.addEventListener("pointerdown", function _bppPointerdownDispatch(e) { if (!e || !e.target) return; var _t = typeof e.target.closest === "function" ? e.target : (e.target.parentElement || null); if (!_t) return;
   var el = _t.closest("[data-onpointerdown]");
   if (!el) return;
-  var fn = window[el.dataset.onpointerdown];
-  if (typeof fn !== "function") return;
+  var fn = _bppHandler("onpointerdown", el.dataset.onpointerdown);
+  if (!fn) return;
   fn.call(el, e);
 }, true);
 window._personCtxMenuDispatch = function(e) {
@@ -486,7 +489,7 @@ window._bppCardCtxMenu = function(e) {
 // Generic backdrop-close: fires the named function only if click was directly on the overlay
 window._bppBackdropClose = function(e) {
   if (!e || !e.target) return; var _t = typeof e.target.closest === "function" ? e.target : (e.target.parentElement || null); if (!_t) return;
-  if (e.target !== this) return;
+  if (e.target !== this || e.type !== "click") return; // a real click on the backdrop, nothing else
   var fn = this.dataset.backdropFn;
   var arg = this.dataset.backdropArg;
   if (typeof window[fn] === "function") {

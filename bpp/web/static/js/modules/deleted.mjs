@@ -17,10 +17,10 @@
  * window-bridged at module load time.
  */
 
-import { apiFetch, authedSrc } from "./api-client.mjs";
+import { apiFetch, thumbUrl } from "./api-client.mjs";
 import { fetchAllPages } from "./paging.mjs";
 import { appConfirm } from "./dialogs.mjs";
-import { esc, escapeAttr, escapeJsAttr } from "./text-format.mjs";
+import { esc, escapeAttr } from "./text-format.mjs";
 import { toast, toastError } from "./toast.mjs";
 
 /**
@@ -171,8 +171,8 @@ export async function loadDeletedPhotos() {
       const daysLeft = Math.max(0, 30 - daysAgo);
       const countdownText =
         daysLeft === 0 ? "Expiring soon" : `${daysLeft} day${daysLeft !== 1 ? "s" : ""} left`;
-      const thumbSrc = p.thumb_hash ? authedSrc(`/thumb/${p.thumb_hash}`) : "";
-      html += `<div class="deleted-card" data-filepath="${escapeAttr(p.filepath)}" data-oncontextmenu="showCardCtxMenu" data-arg0="${escapeJsAttr(p.filepath)}">
+      const thumbSrc = p.thumb_hash ? thumbUrl(p.thumb_hash) : "";
+      html += `<div class="deleted-card" data-filepath="${escapeAttr(p.filepath)}" data-oncontextmenu="showCardCtxMenu" data-arg0="${escapeAttr(p.filepath)}">
         <div class="card-image">
           ${thumbSrc ? `<img src="${thumbSrc}" alt="${escapeAttr(p.filename)}">` : '<div style="height:var(--thumb-height,220px);background:var(--surface-hover)"></div>'}
           <div class="deleted-countdown-badge">${countdownText}</div>
@@ -425,8 +425,8 @@ export async function loadHiddenPhotos() {
     html += '<button class="batch-btn" data-action="unhideAllHidden">Unhide All</button>';
     html += "</div>";
     for (const p of hiddenPhotos) {
-      const thumbSrc = p.thumb_hash ? authedSrc(`/thumb/${p.thumb_hash}`) : "";
-      html += `<div class="deleted-card" data-filepath="${escapeAttr(p.filepath)}" data-oncontextmenu="showCardCtxMenu" data-arg0="${escapeJsAttr(p.filepath)}">
+      const thumbSrc = p.thumb_hash ? thumbUrl(p.thumb_hash) : "";
+      html += `<div class="deleted-card" data-filepath="${escapeAttr(p.filepath)}" data-oncontextmenu="showCardCtxMenu" data-arg0="${escapeAttr(p.filepath)}">
         <div class="card-image">
           ${thumbSrc ? `<img src="${thumbSrc}" alt="${escapeAttr(p.filename)}">` : '<div style="height:var(--thumb-height,220px);background:var(--surface-hover)"></div>'}
           <div class="deleted-hover-actions">

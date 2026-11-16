@@ -19,6 +19,7 @@ import { saveCurrentScopeFilter } from "./albums.mjs";
 import { apiFetch } from "./api-client.mjs";
 import { _formatBytes } from "./format-helpers.mjs";
 import { toast, toastError } from "./toast.mjs";
+import { escVal } from "./text-format.mjs";
 
 /** @type {HTMLElement | null} */
 let activePopover = null;
@@ -234,8 +235,8 @@ export function updateLibStats() {
       if (stats.video_count) sub.push(`${stats.video_count} videos`);
       if (stats.raw_count) sub.push(`${stats.raw_count} RAW`);
       el.innerHTML =
-        `<div>${parts.join(" · ")}</div>` +
-        (sub.length ? `<div style="margin-top:2px">${sub.join(" · ")}</div>` : "");
+        `<div>${escVal(parts.join(" · "))}</div>` +
+        (sub.length ? `<div style="margin-top:2px">${escVal(sub.join(" · "))}</div>` : "");
     })
     .catch((e) => console.warn("Stats fetch failed:", e));
 }

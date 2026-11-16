@@ -9,7 +9,7 @@
 
 import { ROW_LIFECYCLE } from "./face-embedders-rowstate.mjs";
 import { _formatBytes } from "./format-helpers.mjs";
-import { escapeAttr, esc } from "./text-format.mjs";
+import { escapeAttr, esc, escVal } from "./text-format.mjs";
 
 // ── License badge ───────────────────────────────────────────────────
 
@@ -218,7 +218,7 @@ export function _sizeCell(state) {
   // Its install record didn't load: its size isn't known either.
   if (state.installUnknown) return `<span class="fe-cell-size-val">—</span>`;
   if (state.sizeBytes > 0) {
-    return `<span class="fe-cell-size-val">${_formatBytes(state.sizeBytes)}</span>`;
+    return `<span class="fe-cell-size-val">${escVal(_formatBytes(state.sizeBytes))}</span>`;
   }
   if (state.expectedSize > 0) {
     // When the catalog entry's weights are on disk, the size is no
@@ -229,7 +229,7 @@ export function _sizeCell(state) {
     // signal "this is what you would download, not what you have."
     const cls = state.onDisk ? "fe-cell-size-val" : "fe-cell-size-expected";
     const prefix = state.onDisk ? "" : "~";
-    return `<span class="${cls}" title="Download size">${prefix}${_formatBytes(state.expectedSize)}</span>`;
+    return `<span class="${cls}" title="Download size">${prefix}${escVal(_formatBytes(state.expectedSize))}</span>`;
   }
   return `<span class="fe-cell-size-empty">—</span>`;
 }

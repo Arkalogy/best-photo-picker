@@ -23,7 +23,7 @@
 
 import { apiFetch, petCropUrl } from "./api-client.mjs";
 import { appConfirm } from "./dialogs.mjs";
-import { esc, escapeAttr } from "./text-format.mjs";
+import { esc, escapeAttr, escVal } from "./text-format.mjs";
 import { toast, toastError } from "./toast.mjs";
 import { loadAlbumList } from "./albums.mjs";
 import { loadFaceClusters } from "./faces.mjs";
@@ -355,7 +355,7 @@ export async function updateLightboxPets(p) {
       const chips = pets
         .map(
           (name) =>
-            `<div class="lb-pet-chip"><span class="lb-pet-icon">${ICONS.paw || ""}</span><span>${name}</span></div>`
+            `<div class="lb-pet-chip"><span class="lb-pet-icon">${ICONS.paw || ""}</span><span>${escVal(name)}</span></div>`
         )
         .join("");
       container.innerHTML = `<div class="lb-faces-label">Pets in photo</div><div class="lb-faces-row">${chips}</div>`;

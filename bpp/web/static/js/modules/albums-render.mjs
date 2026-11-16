@@ -16,7 +16,7 @@
 
 import { _getFaceGroups } from "./groups.mjs";
 import { getSectionError, safeRenderNav } from "./sidebar-safety.mjs";
-import { esc, escapeAttr, escapeJsAttr } from "./text-format.mjs";
+import { esc, escapeAttr, escVal } from "./text-format.mjs";
 import { renderSmartAlbums } from "./albums-render-smart.mjs";
 import {
   _SORT_LABEL,
@@ -150,13 +150,13 @@ function _renderLibraryAndViews(ctx, allAlbums) {
     const active = libActive && win.currentView !== "favorites" ? " active" : "";
     const picksActive = win.currentView === "picks" ? " active" : "";
     const picksCount = album.selected_count || 0;
-    html += `<div class="nav-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${album.id}" data-album-id="${album.id}">
+    html += `<div class="nav-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${escVal(album.id)}" data-album-id="${escVal(album.id)}">
       <span><span class="nav-icon-svg">${ICONS.library || ""}</span>Library</span>
-      <span class="nav-count">${album.photo_count || 0}</span>
+      <span class="nav-count">${escVal(album.photo_count || 0)}</span>
     </div>
     <div class="nav-subitem nav-subitem-picks${picksActive}" role="button" tabindex="0" data-key-activate="true" data-action="navigateToLibraryPicks" title="Best K photos across the full library">
       <span><span class="nav-icon-svg">${ICONS.picks || ""}</span>BPP Picks</span>
-      <span class="nav-count">${picksCount || ""}</span>
+      <span class="nav-count">${escVal(picksCount || "")}</span>
     </div>`;
   }
   if (allAlbums.length === 0) {
@@ -187,7 +187,7 @@ function _renderLibraryAndViews(ctx, allAlbums) {
     const petCount = ctx.petClusters.reduce((sum, c) => sum + c.photo_count, 0);
     html += `<div class="nav-item${petsActive}" role="button" tabindex="0" data-key-activate="true" data-action="navigateToPets">
       <span><span class="nav-icon-svg">${ICONS.paw || ""}</span>Pets</span>
-      ${petCount > 0 ? `<span class="nav-count">${petCount}</span>` : ""}
+      ${petCount > 0 ? `<span class="nav-count">${escVal(petCount)}</span>` : ""}
     </div>`;
   }
 
@@ -287,7 +287,7 @@ function _renderManualAlbums(ctx, manualAlbums) {
   function picksBadge(album) {
     const sc = album.selected_count || 0;
     if (sc <= 0) return "";
-    return `<span class="nav-picks-badge" title="${sc} picked by BPP">✓${sc}</span>`;
+    return `<span class="nav-picks-badge" title="${escVal(sc)} picked by BPP">✓${escVal(sc)}</span>`;
   }
 
   /**
@@ -297,7 +297,7 @@ function _renderManualAlbums(ctx, manualAlbums) {
    */
   function renderAlbumItem(album, indent) {
     const active = win.currentAlbumId === album.id && win.currentView === "album" ? " active" : "";
-    const actions = `<span class="nav-item-actions"><button data-stop-propagation="true" data-action="deleteAlbumPrompt" data-arg0="${album.id}" data-arg1="${escapeJsAttr(album.name)}" title="Delete">&times;</button></span>`;
+    const actions = `<span class="nav-item-actions"><button data-stop-propagation="true" data-action="deleteAlbumPrompt" data-arg0="${escVal(album.id)}" data-arg1="${escapeAttr(album.name)}" title="Delete">&times;</button></span>`;
     const badge = picksBadge(album);
     const children = childrenOf[album.id];
     let out = "";
@@ -307,22 +307,22 @@ function _renderManualAlbums(ctx, manualAlbums) {
       );
       const isCurrent = win.currentAlbumId === album.id && win.currentView === "album";
       const isOpen = _navFolderOpenAttr(`album:${album.id}`, hasActiveChild || isCurrent);
-      out += `<details class="nav-folder album-folder"${isOpen} data-nav-key="album:${album.id}">
-        <summary class="nav-item${active}" data-prevent-default="true" data-action="switchAlbum" data-arg0="${album.id}" data-album-id="${album.id}" style="padding-left:${12 + indent * 16}px"
+      out += `<details class="nav-folder album-folder"${isOpen} data-nav-key="album:${escVal(album.id)}">
+        <summary class="nav-item${active}" data-prevent-default="true" data-action="switchAlbum" data-arg0="${escVal(album.id)}" data-album-id="${escVal(album.id)}" style="padding-left:${12 + indent * 16}px"
           data-ondblclick="_bppDblclickToggle"
-          data-oncontextmenu="showAlbumMoveMenu" data-arg0="${album.id}">
+          data-oncontextmenu="showAlbumMoveMenu" data-arg0="${escVal(album.id)}">
           <span><span class="nav-icon-svg">${ICONS.folder || ""}</span>${esc(album.name)}</span>
-          <span class="nav-item-right">${badge}<span class="nav-count">${album.photo_count || 0}</span>${actions}</span>
+          <span class="nav-item-right">${badge}<span class="nav-count">${escVal(album.photo_count || 0)}</span>${actions}</span>
         </summary>`;
       for (const child of children) {
         out += renderAlbumItem(child, indent + 1);
       }
       out += `</details>`;
     } else {
-      out += `<div class="nav-item${active}" role="group" aria-roledescription="album" aria-label="${escapeAttr(album.name)}, Enter opens" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${album.id}" data-album-id="${album.id}" style="padding-left:${12 + indent * 16}px"
-        data-oncontextmenu="showAlbumMoveMenu" data-arg0="${album.id}">
+      out += `<div class="nav-item${active}" role="group" aria-roledescription="album" aria-label="${escapeAttr(album.name)}, Enter opens" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${escVal(album.id)}" data-album-id="${escVal(album.id)}" style="padding-left:${12 + indent * 16}px"
+        data-oncontextmenu="showAlbumMoveMenu" data-arg0="${escVal(album.id)}">
         <span><span class="nav-icon-svg">${ICONS.folder || ""}</span>${esc(album.name)}</span>
-        <span class="nav-item-right">${badge}<span class="nav-count">${album.photo_count || 0}</span>${actions}</span>
+        <span class="nav-item-right">${badge}<span class="nav-count">${escVal(album.photo_count || 0)}</span>${actions}</span>
       </div>`;
     }
     return out;

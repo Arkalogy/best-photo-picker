@@ -1236,6 +1236,7 @@
   import * as shareTabModule from "/static/js/modules/share-tab.mjs";
   import * as sidebarSafetyModule from "/static/js/modules/sidebar-safety.mjs";
   import * as sensitiveModule from "/static/js/modules/sensitive.mjs";
+  import * as eventHandlers from "/static/js/modules/event-handlers.mjs";
   import "/static/js/modules/tooltip.mjs"; // self-attaches listeners on import
   // The classic copies have been removed — these modules now ARE the
   // runtime. See docs/js-modules-migration.md for the path.
@@ -1254,7 +1255,7 @@
     lightboxFacePickerModule, lightboxFaceAssignModule, lightboxFaceOverlaysModule,
     lightboxInputModule, lightboxActionsModule, lightboxOpenModule, lightboxModule,
     peopleAlbumBarModule, peopleActionsModule, peopleCtxMenuModule, peoplePickersModule, peopleReviewModule, photoPreviewModule, peoplePairReviewModule, peopleViewModule, peopleMergeModule, peopleModule, shareTabModule,
-    sidebarSafetyModule, sensitiveModule,
+    sidebarSafetyModule, sensitiveModule, eventHandlers,
   );
   // Install the view-guard setter on window.currentView immediately
   // after the bridge so every subsequent view switch bumps the token

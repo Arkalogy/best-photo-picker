@@ -16,7 +16,7 @@ vector.
 
 This test pins the closure: every ``<attr>="${...}"`` interpolation
 whose attribute name OR expression body matches the risky keyword
-set MUST be wrapped by ``escapeAttr`` or ``escapeJsAttr``. Numeric
+set MUST be wrapped by ``escapeAttr`` or ``escVal``. Numeric
 expressions, simple integer IDs, conditional class fragments, and
 ternary-of-literals are accepted as safe-by-construction.
 
@@ -43,7 +43,7 @@ _ATTR_INTERP_RE = re.compile(
 )
 
 _INNER_RE = re.compile(r"\$\{[^}]+\}")
-_WRAPPER_OK = re.compile(r"^\s*\$\{\s*(escapeAttr|escapeJsAttr)\(")
+_WRAPPER_OK = re.compile(r"^\s*\$\{\s*(escapeAttr|escVal|thumbUrl|faceCropUrl|petCropUrl)\(")
 
 # Words in either the attribute name OR the interpolated expression
 # that indicate the value is a string the user can influence
@@ -167,7 +167,7 @@ def _classify(attr: str, expr: str) -> str:
 
 def test_no_risky_unescaped_attribute_interpolations() -> None:
     """No HTML-attribute interpolation in any ES module may pass a
-    risky-keyword value without ``escapeAttr`` / ``escapeJsAttr``.
+    risky-keyword value without ``escapeAttr`` / ``escVal``.
 
     If you add a new helper that produces safe output and trip this
     test, either wrap the call in ``escapeAttr`` (idempotent and zero
@@ -195,11 +195,10 @@ def test_no_risky_unescaped_attribute_interpolations() -> None:
                     offenders.append(f"{rel}:{line_no} attr={attr} expr={expr}\n    {snippet}")
     assert not offenders, (
         f"Found {len(offenders)} risky HTML-attribute interpolation(s) "
-        f"without escapeAttr/escapeJsAttr:\n\n  "
+        f"without escapeAttr/escVal:\n\n  "
         + "\n  ".join(offenders)
         + "\n\nFix: wrap the interpolated expression with escapeAttr() "
-        "(or escapeJsAttr() if it's destined for a JS-context attribute "
-        "like inline onclick / data-action). Or, if the value is "
-        "provably safe (hardcoded string from a const), add to the "
-        "_ALLOWLIST set with a one-line reason."
+        "(or escVal() for a value expected to be a number, date or hash). "
+        "Or, if the value is provably safe (hardcoded string from a "
+        "const), add to the _ALLOWLIST set with a one-line reason."
     )
