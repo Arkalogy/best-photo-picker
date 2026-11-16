@@ -751,6 +751,7 @@
   "openPhotoPreview": "writable",
   "openPicker": "writable",
   "openSensitiveAlbum": "writable",
+  "outsideSourceMessage": "writable",
   "overrides": "writable",
   "parseSSE": "writable",
   "partitionSensitive": "writable",

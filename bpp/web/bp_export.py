@@ -81,6 +81,7 @@ def api_export() -> tuple[Response, int]:
             write_xmp=params.get("write_xmp", False),
             library_path=ctx.state.get("library_path", ""),
             strip_metadata=params.get("strip_metadata", True),
+            source_roots=_source_roots(ctx),
         )
     except Exception as e:
         raise BppError(
@@ -104,8 +105,22 @@ def api_export() -> tuple[Response, int]:
             "failed": result.failed,
             "disk_error": result.disk_error,
             "metadata_kept": result.metadata_kept,
+            "outside_source": result.outside_source,
         }
     ), 200
+
+
+def _source_roots(ctx) -> list[str]:
+    """The folders an export may read photos from: the open library, its
+    workdir, and the folders the owner analyzed in place while this
+    library was open. All of them come from the owner (launch arguments
+    or their Analyze requests), never from the library's rows."""
+    from bpp.utils.path_validation import build_library_allowlist
+
+    roots = build_library_allowlist(
+        library_path=ctx.state.get("library_path"), workdir=ctx.state.get("workdir")
+    )
+    return [*roots, *sorted(ctx.export_source_dirs)]
 
 
 def _validate_export_params(ctx, params):
@@ -227,6 +242,7 @@ def api_export_start() -> tuple[Response, int]:
         write_xmp=params.get("write_xmp", False),
         library_path=ctx.state.get("library_path", ""),
         strip_metadata=params.get("strip_metadata", True),
+        source_roots=_source_roots(ctx),
     )
     if not started:
         raise ConflictError(

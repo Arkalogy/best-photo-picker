@@ -72,3 +72,70 @@ def build_library_allowlist(
         if home != os.path.realpath(os.sep):
             out.append(home)
     return out
+
+
+class FolderSet:
+    """Folders a file may be read from, for checking many files against
+    the same few folders (an export run).
+
+    A file is inside when the folder it really sits in (links resolved)
+    is one of the roots or below one. Folders are compared by what they
+    are on disk, not only by spelling, so a root typed in another case
+    or Unicode form on a volume that ignores those still matches. Roots
+    are resolved once and each source folder is decided once.
+    """
+
+    def __init__(self, roots: list[str] | tuple[str, ...]) -> None:
+        self._paths: list[str] = []
+        self._ids: set[tuple[int, int]] = set()
+        self._decided: dict[str, bool] = {}
+        for root in roots:
+            if not root:
+                continue
+            try:
+                real = os.path.realpath(root)
+                st = os.stat(real)
+            except (OSError, ValueError):
+                continue  # a folder that isn't there holds nothing
+            self._paths.append(real)
+            if st.st_ino:
+                self._ids.add((st.st_dev, st.st_ino))
+
+    def holds(self, path: str) -> bool:
+        """True iff ``path`` resolves to a file in or below a root. A path
+        that can't be resolved (a NUL byte, a link loop) is not."""
+        try:
+            folder = os.path.dirname(os.path.realpath(path))
+        except (OSError, ValueError):
+            return False
+        decided = self._decided.get(folder)
+        if decided is None:
+            decided = self._decided[folder] = self._inside(folder)
+        return decided
+
+    def _inside(self, folder: str) -> bool:
+        if is_path_under_any(folder, self._paths):
+            return True
+        while self._ids:
+            try:
+                st = os.stat(folder)
+                if st.st_ino and (st.st_dev, st.st_ino) in self._ids:
+                    return True
+            except OSError:
+                pass  # a missing level: keep climbing
+            parent = os.path.dirname(folder)
+            if parent == folder:
+                break
+            folder = parent
+        return False
+
+
+def split_existing_folders(values: list[str]) -> tuple[list[str], list[str]]:
+    """Folders named on a command line, as ``(existing, missing)``: each
+    with ``~`` expanded and made absolute."""
+    existing: list[str] = []
+    missing: list[str] = []
+    for value in values:
+        folder = os.path.abspath(os.path.expanduser(value))
+        (existing if os.path.isdir(folder) else missing).append(folder)
+    return existing, missing

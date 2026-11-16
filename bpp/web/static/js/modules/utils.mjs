@@ -37,7 +37,7 @@ const _EXPORT_STREAM_THRESHOLD = 25;
  *
  * @param {Record<string, any>} body
  * @param {HTMLElement | null} statusEl
- * @returns {Promise<{count: number, failed: number, outdir: string, disk_error: any, metadata_kept: number, cancelled?: boolean}>}
+ * @returns {Promise<{count: number, failed: number, outdir: string, disk_error: any, metadata_kept: number, outside_source?: number, cancelled?: boolean}>}
  */
 async function _streamExport(body, statusEl) {
   // 1) Kick off the worker; 202 means streaming has begun.
@@ -73,6 +73,7 @@ async function _streamExport(body, statusEl) {
           outdir: msg.outdir,
           disk_error: msg.disk_error,
           metadata_kept: msg.metadata_kept || 0,
+          outside_source: msg.outside_source || 0,
         });
       } else if (msg.type === "cancelled") {
         // A stop, not a failure: the photos written so far are kept.
@@ -264,6 +265,16 @@ export async function doExport() {
       `<button class="btn-open-folder" data-action="_openExportFolder" data-arg0="${escapeJsAttr(data.outdir)}">Open Folder</button>`;
     statusEl.className = "export-status success";
   }
+  _toastExportResult(data, msg);
+}
+
+/**
+ * The toast that closes an export: a disk problem first, then refused
+ * files, then other failures, else the plain result.
+ * @param {Record<string, any>} data
+ * @param {string} msg
+ */
+function _toastExportResult(data, msg) {
   // Categorised disk error takes precedence over the generic "N failed"
   // toast — when the loop aborted it's because every subsequent photo
   // would have failed the same way, and the user needs that context to
@@ -279,6 +290,8 @@ export async function doExport() {
     const label = labels[data.disk_error.category] || "Filesystem error";
     const at = data.disk_error.first_failed_index;
     toast(`${label} — export stopped at photo ${at}. Free space or pick another folder and retry.`, true);
+  } else if (outsideSourceMessage(data)) {
+    toast(outsideSourceMessage(data), "error"); /* toast-ok: names the reason and the recovery */
   } else if (data.failed > 0) {
     // Non-disk failures (corrupt source, bad filename, format
     // conversion error) — surface a 'View log' shortcut. The per-photo
@@ -298,6 +311,23 @@ export async function doExport() {
   } else {
     toast(msg);
   }
+}
+
+/**
+ * What to tell the owner when the export refused files that sit outside
+ * the library and the folder last analyzed; "" when none were refused.
+ * @param {{failed?: number, outside_source?: number}} data
+ * @returns {string}
+ */
+export function outsideSourceMessage(data) {
+  const refused = data.outside_source || 0;
+  if (refused <= 0) return "";
+  const other = (data.failed || 0) - refused;
+  const them = refused === 1 ? "1 photo wasn't exported: its file is" : `${refused} photos weren't exported: their files are`;
+  return (
+    `${them} outside this library. Analyze that folder again, then export.` +
+    (other > 0 ? ` ${other} more failed (see the activity log).` : "")
+  );
 }
 
 /**

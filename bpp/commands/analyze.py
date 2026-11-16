@@ -121,6 +121,13 @@ def do_select(args: argparse.Namespace) -> int:
         log.error("Workdir does not exist: %s", workdir)
         return 1
 
+    from bpp.utils.path_validation import split_existing_folders
+
+    named_roots, missing = split_existing_folders(getattr(args, "source_root", None) or [])
+    if missing:
+        log.error("--source-root folder does not exist: %s", ", ".join(missing))
+        return 1
+
     with timer.section("load"):
         analysis = load_analysis(workdir)
 
@@ -147,17 +154,28 @@ def do_select(args: argparse.Namespace) -> int:
         return 0
 
     with timer.section("export"):
-        export_selected(
+        result = export_selected(
             selected,
             analysis=analysis,
             outdir=outdir,
             mode=args.export_mode,
             gallery=args.gallery,
             config=cfg,
+            # Folders the owner named on this command line: never one the
+            # workdir's own files supply.
+            source_roots=[workdir, *named_roots],
         )
 
     log.info("Output written to %s", outdir)
     timer.summary()
+    if result.outside_source:
+        log.error(
+            "%d photo(s) were not exported: their files are outside %s. "
+            "Name the folder they were analyzed from with --source-root DIR.",
+            result.outside_source,
+            workdir,
+        )
+        return 1
     return 0
 
 
@@ -196,5 +214,6 @@ def do_run(args: argparse.Namespace) -> int:
         gallery=getattr(args, "gallery", False),
         dry_run=args.dry_run,
         extensions=args.extensions,
+        source_root=[os.path.abspath(args.input), *(getattr(args, "source_root", None) or [])],
     )
     return do_select(select_ns)

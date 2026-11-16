@@ -115,6 +115,11 @@ class WebAppState(_LegacyDelegateMixin):
             dirs=get_library_dirs(lib_path),
         )
 
+        #: Folders the owner analyzed in place (or named at launch) while
+        #: this library is open: the only folders outside the library an
+        #: export may read. Emptied on a library switch.
+        self.export_source_dirs: set[str] = {self.paths.input_dir} - {""}
+
         self.state: AppState = {
             "input_dir": self.paths.input_dir or None,
             "workdir": self.paths.workdir or None,

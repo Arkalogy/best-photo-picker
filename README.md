@@ -162,8 +162,10 @@ bpp run --input ~/Photos/MyKid --k 50 --out ~/curated --gallery
 
 # Or step-by-step:
 bpp analyze --input ~/Photos/MyKid --out ~/workdir
-bpp select --workdir ~/workdir --k 50 --out ~/curated --gallery
+bpp select --workdir ~/workdir --source-root ~/Photos/MyKid --k 50 --out ~/curated --gallery
 ```
+
+`bpp select` and `bpp pick` copy photos only from the workdir or library you point them at, plus any folder you name with `--source-root`. Name the folder you analyzed; a file anywhere else is skipped and reported.
 
 ## How It Works
 
@@ -461,10 +463,10 @@ bpp serve [--library PATH] [--host HOST] [--port 5001] [--no-browser] [--open-lo
 bpp demo [--port 5001] [--no-browser] [--open-loopback] [--keep]
 bpp web [--input DIR] [--workdir DIR] [--host HOST] [--port 5001] [--no-browser] [--open-loopback]
 bpp analyze --input DIR --out WORKDIR [--config FILE] [--max N] [--workers K]
-bpp select --workdir DIR --k N --out DIR [--copy|--hardlink|--symlink] [--gallery]
+bpp select --workdir DIR --k N --out DIR [--source-root DIR]... [--copy|--hardlink|--symlink] [--gallery]
 bpp run --input DIR --k N --out DIR [all options from analyze + select]
 bpp pick LIBRARY [--top N] [--boost-face NAME]... [--out DIR] [--json|--paths-only]
-                 [--quality original|high|medium|low] [--dry-run]
+                 [--quality original|high|medium|low] [--source-root DIR]... [--dry-run]
 bpp model {list|accept|accept-attribution|accepted|use-context|byom|remove|registry}
                  — text-mode parity with the GUI click-through for
                    restricted-license models. Use when running headless,

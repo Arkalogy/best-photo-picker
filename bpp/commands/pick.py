@@ -43,6 +43,12 @@ def do_pick(args: argparse.Namespace) -> int:
     except ValidationError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
+    from bpp.utils.path_validation import split_existing_folders
+
+    named_roots, missing = split_existing_folders(getattr(args, "source_root", None) or [])
+    if missing:
+        print(f"Error: --source-root folder does not exist: {', '.join(missing)}", file=sys.stderr)
+        return 1
     db_path = os.path.join(get_library_dirs(library_path)["data"], "photopicker.db")
     if not os.path.exists(db_path):
         print(f"Error: no database found at {db_path}", file=sys.stderr)
@@ -81,7 +87,18 @@ def do_pick(args: argparse.Namespace) -> int:
         out_dir = getattr(args, "out", None)
         dry_run = getattr(args, "dry_run", False)
         if out_dir and not dry_run:
-            _export(selected, analyzed, os.path.abspath(out_dir), args.quality)
+            # Folders the owner named on this command line: never one the
+            # library's own rows supply.
+            roots = [library_path, *named_roots]
+            refused = _export(selected, analyzed, os.path.abspath(out_dir), args.quality, roots)
+            if refused:
+                print(
+                    f"Error: {refused} photo(s) were not exported: their files are outside "
+                    f"{library_path}. Name the folder they were analyzed from with "
+                    "--source-root DIR.",
+                    file=sys.stderr,
+                )
+                return 1
         elif out_dir and dry_run:
             log.info("[dry-run] Would export %d photos to %s", len(selected), out_dir)
 
@@ -176,7 +193,15 @@ def _print_selection(selected: list[dict], args: argparse.Namespace) -> None:
             )
 
 
-def _export(selected: list[dict], analyzed: list[dict], out_dir: str, quality_preset: str) -> None:
+def _export(
+    selected: list[dict],
+    analyzed: list[dict],
+    out_dir: str,
+    quality_preset: str,
+    source_roots: list[str],
+) -> int:
+    """Export the selection; returns how many files were refused for
+    being outside ``source_roots``."""
     from bpp.output.export import export_selected
 
     quality_map = {
@@ -186,12 +211,14 @@ def _export(selected: list[dict], analyzed: list[dict], out_dir: str, quality_pr
         "low": ("jpeg", 1024, 70),
     }
     fmt, max_size, quality = quality_map.get(quality_preset, ("original", None, 85))
-    export_selected(
+    result = export_selected(
         selected,
         analysis=analyzed,
         outdir=out_dir,
         fmt=fmt,
         max_size=max_size,
         quality=quality,
+        source_roots=source_roots,
     )
-    get_logger(__name__).info("Exported %d photos to %s", len(selected), out_dir)
+    get_logger(__name__).info("Exported %d photos to %s", result.exported, out_dir)
+    return result.outside_source

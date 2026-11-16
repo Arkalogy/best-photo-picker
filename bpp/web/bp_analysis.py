@@ -89,6 +89,8 @@ def api_analyze() -> tuple[Response, int]:
     if not started:
         raise ConflictError("Analysis already in progress")
 
+    # The owner chose this folder: export may read from it (see bp_export).
+    ctx.export_source_dirs.add(ctx.input_dir)
     ctx.invalidate_analysis()
     return jsonify({"status": "started", "workdir": wd}), 202
 
