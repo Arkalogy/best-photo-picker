@@ -487,9 +487,11 @@ window._bppCardCtxMenu = function(e) {
 };
 
 // Generic backdrop-close: fires the named function only if click was directly on the overlay
+document.addEventListener("mousedown", function _bppNotePress(e) { window._bppPressedOn = e.target; }, true);
 window._bppBackdropClose = function(e) {
   if (!e || !e.target) return; var _t = typeof e.target.closest === "function" ? e.target : (e.target.parentElement || null); if (!_t) return;
-  if (e.target !== this || e.type !== "click") return; // a real click on the backdrop, nothing else
+  // A real click on the backdrop, pressed there too (not a drag that began inside the dialog).
+  if (e.target !== this || e.type !== "click" || (window._bppPressedOn && window._bppPressedOn !== this)) return;
   var fn = this.dataset.backdropFn;
   var arg = this.dataset.backdropArg;
   if (typeof window[fn] === "function") {

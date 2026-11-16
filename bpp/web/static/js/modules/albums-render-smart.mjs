@@ -69,7 +69,7 @@ export function renderSmartAlbums(ctx, smartAlbums) {
     const tip = smartAlbumTip(album);
     html += `<div class="nav-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${escVal(album.id)}" data-album-id="${escVal(album.id)}"
         ${tip ? `title="${escapeAttr(tip)}"` : ""}
-        data-oncontextmenu="showSmartAlbumMenu" data-arg0="${escVal(album.id)}" data-arg1="${escapeAttr(album.name)}">
+        data-oncontextmenu="showSmartAlbumMenu" data-arg1="${escapeAttr(album.name)}">
         <span><span class="nav-icon-svg">${icon || ""}</span>${esc(album.name)}</span>
         <span class="nav-count">${escVal(album.photo_count || 0)}</span>
       </div>`;
@@ -120,7 +120,7 @@ function _renderFacesFolder(ctx, faceAlbums, namedPetAlbums) {
         : `<span class="nav-face-thumb nav-face-placeholder">${ICONS.people || ""}</span>`;
     const cid = album.rule && album.rule.cluster_id;
     html += `<div class="nav-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${escVal(album.id)}" data-album-id="${escVal(album.id)}"
-          data-oncontextmenu="${cid != null ? "showPersonCtxMenu" : "showSmartAlbumMenu"}" data-arg0="${escVal(cid != null ? cid : album.id)}" data-arg1="${escapeAttr(album.name)}">
+          data-oncontextmenu="_bppAlbumCtxMenu"${cid != null ? ` data-cid="${escVal(cid)}"` : ""} data-arg1="${escapeAttr(album.name)}">
           <span class="nav-face-label">${thumb}<span class="nav-face-name">${esc(album.name)}</span></span>
           <span class="nav-count">${escVal(album.photo_count || 0)}</span>
         </div>`;
@@ -139,7 +139,7 @@ function _renderFacesFolder(ctx, faceAlbums, namedPetAlbums) {
         ? `<img class="nav-face-thumb" src="${petCropUrl(petRep.thumb_hash, petRep.detection_index)}" loading="lazy">`
         : `<span class="nav-face-thumb nav-face-placeholder">${ICONS.paw || ""}</span>`;
     html += `<div class="nav-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${escVal(album.id)}" data-album-id="${escVal(album.id)}"
-          data-oncontextmenu="showPetCtxMenu" data-arg0="${escVal(album.rule.cluster_id)}">
+          data-oncontextmenu="_petRowCtxMenu" data-cid="${escVal(album.rule.cluster_id)}">
           <span class="nav-face-label">${petThumb}<span class="nav-face-name">${esc(album.name)}</span></span>
           <span class="nav-count">${escVal(album.photo_count || 0)}</span>
         </div>`;
@@ -168,7 +168,7 @@ function _renderGroupsFolder(ctx, groupAlbums) {
   for (const album of groupAlbums) {
     const active = _isActive(ctx, album) ? " active" : "";
     html += `<div class="nav-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${escVal(album.id)}" data-album-id="${escVal(album.id)}"
-          data-oncontextmenu="showSmartAlbumMenu" data-arg0="${escVal(album.id)}" data-arg1="${escapeAttr(album.name)}">
+          data-oncontextmenu="showSmartAlbumMenu" data-arg1="${escapeAttr(album.name)}">
           <span>${esc(album.name)}</span>
           <span class="nav-count">${escVal(album.photo_count || 0)}</span>
         </div>`;
@@ -190,7 +190,7 @@ function _renderTagsFolder(ctx, tagAlbums) {
     const active = _isActive(ctx, album) ? " active" : "";
     const tagId = album.rule && album.rule.tag_id;
     html += `<div class="nav-item${active}" role="button" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${escVal(album.id)}" data-album-id="${escVal(album.id)}"
-          data-oncontextmenu="showTagAlbumMenu" data-arg0="${escVal(album.id)}" data-arg1="${escapeAttr(album.name)}" data-arg2="${escVal(tagId || 0)}">
+          data-oncontextmenu="showTagAlbumMenu" data-arg1="${escapeAttr(album.name)}" data-arg2="${escVal(tagId || 0)}">
           <span><span class="nav-icon-svg">${ctx.ICONS.tag || ""}</span>${esc(album.name)}</span>
           <span class="nav-count">${escVal(album.photo_count || 0)}</span>
         </div>`;

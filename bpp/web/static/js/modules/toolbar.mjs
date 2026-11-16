@@ -196,7 +196,10 @@ export function syncToolbarK() {
  * @param {KeyboardEvent} e
  */
 export function onToolbarKKeydown(e) {
-  const input = /** @type {HTMLInputElement} */ (e.currentTarget || e.target);
+  // The delegated dispatcher listens on document: the box is the target.
+  const input = /** @type {HTMLInputElement} */ (
+    e.target instanceof HTMLInputElement ? e.target : e.currentTarget
+  );
   if (e.key === "ArrowUp" || e.key === "ArrowDown") {
     // Let the native step happen first, then read the new value.
     // requestAnimationFrame ensures we read post-update.

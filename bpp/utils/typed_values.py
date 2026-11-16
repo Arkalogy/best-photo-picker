@@ -2,7 +2,7 @@
 
 SQLite keeps any text in a column declared INTEGER, REAL or TEXT, and a
 library folder can come from someone else. Fields the page treats as a
-number, a date or a hash are passed through these before they are sent,
+number or a date are passed through these before they are sent,
 so a row can't deliver other text under that name.
 """
 
@@ -16,7 +16,6 @@ from typing import Any
 # characters date and time notations use. Not a format check (EXIF and
 # ISO spellings both pass); it rules out everything else.
 _DATE_TEXT = re.compile(r"[0-9][0-9A-Za-z :.+/\-]{0,39}")
-_HASH_TEXT = re.compile(r"[0-9A-Fa-f]{1,128}")
 
 
 def as_int(value: Any) -> int | None:
@@ -41,8 +40,3 @@ def as_float(value: Any) -> float | None:
 def as_date_text(value: Any) -> str:
     """A stored date, day or month as text, or "" when it isn't one."""
     return value if isinstance(value, str) and _DATE_TEXT.fullmatch(value) else ""
-
-
-def as_hash(value: Any) -> str | None:
-    """A stored hex digest, or None when the value isn't one."""
-    return value if isinstance(value, str) and _HASH_TEXT.fullmatch(value) else None

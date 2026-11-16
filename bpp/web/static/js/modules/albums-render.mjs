@@ -310,7 +310,7 @@ function _renderManualAlbums(ctx, manualAlbums) {
       out += `<details class="nav-folder album-folder"${isOpen} data-nav-key="album:${escVal(album.id)}">
         <summary class="nav-item${active}" data-prevent-default="true" data-action="switchAlbum" data-arg0="${escVal(album.id)}" data-album-id="${escVal(album.id)}" style="padding-left:${12 + indent * 16}px"
           data-ondblclick="_bppDblclickToggle"
-          data-oncontextmenu="showAlbumMoveMenu" data-arg0="${escVal(album.id)}">
+          data-oncontextmenu="showAlbumMoveMenu">
           <span><span class="nav-icon-svg">${ICONS.folder || ""}</span>${esc(album.name)}</span>
           <span class="nav-item-right">${badge}<span class="nav-count">${escVal(album.photo_count || 0)}</span>${actions}</span>
         </summary>`;
@@ -320,7 +320,7 @@ function _renderManualAlbums(ctx, manualAlbums) {
       out += `</details>`;
     } else {
       out += `<div class="nav-item${active}" role="group" aria-roledescription="album" aria-label="${escapeAttr(album.name)}, Enter opens" tabindex="0" data-key-activate="true" data-action="switchAlbum" data-arg0="${escVal(album.id)}" data-album-id="${escVal(album.id)}" style="padding-left:${12 + indent * 16}px"
-        data-oncontextmenu="showAlbumMoveMenu" data-arg0="${escVal(album.id)}">
+        data-oncontextmenu="showAlbumMoveMenu">
         <span><span class="nav-icon-svg">${ICONS.folder || ""}</span>${esc(album.name)}</span>
         <span class="nav-item-right">${badge}<span class="nav-count">${escVal(album.photo_count || 0)}</span>${actions}</span>
       </div>`;

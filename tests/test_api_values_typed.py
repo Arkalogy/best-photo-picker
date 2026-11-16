@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from bpp.utils.typed_values import as_date_text, as_float, as_hash, as_int
+from bpp.utils.typed_values import as_date_text, as_float, as_int
 
 MARKUP = '"><img src=x data-onerror=toast>'
 
@@ -33,7 +33,6 @@ def test_helpers_accept_what_the_app_stores():
     assert as_date_text("2023-01-29T11:36:32") == "2023-01-29T11:36:32"
     assert as_date_text("2023:01:29 11:36:32.123456+02:00") != ""
     assert as_date_text("2023-01") == "2023-01"
-    assert as_hash("0a1B" * 16) == "0a1B" * 16
 
 
 @pytest.mark.parametrize(
@@ -53,11 +52,6 @@ def test_as_float_refuses_everything_else(value):
 )
 def test_as_date_text_refuses_everything_else(value):
     assert as_date_text(value) == ""
-
-
-@pytest.mark.parametrize("value", [MARKUP, "xyz", "", None, 12, "ab" * 65, "ab\n"])
-def test_as_hash_refuses_everything_else(value):
-    assert as_hash(value) is None
 
 
 def test_photo_dict_sends_typed_fields_only():
@@ -186,7 +180,7 @@ def _add_photo(conn, tmp_path, name, **cols):
     return photo_id
 
 
-def test_memories_send_a_count_and_a_hash(conn, tmp_path):
+def test_memories_send_a_count_and_dates(conn, tmp_path):
     from bpp.db.memories import get_memory, list_memories
 
     hero = _add_photo(conn, tmp_path, "a.jpg", sha256=MARKUP)
@@ -199,17 +193,8 @@ def test_memories_send_a_count_and_a_hash(conn, tmp_path):
     (memory,) = list_memories(conn)
     assert MARKUP not in json.dumps(memory)
     assert MARKUP not in json.dumps(get_memory(conn, memory["id"]))
-    assert memory["photo_count"] == 0 and memory["hero_hash"] is None
+    assert memory["photo_count"] == 0
     assert memory["date_start"] is None and memory["date_end"] == "2024-06-01"
-
-
-def test_calendar_sends_a_hash_or_nothing(conn, tmp_path):
-    from bpp.db.calendar import get_daily_counts
-
-    _add_photo(conn, tmp_path, "a.jpg", date="2024-06-05T10:00:00", sha256=MARKUP)
-    days = get_daily_counts(conn, 2024, 6)
-    assert [d["day"] for d in days] == [5]
-    assert days[0]["top_hash"] is None
 
 
 def test_face_groups_with_a_text_id_are_not_people(conn, tmp_path):

@@ -192,7 +192,7 @@
     <span id="tag-filter-chip" class="hidden"></span>
   </div>
 
-  <div class="confirm-overlay" id="confirm-overlay" role="alertdialog" aria-modal="true" aria-labelledby="confirm-message" data-action="_bppBackdropClose" data-backdrop-fn="resolveConfirm" data-backdrop-arg="false">
+  <div class="confirm-overlay" id="confirm-overlay" role="alertdialog" aria-modal="true" aria-labelledby="confirm-message" data-action="_bppBackdropClose" data-pass-event="true" data-backdrop-fn="dismissConfirm">
     <div class="confirm-dialog"></div>
   </div>
 
@@ -438,7 +438,7 @@
   <button class="batch-btn batch-deselect" data-action="clearMultiSelect">Deselect all</button>
 </div>
 
-<div class="modal-overlay" id="album-picker-overlay" role="dialog" aria-modal="true" aria-label="Add to album" data-action="_bppBackdropClose" data-backdrop-fn="hideAlbumPicker">
+<div class="modal-overlay" id="album-picker-overlay" role="dialog" aria-modal="true" aria-label="Add to album" data-action="_bppBackdropClose" data-pass-event="true" data-backdrop-fn="hideAlbumPicker">
   <div class="modal album-picker-modal">
     <div class="modal-title modal-title-spaced">Add to Album</div>
     <div class="album-picker-list" id="album-picker-list"></div>
@@ -469,7 +469,7 @@
 
 
 <!-- Onboarding overlay (first-run) -->
-<div class="onboarding-overlay hidden" id="onboarding-overlay" role="dialog" aria-modal="true" aria-label="Welcome to Best Photo Picker" data-action="_bppBackdropClose" data-backdrop-fn="_onboardingSkip">
+<div class="onboarding-overlay hidden" id="onboarding-overlay" role="dialog" aria-modal="true" aria-label="Welcome to Best Photo Picker">
   <div class="onboarding-modal">
     <div class="onboarding-body" id="onboarding-body"></div>
     <div class="onboarding-dots" id="onboarding-dots"></div>
@@ -500,7 +500,7 @@
 
 <input type="hidden" id="input-dir" value="">
 
-<div class="modal-overlay" id="import-modal-overlay" role="dialog" aria-modal="true" aria-label="Import photos" data-action="_bppBackdropClose" data-backdrop-fn="hideImportModal">
+<div class="modal-overlay" id="import-modal-overlay" role="dialog" aria-modal="true" aria-label="Import photos" data-action="_bppBackdropClose" data-pass-event="true" data-backdrop-fn="hideImportModal">
   <div class="modal modal-import">
     <div class="modal-title modal-title-spaced">Import Photos</div>
     <p class="modal-desc">Choose a folder of photos to add to your library. Photos are copied into the library &mdash; your originals are not moved or modified.</p>
@@ -533,7 +533,7 @@
 
 <!-- Settings modal -->
 <!-- Cmd+K Search Modal -->
-<div class="search-overlay" id="search-overlay" role="dialog" aria-modal="true" aria-label="Search" data-action="_bppBackdropClose" data-backdrop-fn="hideSearch">
+<div class="search-overlay" id="search-overlay" role="dialog" aria-modal="true" aria-label="Search" data-action="_bppBackdropClose" data-pass-event="true" data-backdrop-fn="hideSearch">
   <div class="search-modal">
     <div class="search-input-row">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6.5" cy="6.5" r="4.5"/><line x1="10" y1="10" x2="14" y2="14"/></svg>
@@ -578,7 +578,7 @@
 </div>
 
 <!-- Library Picker Modal -->
-<div class="library-picker-overlay hidden" id="library-picker-overlay" role="dialog" aria-modal="true" aria-labelledby="library-picker-title" data-action="_bppBackdropClose" data-backdrop-fn="hideLibraryPicker">
+<div class="library-picker-overlay hidden" id="library-picker-overlay" role="dialog" aria-modal="true" aria-labelledby="library-picker-title" data-action="_bppBackdropClose" data-pass-event="true" data-backdrop-fn="hideLibraryPicker">
   <div class="library-picker-modal">
     <div class="library-picker-header">
       <h2 id="library-picker-title">Libraries</h2>
@@ -592,7 +592,7 @@
   </div>
 </div>
 
-<div class="settings-overlay" id="settings-overlay" role="dialog" aria-modal="true" aria-label="Settings" data-action="_bppBackdropClose" data-backdrop-fn="hideSettings">
+<div class="settings-overlay" id="settings-overlay" role="dialog" aria-modal="true" aria-label="Settings" data-action="_bppBackdropClose" data-pass-event="true" data-backdrop-fn="hideSettings">
   <div class="settings-panel">
     <div class="settings-header">
       <div class="settings-title-row">
@@ -1050,7 +1050,7 @@
 </div>
 
 <!-- Export modal -->
-<div class="modal-overlay" id="export-modal-overlay" role="dialog" aria-modal="true" aria-label="Export photos" data-action="_bppBackdropClose" data-backdrop-fn="hideExportModal">
+<div class="modal-overlay" id="export-modal-overlay" role="dialog" aria-modal="true" aria-label="Export photos" data-action="_bppBackdropClose" data-pass-event="true" data-backdrop-fn="hideExportModal">
   <div class="modal modal-export">
     <div class="modal-title modal-title-spaced" id="export-modal-title">Export Selected Photos</div>
     <div class="field">

@@ -202,8 +202,8 @@ function _personCardHTML(c) {
   return `<div class="${cls}${cardCls}${selCls}${boostCls}" data-cluster-id="${escVal(cid)}"${cardTitle}
         tabindex="0" role="button" data-key-activate
         data-action="_personCardClick" data-pass-event="true" data-arg0="${escVal(cid)}"
-        data-oncontextmenu="_personCtxMenuDispatch" data-arg0="${escVal(cid)}"
-        data-onpointerdown="_personPointerDownDispatch" data-arg0="${escVal(cid)}">
+        data-oncontextmenu="_personCtxMenuDispatch"
+        data-onpointerdown="_personPointerDownDispatch">
         <div class="person-avatar">
           <img src="${faceCropUrl(rep.thumb_hash, rep.face_index)}" loading="lazy" draggable="false">
         </div>

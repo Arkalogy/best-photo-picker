@@ -16,18 +16,13 @@ def conn(tmp_path):
     c.close()
 
 
-def _sha(filepath):
-    """A stand-in content hash: hex, like the real one."""
-    return (filepath or "").encode().hex()
-
-
 def _insert(conn, filepath, date, score=0.5):
     fname = filepath.split("/")[-1] if filepath else "unknown"
     conn.execute(
         "INSERT INTO photos (filepath, sha256, date, date_month, aggregate_score, "
         "original_filename, file_size, file_mtime) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (filepath, _sha(filepath), date, date[:7] if date else None, score, fname, 1000, 0.0),
+        (filepath, filepath, date, date[:7] if date else None, score, fname, 1000, 0.0),
     )
     conn.commit()
 
@@ -82,13 +77,13 @@ class TestGetDailyCounts:
         result = get_daily_counts(conn, 2024, 6)
         assert len(result) == 1
 
-    def test_top_photo_hash(self, conn):
-        """Each day should include the hash of the top-scored photo."""
+    def test_top_photo_of_the_day(self, conn):
+        """Each day names its top-scored photo."""
         _insert(conn, "/a.jpg", "2024-06-15 10:00:00", 0.3)
         _insert(conn, "/b.jpg", "2024-06-15 14:00:00", 0.9)
         result = get_daily_counts(conn, 2024, 6)
         assert len(result) == 1
-        assert result[0]["top_hash"] == _sha("/b.jpg")
+        assert result[0]["top_path"] == "/b.jpg"  # the highest scored
 
     def test_padded_month(self, conn):
         """Single-digit months should work correctly."""

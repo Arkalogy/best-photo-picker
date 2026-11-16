@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from flask import Blueprint, Response, jsonify
 
 from bpp.constants import ACTIVE_PHOTO_SQL
@@ -18,6 +20,14 @@ log = get_logger(__name__)
 bp = Blueprint("memories", __name__)
 
 
+def _for_api(memory: dict[str, Any], thumbs: Any) -> dict[str, Any]:
+    """A memory as the page gets it: the hero photo's path (internal) is
+    replaced by its thumbnail hash, the one /thumb/<hash> serves."""
+    path = memory.pop("hero_path", None)
+    memory["hero_hash"] = thumbs.get_hash(path) if path and thumbs else None
+    return memory
+
+
 @bp.get("/api/v1/memories")
 def api_memories_list() -> tuple[Response, int]:
     """Return the list of saved memory cards (auto-generated photo
@@ -25,7 +35,7 @@ def api_memories_list() -> tuple[Response, int]:
     detail endpoint to fetch the photos in a specific memory."""
     ctx = get_ctx()
     conn = ctx.get_conn()
-    memories = list_memories(conn)
+    memories = [_for_api(m, ctx.thumbs) for m in list_memories(conn)]
     return jsonify({"memories": memories}), 200
 
 
@@ -54,7 +64,7 @@ def api_memories_detail(memory_id: int) -> tuple[Response, int]:
         ).fetchall()
         all_rows.extend(rows)
     m["photos"] = [build_photo_brief(dict(r), ctx.thumbs) for r in all_rows]
-    return jsonify(m), 200
+    return jsonify(_for_api(m, ctx.thumbs)), 200
 
 
 @bp.post("/api/v1/memories/refresh")
@@ -63,5 +73,8 @@ def api_memories_refresh() -> tuple[Response, int]:
     """Regenerate all memories from current photo data."""
     ctx = get_ctx()
     conn = ctx.get_conn()
-    memories = generate_memories(conn)
+    generate_memories(conn)
+    # Answer with the saved cards as the list endpoint shows them (the
+    # page renders this straight away), not the generator's work records.
+    memories = [_for_api(m, ctx.thumbs) for m in list_memories(conn)]
     return jsonify({"count": len(memories), "memories": memories}), 200

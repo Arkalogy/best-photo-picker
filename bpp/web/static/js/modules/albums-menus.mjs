@@ -90,10 +90,21 @@ export async function deleteAlbumPrompt(albumId, name) {
   }
 }
 
+/** Months of each year as last fetched: year -> {months, at}. */
+const _yearMonths = new Map();
+const YEAR_MONTHS_FRESH_MS = 30_000;
+
+/** Test-only: forget the fetched months. */
+export function _resetYearMonths() {
+  _yearMonths.clear();
+}
+
 /**
  * @param {HTMLElement} detailsEl
  */
 export async function loadYearMonths(detailsEl) {
+  // From the toggle dispatcher: (event), with the <details> as `this`.
+  if (!(detailsEl instanceof HTMLElement)) detailsEl = this;
   /** @type {any} */
   const win = window;
   if (!(/** @type {HTMLDetailsElement} */ (detailsEl).open)) return;
@@ -102,11 +113,11 @@ export async function loadYearMonths(detailsEl) {
     detailsEl.querySelector(".nav-year-months")
   );
   if (!container || container.dataset.loaded) return;
-  try {
-    const data = await apiFetch(`/api/v1/albums/time/months?year=${year}`);
-    const albumId = parseInt(detailsEl.dataset.albumId || "0", 10);
+  const albumId = parseInt(detailsEl.dataset.albumId || "0", 10);
+  /** @param {any[]} months */
+  const show = (months) => {
     let html = "";
-    for (const m of data.months) {
+    for (const m of months) {
       const mo = String(m.month).padStart(2, "0");
       const filterVal = `${year}-${mo}`;
       const active =
@@ -118,6 +129,17 @@ export async function loadYearMonths(detailsEl) {
     }
     container.innerHTML = html;
     container.dataset.loaded = "1";
+  };
+  // The sidebar is rebuilt often (every album switch, every key typed
+  // in the filter) and each rebuild opens the folder again: show what
+  // we have at once, and ask the server again only when it is old.
+  const known = _yearMonths.get(String(year));
+  if (known) show(known.months);
+  if (known && Date.now() - known.at < YEAR_MONTHS_FRESH_MS) return;
+  try {
+    const data = await apiFetch(`/api/v1/albums/time/months?year=${year}`);
+    _yearMonths.set(String(year), { months: data.months, at: Date.now() });
+    if (container.isConnected) show(data.months);
   } catch (e) {
     // Sidebar drawer expand — failure means the months list stays
     // empty. Console-only because toasting on every failed timeline

@@ -267,6 +267,11 @@ export function onTagKeydown(e, photoId) {
 
 /** @param {string} name */
 export function pickTagSuggestion(name) {
+  // From the mousedown dispatcher: (event), with the suggestion as `this`.
+  if (typeof name !== "string") {
+    if (/** @type {any} */ (name)?.button) return; // not the main button
+    name = this.dataset.arg0 || "";
+  }
   /** @type {any} */
   const win = window;
   const items = /** @type {any[]} */ (win.currentGridItems || []);

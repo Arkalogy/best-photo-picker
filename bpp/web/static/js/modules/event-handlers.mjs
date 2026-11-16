@@ -74,9 +74,11 @@ export const EVENT_HANDLERS = Object.freeze({
   ontouchend: ["_hideBefore"],
   onpointerdown: ["_personPointerDownDispatch"],
   oncontextmenu: [
+    "_bppAlbumCtxMenu",
     "_bppCardCtxMenu",
     "_lbFaceOverlayCtx",
     "_personCtxMenuDispatch",
+    "_petRowCtxMenu",
     "_tagCardCtxMenu",
     "showAlbumMoveMenu",
     "showCardCtxMenu",

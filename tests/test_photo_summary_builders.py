@@ -94,3 +94,70 @@ def test_a_memory_lists_its_photos_with_the_thumbnail_hash(tmp_path):
     with app.test_client() as c:
         m = c.get(f"/api/v1/memories/{mid}").get_json()
     assert m["photos"][0]["hash"] == ctx.thumbs.get_hash(photo), "not the content hash"
+
+
+def test_calendar_month_and_memories_carry_the_thumbnail_hash(tmp_path):
+    """The day's top photo and a memory's hero are shown with /thumb/<hash>:
+    that is the thumbnail hash, not the file's content hash."""
+    app, ctx, photo = _library_with_one_photo(tmp_path)
+    with app.app_context():
+        conn = ctx.get_conn()
+        (photo_id,) = conn.execute("SELECT id FROM photos").fetchone()
+        conn.execute(
+            "INSERT INTO memories (title, date_start, date_end, hero_photo_id, photo_count, score)"
+            " VALUES ('Trip', '2023-04-25', '2023-04-25', ?, 1, 1.0)",
+            (photo_id,),
+        )
+        memory_id = conn.execute("SELECT id FROM memories").fetchone()[0]
+        conn.commit()
+    with app.test_client() as c:
+        days = c.get("/api/v1/calendar/days?year=2023&month=4").get_json()["days"]
+        memories = c.get("/api/v1/memories").get_json()["memories"]
+        memory = c.get(f"/api/v1/memories/{memory_id}").get_json()
+    want = ctx.thumbs.get_hash(photo)
+    assert days == [{"day": 25, "count": 1, "top_hash": want}]
+    assert memories[0]["hero_hash"] == want
+    assert "hero_path" not in memories[0]
+    assert memory["hero_hash"] == want and "hero_path" not in memory
+
+
+def test_memory_refresh_answers_with_the_cards_the_page_shows(tmp_path, monkeypatch):
+    """The page renders the refresh answer directly: it has to be the list
+    shape (thumbnail hash, no path), not the generator's work records."""
+    app, ctx, photo = _library_with_one_photo(tmp_path)
+    with app.app_context():
+        conn = ctx.get_conn()
+        (photo_id,) = conn.execute("SELECT id FROM photos").fetchone()
+
+    def fake_generate(conn):
+        conn.execute(
+            "INSERT INTO memories (title, date_start, date_end, hero_photo_id, photo_count, score)"
+            " VALUES ('Trip', '2023-04-25', '2023-04-25', ?, 1, 1.0)",
+            (photo_id,),
+        )
+        conn.commit()
+        return [{"title": "Trip", "photo_ids": [photo_id]}]
+
+    monkeypatch.setattr("bpp.web.bp_memories.generate_memories", fake_generate)
+    with app.test_client() as c:
+        body = c.post("/api/v1/memories/refresh").get_json()
+    assert body["count"] == 1
+    assert body["memories"][0]["hero_hash"] == ctx.thumbs.get_hash(photo)
+    assert "hero_path" not in body["memories"][0] and "photo_ids" not in body["memories"][0]
+
+
+def test_a_hidden_hero_photo_is_not_shown_on_its_memory(tmp_path):
+    app, ctx, _photo = _library_with_one_photo(tmp_path)
+    with app.app_context():
+        conn = ctx.get_conn()
+        (photo_id,) = conn.execute("SELECT id FROM photos").fetchone()
+        conn.execute(
+            "INSERT INTO memories (title, date_start, date_end, hero_photo_id, photo_count, score)"
+            " VALUES ('Trip', '2023-04-25', '2023-04-25', ?, 1, 1.0)",
+            (photo_id,),
+        )
+        conn.execute("UPDATE photos SET hidden_at = datetime('now') WHERE id = ?", (photo_id,))
+        conn.commit()
+    with app.test_client() as c:
+        memories = c.get("/api/v1/memories").get_json()["memories"]
+    assert memories[0]["hero_hash"] is None

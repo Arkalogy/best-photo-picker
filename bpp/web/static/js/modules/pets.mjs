@@ -235,7 +235,7 @@ export function showPetsView() {
       return `<div class="person-card pet-card" data-cluster-id="${escVal(cid)}"
       tabindex="0" role="button" data-key-activate
       data-action="navigateToPetAlbum" data-arg0="${escVal(cid)}"
-      data-oncontextmenu="showPetCtxMenu" data-arg0="${escVal(cid)}">
+      data-oncontextmenu="showPetCtxMenu">
       <div class="person-avatar pet-avatar">
         ${cropSrc ? `<img src="${cropSrc}" loading="lazy" draggable="false">` : `<div class="pet-avatar-icon">${ICONS.paw || ""}</div>`}
       </div>
@@ -300,6 +300,16 @@ export function showPetCtxMenu(e, clusterId) {
       menu.style.top = window.innerHeight - rect.height - 8 + "px";
   });
   menuOpened(menu, { trigger: e.target });
+}
+
+/**
+ * Right-click on a pet's sidebar row. The row's `data-arg0` is the album
+ * (for the click that opens it); the pet's id is in `data-cid`.
+ * @this {HTMLElement}
+ * @param {MouseEvent} e
+ */
+export function _petRowCtxMenu(e) {
+  showPetCtxMenu(e, Number(this.dataset.cid));
 }
 
 export function hidePetCtxMenu() {

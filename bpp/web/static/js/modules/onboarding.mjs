@@ -49,7 +49,8 @@ export function hideOnboarding() {
   document.removeEventListener("keydown", _onOnboardingKey, true);
 }
 
-/** Backdrop-click + Esc both route here. Same effect as the explicit
+/** Esc routes here (the welcome page fills the window, so it has no
+ *  backdrop to click). Same effect as the explicit
  *  'Skip — I'll import later' button on step 3: dismiss onboarding
  *  and reveal the empty-state CTA so the user lands on actionable
  *  text, not a blank grid. */
