@@ -71,7 +71,13 @@ def do_serve(args: argparse.Namespace) -> int:
         log.error("Flask is not installed. Install with: pip install bppicker[web]")
         return 1
 
-    library_path, dirs = _resolve_library(args)
+    from bpp.errors import ValidationError
+
+    try:
+        library_path, dirs = _resolve_library(args)
+    except ValidationError as e:
+        log.error("%s", e)
+        return 1
     workdir = dirs["data"]  # DB and caches live in data/ subdir
     port = args.port
 

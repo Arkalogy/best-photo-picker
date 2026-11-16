@@ -134,16 +134,24 @@ def backup_db(db_path: str, preserve_prev: bool = False) -> str | None:
 def _copy_db_with_sidecars(src: str, dst: str) -> None:
     """Copy a DB file and its WAL/SHM; a stale WAL/SHM at the destination
     that the source no longer has would falsely advertise a WAL, so it
-    is dropped."""
+    is dropped. A link at a destination name is removed, never written
+    through: the copy must land in the data folder."""
+    _drop_link(dst)
     shutil.copy2(src, dst)
     for suffix in ("-wal", "-shm"):
         wal = src + suffix
+        _drop_link(dst + suffix)
         if os.path.isfile(wal):
             shutil.copy2(wal, dst + suffix)
         else:
             stale = dst + suffix
             if os.path.isfile(stale):
                 os.remove(stale)
+
+
+def _drop_link(path: str) -> None:
+    if os.path.islink(path):
+        os.remove(path)
 
 
 def _quarantine_bad_backup(backup_path: str) -> None:

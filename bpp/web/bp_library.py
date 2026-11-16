@@ -131,6 +131,11 @@ def api_libraries_rename() -> tuple[Response, int]:
     add_library(path)
 
     if rename_folder:
+        from bpp.db.library_layout import check_library_layout
+
+        # The rename rewrites the library's database and moves its cache
+        # files by name: not through a link that leads out of it.
+        check_library_layout(path)
         new_path = os.path.join(os.path.dirname(path), name)
         ctx = get_ctx()
         moved = False

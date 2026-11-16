@@ -447,39 +447,12 @@ def register_permanent_delete_recovery(ctx: object, library_path: str | None = N
     paths against the new library's allowlist and ``ctx.thumbs``, which
     could remove files that share names across libraries.
     """
-    from bpp.db.journal import journal_start, library_bound_recovery, register_recovery_handler
+    from bpp.db.journal import library_bound_recovery, register_recovery_handler
 
     def _recover(conn: sqlite3.Connection, payload: dict) -> bool:
-        files: dict[str, FileRecord] = dict(payload.get("files") or {})
-        token = payload.get("token") or ""
-        if not files or not token:
-            # Nothing was claimed (a crash before the plan was journaled,
-            # or an entry from a build without records): nothing on disk
-            # is touched.
-            if payload.get("filepaths"):
-                log.warning(
-                    "Permanent-delete entry names %d files without records; leaving them",
-                    len(payload["filepaths"]),
-                )
-            return True
-        log.info("Recovering interrupted permanent_delete for %d files", len(files))
-        outcome = reconcile(
-            ctx,
-            conn,
-            files,
-            token,
-            payload.get("sha256_map") or {},
-            payload.get("allowed_dirs") or [],
-        )
-        leftover = outcome.stuck + outcome.failed
-        if leftover:
-            # A fresh entry naming only what is still stuck replaces this
-            # one (returning True consumes it); both carry the records.
-            attempts = int(payload.get("attempts") or 0) + 1
-            retry = retry_payload(payload, leftover, attempts)
-            if retry is not None:
-                journal_start(conn, "permanent_delete", retry)
-        return True
+        from bpp.web.permanent_delete_replay import replay_entry
+
+        return replay_entry(ctx, conn, payload)
 
     if library_path is not None:
 

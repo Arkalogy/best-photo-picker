@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import os
 
-from flask import Blueprint, Response, jsonify, send_file
+from flask import Blueprint, Response, jsonify
 
 from bpp.config import cfg_get
 from bpp.db.photos import get_photo_id_by_path
@@ -29,6 +29,7 @@ from bpp.utils.logging import get_logger
 from bpp.web.box_crop import RawUnreadable
 from bpp.web.face_worker import generate_face_crop
 from bpp.web.media_support import crop_failure_error, raw_full_jpeg_path, raw_preview_error
+from bpp.web.photo_cache import send_cache_file
 from bpp.web.state import get_ctx
 
 log = get_logger(__name__)
@@ -263,4 +264,4 @@ def api_face_crop(path_hash: str, face_index: int) -> Response | tuple[Response,
             face_index=face_index,
         )
 
-    return send_file(crop_path, mimetype="image/jpeg")
+    return send_cache_file(crop_path, mimetype="image/jpeg")

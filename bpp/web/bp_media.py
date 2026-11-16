@@ -9,17 +9,23 @@ from typing import Any
 from flask import Blueprint, Response, jsonify, request, send_file
 
 from bpp.constants import (
-    HASH_PREFIX_LEN,
     PHOTO_CACHE_SUFFIX_EDITED,
     PHOTO_CACHE_SUFFIX_EDITED_THUMB,
     PHOTO_CACHE_SUFFIX_FULL,
     PHOTO_CACHE_SUFFIX_SPRITE,
 )
+from bpp.db.photos_sha import content_cache_key
 from bpp.errors import BppError, ForbiddenError, NotFoundError, ValidationError
 from bpp.media_types import MediaKind, media_kind_from_path
 from bpp.utils.logging import get_logger
 from bpp.web.media_support import raw_full_jpeg_path, raw_preview_error
-from bpp.web.photo_cache import cached_variant_path, invalidate_photo_cache
+from bpp.web.photo_cache import (
+    MISSING_FILE_RECOVERY,
+    cached_variant_path,
+    invalidate_photo_cache,
+    own_cache_file,
+    send_cache_file,
+)
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx
 
@@ -29,7 +35,6 @@ bp = Blueprint("media", __name__)
 
 
 #: What to check when a photo's file can't be read (shown in the viewer's toast).
-_MISSING_FILE_RECOVERY = "check that the file still exists and its drive is connected"
 
 
 def _safe_send_file(path: str, **kwargs) -> Response | tuple[Response, int]:
@@ -46,7 +51,7 @@ def _safe_send_file(path: str, **kwargs) -> Response | tuple[Response, int]:
         raise NotFoundError(
             "File missing",
             diagnostic_message=f"File missing: {path}",
-            recovery=_MISSING_FILE_RECOVERY,
+            recovery=MISSING_FILE_RECOVERY,
         ) from e
 
 
@@ -71,12 +76,12 @@ def serve_thumbnail(path_hash: str) -> Response | tuple[Response, int]:
     # Only query DB for edits when the cache file is missing or stale.
     cache_dir = ctx.thumbs.cache_dir
     edited_path = cached_variant_path(cache_dir, path_hash, PHOTO_CACHE_SUFFIX_EDITED_THUMB)
-    if os.path.exists(edited_path):
+    if own_cache_file(edited_path):
         stale = False
         with contextlib.suppress(OSError):
             stale = os.path.getmtime(filepath) > os.path.getmtime(edited_path)
         if not stale:
-            return _safe_send_file(edited_path, mimetype="image/jpeg")
+            return send_cache_file(edited_path, mimetype="image/jpeg")
         # Stale — fall through to regenerate below
 
     edits = _get_edits_for_path(ctx, filepath)
@@ -94,18 +99,15 @@ def serve_thumbnail(path_hash: str) -> Response | tuple[Response, int]:
             thumb_path = ctx.thumbs.get_thumbnail(path_hash)
             if thumb_path is None:
                 raise NotFoundError("Thumbnail not found", path_hash=path_hash)
-            return _safe_send_file(thumb_path, mimetype="image/jpeg")
-        return _safe_send_file(edited_path, mimetype="image/jpeg")
+            return send_cache_file(thumb_path, mimetype="image/jpeg")
+        return send_cache_file(edited_path, mimetype="image/jpeg")
 
     # No edits — serve normal thumbnail
     thumb_path = ctx.thumbs.get_thumbnail(path_hash)
     if thumb_path is None:
         raise NotFoundError("Thumbnail not found", path_hash=path_hash)
 
-    try:
-        resp = send_file(thumb_path, mimetype="image/jpeg")
-    except (FileNotFoundError, OSError) as e:
-        raise NotFoundError("Thumbnail file missing", path_hash=path_hash) from e
+    resp = send_cache_file(thumb_path, mimetype="image/jpeg")
     resp.cache_control.public = True
     resp.cache_control.max_age = 31536000  # 1 year — content-addressed by hash
     resp.cache_control.immutable = True
@@ -152,7 +154,7 @@ def serve_full_photo(path_hash: str) -> Response | tuple[Response, int]:
 
     filepath = ctx.thumbs.get_filepath(path_hash)
     if filepath is None or not os.path.isfile(filepath):
-        raise NotFoundError("Photo not found", path_hash=path_hash, recovery=_MISSING_FILE_RECOVERY)
+        raise NotFoundError("Photo not found", path_hash=path_hash, recovery=MISSING_FILE_RECOVERY)
 
     # Skip edits when ?raw=1 (editor needs the original for CSS live preview)
     edits = None if request.args.get("raw") else _get_edits_for_path(ctx, filepath)
@@ -164,7 +166,7 @@ def serve_full_photo(path_hash: str) -> Response | tuple[Response, int]:
         cache_dir = ctx.thumbs.cache_dir if ctx.thumbs else ctx.ensure_workdir()
         cache_suffix = PHOTO_CACHE_SUFFIX_EDITED if edits else PHOTO_CACHE_SUFFIX_FULL
         jpeg_path = cached_variant_path(cache_dir, path_hash, cache_suffix)
-        needs_gen = not os.path.exists(jpeg_path)
+        needs_gen = not own_cache_file(jpeg_path)
         if not needs_gen:
             with contextlib.suppress(OSError):
                 needs_gen = os.path.getmtime(filepath) > os.path.getmtime(jpeg_path)
@@ -177,7 +179,7 @@ def serve_full_photo(path_hash: str) -> Response | tuple[Response, int]:
                     diagnostic_message=f"cached_image generation failed for {filepath}",
                     path_hash=path_hash,
                 )
-        return _safe_send_file(jpeg_path, mimetype="image/jpeg")
+        return send_cache_file(jpeg_path, mimetype="image/jpeg")
 
     # RAW files: convert to JPEG via rawpy (cached), then the saved edits
     # on top of that conversion, like any other format.
@@ -188,7 +190,7 @@ def serve_full_photo(path_hash: str) -> Response | tuple[Response, int]:
         if ensure_raw_jpeg(filepath, jpeg_path) is None:
             raise raw_preview_error(path_hash, filepath)
         if not edits:
-            return _safe_send_file(jpeg_path, mimetype="image/jpeg")
+            return send_cache_file(jpeg_path, mimetype="image/jpeg")
         edited_path = cached_variant_path(
             os.path.dirname(jpeg_path), path_hash, PHOTO_CACHE_SUFFIX_EDITED
         )
@@ -207,7 +209,7 @@ def serve_full_photo(path_hash: str) -> Response | tuple[Response, int]:
                 path_hash=path_hash,
                 recovery=CHECK_FILE_RECOVERY,
             )
-        return _safe_send_file(edited_path, mimetype="image/jpeg")
+        return send_cache_file(edited_path, mimetype="image/jpeg")
 
     return _safe_send_file(filepath, mimetype="image/jpeg")
 
@@ -259,7 +261,7 @@ def serve_video_preview(path_hash: str) -> Response | tuple[Response, int]:
     cache_dir = ctx.thumbs.cache_dir if ctx.thumbs else ctx.ensure_workdir()
     sprite_path = os.path.join(cache_dir, f"{path_hash}{PHOTO_CACHE_SUFFIX_SPRITE}.jpg")
 
-    if not os.path.exists(sprite_path):
+    if not own_cache_file(sprite_path):
         ok = generate_video_sprite(filepath, sprite_path)
         if not ok:
             raise BppError(
@@ -269,7 +271,7 @@ def serve_video_preview(path_hash: str) -> Response | tuple[Response, int]:
                 path_hash=path_hash,
             )
 
-    resp = send_file(sprite_path, mimetype="image/jpeg")
+    resp = send_cache_file(sprite_path, mimetype="image/jpeg")
     resp.cache_control.public = True
     resp.cache_control.max_age = 86400
     return resp
@@ -391,11 +393,10 @@ def api_video_trim() -> tuple[Response, int]:
     # frames that were chopped off the head or tail.
     ctx.invalidate_analysis()
     if ctx.thumbs is not None:
-        old_sha = old["sha256"] or None
         invalidate_photo_cache(
             ctx,
             ctx.thumbs.get_hash(old["filepath"]),
-            content_hash=old_sha[:HASH_PREFIX_LEN] if old_sha else None,
+            content_hash=content_cache_key(old["sha256"]),
         )
 
     return jsonify({"status": "ok", "duration": vmeta["duration"] if vmeta else None}), 200

@@ -345,6 +345,9 @@ def do_model_remove(args: argparse.Namespace) -> int:
     from bpp.db.library import get_library_dirs
 
     try:
+        from bpp.db.library_layout import check_library_layout
+
+        check_library_layout(args.library)
         db_path = os.path.join(get_library_dirs(args.library)["data"], "photopicker.db")
     except Exception as exc:
         print(

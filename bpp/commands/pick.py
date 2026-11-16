@@ -35,6 +35,14 @@ def do_pick(args: argparse.Namespace) -> int:
         print(f"Error: library path does not exist: {library_path}", file=sys.stderr)
         return 1
 
+    from bpp.db.library_layout import check_library_layout
+    from bpp.errors import ValidationError
+
+    try:
+        check_library_layout(library_path)
+    except ValidationError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
     db_path = os.path.join(get_library_dirs(library_path)["data"], "photopicker.db")
     if not os.path.exists(db_path):
         print(f"Error: no database found at {db_path}", file=sys.stderr)

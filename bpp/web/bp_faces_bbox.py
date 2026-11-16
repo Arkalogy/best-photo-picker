@@ -219,14 +219,9 @@ def _invalidate_face_crop(ctx: Any, conn: Any, face_id: int, filepath: str) -> N
         ).fetchone()
         path_hash = ctx.thumbs.get_hash(filepath) if ctx.thumbs else None
         if face_index_row and path_hash and ctx.dirs.get("face_crops"):
-            import glob as _glob
-            import os as _os
+            from bpp.web.face_crop import remove_face_crops
 
-            pattern = _os.path.join(
-                ctx.dirs["face_crops"], f"{path_hash}_{face_index_row['face_index']}*.jpg"
-            )
-            for crop_path in _glob.glob(pattern):
-                _os.remove(crop_path)
+            remove_face_crops(ctx.dirs["face_crops"], path_hash, face_index_row["face_index"])
     except Exception:
         log.debug("Failed to invalidate face crop cache", exc_info=True)
 

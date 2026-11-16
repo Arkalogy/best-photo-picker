@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import gc
-import glob
 import os
 import resource
+import stat
 import sys
 import threading
 
@@ -118,11 +118,22 @@ def api_logs_clear() -> tuple[Response, int]:
     logs_dir = ctx.dirs.get("logs", "")
     cleared = 0
     if logs_dir and os.path.isdir(logs_dir):
-        for path in glob.glob(os.path.join(logs_dir, "server.log*")):
+        from bpp.constants import LOG_BACKUP_COUNT
+
+        # Only the names the app's own rotation writes, and only real
+        # files: a link under one of those names is never written through
+        # (O_NOFOLLOW also covers one swapped in after the check).
+        names = ["server.log"] + [f"server.log.{i}" for i in range(1, LOG_BACKUP_COUNT + 1)]
+        for path in (os.path.join(logs_dir, name) for name in names):
             try:
-                with open(path, "w"):
-                    pass  # truncate
+                if not stat.S_ISREG(os.lstat(path).st_mode):
+                    log.warning("Not clearing %s: it is not a regular file", path)
+                    continue
+                flags = os.O_WRONLY | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+                os.close(os.open(path, flags))
                 cleared += 1
+            except FileNotFoundError:
+                continue
             except OSError:
                 log.warning("Failed to clear log file: %s", path)
 

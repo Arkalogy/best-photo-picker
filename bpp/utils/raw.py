@@ -217,6 +217,10 @@ def _conversion_lock(jpeg_path: str) -> threading.Lock:
 
 
 def _conversion_is_fresh(raw_path: str, jpeg_path: str) -> bool:
+    if os.path.islink(jpeg_path):
+        # Not a conversion this app wrote (the cache folder travels with
+        # the library): converting again replaces the link.
+        return False
     try:
         jpeg_mtime = os.path.getmtime(jpeg_path)
     except OSError:

@@ -39,7 +39,9 @@ class ThumbnailCache:
         """
         version_file = os.path.join(self.cache_dir, ".version")
         current = None
-        if os.path.exists(version_file):
+        # A link under this name is not ours: never read through it, and
+        # the rewrite below replaces it instead of writing into its target.
+        if os.path.exists(version_file) and not os.path.islink(version_file):
             try:
                 with open(version_file) as f:
                     current = f.read().strip()
@@ -63,7 +65,9 @@ class ThumbnailCache:
                     os.makedirs(sib_dir, exist_ok=True)
                     log.info("Cleared stale %s cache (hash length changed)", sibling)
             try:
-                with open(version_file, "w") as f:
+                from bpp.utils.fresh_file import replace_fresh
+
+                with replace_fresh(version_file, "w") as f:
                     f.write(_CACHE_VERSION)
             except OSError:
                 log.warning(
@@ -230,16 +234,22 @@ class ThumbnailCache:
         Returns None if hash is unknown or generation fails.
         Uses an in-memory set to skip stat calls for already-verified thumbnails.
         """
-        # Fast path: already verified this thumbnail exists
+        from bpp.web.photo_cache import own_cache_file
+
+        # Fast path: already verified this thumbnail exists. One lstat
+        # confirms it is still the file this app wrote.
         if path_hash in self._verified:
-            return os.path.join(self.cache_dir, f"{path_hash}.jpg")
+            verified = os.path.join(self.cache_dir, f"{path_hash}.jpg")
+            if own_cache_file(verified):
+                return verified
+            self._verified.discard(path_hash)
 
         filepath = self._hash_to_path.get(path_hash)
         if filepath is None:
             return None
 
         thumb_path = os.path.join(self.cache_dir, f"{path_hash}.jpg")
-        if os.path.exists(thumb_path):
+        if own_cache_file(thumb_path):
             # Regenerate if source is newer than cached thumbnail
             try:
                 if os.path.getmtime(filepath) <= os.path.getmtime(thumb_path):
@@ -265,6 +275,8 @@ class ThumbnailCache:
         exits at the next iteration. Used by `WebAppState.switch_library`
         to drain warming work before swapping the underlying DB.
         """
+        from bpp.web.photo_cache import own_cache_file
+
         generated = 0
         # A snapshot: a permanent delete on a request thread pops from
         # this dict while the warmer runs.
@@ -274,7 +286,7 @@ class ThumbnailCache:
             if path_hash in self._verified or path_hash not in self._hash_to_path:
                 continue
             thumb_path = os.path.join(self.cache_dir, f"{path_hash}.jpg")
-            if os.path.exists(thumb_path):
+            if own_cache_file(thumb_path):
                 self._verified.add(path_hash)
                 continue
             if _make_thumbnail(filepath, thumb_path, size=self.size):

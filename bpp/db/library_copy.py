@@ -199,7 +199,13 @@ def remove_stale_import_tmp(photos_dir: str, *, older_than_s: float = STALE_TMP_
     except OSError as e:
         log.warning("Could not list %s for stale copies: %s", photos_dir, e)
         return 0
-    return sum(_remove_stale_tmp(b, older_than_s=older_than_s) for b in batches if os.path.isdir(b))
+    # A batch folder is a real folder: one that is a link leads out of
+    # the library, and nothing behind it is ours to delete.
+    return sum(
+        _remove_stale_tmp(b, older_than_s=older_than_s)
+        for b in batches
+        if os.path.isdir(b) and not os.path.islink(b)
+    )
 
 
 def _photo_record(dest_path: str, filename: str, batch_name: str, sha: str) -> dict[str, Any]:
