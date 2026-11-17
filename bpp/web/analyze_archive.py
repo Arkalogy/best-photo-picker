@@ -28,6 +28,34 @@ _MAX_ARCHIVE_MEMBERS = 100_000
 _MAX_ARCHIVE_MEMBER_PATH_CHARS = 4096
 
 
+def _files_and_folders(
+    tf: tarfile.TarFile, input_path: str, emit: Callable[[dict[str, Any]], None]
+) -> list[tarfile.TarInfo]:
+    """The members of a tar that are unpacked: files and folders only.
+    A photo archive needs no links, and a hard link is unpacked as a
+    full copy of its target that the size limit never counted. Links
+    left out are reported: an archive made from a folder with
+    hard-linked duplicates or linked photos imports fewer."""
+    everything = tf.getmembers()
+    members = [m for m in everything if m.isfile() or m.isdir()]
+    left_out = len(everything) - len(members)
+    if left_out:
+        log.warning(
+            "Archive %s: %d link entries were not unpacked (links are not imported)",
+            os.path.basename(input_path),
+            left_out,
+        )
+        emit(
+            {
+                "type": "progress",
+                "current": 0,
+                "total": 0,
+                "filepath": f"Skipping {left_out} links in the archive (files only)…",
+            }
+        )
+    return members
+
+
 def extract_archive_into_workdir(
     input_path: str,
     workdir: str,
@@ -99,7 +127,10 @@ def extract_archive_into_workdir(
                 zf.extract(info, extract_dir)
     elif tarfile.is_tarfile(input_path):
         with tarfile.open(input_path, "r:*") as tf:
-            members = tf.getmembers()
+            # Files and folders only. A photo archive needs no links, and
+            # a hard link is unpacked as a full copy of its target that
+            # the size limit below never counted.
+            members = _files_and_folders(tf, input_path, emit)
             if len(members) > _MAX_ARCHIVE_MEMBERS:
                 emit(
                     {
@@ -139,7 +170,7 @@ def extract_archive_into_workdir(
                     # filter="data" (3.11.4+ ships it) rejects absolute
                     # paths, links escaping the tree, device files, and
                     # drops the archive's mode bits.
-                    tf.extractall(extract_dir, filter="data")
+                    tf.extractall(extract_dir, members=members, filter="data")
                 else:
                     # Python 3.11: no filter kwarg yet — validate
                     # each member via is_safe_tar_member, which

@@ -67,5 +67,9 @@ def do_demo(args: argparse.Namespace) -> int:
     log.info("Starting demo at http://127.0.0.1:%d", port)
     # ``--debug`` means verbose logging (setup_logging above), never
     # Werkzeug's interactive debugger (same rule as ``bpp serve``).
-    app.run(host="127.0.0.1", port=port, debug=False, threaded=True)
+    from bpp.web.wsgi_bind import request_handler
+
+    app.run(
+        host="127.0.0.1", port=port, debug=False, threaded=True, request_handler=request_handler()
+    )
     return 0

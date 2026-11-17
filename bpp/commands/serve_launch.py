@@ -204,10 +204,17 @@ def hold_loopback(app: Any, host: str, port: int, ssl_context: Any) -> Any:
         return None
     from werkzeug.serving import make_server
 
-    from bpp.web.wsgi_bind import bind_without_reverse_dns
+    from bpp.web.wsgi_bind import bind_without_reverse_dns, request_handler
 
     bind_without_reverse_dns()
-    server = make_server("127.0.0.1", port, app, threaded=True, ssl_context=ssl_context)
+    server = make_server(
+        "127.0.0.1",
+        port,
+        app,
+        threaded=True,
+        ssl_context=ssl_context,
+        request_handler=request_handler(),
+    )
     main_is_up = _MainServerUp()
     logging.getLogger("werkzeug").filters.insert(0, main_is_up)  # ahead of the banner filter
 

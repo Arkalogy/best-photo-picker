@@ -19,7 +19,7 @@ from bpp.commands.serve_launch import (
     open_browser_when_ours,
 )
 from bpp.utils.logging import get_logger, setup_logging
-from bpp.web.wsgi_bind import bind_without_reverse_dns
+from bpp.web.wsgi_bind import bind_without_reverse_dns, lazy_tls, request_handler
 
 
 def do_web(args: argparse.Namespace) -> int:
@@ -58,7 +58,7 @@ def do_web(args: argparse.Namespace) -> int:
     # and a code console to anyone who can reach the port.
     hold_loopback(app, host, port, None)
     bind_without_reverse_dns()
-    app.run(host=host, port=port, debug=False, threaded=True)
+    app.run(host=host, port=port, debug=False, threaded=True, request_handler=request_handler())
     return 0
 
 
@@ -138,6 +138,7 @@ def do_serve(args: argparse.Namespace) -> int:
     # LAN, and the debugger's traceback pages and console would be reachable
     # by any device that can send a loopback Host header.
     ssl_context = _ssl_context(ctx.config or {})
+    ssl_context = lazy_tls(ssl_context)
     hold_loopback(app, host, port, ssl_context)
     if not args.no_browser:
         open_browser_when_ours(_launch_url, port, ctx.boot_secret, tls=bool(ssl_context))
@@ -148,6 +149,7 @@ def do_serve(args: argparse.Namespace) -> int:
         debug=False,
         threaded=True,
         ssl_context=ssl_context,
+        request_handler=request_handler(),
     )
     return 0
 

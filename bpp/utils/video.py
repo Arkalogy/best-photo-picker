@@ -155,6 +155,15 @@ def format_duration(seconds: float) -> str:
     return f"{s // 3600}:{(s % 3600) // 60:02d}:{s % 60:02d}"
 
 
+def sprite_cell_size(width: int, height: int, thumb_width: int) -> tuple[int, int]:
+    """(width, height) of one preview cell for a frame of this size:
+    *thumb_width* wide, the frame's shape kept up to three times as tall
+    as wide. A frame narrower than that (4 x 300, say) would otherwise
+    make each cell thousands of pixels high."""
+    cell_h = int(height * thumb_width / max(1, width))
+    return thumb_width, max(1, min(cell_h, 3 * thumb_width))
+
+
 def generate_video_sprite(
     filepath: str,
     output_path: str,
@@ -196,9 +205,7 @@ def generate_video_sprite(
             if not ret or frame is None:
                 continue
             h, w = frame.shape[:2]
-            scale = thumb_width / w
-            new_h = int(h * scale)
-            resized = cv2.resize(frame, (thumb_width, new_h))
+            resized = cv2.resize(frame, sprite_cell_size(w, h, thumb_width))
             thumbs.append(resized)
 
         cap.release()

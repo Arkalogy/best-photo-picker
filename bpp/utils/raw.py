@@ -91,8 +91,15 @@ def _decode_path(raw_path: str, half_size: bool) -> np.ndarray:
     try:
         raw.open_file(raw_path)
         sizes = raw.sizes
-        if sizes.width * sizes.height > MAX_RAW_PIXELS:
-            raise RawTooLarge(f"{sizes.width}x{sizes.height} exceeds {MAX_RAW_PIXELS} pixels")
+        # Non-square sensor pixels are stretched on output: one side
+        # grows by the aspect (or its inverse).
+        aspect = float(getattr(sizes, "pixel_aspect", 1.0) or 1.0)
+        stretch = max(aspect, 1.0 / aspect) if aspect > 0 else 1.0
+        if sizes.width * sizes.height * stretch > MAX_RAW_PIXELS:
+            shape = f"{sizes.width}x{sizes.height}"
+            if stretch > 1:
+                shape += f" (stretched x{stretch:.2f} on output)"
+            raise RawTooLarge(f"{shape} exceeds {MAX_RAW_PIXELS} pixels")
         raw.unpack()
         return raw.postprocess(use_camera_wb=True, half_size=half_size)
     finally:
@@ -200,6 +207,41 @@ FAILED_CONVERSION_RETRY_SECONDS = 60.0
 #: file dated in the future (where mtimes can't say) is still noticed
 #: when it is replaced.
 _converted_signatures: dict[str, tuple[float, int]] = {}
+
+
+def open_raw_as_pil_bounded(raw_path: str) -> Image.Image | None:
+    """:func:`open_raw_as_pil` for request paths: it takes one of the
+    decode slots, and a file that just failed is not decoded again on
+    every request (same rule as :func:`ensure_raw_jpeg`)."""
+    key = f"pil:{raw_path}"
+    # One decode of this file at a time: requests that arrive together
+    # wait here and then find the first one's verdict.
+    with _conversion_lock(key):
+        signature = _raw_signature(raw_path)
+        now = time.monotonic()
+        failed = _failed_conversions.get(key)
+        if (
+            signature is not None
+            and failed is not None
+            and failed[0] == signature
+            and now - failed[1] < FAILED_CONVERSION_RETRY_SECONDS
+        ):
+            return None
+        with _conversion_slots:
+            image = open_raw_as_pil(raw_path)
+        if image is None:
+            if signature is not None:
+                if len(_failed_conversions) > 256:  # forget verdicts that ran out
+                    for old in [
+                        k
+                        for k, (_sig, at) in list(_failed_conversions.items())
+                        if now - at >= FAILED_CONVERSION_RETRY_SECONDS
+                    ]:
+                        _failed_conversions.pop(old, None)
+                _failed_conversions[key] = (signature, time.monotonic())
+        else:
+            _failed_conversions.pop(key, None)
+        return image
 
 
 def decode_slot() -> threading.BoundedSemaphore:
