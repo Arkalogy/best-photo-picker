@@ -22,6 +22,7 @@ import { setPersonAlbumClusterId } from "./people-album-bar.mjs";
 import { expandDismissedSection } from "./people-actions.mjs";
 import {
   getAmbiguousPairCount,
+  isPairReviewOwnerOnly,
   refreshAmbiguousPairCount,
 } from "./people-review.mjs";
 import { FACE_MIN_PHOTOS } from "./constants.mjs";
@@ -168,7 +169,7 @@ function _filterBarHTML(mainIncluded, minor, excluded) {
     : '';
   const pairCount = getAmbiguousPairCount();
   const pairLabel = pairCount === null ? "Review pairs (…)" : `Review pairs (${pairCount})`;
-  const pairDisabled = pairCount === 0 ? " disabled" : "";
+  const pairDisabled = (pairCount === 0 ? " disabled" : "") + (isPairReviewOwnerOnly() ? " hidden" : "");
   const reviewPairsBtn = `<button class="people-review-btn" id="btn-review-pairs" data-action="startFacePairReview" title="Find ambiguous cluster pairs and mark same/different to teach the adaptive threshold"${pairDisabled}>${escVal(pairLabel)}</button>`;
   return `<div class="people-filter-bar">
     ${pill("included", "Included", mainIncluded.length)}

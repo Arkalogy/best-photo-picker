@@ -335,6 +335,7 @@ import {
   _renderPairReviewCard,
   _showPairReviewOverlay,
   getAmbiguousPairCount,
+  isPairReviewOwnerOnly,
   refreshAmbiguousPairCount,
   startFacePairReview,
 } from "./people-pair-review.mjs";
@@ -346,6 +347,7 @@ export {
   _renderPairReviewCard,
   _showPairReviewOverlay,
   getAmbiguousPairCount,
+  isPairReviewOwnerOnly,
   refreshAmbiguousPairCount,
   startFacePairReview,
 };

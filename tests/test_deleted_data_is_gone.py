@@ -177,6 +177,9 @@ def test_deleted_photos_leave_the_analysis_stores(tmp_path, conn):
     cache = _analysis_cache(work, [gone, kept])
 
     forget_analysis(str(work), [gone])
+    from bpp.db.analysis_leftovers import wait_for_forgets
+
+    wait_for_forgets()  # the file is rewritten in the background
 
     assert [d["filepath"] for d in json.loads((work / "analysis.json").read_text())] == [kept]
     assert [r[0] for r in cache.execute("SELECT filepath FROM image_analysis")] == [kept]
@@ -199,6 +202,9 @@ def test_only_photos_whose_rows_are_gone_are_forgotten(tmp_path, conn):
         json.dumps([{"filepath": still_here}, {"filepath": deleted}])
     )
     forget_deleted(conn, str(work), [still_here, deleted])
+    from bpp.db.analysis_leftovers import wait_for_forgets
+
+    wait_for_forgets()  # the file is rewritten in the background
     left = [d["filepath"] for d in json.loads((work / "analysis.json").read_text())]
     assert left == [still_here]
 
@@ -344,6 +350,9 @@ def test_deleting_a_photo_for_good_takes_its_companion_and_counts_one(tmp_path):
     assert reply.status_code == 200, body
     assert body["count"] == 1
     assert not os.path.exists(files[0]) and not os.path.exists(files[1])
+    from bpp.db.analysis_leftovers import wait_for_forgets
+
+    wait_for_forgets()  # the file is rewritten in the background
     with open(os.path.join(dirs["data"], "analysis.json")) as f:
         assert json.load(f) == []
 

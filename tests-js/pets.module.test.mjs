@@ -183,6 +183,17 @@ describe("startPetRename", () => {
     startPetRename(5, label);
     expect(label.querySelector("input")).toBeTruthy();
   });
+
+  test("a click on the name (no element passed, `this` is the name) edits its label", () => {
+    /** @type {any} */ (window).petClusters = [{ cluster_id: 5, pet_class: "dog" }];
+    const label = document.createElement("div");
+    label.innerHTML = petLabelHTML(5, 1);
+    document.body.appendChild(label);
+    const name = /** @type {HTMLElement} */ (label.querySelector("[data-action=startPetRename]"));
+    expect(name.dataset.arg1).toBeUndefined();
+    startPetRename.call(name, 5);
+    expect(label.querySelector("input")).toBeTruthy();
+  });
 });
 
 describe("petLabelHTML", () => {

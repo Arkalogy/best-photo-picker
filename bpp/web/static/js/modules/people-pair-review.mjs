@@ -37,6 +37,13 @@ let _pairZoomedOut = {a: false, b: false};
 // Cache for the "Review pairs (N)" button label. null = not yet fetched.
 let _ambiguousPairCount = null;
 
+let _pairReviewOwnerOnly = false;
+
+/** True on a paired device: pair review is the owner's. */
+export function isPairReviewOwnerOnly() {
+  return _pairReviewOwnerOnly;
+}
+
 export function getAmbiguousPairCount() {
   return _ambiguousPairCount;
 }
@@ -45,14 +52,19 @@ export async function refreshAmbiguousPairCount() {
   try {
     const resp = await apiFetch("/api/v1/faces/review-pairs/count");
     _ambiguousPairCount = resp && typeof resp.count === "number" ? resp.count : 0;
-  } catch {
+    _pairReviewOwnerOnly = false;
+  } catch (e) {
     _ambiguousPairCount = 0;
+    // A paired device may not review pairs: no button, rather than
+    // one that says there is nothing to review.
+    _pairReviewOwnerOnly = Boolean(/** @type {any} */ (e) && /** @type {any} */ (e).ownerOnly);
   }
   // Patch just the button in place — avoids re-rendering the whole grid
   const btn = /** @type {HTMLButtonElement | null} */ (
     document.getElementById("btn-review-pairs")
   );
   if (btn) {
+    btn.hidden = _pairReviewOwnerOnly;
     btn.textContent = `Review pairs (${_ambiguousPairCount})`;
     btn.disabled = _ambiguousPairCount === 0;
   }

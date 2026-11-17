@@ -51,6 +51,7 @@ from bpp.utils.logging import get_logger
 from bpp.web.clip_cap import clip_cap_status
 from bpp.web.request_validation import json_bool
 from bpp.web.share import requires_local_app
+from bpp.web.share_seal import KEY_LAN_ENABLED, KEY_SHARE_TOKEN, SEAL_KEYS
 from bpp.web.state import get_ctx
 
 log = get_logger(__name__)
@@ -58,15 +59,7 @@ log = get_logger(__name__)
 bp = Blueprint("settings_presets", __name__)
 
 #: Settings only the share endpoints may write (see PUT /api/v1/settings).
-_SHARE_ONLY_KEYS = frozenset(
-    {
-        "lan_share_token",
-        "lan_sharing_enabled",
-        "lan_share_seal",
-        "lan_share_seal_id",
-        "lan_share_seal_n",
-    }
-)
+_SHARE_ONLY_KEYS = frozenset({KEY_SHARE_TOKEN, KEY_LAN_ENABLED, *SEAL_KEYS})
 
 
 @bp.post("/api/v1/settings/clip_max_override")
@@ -168,16 +161,9 @@ def api_presets_delete(name: str) -> tuple[Response, int]:
 # to learn the token and grant other devices access bypassing the
 # pairing flow, OR exfiltrate it for offline replay attacks. Future
 # token-shaped keys (OAuth client secrets, etc.) get added here.
-_SENSITIVE_SETTING_KEYS: frozenset[str] = frozenset(
-    {
-        "lan_share_token",
-        # The seal over the sharing state (bpp.web.share_seal): a device
-        # that could read it could carry it into another library file.
-        "lan_share_seal",
-        "lan_share_seal_id",
-        "lan_share_seal_n",
-    }
-)
+# (The seal over the sharing state too: a device that could read it
+# could carry it into another library file.)
+_SENSITIVE_SETTING_KEYS: frozenset[str] = frozenset({KEY_SHARE_TOKEN, *SEAL_KEYS})
 
 # Defense in depth on top of the explicit denylist. set_settings()
 # accepts arbitrary owner-supplied keys, so a future contributor adding

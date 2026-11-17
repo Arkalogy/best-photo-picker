@@ -92,10 +92,12 @@ def init_app_db(ctx: WebAppState) -> None:
     lib_root = ctx.state.get("library_path", "")
 
     # Sharing state this installation didn't make is not honoured.
-    from bpp.web.share_seal import check_on_open
+    from bpp.web.share_seal import UNCHECKED, check_on_open
 
-    check_on_open(conn)
-    ctx.share_state_checked = True
+    # Unchecked (this app's own key can't be read): devices stay out,
+    # and the check is made again when one asks (share.authorize).
+    ctx.share_state_checked = check_on_open(conn) != UNCHECKED
+    ctx.share_check_waits_for_key = not ctx.share_state_checked
 
     # Phase 4 — sidecar backfill + legacy-cache import. The "true"
     # return from 4a forces the smart-album refresh in 5 even when no

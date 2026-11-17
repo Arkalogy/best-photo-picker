@@ -97,17 +97,25 @@ class FolderSet:
         self._paths: list[str] = []
         self._ids: set[tuple[int, int]] = set()
         self._decided: dict[str, bool] = {}
-        for root in roots:
-            if not root:
-                continue
-            try:
-                real = os.path.realpath(root)
-                st = os.stat(real)
-            except (OSError, ValueError):
-                continue  # a folder that isn't there holds nothing
-            self._paths.append(real)
-            if st.st_ino:
-                self._ids.add((st.st_dev, st.st_ino))
+        # Looked at one by one, and only until a file is found inside:
+        # a root on a network share that has gone away blocks for its
+        # whole timeout, and most exports never need the later roots.
+        self._waiting = [r for r in roots if r]
+
+    def _look_at_next_root(self) -> bool:
+        """Resolve one more root. False when none are left."""
+        if not self._waiting:
+            return False
+        root = self._waiting.pop(0)
+        try:
+            real = os.path.realpath(root)
+            st = os.stat(real)
+        except (OSError, ValueError):
+            return True  # a folder that isn't there holds nothing
+        self._paths.append(real)
+        if st.st_ino:
+            self._ids.add((st.st_dev, st.st_ino))
+        return True
 
     def holds(self, path: str) -> bool:
         """True iff ``path`` resolves to a file in or below a root. A path
@@ -131,6 +139,13 @@ class FolderSet:
         return decided
 
     def _inside(self, folder: str) -> bool:
+        while True:
+            if self._inside_known_roots(folder):
+                return True
+            if not self._look_at_next_root():
+                return False
+
+    def _inside_known_roots(self, folder: str) -> bool:
         if is_path_under_any(folder, self._paths):
             return True
         while self._ids:

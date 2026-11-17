@@ -6,7 +6,7 @@
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-import { showToast, toast } from "../bpp/web/static/js/modules/toast.mjs";
+import { showToast, toast, toastError } from "../bpp/web/static/js/modules/toast.mjs";
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -158,5 +158,38 @@ describe("showToast (legacy variant)", () => {
   test("returns silently when #toast-container is missing", () => {
     document.body.innerHTML = "";
     expect(() => showToast("orphan")).not.toThrow();
+  });
+});
+
+describe("toastError for an owner-only refusal", () => {
+  const ownerOnly = () =>
+    Object.assign(new Error("only the computer running Best Photo Picker can do this"), {
+      ownerOnly: true,
+    });
+  const shown = () =>
+    [...document.querySelectorAll("#toast-container .toast")].map((t) => t.textContent);
+
+  test("says where to do it, and says it once for a burst of refusals", () => {
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    for (let tick = 0; tick < 12; tick++) toastError("save that setting", ownerOnly());
+    expect(shown()).toHaveLength(1);
+    expect(shown()[0]).toContain("do it on that computer");
+    expect(shown()[0]).not.toContain("try again");
+
+    // Another action tried right away is still answered.
+    toastError("change the date", ownerOnly());
+    expect(shown().some((t) => t && t.includes("change the date"))).toBe(true);
+
+    vi.setSystemTime(new Date("2026-01-01T00:00:11Z"));
+    const before = shown().length;
+    toastError("save that setting", ownerOnly());
+    expect(shown().length).toBe(before + 1);
+  });
+
+  test("an ordinary failure is still shown every time", () => {
+    toastError("save that setting", new Error("HTTP 500"));
+    toastError("save that setting", new Error("HTTP 500"));
+    expect(shown().filter((t) => t && t.includes("HTTP 500")).length).toBeGreaterThanOrEqual(1);
+    expect(shown()[0]).toContain("try again");
   });
 });

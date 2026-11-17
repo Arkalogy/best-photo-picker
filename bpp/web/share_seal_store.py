@@ -31,6 +31,8 @@ _lock = threading.RLock()
 #: Per file path, what this process holds when the file can't be used.
 _memory_keys: dict[str, str] = {}
 _memory_states: dict[str, dict] = {}
+#: Per key file path, why it could not be read the last time it was tried.
+_unreadable: dict[str, str] = {}
 
 
 def _folder() -> str:
@@ -151,15 +153,19 @@ def key() -> str:
         except FileNotFoundError:
             return _create_key(path)
         except OSError as exc:
-            # Never replace a key we merely couldn't read.
-            log.error(
-                "Can't read this installation's sharing key %s (%s): sharing settings "
-                "are not honoured until it can be read",
-                path,
-                exc,
-            )
-            _memory_keys[path] = secrets.token_hex(32)
-            return _memory_keys[path]
+            # Never replace a key we merely couldn't read, and never judge
+            # a library's sharing state by a stand-in: see unreadable().
+            if _unreadable.get(path) != str(exc):
+                log.error(
+                    "Can't read this installation's sharing key %s (%s). Sharing stays off "
+                    "and the sharing settings of the libraries opened are left as they are "
+                    "until the file can be read: check its permissions, then restart.",
+                    path,
+                    exc,
+                )
+            _unreadable[path] = str(exc)
+            return secrets.token_hex(32)  # not kept: the file is read again next time
+        _unreadable.pop(path, None)
         if _valid_key(text):
             return text
         from bpp.utils.json_utils import move_aside
@@ -167,6 +173,15 @@ def key() -> str:
         with contextlib.suppress(OSError):
             move_aside(path, context="sharing key")
         return _create_key(path)
+
+
+def unreadable() -> str | None:
+    """Why this installation's key can't be read right now, or None when
+    it can (or does not exist yet). While it can't, nothing can be said
+    about whether a library's sharing state is ours."""
+    with _lock:
+        key()
+        return _unreadable.get(key_file())
 
 
 def _load() -> dict:

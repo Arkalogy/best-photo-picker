@@ -636,6 +636,7 @@
   "isCatalogEntry": "writable",
   "isClusterExcluded": "writable",
   "isCompareOpen": "writable",
+  "isPairReviewOwnerOnly": "writable",
   "isSearchOpen": "writable",
   "isSiblingMode": "writable",
   "isStateKey": "writable",

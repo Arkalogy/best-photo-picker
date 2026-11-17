@@ -162,6 +162,12 @@ export async function apiFetch(url, opts) {
     );
     err.status = resp.status;
     err.body = body;
+    if (body.code === "owner_only") {
+      // In words a person on a paired phone can act on; toastError
+      // reads the flag (no "try again": it can't work from here).
+      /** @type {any} */ (err).ownerOnly = true;
+      err.message = "only the computer running Best Photo Picker can do this";
+    }
     throw err;
   }
   return resp.json();

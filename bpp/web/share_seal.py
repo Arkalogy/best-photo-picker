@@ -56,6 +56,7 @@ _UPSERT = (
 #: What :func:`check_on_open` found.
 SEALED = "sealed"  # sealed by this installation: left as it is
 EMPTY = "empty"  # no sharing state to honour
+UNCHECKED = "unchecked"  # this installation's key can't be read: left alone, sharing off
 ADOPTED = "adopted"  # from before the key existed: sealed now
 RESET = "reset"  # not ours: sharing off, link and devices removed
 
@@ -217,6 +218,15 @@ def ensure_ours(conn: sqlite3.Connection) -> None:
     """Before an owner write, inside its transaction: the sharing state
     must be this installation's, or empty. Anything else is removed
     first, so a write can never seal state that was not checked."""
+    reason = store.unreadable()
+    if reason:
+        from bpp.errors import ConflictError
+
+        raise ConflictError(
+            "Sharing settings can't be changed",
+            user_message="this app's own sharing key file can't be read "
+            f"({reason}); fix its permissions and restart Best Photo Picker",
+        )
     state = _state(conn)
     if state is None or not (_ours(conn, state) or _is_empty(conn, state)):
         _remove(conn)
@@ -273,8 +283,11 @@ def set_sealed(conn: sqlite3.Connection, key: str, value: str) -> None:
 def check_on_open(conn: sqlite3.Connection) -> str:
     """Decide whether an opened library's sharing state is this
     installation's, and remove it when it is not. Returns one of
-    :data:`SEALED`, :data:`EMPTY`, :data:`ADOPTED`, :data:`RESET`."""
-    store.key()
+    :data:`SEALED`, :data:`EMPTY`, :data:`ADOPTED`, :data:`RESET`, or
+    :data:`UNCHECKED` when the key itself can't be read (nothing is
+    removed then; the caller keeps devices out)."""
+    if store.unreadable():
+        return UNCHECKED
     ident = store.file_identity(_db_file(conn))
     try:
         state = _state(conn)

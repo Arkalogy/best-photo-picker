@@ -379,12 +379,18 @@ def test_a_key_that_cannot_be_read_is_not_replaced(tmp_path, monkeypatch):
         return real_open(path, *a, **k)
 
     monkeypatch.setattr("builtins.open", unreadable)
-    assert not _sharing_is_on(lib), "not honoured while the key can't be read"
+    _app, ctx = _open(lib)
+    assert not ctx.share_state_checked, "devices are kept out while the key can't be read"
+    _close()
     monkeypatch.setattr("builtins.open", real_open)
     store._memory_keys.clear()
 
     with open(store.key_file()) as f:
         assert f.read() == key
+    _app, ctx = _open(lib)
+    assert ctx.share_state_checked
+    _close()
+    assert _sharing_is_on(lib), "and nothing was removed meanwhile"
 
 
 def test_a_damaged_key_is_set_aside_and_old_seals_stop_counting(tmp_path):

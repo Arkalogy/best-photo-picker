@@ -214,7 +214,7 @@ function _renderTimelineFolder(ctx, timeAlbums) {
     if (isYear) {
       const yearKey = `year:${album.rule.year}`;
       const yearOpen = _navFolderOpenAttr(yearKey, _isActive(ctx, album));
-      html += `<details class="nav-folder nav-year-folder"${yearOpen} data-nav-key="${escVal(yearKey)}" data-year="${escapeAttr(album.rule.year)}" data-album-id="${escVal(album.id)}" data-ontoggle="loadYearMonths">
+      html += `<details class="nav-folder nav-year-folder"${yearOpen} data-nav-key="${escVal(yearKey)}" data-year="${escapeAttr(album.rule.year)}" data-album-id="${escVal(album.id)}" data-count="${escVal(album.photo_count || 0)}" data-ontoggle="loadYearMonths">
             <summary class="nav-item${active}" data-prevent-default="true" data-action="switchAlbum" data-arg0="${escVal(album.id)}">
               <span>${esc(album.name)}</span>
               <span class="nav-item-right"><span class="nav-count">${escVal(album.photo_count || 0)}</span></span>

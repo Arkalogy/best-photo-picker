@@ -118,3 +118,27 @@ def test_a_switch_that_fails_keeps_the_open_librarys_folders(tmp_path, monkeypat
 
     assert ctx.export_source_dirs == {"/Volumes/Trip"}
     assert ctx.export_followed_dirs == {"/Volumes/Trip"}
+
+
+def test_roots_are_looked_at_only_until_the_file_is_found(tmp_path, monkeypatch):
+    from bpp.utils import path_validation
+    from bpp.utils.path_validation import FolderSet
+
+    library, gone_share = tmp_path / "lib", tmp_path / "share-that-went-away"
+    (library / "photos").mkdir(parents=True)
+    gone_share.mkdir()
+    looked_at = []
+    real = os.path.realpath
+
+    def realpath(path, *a, **k):
+        looked_at.append(str(path))
+        return real(path, *a, **k)
+
+    monkeypatch.setattr(path_validation.os.path, "realpath", realpath)
+    roots = FolderSet([str(library), str(gone_share)])
+
+    assert roots.holds(str(library / "photos" / "a.jpg"))
+    assert str(gone_share) not in looked_at, "a photo inside the library never touches it"
+    assert not roots.holds(str(tmp_path / "elsewhere" / "a.jpg"))
+    assert str(gone_share) in looked_at
+    assert roots.holds(str(gone_share / "a.jpg"))

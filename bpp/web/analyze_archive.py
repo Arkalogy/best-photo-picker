@@ -18,6 +18,7 @@ import zipfile
 from collections.abc import Callable
 from typing import Any
 
+from bpp.db.analysis_leftovers import EXTRACTED_DIR
 from bpp.utils.logging import get_logger
 from bpp.utils.paths import is_safe_archive_member, is_safe_tar_member
 
@@ -51,7 +52,7 @@ def _real_folder(workdir: str, name: str) -> str:
     library folder may have been prepared by someone else) would send
     the archive's files to wherever it points, over the owner's own.
     Links are removed, never followed."""
-    base = os.path.join(workdir, "extracted")
+    base = os.path.join(workdir, EXTRACTED_DIR)
     target = os.path.join(base, name)
     for folder in (base, target):
         if os.path.islink(folder):
@@ -244,7 +245,7 @@ def extract_archive_into_workdir(
         emit({"type": "error", "message": "Unsupported archive format"})
         return None
 
-    _drop_twins_of_the_old_layout(os.path.join(workdir, "extracted"), extract_dir)
+    _drop_twins_of_the_old_layout(os.path.join(workdir, EXTRACTED_DIR), extract_dir)
     log.info("Extracted archive to %s", extract_dir)
     return extract_dir
 

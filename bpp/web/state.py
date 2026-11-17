@@ -96,6 +96,9 @@ class WebAppState(_LegacyDelegateMixin):
     #: False from a library switch until the new library's sharing state
     #: has been checked (share_seal): devices are refused meanwhile.
     share_state_checked: bool = True
+    #: True when that check could not be made because this installation's
+    #: key file can't be read; it is made again once it can.
+    share_check_waits_for_key: bool = False
 
     def __init__(
         self,

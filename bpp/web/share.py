@@ -265,6 +265,19 @@ def is_loopback_address(remote: str | None) -> bool:
     return (mapped or addr).is_loopback
 
 
+def _check_sharing_state_again(ctx: object, conn: object) -> None:
+    """The open-time check could not be made (the key file was not
+    readable). Once it is, make it, so sharing works again without a
+    restart."""
+    from bpp.web import share_seal, share_seal_store
+
+    if share_seal_store.unreadable():
+        return
+    checked = share_seal.check_on_open(conn) != share_seal.UNCHECKED  # type: ignore[arg-type]
+    ctx.share_state_checked = checked  # type: ignore[attr-defined]
+    ctx.share_check_waits_for_key = not ctx.share_state_checked  # type: ignore[attr-defined]
+
+
 def authorize_request(request: object, ctx: object) -> AuthResult:
     """Single-source-of-truth auth check.
 
@@ -299,6 +312,8 @@ def authorize_request(request: object, ctx: object) -> AuthResult:
 
     # LAN gate first. During a library switch the new library's sharing
     # state is not ours until share_seal has checked it.
+    if not is_loopback and getattr(ctx, "share_check_waits_for_key", False):
+        _check_sharing_state_again(ctx, conn)
     if not is_loopback and not (
         getattr(ctx, "share_state_checked", True) and is_lan_sharing_enabled(conn)
     ):

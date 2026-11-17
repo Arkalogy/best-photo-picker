@@ -88,6 +88,8 @@ curl -X POST http://localhost:5001/api/v1/export \
 
 Best Photo Picker exposes a full REST API on `localhost:5001`. You can build custom frontends, integrate with automation tools (Shortcuts, Hazel, cron), or use it as a photo scoring microservice. By default the server binds to `127.0.0.1`, and every `/api/v1/*` request still has to carry the token described under **Authentication** — binding to loopback does not make the API unauthenticated. For LAN sharing (multi-device access from a phone or tablet on the same Wi-Fi), see [`docs/security.md`](security.md) for the pairing model and auth boundary. All state-changing operations use `POST`, `PUT`, or `DELETE`, so read-only tools can safely call any `GET` endpoint without side effects.
 
+A paired device that calls a route marked **Owner-only** gets `403` with `"code": "owner_only"` in the body. Its session is still valid: the route is simply not open to it.
+
 ---
 
 ## Core
@@ -385,7 +387,7 @@ fixture — used by the Playwright suite's safety gate.
 
 ### POST /api/v1/settings/clip_max_override
 
-Owner-only. Set or clear the per-library CLIP load-cap bypass.
+Owner-only. Set or clear the per-library CLIP load-cap override. While set, the limit is what this computer's memory holds instead of the default.
 Body: `{"enable": true}` to set, `{"enable": false}` to clear.
 
 ## Photos
@@ -560,8 +562,15 @@ curl -X POST http://localhost:5001/api/v1/export \
 **Response:**
 
 ```json
-{ "status": "exported", "outdir": "/tmp/export", "count": 50, "failed": 0, "disk_error": null, "metadata_kept": 0 }
+{ "status": "exported", "outdir": "/tmp/export", "count": 50, "failed": 0, "disk_error": null, "metadata_kept": 0, "outside_source": 0 }
 ```
+
+An export reads photos only from the open library, its workdir and
+folders analyzed in place for this library. A photo anywhere else is
+not copied: it counts in `failed`, and `outside_source` is how many of
+the failures were refused for that reason (analyze the folder, then
+export again). The `done` event of `POST /api/v1/export/start` carries
+the same field.
 
 ### POST /api/v1/open-folder
 
@@ -664,6 +673,9 @@ point loses nothing. A file that could not be checked or renamed keeps
 its row (delete it again later); one the OS refused to remove is
 retried at the next start. Both are listed in `files_failed` with
 `"status": "partial"`.
+
+Answers `409` with `"blocker": "analysis_or_import"` while an analysis
+or an import is running: wait for it to finish, then delete again.
 
 ### GET /api/v1/photos/deleted
 
@@ -1750,6 +1762,11 @@ curl -X POST http://localhost:5001/api/v1/libraries/switch \
   -H 'Content-Type: application/json' \
   -d '{"path": "~/Pictures/AnotherLibrary"}'
 ```
+
+Answers `400` when the folder can't be opened as a library. When the
+reason is a link inside it (`photos`, `data`, `cache`, `logs`, or an
+entry of `data` / `logs` is a link to another location), the body names
+it in `entry`; the previous library stays open.
 
 ### GET /api/v1/libraries/active
 

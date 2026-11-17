@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from typing import Any
 
 import cv2
@@ -50,6 +51,9 @@ log = get_logger(__name__)
 
 _DEFAULT_FACE_CONF = DEFAULTS["face_detection_confidence"]
 DB_NAME = "analysis_cache.db"
+#: One writer of analysis.json at a time in this process: the analysis
+#: that writes it, and the rewrite after a permanent delete.
+ANALYSIS_FILE_LOCK = threading.Lock()
 
 
 def init_analysis_db(db_path: str) -> None:
@@ -462,7 +466,7 @@ def analyze_all(
     from bpp.utils.retry import retry_io
 
     def _write():
-        with open(results_path, "w") as f:
+        with ANALYSIS_FILE_LOCK, open(results_path, "w") as f:
             json.dump(valid, f, indent=2)
 
     results_path = os.path.join(workdir, "analysis.json")

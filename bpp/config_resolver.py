@@ -60,13 +60,19 @@ def stored_value(key: str, raw: str) -> Any:
     """A library-stored setting as the app may use it: coerced and inside
     the limits its schema declares, else ``_REJECTED`` (warned once). Keys
     without a schema are returned as stored."""
-    from bpp.config_schema import ConfigValidationError, get_schema, validate_value
+    from bpp.config_schema import get_schema, validate_value
 
-    if get_schema(key) is None:
+    schema = get_schema(key)
+    if schema is None:
+        return raw
+    if getattr(schema, "type", str) not in (bool, int, float, str):
+        # A plugin's list / dict / own type: stored as text the app can't
+        # turn back, and its validator was written for the real value.
+        # Returned as stored, as before.
         return raw
     try:
         return validate_value(key, raw)
-    except ConfigValidationError as exc:
+    except Exception as exc:  # a plugin's validator may raise anything
         if (key, raw) not in _warned_rejections:
             _warned_rejections.add((key, raw))
             log.warning("Ignoring the library's stored setting %s: %s", key, exc)

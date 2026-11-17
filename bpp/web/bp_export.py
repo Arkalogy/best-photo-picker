@@ -125,7 +125,8 @@ def _source_roots(ctx) -> FolderSet:
     from bpp.utils.path_validation import is_path_under_any
 
     # Links inside the library's own folders are not the owner's: only
-    # folders outside it count as followed.
+    # folders outside it count as followed. Links resolved, so another
+    # spelling of a folder inside the library is still inside it.
     followed = [f for f in sorted(ctx.export_followed_dirs) if not is_path_under_any(f, roots)]
     return FolderSet([*roots, *sorted(ctx.export_source_dirs)], followed=followed)
 

@@ -204,6 +204,9 @@ def test_a_photo_deleted_just_before_a_crash_is_not_imported_again(tmp_path):
         )
     assert conn.execute("SELECT COUNT(*) FROM photos").fetchone()[0] == 0
 
+    from bpp.db.analysis_leftovers import wait_for_forgets
+
+    wait_for_forgets()
     import_from_legacy_caches(conn, work, dirs["root"], 0)  # the next start
 
     paths = [r[0] for r in conn.execute("SELECT filepath FROM photos")]
@@ -349,42 +352,6 @@ def test_companions_left_out_of_the_bin_or_orphaned_are_settled_at_open(tmp_path
     assert not conn.in_transaction, "an open transaction would block the next writer"
 
 
-# ── a delete does not parse the analysis file it is not listed in ────────
-
-
-def test_the_analysis_file_is_parsed_only_when_it_names_a_deleted_photo(tmp_path, monkeypatch):
-    import json
-
-    from bpp.db import analysis_leftovers as leftovers
-
-    results = tmp_path / "analysis.json"
-    listed = ["/p/a.jpg", '/p/caf\u00e9 "x".jpg', "/p/" + "n" * 300 + ".jpg"]
-    results.write_text(json.dumps([{"filepath": p} for p in listed], ensure_ascii=False))
-    parsed = []
-    real = leftovers.load_json_file
-    monkeypatch.setattr(
-        leftovers, "load_json_file", lambda *a, **k: parsed.append(1) or real(*a, **k)
-    )
-
-    leftovers.forget_analysis(str(tmp_path), ["/p/not-listed.jpg", "/p/a.jp"])
-    assert parsed == []
-
-    for i, path in enumerate(listed, 1):
-        leftovers.forget_analysis(str(tmp_path), [path])
-        assert len(parsed) == i, path
-    assert json.loads(results.read_text()) == []
-
-
-def test_a_path_split_across_two_reads_is_still_found(tmp_path, monkeypatch):
-    from bpp.db import analysis_leftovers as leftovers
-
-    results = tmp_path / "analysis.json"
-    needle = '"/p/needle.jpg"'
-    results.write_text("x" * ((1 << 20) - 5) + needle + "y" * 50)
-    assert leftovers._may_name_any(str(results), {"/p/needle.jpg"})
-    assert not leftovers._may_name_any(str(results), {"/p/other.jpg"})
-
-
 # ── an archive first unpacked by an earlier version ──────────────────────
 
 
@@ -412,3 +379,94 @@ def test_photos_already_unpacked_the_old_way_are_not_unpacked_twice(tmp_path):
     )
     assert os.listdir(os.path.join(out, "sub")) == ["photo.jpg"], "same name, other content"
     assert (work / "extracted" / "photo.jpg").read_bytes() == b"FROM THE ARCHIVE"
+
+
+# ── a sharing key that can't be read removes nothing ─────────────────────
+
+
+def test_an_unreadable_key_leaves_the_sharing_state_and_keeps_devices_out(tmp_path, monkeypatch):
+    import builtins
+
+    from bpp.db.connection import init_db
+    from bpp.errors import ConflictError
+    from bpp.web import share_seal, share_seal_store
+    from bpp.web.share import get_share_token, is_lan_sharing_enabled, set_lan_sharing_enabled
+
+    conn = init_db(str(tmp_path / "photopicker.db"))
+    token = get_share_token(conn)
+    set_lan_sharing_enabled(conn, True)
+    assert share_seal.check_on_open(conn) == share_seal.SEALED
+    key_path, real_open = share_seal_store.key_file(), builtins.open
+
+    def no_key(path, *a, **k):
+        if path == key_path:
+            raise PermissionError(13, "Permission denied")
+        return real_open(path, *a, **k)
+
+    monkeypatch.setattr(builtins, "open", no_key)
+    assert share_seal.check_on_open(conn) == share_seal.UNCHECKED
+    assert not is_lan_sharing_enabled(conn), "reads as off: not shown, not bound to the LAN"
+    with pytest.raises(ConflictError):
+        set_lan_sharing_enabled(conn, False)
+    monkeypatch.setattr(builtins, "open", real_open)
+
+    assert share_seal.check_on_open(conn) == share_seal.SEALED, "readable again: still ours"
+    assert get_share_token(conn) == token
+    assert is_lan_sharing_enabled(conn)
+
+
+def test_devices_are_let_in_again_once_the_key_can_be_read(tmp_path):
+    from types import SimpleNamespace
+
+    from bpp.db.connection import init_db
+    from bpp.web.share import _check_sharing_state_again, set_lan_sharing_enabled
+
+    conn = init_db(str(tmp_path / "photopicker.db"))
+    set_lan_sharing_enabled(conn, True)
+    ctx = SimpleNamespace(share_state_checked=False, share_check_waits_for_key=True)
+
+    _check_sharing_state_again(ctx, conn)  # the key is readable now
+
+    assert ctx.share_state_checked and not ctx.share_check_waits_for_key
+
+
+# ── a plugin's own kind of setting is read back as it was stored ─────────
+
+
+def test_a_plugin_setting_of_its_own_type_is_not_run_through_its_validator_on_read():
+    from bpp.config_resolver import _REJECTED, stored_value
+    from bpp.config_schema import (
+        _SCHEMA_REGISTRY,
+        ConfigField,
+        ConfigValidationError,
+        register_field,
+    )
+
+    def only_lists(value):
+        if not isinstance(value, list):
+            raise AttributeError("a validator written for the real value")
+        return value
+
+    def never_seven(value):
+        if value == 7:
+            raise ConfigValidationError("plugin_x_count", "not seven")
+        return value
+
+    def breaks(value):
+        raise RuntimeError("a validator may raise anything")
+
+    fields = [
+        ConfigField(key="plugin_x_tags", type=list, validator=only_lists),
+        ConfigField(key="plugin_x_count", type=int, validator=never_seven),
+        ConfigField(key="plugin_x_name", type=str, validator=breaks),
+    ]
+    for field in fields:
+        register_field(field)
+    try:
+        assert stored_value("plugin_x_tags", "['a', 'b']") == "['a', 'b']"
+        assert stored_value("plugin_x_count", "3") == 3
+        assert stored_value("plugin_x_count", "7") is _REJECTED
+        assert stored_value("plugin_x_name", "x") is _REJECTED, "refused, not raised"
+    finally:
+        for field in fields:
+            _SCHEMA_REGISTRY.pop(field.key, None)

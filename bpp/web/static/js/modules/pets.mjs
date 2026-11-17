@@ -142,6 +142,11 @@ export async function renamePet(clusterId, newName) {
  * @param {HTMLElement} el
  */
 export function startPetRename(clusterId, el) {
+  // From a click on the name the dispatcher passes no element and sets
+  // `this` to the name; its parent is the label that is redrawn. Menus
+  // pass the label itself.
+  if (!(el instanceof Element)) el = this instanceof Element ? this.parentElement : null;
+  if (!el) return;
   const cls = petClassFromCluster(clusterId);
   const current = petDisplayName(clusterId) || _petDefaultLabel(cls) || "";
   const input = document.createElement("input");
@@ -182,7 +187,7 @@ export function petLabelHTML(clusterId, photoCount) {
   const displayName = name || defaultName;
   const nameCls = name ? "person-name" : "person-name unnamed";
   return (
-    `<div class="${nameCls}" data-stop-propagation="true" data-action="startPetRename" data-arg0="${escVal(clusterId)}" data-arg1="this.parentElement">${esc(displayName)}</div>` +
+    `<div class="${nameCls}" data-stop-propagation="true" data-action="startPetRename" data-arg0="${escVal(clusterId)}">${esc(displayName)}</div>` +
     `<div class="person-count">${escVal(count)} photo${count === 1 ? "" : "s"}</div>`
   );
 }

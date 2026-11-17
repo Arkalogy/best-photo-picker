@@ -97,9 +97,11 @@ describe("apiFetch", () => {
           })
       )
     );
-    await expect(apiFetch("/api/v1/faces/review-pairs/count")).rejects.toThrow(
-      "Owner-only endpoint"
-    );
+    const err = await apiFetch("/api/v1/faces/review-pairs/count").catch((e) => e);
+    // In words the person on the phone can act on, and flagged for callers.
+    expect(err.message).toBe("only the computer running Best Photo Picker can do this");
+    expect(err.ownerOnly).toBe(true);
+    expect(err.status).toBe(403);
     await new Promise((r) => setTimeout(r, 80));
     expect(reload).not.toHaveBeenCalled();
   });

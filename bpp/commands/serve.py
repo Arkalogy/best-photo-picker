@@ -97,12 +97,28 @@ def do_serve(args: argparse.Namespace) -> int:
     add_file_handler(os.path.join(dirs["logs"], "server.log"))
 
     _startup_integrity_gate(os.path.join(workdir, "photopicker.db"))
+    # Said again now that the log file is attached: the first read of the
+    # sharing key happened before it, and this is what explains "sharing
+    # is off" to whoever reads server.log.
+    from bpp.web import share_seal_store
 
-    app = create_app(
-        workdir=workdir,
-        config_path=getattr(args, "config", None),
-        library_path=library_path,
-    )
+    if share_seal_store.unreadable():
+        log.error(
+            "This installation's sharing key %s can't be read (%s): sharing stays off "
+            "until it can. Check the file's permissions, then restart.",
+            share_seal_store.key_file(),
+            share_seal_store.unreadable(),
+        )
+
+    try:
+        app = create_app(
+            workdir=workdir,
+            config_path=getattr(args, "config", None),
+            library_path=library_path,
+        )
+    except ValidationError as e:
+        log.error("%s", e)
+        return 1
 
     ctx = app.extensions["bpp"]
     _launch_url = _configure_loopback_boot(ctx, port, args)

@@ -226,10 +226,13 @@ def recent_share_access(conn: sqlite3.Connection, *, limit: int = 10) -> list[di
 
 
 def is_lan_sharing_enabled(conn: sqlite3.Connection) -> bool:
-    """Whether the user has flipped the Settings → Share toggle on."""
+    """Whether the user has flipped the Settings → Share toggle on.
+    Off while this installation's key can't be read: the stored switch
+    can't be told from one that came with the library."""
     from bpp.db.settings import get_setting
+    from bpp.web import share_seal_store
 
-    return get_setting(conn, _KEY_LAN_ENABLED) == "1"
+    return get_setting(conn, _KEY_LAN_ENABLED) == "1" and not share_seal_store.unreadable()
 
 
 def set_lan_sharing_enabled(conn: sqlite3.Connection, enabled: bool) -> None:

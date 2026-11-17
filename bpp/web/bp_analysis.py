@@ -11,7 +11,7 @@ from bpp.constants import WORKER_JOIN_TIMEOUT_S
 from bpp.db.library import clear_library
 from bpp.db.settings import get_all_settings
 from bpp.db.smart_albums import get_affected_album_types, refresh_smart_albums
-from bpp.errors import ConflictError, ValidationError
+from bpp.errors import BppError, ConflictError, ValidationError
 from bpp.utils.logging import get_logger
 from bpp.web.request_validation import json_bool
 from bpp.web.share import requires_local_app
@@ -293,6 +293,20 @@ def api_clear_library() -> tuple[Response, int]:
     library_path = ctx.library_path
     if not library_path:
         raise ValidationError("No library configured")
+    # The saved analysis goes first: with an empty database it is what
+    # the next start imports, so a Clear cut short after the rows went
+    # would bring every photo back.
+    from bpp.db.analysis_leftovers import forget_analysis_files
+
+    try:
+        forget_analysis_files(ctx.state.get("workdir") or ctx.dirs.get("data"), library_path)
+    except OSError as e:
+        raise BppError(
+            "Clear library failed",
+            user_message="the saved analysis file couldn't be removed "
+            f"({e.strerror or e}); nothing was cleared. Check the library folder's permissions",
+            diagnostic_message=f"clear library: could not remove analysis files: {e!r}",
+        ) from e
     result = clear_library(conn, library_path)
     # The analysis stores and what was unpacked from archives hold the
     # same photos: "delete all photos" covers them.

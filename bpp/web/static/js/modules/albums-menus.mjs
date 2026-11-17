@@ -133,12 +133,15 @@ export async function loadYearMonths(detailsEl) {
   // The sidebar is rebuilt often (every album switch, every key typed
   // in the filter) and each rebuild opens the folder again: show what
   // we have at once, and ask the server again only when it is old.
+  // ...or when the year's own count has changed since (a delete, an
+  // import): its months have too.
+  const total = detailsEl.dataset.count || "";
   const known = _yearMonths.get(String(year));
   if (known) show(known.months);
-  if (known && Date.now() - known.at < YEAR_MONTHS_FRESH_MS) return;
+  if (known && known.total === total && Date.now() - known.at < YEAR_MONTHS_FRESH_MS) return;
   try {
     const data = await apiFetch(`/api/v1/albums/time/months?year=${year}`);
-    _yearMonths.set(String(year), { months: data.months, at: Date.now() });
+    _yearMonths.set(String(year), { months: data.months, at: Date.now(), total });
     if (container.isConnected) show(data.months);
   } catch (e) {
     // Sidebar drawer expand — failure means the months list stays

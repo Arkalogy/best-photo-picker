@@ -20,19 +20,20 @@ import sqlite3
 import threading
 
 from bpp.db.sql_batches import in_batches
+from bpp.scoring.aggregate import ANALYSIS_FILE_LOCK, DB_NAME
 from bpp.utils.fresh_file import replace_fresh
-from bpp.utils.json_utils import load_json_file
 from bpp.utils.logging import get_logger
 from bpp.utils.retry import retry_io
 
 log = get_logger(__name__)
 
 ANALYSIS_JSON = "analysis.json"
-ANALYSIS_CACHE = "analysis_cache.db"
+ANALYSIS_CACHE = DB_NAME  # the name its writers use
 EXTRACTED_DIR = "extracted"
 
-#: One rewrite of an analysis file at a time in this process.
-_rewrite_lock = threading.Lock()
+#: One writer of an analysis file at a time in this process (the
+#: analysis that writes it takes the same lock).
+_rewrite_lock = ANALYSIS_FILE_LOCK
 
 
 def forget_deleted(
@@ -60,9 +61,10 @@ def forget_interrupted_deletes(
     conn: sqlite3.Connection, workdir: str | None, library_path: str | None = None
 ) -> None:
     """Before anything is imported from the analysis file at start-up:
-    drop what a permanent delete that was cut short had already deleted.
-    Its rows went first and its own clean-up never ran, so the file
-    still lists those photos and the import would bring them back."""
+    drop what a permanent delete that was cut short had already deleted
+    (its rows went first and its own clean-up never ran), and finish any
+    rewrite of the file that was still waiting. Otherwise the file still
+    lists those photos and the import would bring them back."""
     from bpp.db.journal import pending_journals
 
     named: set[str] = set()
@@ -72,6 +74,7 @@ def forget_interrupted_deletes(
             if isinstance(part, (list, dict)):
                 named.update(fp for fp in part if isinstance(fp, str))
     forget_deleted(conn, workdir, sorted(named), library_path)
+    apply_pending_forgets(workdir, library_path)
 
 
 def forget_analysis(
@@ -79,64 +82,166 @@ def forget_analysis(
 ) -> None:
     """Remove *filepaths* from the analysis stores. Best-effort: a store
     that can't be updated is logged, and the delete the caller just did
-    stands."""
+    stands.
+
+    The cache is updated at once. The analysis file can be hundreds of
+    megabytes and is rewritten whole, so its part is noted in a small
+    file beside it and done in the background; a rewrite that the
+    process did not live to finish is done at the next start, before
+    the file is read (:func:`forget_interrupted_deletes`)."""
     if not filepaths:
         return
-    gone = set(filepaths)
-    for folder in {d for d in (workdir, library_path) if d}:
-        _forget_in_json(os.path.join(folder, ANALYSIS_JSON), gone)
+    gone = sorted(set(filepaths))
     if workdir:
-        _forget_in_cache(os.path.join(workdir, ANALYSIS_CACHE), sorted(gone))
-
-
-def _forget_in_json(path: str, gone: set[str]) -> None:
-    if not os.path.isfile(path) or os.path.islink(path):
+        _forget_in_cache(os.path.join(workdir, ANALYSIS_CACHE), gone)
+    folders = [d for d in (workdir, library_path) if d]
+    if not any(os.path.isfile(os.path.join(d, ANALYSIS_JSON)) for d in folders):
         return
-    with _rewrite_lock:
-        if not _may_name_any(path, gone):
-            return
-        data = load_json_file(path, None, expected_type=list, context=path)
-        if data is None:
-            return
-        kept = [d for d in data if not (isinstance(d, dict) and d.get("filepath") in gone)]
-        if len(kept) == len(data):
-            return
-        try:
-            # A part file of this thread's own: two rewrites never share one.
-            part = f"{path}.{os.getpid()}.{threading.get_ident()}.part"
-            with replace_fresh(path, "w", part=part) as f:
-                json.dump(kept, f)
-        except OSError:
-            log.warning("Could not remove deleted photos from %s", path, exc_info=True)
+    if not workdir or not _note_pending(workdir, gone):
+        with _rewrite_lock:  # nowhere to note it: do it now
+            _forget_in_json_files(folders, set(gone))
+        return
+    _start_applying(workdir, library_path)
 
 
-#: Looking for a path costs a pass over the file; a parse costs about ten.
-_SCAN_AT_MOST = 4
+# ── the analysis file: noted now, rewritten in the background ────────────
+
+PENDING = "analysis.forget"
+#: Suffix of the file a rewrite is written to before it replaces the original.
+PART = ".part"
+
+#: Guards the pending file (appends are quick; never held across a rewrite).
+_pending_lock = threading.Lock()
+_appliers: dict[tuple[str, str | None], threading.Thread] = {}
 
 
-def _may_name_any(path: str, gone: set[str]) -> bool:
-    """A cheap look before the file is parsed (it can be hundreds of
-    megabytes, and most deletes are of photos it does not list): does
-    it contain any of the paths, as JSON writes them? Read in pieces,
-    never whole."""
-    needles = set()
-    for fp in gone:
-        for ascii_only in (True, False):
-            needles.add(json.dumps(fp, ensure_ascii=ascii_only).encode("utf-8", "surrogatepass"))
-    if not needles or len(gone) > _SCAN_AT_MOST:
-        return True  # more than a few paths: parsing once is the cheaper way
-    longest = max(len(n) for n in needles)
+def _note_pending(workdir: str, gone: list[str]) -> bool:
+    """Append the paths to the pending file, one JSON string per line."""
+    try:
+        with _pending_lock, open(os.path.join(workdir, PENDING), "a", encoding="utf-8") as f:
+            f.writelines(json.dumps(fp) + "\n" for fp in gone)
+            f.flush()
+            os.fsync(f.fileno())
+        return True
+    except OSError:
+        log.warning("Could not note deleted photos in %s", workdir, exc_info=True)
+        return False
+
+
+def _read_pending(path: str) -> tuple[set[str], int]:
+    """The noted paths, and how many bytes of the file they are."""
+    from bpp.utils.json_utils import safe_json_loads
+
     try:
         with open(path, "rb") as f:
-            tail = b""
-            while chunk := f.read(1 << 20):
-                window = tail + chunk
-                if any(n in window for n in needles):
-                    return True
-                tail = window[-longest:]
+            raw = f.read()
     except OSError:
-        return True  # let the load report it
-    return False
+        return set(), 0
+    gone = set()
+    for line in raw.splitlines():
+        fp = (
+            safe_json_loads(line, None, context=PENDING, expected_type=str)
+            if line.strip()
+            else None
+        )
+        if isinstance(fp, str):
+            gone.add(fp)
+    return gone, len(raw)
+
+
+def apply_pending_forgets(workdir: str | None, library_path: str | None = None) -> None:
+    """Rewrite the analysis files without the paths noted as deleted,
+    then drop the note. Safe to run again: paths noted meanwhile stay."""
+    if not workdir:
+        return
+    path = os.path.join(workdir, PENDING)
+    if os.path.islink(path) or not os.path.isfile(path):
+        return
+    with _rewrite_lock:
+        with _pending_lock:
+            gone, size = _read_pending(path)
+        if gone and not _forget_in_json_files([d for d in (workdir, library_path) if d], gone):
+            return  # keep the note: tried again at the next delete or start
+        with _pending_lock:
+            try:
+                with open(path, "rb") as f:
+                    f.seek(size)
+                    later = f.read()
+                if later:
+                    with replace_fresh(path, "wb") as f:
+                        f.write(later)
+                else:
+                    os.unlink(path)
+            except OSError:
+                log.warning("Could not update %s", path, exc_info=True)
+
+
+def _start_applying(workdir: str, library_path: str | None) -> None:
+    key = (workdir, library_path)
+    with _pending_lock:
+        running = _appliers.get(key)
+        if running is not None and running.is_alive():
+            # It may already have read the note: run once more after it.
+            follow = threading.Thread(
+                target=lambda: (running.join(), apply_pending_forgets(workdir, library_path)),
+                name="analysis-forget",
+                daemon=True,
+            )
+        else:
+            follow = threading.Thread(
+                target=apply_pending_forgets,
+                args=(workdir, library_path),
+                name="analysis-forget",
+                daemon=True,
+            )
+        _appliers[key] = follow
+    log.info("Removing deleted photos from the saved analysis in the background")
+    follow.start()
+
+
+def wait_for_forgets(timeout: float = 60.0) -> None:
+    """Wait for background rewrites started so far (shutdown, tests)."""
+    with _pending_lock:
+        running = list(_appliers.values())
+    for thread in running:
+        thread.join(timeout)
+
+
+def _forget_in_json_files(folders: list[str], gone: set[str]) -> bool:
+    """True when every analysis file is now without *gone*."""
+    return all([_forget_in_json(os.path.join(folder, ANALYSIS_JSON), gone) for folder in folders])
+
+
+def _forget_in_json(path: str, gone: set[str]) -> bool:
+    """Caller holds ``_rewrite_lock``."""
+    from bpp.utils.json_utils import safe_json_loads
+
+    if not os.path.isfile(path) or os.path.islink(path):
+        return True
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+    except OSError:
+        # Not read is not "nothing to remove": the note is kept.
+        log.warning("Could not read %s to remove deleted photos", path, exc_info=True)
+        return False
+    data = safe_json_loads(raw, None, context=path, expected_type=list)
+    del raw
+    if data is None:
+        return True  # not a list of photos: nothing in it is imported either
+    kept = [d for d in data if not (isinstance(d, dict) and d.get("filepath") in gone)]
+    if len(kept) == len(data):
+        return True
+    try:
+        # One fixed name: a rewrite cut short leaves its part file where
+        # the next one (or Clear Library) removes it.
+        with replace_fresh(path, "w", part=path + PART) as f:
+            f.write(json.dumps(kept))  # one C-encoded pass; json.dump is several times slower
+        log.info("Removed %d deleted photos from %s", len(data) - len(kept), path)
+        return True
+    except OSError:
+        log.warning("Could not remove deleted photos from %s", path, exc_info=True)
+        return False
 
 
 def _erasing(path: str) -> sqlite3.Connection:
@@ -159,6 +264,7 @@ def _settle(conn: sqlite3.Connection) -> None:
 def _forget_in_cache(path: str, gone: list[str]) -> None:
     if not os.path.isfile(path) or os.path.islink(path):
         return
+    conn = None
     try:
         conn = _erasing(path)
         for marks, batch in in_batches(gone):
@@ -167,19 +273,30 @@ def _forget_in_cache(path: str, gone: list[str]) -> None:
         _settle(conn)
     except sqlite3.Error:
         log.warning("Could not remove deleted photos from %s", path, exc_info=True)
+        if conn is not None:  # a pooled connection: never left mid-transaction
+            with contextlib.suppress(sqlite3.Error):
+                conn.rollback()
+
+
+def forget_analysis_files(workdir: str | None, library_path: str | None = None) -> None:
+    """Remove the analysis files (and the note of pending removals).
+    Raises OSError when one can't be removed: with an empty database it
+    would be imported whole at the next start, so the caller must not
+    go on to empty the database. Waits for a rewrite in progress, which
+    would otherwise put the file back."""
+    with _rewrite_lock, _pending_lock:
+        for folder in {d for d in (workdir, library_path) if d}:
+            names = [ANALYSIS_JSON, ANALYSIS_JSON + PART]
+            for name in [*names, PENDING] if folder == workdir else names:
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(os.path.join(folder, name))
 
 
 def forget_all_analysis(workdir: str | None, library_path: str | None = None) -> None:
     """Clear Library: the analysis stores and everything unpacked from
     archives go too. A link at one of those names is removed, never
     followed."""
-    for folder in {d for d in (workdir, library_path) if d}:
-        results = os.path.join(folder, ANALYSIS_JSON)
-        if os.path.lexists(results):
-            try:
-                os.unlink(results)
-            except OSError:
-                log.warning("Could not remove %s", results, exc_info=True)
+    forget_analysis_files(workdir, library_path)
     if not workdir:
         return
     _empty_cache(os.path.join(workdir, ANALYSIS_CACHE))
