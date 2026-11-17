@@ -310,7 +310,7 @@ function _recentAccessHTML(entries) {
         </div>
         <div style="margin-top:4px">${rows}</div>
         <div style="color:var(--text-secondary);font-size:0.82em;margin-top:6px">
-          See something you don't recognize? Click <strong>Revoke</strong> above to kill the current URL.
+          See something you don't recognize? Remove that device under <strong>Trusted devices</strong>, then click <strong>Revoke</strong> above so the link can't be used again.
         </div>
       </div>
     </div>
@@ -362,7 +362,7 @@ export async function _shareToggle(enabled) {
 export async function _revokeShareLink() {
   const ok = await appConfirm(
     "Revoke share link?",
-    "The current URL will stop working immediately. Anyone using it will lose access. You'll get a fresh URL.",
+    "The current link will stop working for new devices, and you'll get a fresh one. Devices you already approved keep their access: remove those under Trusted devices.",
     { okLabel: "Revoke" }
   );
   if (!ok) return;

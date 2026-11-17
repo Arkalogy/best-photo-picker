@@ -197,6 +197,9 @@ def _drain_current_library(ctx: WebAppState) -> None:
     # Cancel all running workers and wait for them to finish
     # Single canonical cancel-all path lives on WorkerPool.
     ctx.workers.cancel_and_join_all(timeout=WORKER_JOIN_TIMEOUT_S)
+    # What they reported (file names, batch names) belongs to the
+    # library being left, and to the devices approved for it.
+    ctx.workers.forget_runs()
 
     # Stop health-check threads and wait for them to release their
     # thread-local DB connections before switching databases.

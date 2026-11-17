@@ -141,6 +141,7 @@ def index() -> Response:
         find_or_create_pending_device,
         get_share_token,
         is_lan_sharing_enabled,
+        is_loopback_address,
     )
 
     remote = request.remote_addr or ""
@@ -152,11 +153,7 @@ def index() -> Response:
     # deployments work; they do NOT promote arbitrary LAN clients
     # to owner. See bpp/web/share.py:_is_trusted_peer for the
     # blast-radius limit.
-    is_loopback = (
-        remote in ("127.0.0.1", "::1", "localhost")
-        or remote.startswith("127.")
-        or _is_trusted_peer(remote)
-    )
+    is_loopback = is_loopback_address(remote) or _is_trusted_peer(remote)
 
     if not is_loopback and is_lan_sharing_enabled(ctx.get_conn()):
         token = get_share_token(ctx.get_conn())
@@ -167,10 +164,11 @@ def index() -> Response:
         import secrets
 
         from bpp.web.share import _token_equals, consume_pair_request_token
-        from bpp.web.share_devices import get_device_by_fingerprint
+        from bpp.web.share_devices import get_device_by_fingerprint, prune_expired_pending
 
         conn = ctx.get_conn()
         fp = request.cookies.get(FP_COOKIE_NAME)
+        prune_expired_pending(conn)  # a request that ran out is not a known device
         known = get_device_by_fingerprint(conn, fp) if fp else None
         if known is None:
             # A device the owner has never seen joins the pending list only

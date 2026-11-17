@@ -227,6 +227,7 @@ def _absolute_library_path(ctx: Any, filepath: str) -> str:
 
 
 @bp.get("/api/v1/photos/enhance-preview")
+@requires_local_app
 def api_enhance_preview() -> tuple[Response, int]:
     """Return auto-enhance parameters without saving (for per-section AUTO)."""
     from bpp.scoring.enhance import auto_enhance

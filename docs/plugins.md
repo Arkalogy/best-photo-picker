@@ -80,6 +80,11 @@ class MyPlugin:
         Use for: registering Flask blueprints, hooking the photo event bus."""
         if app is not None:
             from .blueprint import bp
+            # Put routes under /api/: only /api/, /thumb/, /photo/ and
+            # /video/ require the app or share token. A route anywhere
+            # else answers every program on the machine, and every LAN
+            # host once sharing is on. Owner-only routes also take
+            # @requires_local_app (bpp.web.share).
             app.register_blueprint(bp)
 
     def on_library_open(self, ctx):

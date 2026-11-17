@@ -344,8 +344,8 @@ to the wrong person):
 - **Pending requests** with badge count when phones are waiting
 - **Trusted devices** with last-seen timestamps and a "previously
   revoked" tag if you'd kicked them before
-- **Recent access** — last 10 share-link auth events (deduped per
-  10-minute window)
+- **Recent access** — last 10 visits by approved devices, under the
+  name you approved them with (one per device per 10-minute window)
 
 ### Security model
 

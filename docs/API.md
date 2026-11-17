@@ -9,7 +9,7 @@ Best Photo Picker exposes a full REST API on `localhost:5001`. All endpoints are
 - **App session token** — generated fresh on every server boot, embedded in the index page's `<meta name="auth-token">` tag for the local Tauri app to read.
 - **Persistent share token** — DB-backed, used by phones via the LAN share URL. It is only accepted when the device's fingerprint cookie maps to a *trusted* `share_devices` row, from any address: on the host machine too it is a device's credential, never the owner's.
 
-Responses to a paired device never carry the owner's real paths: `filepath` and every other path-shaped string is library-relative, `~/…` for the home folder, or an opaque `@ext/<hash>/<name>` for a photo outside both; the device's path-based lookups accept those forms. `/boot-check` (outside `/api`) exists for the desktop app's start-up probe and is not part of the API.
+Responses to a paired device never carry the owner's real paths: `filepath` and every other path-shaped string is library-relative, `~/…` for the home folder, or an `@ext/<hash>/<name>` handle for a photo outside both; the device's path-based lookups accept those forms. (`thumb_hash` is a hash of the full path: it does not reveal the path, but it lets a device confirm a guessed one.) `/boot-check` (outside `/api`) exists for the desktop app's start-up probe and is not part of the API.
 
 When **LAN sharing is off** (Settings → Share toggle), all non-loopback requests are denied at the gate before the token check runs. When LAN sharing is on, untrusted phones can only reach a small allow-list (`/`, `/static/*`, `/api/v1/share/pair/status`, `/api/v1/share/pair/request`) until the owner approves them. See [security.md](security.md) for the full threat model.
 
@@ -813,7 +813,7 @@ Returns `{"angle": -1.8}` (degrees; 0 when no dominant line found).
 
 ### GET /api/v1/photos/enhance-preview
 
-Return auto-enhance parameters for a photo without saving anything
+Owner-only. Return auto-enhance parameters for a photo without saving anything
 (`?filepath=...`) — powers the editor's per-section AUTO buttons.
 
 ### GET /api/v1/duplicates/groups
@@ -1605,12 +1605,12 @@ Feedback-corpus statistics and whether re-clustering is recommended
 
 ### GET /api/v1/faces/review-pairs/count
 
-Count of reviewable ambiguous pairs — gates the "Review pairs (N)"
+Owner-only. Count of reviewable ambiguous pairs — gates the "Review pairs (N)"
 button without building full pair metadata.
 
 ### GET /api/v1/faces/review-pairs/next
 
-Ambiguous cluster pairs for the "Same person?" flow (`?limit=30`),
+Owner-only. Ambiguous cluster pairs for the "Same person?" flow (`?limit=30`),
 closest-first, enriched with names + representative crops. Pairs the
 user already answered (either way) are excluded.
 

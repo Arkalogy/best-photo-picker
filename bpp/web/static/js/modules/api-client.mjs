@@ -145,7 +145,9 @@ export async function apiFetch(url, opts) {
     // disabled, token rotated). Reload → server serves the appropriate
     // page (pair.html with revoked state, or full SPA if still trusted).
     // Only fires once to avoid a storm if many in-flight calls all 403.
-    if (resp.status === 403 && !_sessionLostHandled) {
+    // (Not for "this is the owner's": a paired device that asks for an
+    // owner-only route keeps its session; the caller shows the refusal.)
+    if (resp.status === 403 && body.code !== "owner_only" && !_sessionLostHandled) {
       _sessionLostHandled = true;
       // Tiny delay so any cleanup tasks (timers, abort signals) settle.
       // The reload carries the boot key only to a listener that proved

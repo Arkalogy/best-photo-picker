@@ -48,10 +48,10 @@ hardening path.
 | Token leaks via browser history | `history.replaceState` strips `?_token=` after first paint |
 | Token leaks via Referer (outbound clicks) | `Referrer-Policy: no-referrer` on the index page |
 | Another local user or a sandboxed app reads the index page on 127.0.0.1 | Boot key: `bpp serve` prints a `?_boot=` URL whose key is good for that run only (the desktop app passes its own key to the sidecar); without it the page is a 403 with no token. On Linux, where other accounts can read the browser launcher's arguments, the key is refused on a connection the system's socket table shows another account made (not checked inside a container, which cannot see the host's sockets, or behind a reverse proxy). On macOS, while the server listens on every interface (LAN sharing on), it also holds `127.0.0.1` itself so no other program can take that address. `--open-loopback` restores the open page for single-user setups |
-| A paired phone learns the owner's folder layout | Every JSON response to a device is rewritten: library paths become relative, home becomes `~/…`, anything else becomes an opaque `@ext/<hash>/<name>` the device can still look the photo up by |
+| A paired phone learns the owner's folder layout | Every JSON response to a device is rewritten: library paths become relative, home becomes `~/…`, anything else becomes an `@ext/<hash>/<name>` handle the device can still look the photo up by. Limit: each photo's thumbnail id is a hash of its full path, so a paired device that guesses a path (a home-folder name, a drive name) can confirm the guess; it cannot read the path from it |
 | XSS exfiltrates the fingerprint cookie | `HttpOnly` cookie attribute |
 | CSRF via cross-origin form | `SameSite=Lax` cookie + custom `X-Auth-Token` header check |
-| Access log spammed by every phone API call | Dedup by (ip, user-agent) within a 10-minute window — one row per session |
+| Access log spammed by every phone API call, or relabelled by the phone | One row per approved device and address within a 10-minute window, shown under the name the owner approved (not the User-Agent the device sends); a name keeps its latest 3 rows |
 
 ## Threats NOT addressed
 

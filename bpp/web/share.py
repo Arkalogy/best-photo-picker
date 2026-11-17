@@ -41,7 +41,6 @@ from bpp.web.share_token import (  # noqa: E402, F401 - re-exported
     regenerate_share_token,
 )
 
-LOOPBACK_ADDRS = frozenset({"127.0.0.1", "::1", "localhost"})
 PAIR_STATUS_PATH = "/api/v1/share/pair/status"
 PAIR_REQUEST_PATH = "/api/v1/share/pair/request"
 FP_COOKIE_NAME = "bpp_share_fp"
@@ -115,7 +114,7 @@ def _require_local_app() -> tuple[object, int] | None:
 
     principal = getattr(g, "bpp_principal", None)
     if principal is None or principal.kind != PRINCIPAL_LOCAL_APP:
-        return jsonify({"error": "Owner-only endpoint"}), 403
+        return jsonify({"error": "Owner-only endpoint", "code": "owner_only"}), 403
     return None
 
 
@@ -252,6 +251,20 @@ class AuthResult:
     principal: Principal | None = None
 
 
+def is_loopback_address(remote: str | None) -> bool:
+    """Whether *remote* is an address of this computer (127.0.0.0/8 or
+    ::1). Parsed, not matched as text: behind a reverse proxy the value
+    comes from a header, and "127.0.0.1.example" is not this computer."""
+    import ipaddress
+
+    try:
+        addr = ipaddress.ip_address((remote or "").split("%", 1)[0])
+    except ValueError:
+        return False
+    mapped = getattr(addr, "ipv4_mapped", None)
+    return (mapped or addr).is_loopback
+
+
 def authorize_request(request: object, ctx: object) -> AuthResult:
     """Single-source-of-truth auth check.
 
@@ -279,7 +292,7 @@ def authorize_request(request: object, ctx: object) -> AuthResult:
     args = getattr(request, "args", {}) or {}
     cookies = getattr(request, "cookies", {}) or {}
 
-    is_loopback = remote in LOOPBACK_ADDRS or remote.startswith("127.") or _is_trusted_peer(remote)
+    is_loopback = is_loopback_address(remote) or _is_trusted_peer(remote)
     conn = ctx.get_conn()  # type: ignore[attr-defined]
 
     anonymous = Principal(kind=PRINCIPAL_ANONYMOUS)

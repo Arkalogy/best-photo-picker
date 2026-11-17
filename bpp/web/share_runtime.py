@@ -80,6 +80,7 @@ def consume_pair_request_token(ip: str) -> bool:
 _DESTRUCTIVE_RATE = 60 / 60.0
 _DESTRUCTIVE_BURST = 60
 _DESTRUCTIVE_BUCKETS: dict[str, tuple[float, float]] = {}
+_DESTRUCTIVE_BUCKETS_MAX = 1024
 _DESTRUCTIVE_LOCK = threading.Lock()
 
 
@@ -95,6 +96,12 @@ def consume_destructive_token(principal_key: str) -> bool:
     """
     now = time.monotonic()
     with _DESTRUCTIVE_LOCK:
+        if len(_DESTRUCTIVE_BUCKETS) >= _DESTRUCTIVE_BUCKETS_MAX:
+            # Buckets untouched for a while are full again: forgetting
+            # them changes nothing. (Keys include caller addresses.)
+            idle = [k for k, (_t, at) in _DESTRUCTIVE_BUCKETS.items() if now - at > 120]
+            for key in idle or list(_DESTRUCTIVE_BUCKETS)[: _DESTRUCTIVE_BUCKETS_MAX // 4]:
+                del _DESTRUCTIVE_BUCKETS[key]
         tokens, last = _DESTRUCTIVE_BUCKETS.get(principal_key, (float(_DESTRUCTIVE_BURST), now))
         tokens = min(float(_DESTRUCTIVE_BURST), tokens + (now - last) * _DESTRUCTIVE_RATE)
         if tokens < 1:
@@ -110,6 +117,8 @@ def _reset_pair_request_buckets_for_tests() -> None:
         _PAIR_REQUEST_BUCKETS.clear()
     with _DESTRUCTIVE_LOCK:
         _DESTRUCTIVE_BUCKETS.clear()
+    with _ACCESS_LOGGED_LOCK:
+        _ACCESS_LOGGED.clear()
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -126,26 +135,72 @@ _ACCESS_LOG_MAX_ROWS = 100
 _ACCESS_LOG_DEDUP_WINDOW_S = 10 * 60  # 10 minutes
 
 
-def record_share_access(conn: sqlite3.Connection, *, ip: str, user_agent: str) -> None:
-    """Append a successful share-token auth to the access log.
+#: Rows one device keeps in the access log (its latest visits).
+_ACCESS_LOG_ROWS_PER_DEVICE = 3
 
-    Deduplicated by (ip, user_agent) within a 10-minute window — a
-    single page load fires dozens of API calls, but the user only
-    cares about "iPhone connected at 09:36" not 30 separate rows.
-    Pruning is inline: after insert, keep only the last
-    `_ACCESS_LOG_MAX_ROWS` entries.
+
+#: (fingerprint, ip) -> when that device's visit was last written down.
+_ACCESS_LOGGED: dict[tuple[str, str], float] = {}
+_ACCESS_LOGGED_LOCK = threading.Lock()
+_ACCESS_LOGGED_MAX = 512
+
+
+def _already_logged(fingerprint: str, ip: str) -> bool:
+    """Whether this device (from this address) was logged within the
+    window; if not, note that it is being logged now. In memory: this
+    runs on every request a device makes."""
+    now = time.monotonic()
+    with _ACCESS_LOGGED_LOCK:
+        last = _ACCESS_LOGGED.get((fingerprint, ip))
+        if last is not None and now - last < _ACCESS_LOG_DEDUP_WINDOW_S:
+            return True
+        if len(_ACCESS_LOGGED) >= _ACCESS_LOGGED_MAX:
+            for key in sorted(_ACCESS_LOGGED, key=_ACCESS_LOGGED.__getitem__)[:64]:
+                del _ACCESS_LOGGED[key]
+        _ACCESS_LOGGED[(fingerprint, ip)] = now
+        return False
+
+
+def record_share_access(
+    conn: sqlite3.Connection, *, ip: str, user_agent: str, fingerprint: str | None = None
+) -> None:
+    """Append a paired device's visit to the access log.
+
+    One row per device and address within a 10-minute window: a page
+    load fires dozens of API calls, the owner wants "iPhone at 09:36".
+    The device is told apart by *fingerprint* (what the owner approved),
+    and the row carries the name it was approved under; the User-Agent
+    is only a fallback, because the device sends it and could put any
+    text, or a new one each request, there. Rows under one name keep the
+    latest few, so a device can't push the others out; the whole log
+    keeps the last `_ACCESS_LOG_MAX_ROWS`.
     """
+    label = user_agent or ""
+    if fingerprint:
+        if _already_logged(fingerprint, ip):
+            return
+        row = conn.execute(
+            "SELECT name FROM share_devices WHERE fingerprint = ?", (fingerprint,)
+        ).fetchone()
+        if row is not None and row[0]:
+            label = str(row[0])
     now = int(time.time())
     cutoff = now - _ACCESS_LOG_DEDUP_WINDOW_S
     existing = conn.execute(
         "SELECT 1 FROM share_access_log WHERE ip = ? AND user_agent = ? AND ts > ? LIMIT 1",
-        (ip, user_agent or "", cutoff),
+        (ip, label, cutoff),
     ).fetchone()
-    if existing is not None:
+    if existing is not None and not fingerprint:
         return  # already logged within the window
     conn.execute(
         "INSERT INTO share_access_log (ts, ip, user_agent) VALUES (?, ?, ?)",
-        (now, ip, user_agent or ""),
+        (now, ip, label),
+    )
+    conn.execute(
+        "DELETE FROM share_access_log WHERE user_agent = ? AND id NOT IN ("
+        "  SELECT id FROM share_access_log WHERE user_agent = ? ORDER BY ts DESC, id DESC LIMIT ?"
+        ")",
+        (label, label, _ACCESS_LOG_ROWS_PER_DEVICE),
     )
     conn.execute(
         "DELETE FROM share_access_log WHERE id NOT IN ("

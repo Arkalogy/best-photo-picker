@@ -179,6 +179,9 @@ class TestSwitchLibraryDrainsAllCollaborators:
         # Stub WorkerPool.cancel_and_join_all and AnalysisStore.join_threads
         # on the ctx so we can record the call order.
         class _StubWorkerPool:
+            def forget_runs(self) -> None:
+                events.append("workerpool.forget_runs")
+
             def cancel_and_join_all(self, timeout: Any) -> None:
                 events.append("workerpool.cancel_and_join_all")
 
@@ -231,6 +234,10 @@ class TestSwitchLibraryDrainsAllCollaborators:
 
         # Order: workerpool first, then analysis store, then pool close,
         # then startup. The "close_pool" event is inside the lock block.
+        # What the stopped workers reported is dropped with them.
+        assert events.index("workerpool.cancel_and_join_all") < events.index(
+            "workerpool.forget_runs"
+        )
         assert events.index("workerpool.cancel_and_join_all") < events.index(
             "analysis_store.join_threads"
         )
@@ -258,6 +265,8 @@ class TestSwitchLibraryResetsPhase5HealthFlag:
         from bpp.web.state import LibraryPaths
 
         class _NoOpWorkerPool:
+            def forget_runs(self) -> None: ...
+
             def cancel_and_join_all(self, timeout: Any) -> None: ...
 
         class _NoOpAnalysisStore:
@@ -326,6 +335,8 @@ class TestSwitchLibrarySerialized:
         from bpp.web.state import LibraryPaths
 
         class _StubWorkerPool:
+            def forget_runs(self) -> None: ...
+
             def cancel_and_join_all(self, timeout: Any) -> None:
                 in_flight_signal["enter"]()
                 slow_close()

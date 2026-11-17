@@ -254,7 +254,9 @@ def list_devices(conn: sqlite3.Connection) -> dict[str, list[dict[str, object]]]
     """
     prune_expired_pending(conn)
     rows = conn.execute(
-        "SELECT * FROM share_devices WHERE revoked_at IS NULL ORDER BY last_seen DESC"
+        # Arrival order, not "last seen": a waiting device refreshes that
+        # itself, and must not move its row under the owner's finger.
+        "SELECT * FROM share_devices WHERE revoked_at IS NULL ORDER BY first_seen, id"
     ).fetchall()
     pending: list[dict[str, object]] = []
     trusted: list[dict[str, object]] = []
