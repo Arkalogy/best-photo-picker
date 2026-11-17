@@ -85,7 +85,15 @@ class FolderSet:
     are resolved once and each source folder is decided once.
     """
 
-    def __init__(self, roots: list[str] | tuple[str, ...]) -> None:
+    def __init__(
+        self, roots: list[str] | tuple[str, ...], followed: list[str] | tuple[str, ...] = ()
+    ) -> None:
+        """*followed* are folders of the owner's own that were scanned
+        with links followed: a file reached through a link inside one
+        was imported from there on the owner's say, so it is inside by
+        its path as written. (Never the library's own folders: links in
+        those are not the owner's.)"""
+        self._followed = [os.path.abspath(f) for f in followed if f]
         self._paths: list[str] = []
         self._ids: set[tuple[int, int]] = set()
         self._decided: dict[str, bool] = {}
@@ -106,8 +114,17 @@ class FolderSet:
         that can't be resolved (a NUL byte, a link loop) is not."""
         try:
             folder = os.path.dirname(os.path.realpath(path))
+            written = os.path.dirname(os.path.abspath(path))
         except (OSError, ValueError):
             return False
+        # As written means as written: a ".." after a link names another
+        # folder than the spelling suggests, so such a path is never
+        # accepted this way.
+        stepped_up = os.pardir in str(path).replace("\\", "/").split("/")
+        if not stepped_up and any(
+            written == f or written.startswith(f.rstrip(os.sep) + os.sep) for f in self._followed
+        ):
+            return True
         decided = self._decided.get(folder)
         if decided is None:
             decided = self._decided[folder] = self._inside(folder)

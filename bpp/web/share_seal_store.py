@@ -113,7 +113,28 @@ def _create_key(path: str) -> str:
         _memory_states[state_file()] = state
         return key
     log.info("Created this installation's sharing key (%d libraries in use)", len(state["adopt"]))
+    _warn_of_settings_left_elsewhere()
     return key
+
+
+def _warn_of_settings_left_elsewhere() -> None:
+    """A first start with an empty settings folder while an earlier
+    version's settings sit in the home folder: the usual cause is a
+    container started without its settings folder mounted, and then
+    every new container starts from nothing (sharing turned off, model
+    choices asked again)."""
+    old = os.path.join(os.path.expanduser("~"), ".config", "bpp")
+    now = _folder()
+    with contextlib.suppress(OSError):
+        if os.path.isdir(old) and not os.path.samefile(old, now):
+            log.warning(
+                "Settings of an earlier version are in %s and are no longer used: this "
+                "version keeps its settings in %s. Sharing has to be turned on again. "
+                "In a container, mount a folder at /state so the settings survive a "
+                "new container (see the README).",
+                old,
+                now,
+            )
 
 
 def key() -> str:

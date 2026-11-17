@@ -202,6 +202,9 @@ def import_from_legacy_caches(conn: Any, wd: str, lib_root: str, photo_count: in
     For a fresh library only, also imports the v0 face_embeddings
     sidecar DB and the presets JSON, if present.
     """
+    from bpp.db.analysis_leftovers import forget_interrupted_deletes
+
+    forget_interrupted_deletes(conn, wd, lib_root)
     _unscored = (
         photo_count > 0
         and conn.execute(

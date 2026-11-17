@@ -30,7 +30,8 @@ CLIP_EMBEDDING_BYTES = CLIP_EMBEDDING_DIM * 4  # float32
 # Three knobs control the effective cap, checked in this order:
 #  1. Per-library DB setting `clip_max_override = "bypass"` —
 #     written when the user clicks "Enable anyway" in the Settings
-#     banner. Disables the cap entirely for that library.
+#     banner. Raises the cap for that library to what this computer's
+#     memory holds (see clip_row_limit); it does not remove it.
 #  2. BPP_CLIP_MAX_PHOTOS env var — raises (or lowers) the
 #     numeric cap at server-start time. CLI / dev users still
 #     have this path; Tauri users get the DB-override path.
@@ -57,6 +58,26 @@ def _clip_cap_overridden(conn: sqlite3.Connection) -> bool:
     from bpp.db.settings import get_setting
 
     return get_setting(conn, CLIP_MAX_OVERRIDE_KEY) == CLIP_MAX_OVERRIDE_BYPASS
+
+
+def _rows_this_computer_holds() -> int:
+    """One matrix in an eighth of the computer's memory (three can be
+    loaded at once), and never fewer rows than the default limit."""
+    try:
+        memory = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except (AttributeError, ValueError, OSError):  # Windows has no sysconf
+        memory = 0
+    by_memory = memory // 8 // CLIP_EMBEDDING_BYTES
+    return max(CLIP_EMBEDDING_MAX_ROWS, by_memory or 4 * CLIP_EMBEDDING_MAX_ROWS)
+
+
+def clip_row_limit(conn: sqlite3.Connection) -> int:
+    """How many embeddings may be loaded for this library.
+
+    "Enable anyway" is stored in the library, and a library can come
+    from someone else: so it raises the limit to what this computer's
+    memory holds, it does not remove it."""
+    return _rows_this_computer_holds() if _clip_cap_overridden(conn) else CLIP_EMBEDDING_MAX_ROWS
 
 
 # ---------------------------------------------------------------------------
@@ -138,8 +159,9 @@ def load_clip_matrix(
     semantic dedupe instead of running out of memory).
     """
     count = get_clip_embedding_count(conn, model_name=model_name)
-    if count > CLIP_EMBEDDING_MAX_ROWS and not _clip_cap_overridden(conn):
-        raise ClipEmbeddingsTooLarge(count, CLIP_EMBEDDING_MAX_ROWS)
+    limit = clip_row_limit(conn)
+    if count > limit:
+        raise ClipEmbeddingsTooLarge(count, limit)
 
     matrix = np.empty((count, CLIP_EMBEDDING_DIM), dtype=np.float32)
     ids: list[int] = []

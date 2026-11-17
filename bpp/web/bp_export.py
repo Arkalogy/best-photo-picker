@@ -16,6 +16,7 @@ from bpp.constants import WORKER_JOIN_TIMEOUT_S
 from bpp.errors import BppError, ConflictError, NotFoundError, ValidationError
 from bpp.output.export import export_selected
 from bpp.utils.logging import get_logger
+from bpp.utils.path_validation import FolderSet
 from bpp.web.share import requires_local_app
 from bpp.web.sse import captured_device_fingerprint, stream_worker_progress
 from bpp.web.state import get_ctx
@@ -110,17 +111,23 @@ def api_export() -> tuple[Response, int]:
     ), 200
 
 
-def _source_roots(ctx) -> list[str]:
+def _source_roots(ctx) -> FolderSet:
     """The folders an export may read photos from: the open library, its
-    workdir, and the folders the owner analyzed in place while this
-    library was open. All of them come from the owner (launch arguments
-    or their Analyze requests), never from the library's rows."""
+    workdir, and the folders the owner analyzed in place for this
+    library (in this run or an earlier one). All of them come from the
+    owner (launch arguments or their Analyze requests), never from the
+    library's rows."""
     from bpp.utils.path_validation import build_library_allowlist
 
     roots = build_library_allowlist(
         library_path=ctx.state.get("library_path"), workdir=ctx.state.get("workdir")
     )
-    return [*roots, *sorted(ctx.export_source_dirs)]
+    from bpp.utils.path_validation import is_path_under_any
+
+    # Links inside the library's own folders are not the owner's: only
+    # folders outside it count as followed.
+    followed = [f for f in sorted(ctx.export_followed_dirs) if not is_path_under_any(f, roots)]
+    return FolderSet([*roots, *sorted(ctx.export_source_dirs)], followed=followed)
 
 
 def _validate_export_params(ctx, params):

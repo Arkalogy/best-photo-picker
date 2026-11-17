@@ -184,8 +184,11 @@ def _is_empty(conn: sqlite3.Connection, state: tuple[str, str, list[str]]) -> bo
 
 
 def _remove(conn: sqlite3.Connection) -> None:
-    """Delete the sharing state, in the caller's transaction."""
-    stored = _stored_seal(conn)
+    """Delete the sharing state, in the caller's transaction.
+
+    What this installation recorded for the library (its counter) is
+    kept: the caller may still roll back, and an older sealed state put
+    back later must not pass as the first one seen."""
     conn.execute("DELETE FROM share_devices")
     conn.execute("DELETE FROM share_access_log")
     marks = ", ".join("?" for _ in range(2 + len(SEAL_KEYS)))
@@ -193,11 +196,6 @@ def _remove(conn: sqlite3.Connection) -> None:
         f"DELETE FROM settings WHERE key IN ({marks})",
         (KEY_SHARE_TOKEN, KEY_LAN_ENABLED, *SEAL_KEYS),
     )
-    if stored is not None:
-        lib_id, here = stored[1], _db_file(conn)
-        seen = store.record(lib_id)
-        if seen is not None and seen["path"] == here:
-            store.update(lambda state: state["libs"].pop(lib_id, None))
     log.warning(
         "Sharing was turned off for this library: its sharing settings were not made "
         "by this installation. The share link and approved devices it carried were "

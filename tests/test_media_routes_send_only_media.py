@@ -22,7 +22,8 @@ def app_with_rows(tmp_path):
     paths = {}
     for name in ("note.txt", "note.gif", "clip.mp4"):
         path = tmp_path / name
-        path.write_bytes(NOTE)
+        # A video is told by its header: only the .mp4 gets one.
+        path.write_bytes((b"\x00\x00\x00\x18ftypmp42" if name == "clip.mp4" else b"") + NOTE)
         paths[name] = str(path)
     app = create_app(workdir=str(tmp_path), input_dir=str(tmp_path), library_path=str(tmp_path))
     app.config["TESTING"] = True

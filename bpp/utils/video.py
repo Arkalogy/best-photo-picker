@@ -55,6 +55,37 @@ def _looks_like_a_manifest(filepath: str) -> bool:
     return text[:1] in (b"<", b"#") or all(32 <= b < 127 or b in (9, 10, 13) for b in head)
 
 
+#: How the containers this app plays begin. MP4 / MOV / M4V / 3GP are a
+#: list of boxes: four bytes of size, then one of these names.
+_FIRST_BOXES = (
+    *(b"ftyp", b"styp", b"moov", b"moof", b"mdat", b"wide"),
+    *(b"free", b"skip", b"junk", b"pict", b"pnot", b"uuid"),
+)
+_MATROSKA = b"\x1a\x45\xdf\xa3"  # MKV, WebM
+_ASF = bytes.fromhex("3026b2758e66cf11a6d900aa0062ce6c")  # WMV
+
+
+def has_video_header(filepath: str) -> bool:
+    """True when the file's own first bytes are a video container's.
+    The name says nothing: a row, or a link in the photos folder, can
+    give any file a video extension, and a video is sent as it is."""
+    try:
+        with open(filepath, "rb") as f:
+            head = f.read(189)
+    except OSError:
+        return False
+    return (
+        head[4:8] in _FIRST_BOXES
+        or head.startswith(_MATROSKA)
+        or (head[:4] in (b"RIFF", b"RF64") and head[8:12] == b"AVI ")
+        # MPEG program / transport streams, sometimes saved as .mp4 / .avi
+        or head.startswith(b"\x00\x00\x01\xba")
+        or (len(head) == 189 and head[0] == 0x47 and head[188] == 0x47)
+        or head.startswith(_ASF)
+        or head.startswith(b"FLV")
+    )
+
+
 def open_capture(filepath: str) -> cv2.VideoCapture | None:
     """The one way this app decodes a video: refuses manifests (the one
     real guard against a playlist with a video extension), returns None

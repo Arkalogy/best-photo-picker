@@ -280,6 +280,9 @@ def load_analysis_if_needed(
         # analysis file. One whose photos are all hidden, missing or
         # companions has rows, and the file may list photos deleted since.
         if not data and conn.execute("SELECT 1 FROM photos LIMIT 1").fetchone() is None:
+            from bpp.db.analysis_leftovers import forget_interrupted_deletes
+
+            forget_interrupted_deletes(conn, ctx.state["workdir"], ctx.state.get("library_path"))
             # Try loading from workdir (data/) then library root (legacy)
             json_data = None
             for search_dir in (ctx.state["workdir"], ctx.state.get("library_path")):

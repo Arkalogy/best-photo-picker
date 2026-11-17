@@ -156,7 +156,7 @@ def export_selected(
     strip_metadata: bool = True,
     on_progress: Callable[[int, int, str], None] | None = None,
     cancel_event: threading.Event | None = None,
-    source_roots: Sequence[str] | None = None,
+    source_roots: Sequence[str] | FolderSet | None = None,
 ) -> ExportResult:
     """Export selected photos and write reports.
 
@@ -337,7 +337,7 @@ def _write_photos(
     write_xmp: bool,
     on_progress: Callable[[int, int, str], None] | None,
     cancel_event: threading.Event | None = None,
-    source_roots: Sequence[str] | None = None,
+    source_roots: Sequence[str] | FolderSet | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None, int, bool]:
     """The per-photo loop. Returns ``(exported, failed, disk_error,
     metadata_kept, cancelled)``; the loop stops at the first OSError
@@ -349,7 +349,11 @@ def _write_photos(
     metadata_kept = 0
     cancelled = False
     total = len(selected)
-    readable = FolderSet(list(source_roots)) if source_roots is not None else None
+    readable = (
+        source_roots
+        if source_roots is None or isinstance(source_roots, FolderSet)
+        else FolderSet(list(source_roots))
+    )
     for i, item in enumerate(selected, 1):
         if cancel_event is not None and cancel_event.is_set():
             cancelled = True

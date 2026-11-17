@@ -368,6 +368,18 @@ def retry_payload(
     }
 
 
+def _forget_in_analysis_stores(ctx: object, conn: sqlite3.Connection, filepaths: list[str]) -> None:
+    """Drop the deleted photos from the analysis file and cache (those
+    of *filepaths* whose row is gone). Best effort: the delete stands."""
+    from bpp.db.analysis_leftovers import forget_deleted
+
+    state = getattr(ctx, "state", None) or {}
+    try:
+        forget_deleted(conn, state.get("workdir"), filepaths, state.get("library_path"))
+    except Exception:
+        log.warning("Could not clear deleted photos from the analysis stores", exc_info=True)
+
+
 def run_permanent_delete(
     ctx: object,
     conn: sqlite3.Connection,
@@ -422,6 +434,9 @@ def run_permanent_delete(
         _close(outcome.stuck + outcome.failed)
         raise
     outcome = reconcile(ctx, conn, files, token, sha256_map, allowed_dirs)
+    # Before the journal entry is closed: a crash from here on is
+    # replayed, and the replay finishes this too.
+    _forget_in_analysis_stores(ctx, conn, list(path_ids))
     _close(outcome.stuck + outcome.failed)
     if unclaimed:
         log.warning("%d files could not be claimed and keep their rows", len(unclaimed))

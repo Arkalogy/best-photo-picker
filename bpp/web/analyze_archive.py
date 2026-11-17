@@ -44,6 +44,31 @@ def _archive_folder(input_path: str) -> str:
     return f"{stem}-{hashlib.sha256(identity.encode()).hexdigest()[:10]}"
 
 
+def _real_folder(workdir: str, name: str) -> str:
+    """``workdir/extracted/<name>`` as a real folder with no links in it.
+
+    Unpacking writes by name. A link left at one of those names (the
+    library folder may have been prepared by someone else) would send
+    the archive's files to wherever it points, over the owner's own.
+    Links are removed, never followed."""
+    base = os.path.join(workdir, "extracted")
+    target = os.path.join(base, name)
+    for folder in (base, target):
+        if os.path.islink(folder):
+            log.warning("Removed a link at %s: archives are unpacked into real folders", folder)
+            os.unlink(folder)
+        os.makedirs(folder, exist_ok=True)
+    for parent, folders, files in os.walk(target):  # does not descend into links
+        for entry in [*folders, *files]:
+            path = os.path.join(parent, entry)
+            # A hard link too: writing "into" it would write into the
+            # other file of that name pair.
+            if os.path.islink(path) or (entry in files and os.stat(path).st_nlink > 1):
+                log.warning("Removed a link at %s before unpacking", path)
+                os.unlink(path)
+    return target
+
+
 def _files_and_folders(
     tf: tarfile.TarFile, input_path: str, emit: Callable[[dict[str, Any]], None]
 ) -> list[tarfile.TarInfo]:
@@ -93,8 +118,7 @@ def extract_archive_into_workdir(
     * Tar entries validated via ``is_safe_tar_member`` (Py<3.12) or
       the stdlib ``filter="data"`` policy (Py 3.12+).
     """
-    extract_dir = os.path.join(workdir, "extracted", _archive_folder(input_path))
-    os.makedirs(extract_dir, exist_ok=True)
+    extract_dir = _real_folder(workdir, _archive_folder(input_path))
     emit(
         {
             "type": "progress",
@@ -220,5 +244,64 @@ def extract_archive_into_workdir(
         emit({"type": "error", "message": "Unsupported archive format"})
         return None
 
+    _drop_twins_of_the_old_layout(os.path.join(workdir, "extracted"), extract_dir)
     log.info("Extracted archive to %s", extract_dir)
     return extract_dir
+
+
+def _drop_twins_of_the_old_layout(base: str, extract_dir: str) -> None:
+    """Earlier versions unpacked every archive straight into
+    ``extracted/``. Analysing one of those archives again would import
+    each photo a second time from its new folder. A file just unpacked
+    is removed when the library already has it: a photo row for the old
+    place, whose file there is byte for byte the same."""
+    import filecmp
+
+    pairs: dict[str, str] = {}
+    for parent, _folders, files in os.walk(extract_dir):
+        rel = os.path.relpath(parent, extract_dir)
+        for name in files:
+            old = os.path.normpath(os.path.join(base, rel, name))
+            if os.path.isfile(old) and not os.path.islink(old):
+                pairs[old] = os.path.join(parent, name)
+    dropped = 0
+    for old in _in_the_library(os.path.dirname(base), list(pairs)):
+        try:
+            if filecmp.cmp(old, pairs[old], shallow=False):
+                os.unlink(pairs[old])
+                dropped += 1
+        except OSError:
+            continue
+    if dropped:
+        log.info(
+            "%d photos of this archive are already in the library from an earlier "
+            "unpacking; they were not unpacked again",
+            dropped,
+        )
+
+
+def _in_the_library(workdir: str, paths: list[str]) -> list[str]:
+    """Those of *paths* that have a photo row in the library whose
+    database is in *workdir* (none when there is no database there)."""
+    import sqlite3
+
+    from bpp.db.connection import get_db
+    from bpp.db.sql_batches import in_batches
+
+    db_path = os.path.join(workdir, "photopicker.db")
+    if not paths or not os.path.isfile(db_path):
+        return []
+    found: list[str] = []
+    try:
+        conn = get_db(db_path)
+        for marks, batch in in_batches(paths):
+            found.extend(
+                r[0]
+                for r in conn.execute(
+                    f"SELECT filepath FROM photos WHERE filepath IN ({marks})", batch
+                )
+            )
+    except sqlite3.Error:
+        log.warning("Could not look up earlier unpackings in %s", db_path, exc_info=True)
+        return []
+    return found

@@ -89,7 +89,13 @@ def api_analyze() -> tuple[Response, int]:
         raise ConflictError("Analysis already in progress")
 
     # The owner chose this folder: export may read from it (see bp_export).
+    from bpp.config import cfg_get
+    from bpp.web import export_sources
+
+    followed = bool(cfg_get(merged_config, "follow_symlinks"))
     ctx.export_source_dirs.add(ctx.input_dir)
+    (ctx.export_followed_dirs.add if followed else ctx.export_followed_dirs.discard)(ctx.input_dir)
+    export_sources.remember(ctx.library_path, ctx.input_dir, followed=followed)
     ctx.invalidate_analysis()
     return jsonify({"status": "started", "workdir": wd}), 202
 
@@ -290,9 +296,13 @@ def api_clear_library() -> tuple[Response, int]:
     result = clear_library(conn, library_path)
     # The analysis stores and what was unpacked from archives hold the
     # same photos: "delete all photos" covers them.
-    from bpp.db.analysis_leftovers import forget_all_analysis
+    from bpp.db.analysis_leftovers import forget_all_analysis, forget_database_copies
+    from bpp.db.dialect import dialect
 
     forget_all_analysis(ctx.state.get("workdir") or ctx.dirs.get("data"), library_path)
+    db_path = dialect.database_path(conn)
+    if db_path:
+        forget_database_copies(db_path)
     ctx.invalidate_analysis()
     with ctx.lock:
         ctx.thumbs = None

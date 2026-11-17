@@ -124,7 +124,7 @@ const RULES = [
   {
     re: /^Sharing was turned off for this library/i,
     level: "WARNING",
-    text: "Sharing was turned off: this library’s sharing settings were made on another computer or account. Turn it on again in Settings → Share",
+    text: "Sharing was turned off: this library’s sharing settings were not made by this copy of the app (a library from another computer or account, or one first opened after an update). Turn it on again in Settings → Share",
   },
 
   // ── File permissions had no effect: the database is readable ──────────

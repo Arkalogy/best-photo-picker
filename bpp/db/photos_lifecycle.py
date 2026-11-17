@@ -75,7 +75,12 @@ def _companions_follow_or_surface(conn: sqlite3.Connection, parent_ids: list[int
             )
             (follow if same else surface).append(int(side_id))
     for ph, batch in in_batches(follow):
-        conn.execute(f"UPDATE photos SET deleted_at=datetime('now') WHERE id IN ({ph})", batch)
+        # Its photo's own time in the bin: they are purged together.
+        conn.execute(
+            "UPDATE photos SET deleted_at = (SELECT p.deleted_at FROM photos p"
+            f" WHERE p.id = photos.live_photo_parent_id) WHERE id IN ({ph})",
+            batch,
+        )
     for ph, batch in in_batches(surface):
         conn.execute(
             "UPDATE photos SET is_live_photo_sidecar = 0, live_photo_parent_id = NULL"
@@ -88,6 +93,40 @@ def _companions_follow_or_surface(conn: sqlite3.Connection, parent_ids: list[int
             "same picture: they are back in the library as photos of their own",
             len(surface),
         )
+
+
+def settle_companions_of_binned(conn: sqlite3.Connection) -> int:
+    """At library open: companions an earlier version left behind.
+
+    It binned a photo without its hidden companion, and purged a photo
+    leaving the companion a row nobody can see with its file on disk.
+    Companions of photos now in the bin follow them or come back into
+    view (as for a new delete); companions whose photo is already gone
+    become ordinary photos (in the bin, if that is where they were).
+    Returns how many rows changed."""
+    binned = [
+        int(r[0])
+        for r in conn.execute(
+            "SELECT DISTINCT p.id FROM photos p JOIN photos s ON s.live_photo_parent_id = p.id"
+            " WHERE p.deleted_at IS NOT NULL AND s.is_live_photo_sidecar = 1"
+            " AND s.deleted_at IS NULL"
+        )
+    ]
+    before = conn.total_changes
+    if binned:
+        _companions_follow_or_surface(conn, binned)
+    orphans = conn.execute(
+        "UPDATE photos SET is_live_photo_sidecar = 0"
+        " WHERE is_live_photo_sidecar = 1 AND live_photo_parent_id IS NULL"
+    ).rowcount
+    if orphans:
+        log.info(
+            "%d hidden companion file(s) whose photo was deleted earlier are back "
+            "in the library as photos of their own",
+            orphans,
+        )
+    conn.commit()  # also when nothing changed: the UPDATE opened a transaction
+    return conn.total_changes - before
 
 
 def restore_photos(conn: sqlite3.Connection, photo_ids: list[int]) -> int:

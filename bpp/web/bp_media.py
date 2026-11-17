@@ -255,8 +255,11 @@ def serve_video(path_hash: str) -> Response | tuple[Response, int]:
     if filepath is None or not os.path.isfile(filepath):
         raise NotFoundError("Video not found", path_hash=path_hash)
 
-    # Only a video: the path comes from a library row, which can name any file.
-    if media_kind_from_path(filepath) is not MediaKind.VIDEO:
+    # Only a video, by its name and by its own header: the path comes
+    # from a library row, which can name (or link to) any file.
+    from bpp.utils.video import has_video_header
+
+    if media_kind_from_path(filepath) is not MediaKind.VIDEO or not has_video_header(filepath):
         raise NotFoundError("Video not found", path_hash=path_hash)
     ext = os.path.splitext(filepath)[1].lower()
     mimetype = _VIDEO_MIMETYPES.get(ext, "video/mp4")

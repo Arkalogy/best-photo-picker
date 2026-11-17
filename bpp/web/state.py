@@ -21,6 +21,7 @@ from bpp.db.connection import (
 )
 from bpp.db.library import get_library_dirs, get_library_path
 from bpp.utils.logging import get_logger
+from bpp.web import export_sources
 from bpp.web.analysis_store import AnalysisStore
 from bpp.web.model_cache import ModelCache
 from bpp.web.state_compat import _LegacyDelegateMixin
@@ -90,6 +91,8 @@ class WebAppState(_LegacyDelegateMixin):
     #: library is open: the only folders outside the library an export may
     #: read. Emptied on a library switch.
     export_source_dirs: set[str]
+    #: Those of them that were analyzed with links followed.
+    export_followed_dirs: set[str]
     #: False from a library switch until the new library's sharing state
     #: has been checked (share_seal): devices are refused meanwhile.
     share_state_checked: bool = True
@@ -124,7 +127,8 @@ class WebAppState(_LegacyDelegateMixin):
         )
 
         # Folders outside the library an export may read (see the class attrs).
-        self.export_source_dirs = {self.paths.input_dir} - {""}
+        self.export_source_dirs, self.export_followed_dirs = export_sources.remembered(lib_path)
+        self.export_source_dirs |= {self.paths.input_dir} - {""}
 
         self.state: AppState = {
             "input_dir": self.paths.input_dir or None,

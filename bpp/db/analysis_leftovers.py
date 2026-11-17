@@ -56,6 +56,24 @@ def forget_deleted(
     forget_analysis(workdir, [p for p in filepaths if p not in still_there], library_path)
 
 
+def forget_interrupted_deletes(
+    conn: sqlite3.Connection, workdir: str | None, library_path: str | None = None
+) -> None:
+    """Before anything is imported from the analysis file at start-up:
+    drop what a permanent delete that was cut short had already deleted.
+    Its rows went first and its own clean-up never ran, so the file
+    still lists those photos and the import would bring them back."""
+    from bpp.db.journal import pending_journals
+
+    named: set[str] = set()
+    for entry in pending_journals(conn, "permanent_delete"):
+        payload = entry.get("payload") or {}
+        for part in (payload.get("filepaths"), payload.get("files")):
+            if isinstance(part, (list, dict)):
+                named.update(fp for fp in part if isinstance(fp, str))
+    forget_deleted(conn, workdir, sorted(named), library_path)
+
+
 def forget_analysis(
     workdir: str | None, filepaths: list[str], library_path: str | None = None
 ) -> None:
@@ -75,6 +93,8 @@ def _forget_in_json(path: str, gone: set[str]) -> None:
     if not os.path.isfile(path) or os.path.islink(path):
         return
     with _rewrite_lock:
+        if not _may_name_any(path, gone):
+            return
         data = load_json_file(path, None, expected_type=list, context=path)
         if data is None:
             return
@@ -88,6 +108,35 @@ def _forget_in_json(path: str, gone: set[str]) -> None:
                 json.dump(kept, f)
         except OSError:
             log.warning("Could not remove deleted photos from %s", path, exc_info=True)
+
+
+#: Looking for a path costs a pass over the file; a parse costs about ten.
+_SCAN_AT_MOST = 4
+
+
+def _may_name_any(path: str, gone: set[str]) -> bool:
+    """A cheap look before the file is parsed (it can be hundreds of
+    megabytes, and most deletes are of photos it does not list): does
+    it contain any of the paths, as JSON writes them? Read in pieces,
+    never whole."""
+    needles = set()
+    for fp in gone:
+        for ascii_only in (True, False):
+            needles.add(json.dumps(fp, ensure_ascii=ascii_only).encode("utf-8", "surrogatepass"))
+    if not needles or len(gone) > _SCAN_AT_MOST:
+        return True  # more than a few paths: parsing once is the cheaper way
+    longest = max(len(n) for n in needles)
+    try:
+        with open(path, "rb") as f:
+            tail = b""
+            while chunk := f.read(1 << 20):
+                window = tail + chunk
+                if any(n in window for n in needles):
+                    return True
+                tail = window[-longest:]
+    except OSError:
+        return True  # let the load report it
+    return False
 
 
 def _erasing(path: str) -> sqlite3.Connection:
@@ -163,3 +212,50 @@ def _empty_cache(path: str) -> None:
         _settle(conn)
     except sqlite3.Error:
         log.warning("Could not empty %s", path, exc_info=True)
+
+
+def forget_database_copies(db_path: str) -> int:
+    """Clear Library: the copies of the database kept beside it (the
+    start-up backups, the ones set aside before a restore or a reset,
+    damaged ones kept for inspection) still hold every photo's path,
+    date and location. Remove them and take one fresh backup of the
+    now empty database. Returns how many were removed."""
+    from bpp.db.connection import backup_db
+
+    folder, name = os.path.split(db_path)
+    removed = 0
+    try:
+        entries = os.listdir(folder)
+    except OSError:
+        return 0
+    for entry in entries:
+        # "<db>." copies only: "<db>-wal" / "-shm" belong to the live
+        # database, and a pending-restore marker is not a copy.
+        if not entry.startswith(name + ".") or entry.startswith(name + ".restore-pending"):
+            continue
+        path = os.path.join(folder, entry)
+        if os.path.isdir(path) and not os.path.islink(path):
+            continue
+        try:
+            os.unlink(path)
+            removed += 1
+        except OSError:
+            log.warning("Could not remove the database copy %s", path, exc_info=True)
+    _scrub(db_path)
+    backup_db(db_path)
+    return removed
+
+
+def _scrub(db_path: str) -> None:
+    """Rewrite the database file without the pages its deleted rows
+    left behind, and empty its write-ahead log: until then the "empty"
+    database (and a backup copied from it) still holds their text."""
+    from bpp.db.connection import get_db
+
+    try:
+        conn = get_db(db_path)
+        conn.commit()
+        conn.execute("VACUUM")
+        _settle(conn)
+    except sqlite3.Error:
+        log.warning("Could not compact %s after clearing it", db_path, exc_info=True)

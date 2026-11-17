@@ -355,7 +355,7 @@ def clear_library(conn: sqlite3.Connection, library_path: str) -> dict[str, int]
     Clears: photos, album_photos, face_embeddings, clip_embeddings, dedup_feedback.
     Keeps: albums (structure), presets.
     Removes batch folders under library_path/photos/ (but not the DB).
-    Also clears the thumbnail and face_crops caches.
+    Also clears the thumbnail, face_crops and pet_crops caches.
     """
     dirs = get_library_dirs(library_path)
 
@@ -398,8 +398,8 @@ def clear_library(conn: sqlite3.Connection, library_path: str) -> dict[str, int]
                     log.warning("Failed to remove batch folder %s: %s", batch_dir, e)
                 break
 
-    # Clear cache dirs (thumbnails and face crops)
-    for cache_dir in (dirs["thumbs"], dirs["face_crops"]):
+    # Clear cache dirs (thumbnails, face crops and pet crops)
+    for cache_dir in (dirs["thumbs"], dirs["face_crops"], dirs["pet_crops"]):
         if os.path.isdir(cache_dir):
             try:
                 retry_io(shutil.rmtree, cache_dir, label="rmtree_cache")

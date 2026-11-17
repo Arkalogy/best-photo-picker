@@ -22,7 +22,6 @@ from __future__ import annotations
 from flask import Blueprint, Response, jsonify, request
 
 from bpp.db.albums import sync_all_photos_album
-from bpp.db.analysis_leftovers import forget_deleted
 from bpp.db.photos import (
     count_deleted_photos,
     count_hidden_photos,
@@ -167,7 +166,6 @@ def api_photos_delete_permanent() -> tuple[Response, int]:
         result.removed,
     )
     ctx.invalidate_analysis()
-    forget_deleted(conn, ctx.state.get("workdir"), list(path_to_id), ctx.state.get("library_path"))
     # The owner chose photos; their companions are not counted as more.
     companions_left = set(get_photo_id_map_by_paths(conn, list(companions)))
     photos_deleted = result.rows_deleted - (len(companions) - len(companions_left))

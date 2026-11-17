@@ -229,6 +229,7 @@ def _adopt_library(ctx: WebAppState, new_path: str, new_dirs: dict[str, str], wo
         ctx.state.get("workdir"),
         ctx.state.get("library_path"),
         getattr(ctx, "library_id", None),
+        (ctx.export_source_dirs, ctx.export_followed_dirs),
     )
     with ctx.lock:
         close_all_connections(new_epoch=True)
@@ -247,8 +248,11 @@ def _adopt_library(ctx: WebAppState, new_path: str, new_dirs: dict[str, str], wo
         ctx.state["workdir"] = workdir
         ctx.state["library_path"] = new_path
         ctx.library_id = secrets.token_hex(8)
-        # Folders analyzed in place belong to the library that was open.
-        ctx.export_source_dirs = set()
+        # Folders analyzed in place belong to the library they were
+        # analyzed for: this one's are the ones remembered for it.
+        from bpp.web import export_sources
+
+        ctx.export_source_dirs, ctx.export_followed_dirs = export_sources.remembered(new_path)
         # Devices wait until this library's sharing state has been checked.
         ctx.share_state_checked = False
         # keep `ctx.dirs` consistent with the immutable
@@ -289,7 +293,7 @@ def _adopt_library(ctx: WebAppState, new_path: str, new_dirs: dict[str, str], wo
 
         with contextlib.suppress(Exception):
             clear_lock(workdir)
-        paths, workdir, library_path, library_id = old
+        paths, workdir, library_path, library_id, export_dirs = old
         with ctx.lock:
             close_all_connections(new_epoch=True)
             ctx.paths = paths
@@ -301,6 +305,7 @@ def _adopt_library(ctx: WebAppState, new_path: str, new_dirs: dict[str, str], wo
             ctx.caches.clip_cache = {"embeddings": {}, "ready": False}
             _invalidate_caches(ctx)
             ctx.library_id = library_id
+            ctx.export_source_dirs, ctx.export_followed_dirs = export_dirs
         try:
             ctx.startup()
         except Exception:

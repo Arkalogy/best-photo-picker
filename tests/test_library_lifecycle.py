@@ -209,6 +209,8 @@ class TestSwitchLibraryDrainsAllCollaborators:
             lock=threading.RLock(),
             thumbs=None,
             caches=SimpleNamespace(clip_cache={"embeddings": {}, "ready": False}),
+            export_source_dirs=set(),
+            export_followed_dirs=set(),
             _switch_library_lock=threading.Lock(),
             startup=lambda: events.append("startup"),
         )
@@ -283,6 +285,8 @@ class TestSwitchLibraryResetsPhase5HealthFlag:
             lock=threading.RLock(),
             thumbs=None,
             caches=SimpleNamespace(clip_cache={"embeddings": {}, "ready": False}),
+            export_source_dirs=set(),
+            export_followed_dirs=set(),
             _switch_library_lock=threading.Lock(),
             startup=lambda: None,
             # The poisoned state: a prior daemon ran and failed.
@@ -358,6 +362,8 @@ class TestSwitchLibrarySerialized:
             lock=threading.RLock(),
             thumbs=None,
             caches=SimpleNamespace(clip_cache={"embeddings": {}, "ready": False}),
+            export_source_dirs=set(),
+            export_followed_dirs=set(),
             _switch_library_lock=threading.Lock(),
             startup=lambda: None,
         )

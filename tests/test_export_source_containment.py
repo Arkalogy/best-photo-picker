@@ -404,7 +404,7 @@ def test_an_analyze_that_starts_makes_its_folder_exportable(tmp_path, monkeypatc
     with app.test_client() as c:
         r = c.post("/api/v1/analyze", json={"input_dir": str(folder)})
     assert r.status_code == 202, r.get_json()
-    assert str(folder) in _source_roots(ctx)
+    assert _source_roots(ctx).holds(str(folder / "a.jpg"))
 
 
 def test_an_analyze_that_is_refused_does_not(tmp_path, monkeypatch):
@@ -417,7 +417,7 @@ def test_an_analyze_that_is_refused_does_not(tmp_path, monkeypatch):
     with app.test_client() as c:
         r = c.post("/api/v1/analyze", json={"input_dir": str(folder)})
     assert r.status_code == 409, r.get_json()
-    assert str(folder) not in _source_roots(ctx)
+    assert not _source_roots(ctx).holds(str(folder / "a.jpg"))
 
 
 def test_switching_library_forgets_the_folders_analyzed_for_the_last_one(tmp_path):
@@ -431,10 +431,9 @@ def test_switching_library_forgets_the_folders_analyzed_for_the_last_one(tmp_pat
         ctx.switch_library(str(other))
 
     roots = _source_roots(ctx)
-    assert str(tmp_path / "trip") not in roots
-    assert not any(
-        r.startswith(str(tmp_path / "lib") + os.sep) or r == str(tmp_path / "lib") for r in roots
-    )
+    assert not roots.holds(str(tmp_path / "trip" / "a.jpg"))
+    assert not roots.holds(str(tmp_path / "lib" / "photos" / "a.jpg"))
+    assert roots.holds(str(other / "photos" / "a.jpg"))
 
 
 def test_a_folder_named_at_launch_is_exportable(tmp_path):
