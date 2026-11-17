@@ -39,6 +39,7 @@ class TestShareInfoEndpoint:
         from bpp.web.share import set_lan_sharing_enabled
 
         ctx = share_app.extensions["bpp"]
+        ctx.bound_host = "0.0.0.0"  # this run serves the LAN
         with share_app.app_context():
             set_lan_sharing_enabled(ctx.get_conn(), True)
 
@@ -60,6 +61,7 @@ class TestShareInfoEndpoint:
         from bpp.web.share import get_share_token, set_lan_sharing_enabled
 
         ctx = share_app.extensions["bpp"]
+        ctx.bound_host = "0.0.0.0"  # this run serves the LAN
         with share_app.app_context():
             set_lan_sharing_enabled(ctx.get_conn(), True)
             share_token = get_share_token(ctx.get_conn())

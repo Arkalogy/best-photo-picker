@@ -128,6 +128,18 @@ def _note_pending(workdir: str, gone: list[str]) -> bool:
         return False
 
 
+def pending_forgets(*folders: str | None) -> set[str]:
+    """The paths noted as deleted whose removal from the analysis file
+    has not been done yet (in any of *folders*). An importer of that
+    file leaves them out."""
+    gone: set[str] = set()
+    with _pending_lock:
+        for folder in folders:
+            if folder:
+                gone |= _read_pending(os.path.join(folder, PENDING))[0]
+    return gone
+
+
 def _read_pending(path: str) -> tuple[set[str], int]:
     """The noted paths, and how many bytes of the file they are."""
     from bpp.utils.json_utils import safe_json_loads
@@ -254,11 +266,25 @@ def _erasing(path: str) -> sqlite3.Connection:
     return conn
 
 
-def _settle(conn: sqlite3.Connection) -> None:
+def _settle(conn: sqlite3.Connection, tries: int = 1) -> None:
     """Fold the write-ahead log into the file and empty it: until then
     the log still holds the pages as they were before the delete."""
-    with contextlib.suppress(sqlite3.Error):
-        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    import time
+
+    for attempt in range(tries):
+        try:
+            row = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        except sqlite3.Error:
+            log.warning("Could not checkpoint the database", exc_info=True)
+            return
+        if not row or not row[0]:  # (busy, log pages, checkpointed)
+            return
+        if attempt + 1 < tries:
+            time.sleep(0.2)  # a reader holds an older snapshot: let it finish
+    log.warning(
+        "The database's write-ahead log could not be emptied (it is in use); "
+        "deleted rows stay in it until the next checkpoint"
+    )
 
 
 def _forget_in_cache(path: str, gone: list[str]) -> None:
@@ -326,7 +352,7 @@ def _empty_cache(path: str) -> None:
         conn.commit()
         with contextlib.suppress(sqlite3.Error):
             conn.execute("VACUUM")  # give the emptied pages back
-        _settle(conn)
+        _settle(conn, tries=10)
     except sqlite3.Error:
         log.warning("Could not empty %s", path, exc_info=True)
 
@@ -373,6 +399,6 @@ def _scrub(db_path: str) -> None:
         conn = get_db(db_path)
         conn.commit()
         conn.execute("VACUUM")
-        _settle(conn)
+        _settle(conn, tries=10)
     except sqlite3.Error:
         log.warning("Could not compact %s after clearing it", db_path, exc_info=True)

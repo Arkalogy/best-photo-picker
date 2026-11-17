@@ -62,12 +62,40 @@ def _real_folder(workdir: str, name: str) -> str:
     for parent, folders, files in os.walk(target):  # does not descend into links
         for entry in [*folders, *files]:
             path = os.path.join(parent, entry)
-            # A hard link too: writing "into" it would write into the
-            # other file of that name pair.
-            if os.path.islink(path) or (entry in files and os.stat(path).st_nlink > 1):
+            if os.path.islink(path):
                 log.warning("Removed a link at %s before unpacking", path)
                 os.unlink(path)
     return target
+
+
+def _zip_written_name(name: str) -> str:
+    """Where ``ZipFile.extract`` writes a member: it drops a drive, and
+    every empty, ``.`` and ``..`` part of the name."""
+    name = os.path.splitdrive(name.replace("/", os.sep))[1]
+    return os.sep.join(p for p in name.split(os.sep) if p not in ("", os.curdir, os.pardir))
+
+
+def _tar_written_name(name: str) -> str:
+    """Where the tar is written: a leading slash is dropped (the "data"
+    filter does so, and refuses what would still leave the folder)."""
+    return name.lstrip("/" + os.sep)
+
+
+def _detach(extract_dir: str, member: str) -> None:
+    """Before one member is written: if a file already at its place has
+    another name too (a hard link, as hardlink exports make), remove
+    this name. Writing "into" it would write into the other file. Only
+    the places this archive writes to: other files in the folder are
+    left alone."""
+    path = os.path.join(extract_dir, member)
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return
+    import stat
+
+    if stat.S_ISLNK(st.st_mode) or (stat.S_ISREG(st.st_mode) and st.st_nlink > 1):
+        os.unlink(path)
 
 
 def _files_and_folders(
@@ -96,6 +124,57 @@ def _files_and_folders(
             }
         )
     return members
+
+
+def _unpack_tar(
+    tf: tarfile.TarFile,
+    members: list[tarfile.TarInfo],
+    extract_dir: str,
+    emit: Callable[[dict[str, Any]], None],
+) -> bool:
+    """Write the checked members of a tar. False (after an error event)
+    when the archive is damaged or holds an unsafe entry."""
+    try:
+        if hasattr(tarfile, "data_filter"):
+            # filter="data" (3.11.4+ ships it) rejects absolute
+            # paths, links escaping the tree, device files, and
+            # drops the archive's mode bits.
+            # One member at a time, each detached just before it is
+            # written: an archive that fails halfway has detached only
+            # what it replaced.
+            for member in members:
+                _detach(extract_dir, _tar_written_name(member.name))
+                tf.extract(member, extract_dir, filter="data")
+        else:
+            # Python 3.11: no filter kwarg yet — validate
+            # each member via is_safe_tar_member, which
+            # checks BOTH path containment AND tar entry
+            # type. Rejecting symlinks / hardlinks /
+            # device nodes here mirrors what filter="data"
+            # does on 3.12+, so a malicious archive can't
+            # plant a non-file entry on the older Python.
+            for member in members:
+                if not is_safe_tar_member(member, extract_dir):
+                    raise ValueError(
+                        f"Unsafe tar entry rejected: {member.name} (type={member.type!r})"
+                    )
+                _detach(extract_dir, _tar_written_name(member.name))
+                tf.extract(member, extract_dir)
+    except (tarfile.TarError, ValueError, OSError) as e:
+        # Py3.12+ tarfile filters raise FilterError /
+        # AbsolutePathError / OutsideDestinationError on
+        # malicious entries. Surface as a user-readable
+        # message instead of a 500 crashing the worker.
+        log.warning("Could not extract archive: %s", e)
+        emit(
+            {
+                "type": "error",
+                "message": "Could not extract archive: it is damaged or holds an "
+                "unsafe entry (see server.log)",
+            }
+        )
+        return False
+    return True
 
 
 def extract_archive_into_workdir(
@@ -166,6 +245,7 @@ def extract_archive_into_workdir(
             for info in infos:
                 if not is_safe_archive_member(info.filename, extract_dir):
                     raise ValueError(f"Zip entry escapes target: {info.filename}")
+                _detach(extract_dir, _zip_written_name(info.filename))
                 zf.extract(info, extract_dir)
     elif tarfile.is_tarfile(input_path):
         with tarfile.open(input_path, "r:*") as tf:
@@ -207,39 +287,7 @@ def extract_archive_into_workdir(
                     }
                 )
                 return None
-            try:
-                if hasattr(tarfile, "data_filter"):
-                    # filter="data" (3.11.4+ ships it) rejects absolute
-                    # paths, links escaping the tree, device files, and
-                    # drops the archive's mode bits.
-                    tf.extractall(extract_dir, members=members, filter="data")
-                else:
-                    # Python 3.11: no filter kwarg yet — validate
-                    # each member via is_safe_tar_member, which
-                    # checks BOTH path containment AND tar entry
-                    # type. Rejecting symlinks / hardlinks /
-                    # device nodes here mirrors what filter="data"
-                    # does on 3.12+, so a malicious archive can't
-                    # plant a non-file entry on the older Python.
-                    for member in members:
-                        if not is_safe_tar_member(member, extract_dir):
-                            raise ValueError(
-                                f"Unsafe tar entry rejected: {member.name} (type={member.type!r})"
-                            )
-                        tf.extract(member, extract_dir)
-            except (tarfile.TarError, ValueError, OSError) as e:
-                # Py3.12+ tarfile filters raise FilterError /
-                # AbsolutePathError / OutsideDestinationError on
-                # malicious entries. Surface as a user-readable
-                # message instead of a 500 crashing the worker.
-                log.warning("Could not extract archive: %s", e)
-                emit(
-                    {
-                        "type": "error",
-                        "message": "Could not extract archive: it is damaged or holds an "
-                        "unsafe entry (see server.log)",
-                    }
-                )
+            if not _unpack_tar(tf, members, extract_dir, emit):
                 return None
     else:
         emit({"type": "error", "message": "Unsupported archive format"})
@@ -266,7 +314,13 @@ def _drop_twins_of_the_old_layout(base: str, extract_dir: str) -> None:
             if os.path.isfile(old) and not os.path.islink(old):
                 pairs[old] = os.path.join(parent, name)
     dropped = 0
-    for old in _in_the_library(os.path.dirname(base), list(pairs)):
+    workdir = os.path.dirname(base)
+    # A photo the library already has at the NEW place too stays: its
+    # row, albums and choices point at this file.
+    has_row_here = set(_in_the_library(workdir, list(pairs.values())))
+    for old in _in_the_library(workdir, list(pairs)):
+        if pairs[old] in has_row_here:
+            continue
         try:
             if filecmp.cmp(old, pairs[old], shallow=False):
                 os.unlink(pairs[old])

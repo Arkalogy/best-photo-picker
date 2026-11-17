@@ -255,6 +255,8 @@ def _adopt_library(ctx: WebAppState, new_path: str, new_dirs: dict[str, str], wo
         ctx.export_source_dirs, ctx.export_followed_dirs = export_sources.remembered(new_path)
         # Devices wait until this library's sharing state has been checked.
         ctx.share_state_checked = False
+        ctx.share_check_waits_for_key = False  # the old library's wait is not this one's
+        ctx.share_recovered_this_run = False
         # keep `ctx.dirs` consistent with the immutable
         # mapping `ctx.paths.dirs` now wraps. Pre-fix this
         # assigned the raw dict directly, so callers could

@@ -63,7 +63,23 @@ def auto_purge(ctx: WebAppState) -> None:
         conn = ctx.get_conn()
         # First, so a companion an earlier version left out of the bin
         # is purged with its photo below, not orphaned by it.
-        settle_companions_of_binned(conn)
+        if settle_companions_of_binned(conn):
+            # Start-up synced the albums before this ran: rows that just
+            # became ordinary photos are added to them now.
+            from bpp.db.albums import sync_all_photos_album
+            from bpp.db.smart_albums import refresh_smart_albums
+
+            try:
+                sync_all_photos_album(conn)
+                refresh_smart_albums(conn)
+            except Exception:
+                # (the background start-up pass may hold the database)
+                log.warning(
+                    "Could not add recovered companion photos to the albums now; "
+                    "the next start does it",
+                    exc_info=True,
+                )
+                conn.rollback()
         # One selection drives the journal, the DB delete and the disk
         # loop, so nothing is deleted that the journal doesn't name.
         rows = conn.execute(

@@ -22,6 +22,8 @@ import { toast, toastError } from "./toast.mjs";
  *
  * @typedef {Object} ShareInfo
  * @property {boolean} enabled
+ * @property {boolean} [key_unreadable] - this installation's key file can't be read; sharing is held off
+ * @property {boolean} [restart_required] - switched on, but this run listens on this computer only
  * @property {string|null} lan_ip
  * @property {number} port
  * @property {string|null} share_url
@@ -111,14 +113,32 @@ function _shareTabHTML(info, devices) {
           </div>
         </div>
         <label class="setting-toggle">
-          <input type="checkbox" id="share-toggle" ${info.enabled ? "checked" : ""}
-                 data-onchange="_shareToggle">
+          <input type="checkbox" id="share-toggle" ${info.enabled || info.restart_required ? "checked" : ""}
+                 data-onchange="_shareToggle"${info.key_unreadable ? " disabled" : ""}>
           <span class="toggle-track"></span>
         </label>
       </div>
     </div>
   `;
 
+  if (info.key_unreadable) {
+    return `
+      ${toggle}
+      <div class="setting-item">
+        <div class="setting-label">Sharing is held off: this app's own sharing key file can't be read</div>
+        <div class="setting-hint">Nothing was removed. Fix the file's permissions (its path is in the server log), then restart Best Photo Picker.</div>
+      </div>`;
+  }
+  if (info.restart_required) {
+    // Switched on, but this run started with sharing off and listens on
+    // this computer only: say so, never show a link no phone can open.
+    return `
+      ${toggle}
+      <div class="setting-item">
+        <div class="setting-label">Restart Best Photo Picker to finish turning sharing on</div>
+        <div class="setting-hint">Sharing is switched on, but the app is still only reachable from this computer until it is restarted.</div>
+      </div>`;
+  }
   if (!info.enabled) {
     const ipHint = info.lan_ip
       ? `Your LAN IP is <code>${esc(info.lan_ip)}</code>.`

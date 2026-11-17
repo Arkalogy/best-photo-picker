@@ -265,17 +265,33 @@ def is_loopback_address(remote: str | None) -> bool:
     return (mapped or addr).is_loopback
 
 
-def _check_sharing_state_again(ctx: object, conn: object) -> None:
+def _check_sharing_state_again(ctx: object, conn: object, library: object) -> None:
     """The open-time check could not be made (the key file was not
     readable). Once it is, make it, so sharing works again without a
-    restart."""
+    restart. *library* is ``ctx.library_id`` as it was before *conn* was
+    taken: the result counts only if that is still the open library, so
+    a switch meanwhile leaves the new one to its own start-up check."""
+    import contextlib
+
     from bpp.web import share_seal, share_seal_store
 
     if share_seal_store.unreadable():
         return
     checked = share_seal.check_on_open(conn) != share_seal.UNCHECKED  # type: ignore[arg-type]
-    ctx.share_state_checked = checked  # type: ignore[attr-defined]
-    ctx.share_check_waits_for_key = not ctx.share_state_checked  # type: ignore[attr-defined]
+    with getattr(ctx, "lock", None) or contextlib.nullcontext():
+        still_waiting = getattr(ctx, "share_check_waits_for_key", False)
+        if still_waiting and getattr(ctx, "library_id", None) == library:
+            ctx.share_state_checked = checked  # type: ignore[attr-defined]
+            ctx.share_check_waits_for_key = not checked  # type: ignore[attr-defined]
+            # This run chose its address while sharing read as off.
+            ctx.share_recovered_this_run = checked  # type: ignore[attr-defined]
+
+
+def check_sharing_state_if_waiting(ctx: object) -> None:
+    """For the owner's own Share requests: same recheck as a device's."""
+    if getattr(ctx, "share_check_waits_for_key", False):
+        library = getattr(ctx, "library_id", None)
+        _check_sharing_state_again(ctx, ctx.get_conn(), library)  # type: ignore[attr-defined]
 
 
 def authorize_request(request: object, ctx: object) -> AuthResult:
@@ -306,6 +322,7 @@ def authorize_request(request: object, ctx: object) -> AuthResult:
     cookies = getattr(request, "cookies", {}) or {}
 
     is_loopback = is_loopback_address(remote) or _is_trusted_peer(remote)
+    library = getattr(ctx, "library_id", None)  # before the connection: see the recheck
     conn = ctx.get_conn()  # type: ignore[attr-defined]
 
     anonymous = Principal(kind=PRINCIPAL_ANONYMOUS)
@@ -313,7 +330,7 @@ def authorize_request(request: object, ctx: object) -> AuthResult:
     # LAN gate first. During a library switch the new library's sharing
     # state is not ours until share_seal has checked it.
     if not is_loopback and getattr(ctx, "share_check_waits_for_key", False):
-        _check_sharing_state_again(ctx, conn)
+        _check_sharing_state_again(ctx, conn, library)
     if not is_loopback and not (
         getattr(ctx, "share_state_checked", True) and is_lan_sharing_enabled(conn)
     ):

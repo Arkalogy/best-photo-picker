@@ -293,6 +293,11 @@ def load_analysis_if_needed(
                     if json_data:
                         break
             if json_data:
+                from bpp.db.analysis_leftovers import pending_forgets
+
+                # Deleted for good, removal from the file still waiting.
+                gone = pending_forgets(ctx.state["workdir"])
+                json_data = [d for d in json_data if d.get("filepath") not in gone]
                 bulk_upsert_photos(conn, json_data)
                 sync_all_photos_album(conn)
                 data = db_get_all_photos(conn, include_deleted=True)

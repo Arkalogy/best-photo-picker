@@ -99,6 +99,8 @@ class WebAppState(_LegacyDelegateMixin):
     #: True when that check could not be made because this installation's
     #: key file can't be read; it is made again once it can.
     share_check_waits_for_key: bool = False
+    #: True when that later check turned sharing back on in this run.
+    share_recovered_this_run: bool = False
 
     def __init__(
         self,

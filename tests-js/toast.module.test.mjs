@@ -189,7 +189,7 @@ describe("toastError for an owner-only refusal", () => {
   test("an ordinary failure is still shown every time", () => {
     toastError("save that setting", new Error("HTTP 500"));
     toastError("save that setting", new Error("HTTP 500"));
-    expect(shown().filter((t) => t && t.includes("HTTP 500")).length).toBeGreaterThanOrEqual(1);
+    expect(shown().filter((t) => t && t.includes("HTTP 500"))).toHaveLength(2);
     expect(shown()[0]).toContain("try again");
   });
 });

@@ -41,7 +41,11 @@ def migrate(conn: sqlite3.Connection) -> None:
 
 
 def import_from_analysis_json(
-    conn: sqlite3.Connection, json_path: str, *, existing_only: bool = False
+    conn: sqlite3.Connection,
+    json_path: str,
+    *,
+    existing_only: bool = False,
+    workdir: str | None = None,
 ) -> int:
     """Import photos from a legacy analysis.json file. Returns count imported.
 
@@ -69,6 +73,13 @@ def import_from_analysis_json(
     if existing_only:
         known = {r[0] for r in conn.execute("SELECT filepath FROM photos")}
         rows = [d for d in rows if d["filepath"] in known]
+    # Photos deleted for good whose removal from this file is still
+    # waiting (the rewrite failed, or has not run): never imported.
+    from bpp.db.analysis_leftovers import pending_forgets
+
+    gone = pending_forgets(workdir, os.path.dirname(json_path))  # the note is kept in the workdir
+    if gone:
+        rows = [d for d in rows if d["filepath"] not in gone]
     count = bulk_upsert_photos(conn, rows)
     log.info("Imported %d photos from %s", count, json_path)
     return count

@@ -182,16 +182,21 @@ async function _setClipCapOverride(enable) {
       clip_cap_status: data.clip_cap_status,
       clip_cap: data.clip_cap,
       clip_cap_peak_mb: data.clip_cap_peak_mb,
-      // re-render needs the photo count too; the override response
-      // doesn't ship it, but the active-state message only depends
-      // on the cap + peak so an empty count is fine here.
-      clip_embedding_count: 0,
+      clip_embedding_count: data.clip_embedding_count || 0,
     });
-    toast(
-      enable
-        ? "Semantic dedup enabled — restart not required"
-        : "Semantic dedup disabled — cap will apply on next load",
-    );
+    if (enable && data.clip_cap_status === "disabled_too_large") {
+      // Raised as far as this computer's memory allows, and still not enough.
+      toast(
+        "Semantic dedup stays off: this library is larger than this computer's memory can hold",
+        true,
+      );
+    } else {
+      toast(
+        enable
+          ? "Semantic dedup enabled — restart not required"
+          : "Semantic dedup disabled — cap will apply on next load",
+      );
+    }
   } catch (e) {
     console.warn("clip_max_override toggle failed:", e);
     toastError("save the setting", e);

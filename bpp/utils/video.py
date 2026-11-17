@@ -63,6 +63,8 @@ _FIRST_BOXES = (
 )
 _MATROSKA = b"\x1a\x45\xdf\xa3"  # MKV, WebM
 _ASF = bytes.fromhex("3026b2758e66cf11a6d900aa0062ce6c")  # WMV
+#: Pack header, visual object sequence, sequence header, visual object, VOP.
+_MPEG_START_CODES = tuple(b"\x00\x00\x01" + bytes([c]) for c in (0xBA, 0xB0, 0xB3, 0xB5, 0xB6))
 
 
 def has_video_header(filepath: str) -> bool:
@@ -78,8 +80,9 @@ def has_video_header(filepath: str) -> bool:
         head[4:8] in _FIRST_BOXES
         or head.startswith(_MATROSKA)
         or (head[:4] in (b"RIFF", b"RF64") and head[8:12] == b"AVI ")
-        # MPEG program / transport streams, sometimes saved as .mp4 / .avi
-        or head.startswith(b"\x00\x00\x01\xba")
+        # MPEG program / transport streams, sometimes saved as .mp4 / .avi,
+        # and bare MPEG-4 / MPEG-2 video (a raw .m4v): start codes
+        or head[:4] in _MPEG_START_CODES
         or (len(head) == 189 and head[0] == 0x47 and head[188] == 0x47)
         or head.startswith(_ASF)
         or head.startswith(b"FLV")

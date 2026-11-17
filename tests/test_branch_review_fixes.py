@@ -423,11 +423,12 @@ def test_devices_are_let_in_again_once_the_key_can_be_read(tmp_path):
 
     conn = init_db(str(tmp_path / "photopicker.db"))
     set_lan_sharing_enabled(conn, True)
-    ctx = SimpleNamespace(share_state_checked=False, share_check_waits_for_key=True)
+    ctx = SimpleNamespace(library_id="A", share_state_checked=False, share_check_waits_for_key=True)
 
-    _check_sharing_state_again(ctx, conn)  # the key is readable now
+    _check_sharing_state_again(ctx, conn, "A")  # the key is readable now
 
     assert ctx.share_state_checked and not ctx.share_check_waits_for_key
+    assert ctx.share_recovered_this_run
 
 
 # ── a plugin's own kind of setting is read back as it was stored ─────────

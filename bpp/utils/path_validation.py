@@ -17,6 +17,7 @@ This module is the single source of truth.
 
 from __future__ import annotations
 
+import contextlib
 import os
 from pathlib import Path
 
@@ -94,6 +95,8 @@ class FolderSet:
         its path as written. (Never the library's own folders: links in
         those are not the owner's.)"""
         self._followed = [os.path.abspath(f) for f in followed if f]
+        self._followed_ids: set[tuple[int, int]] | None = None  # looked up when first needed
+        self._followed_decided: dict[str, bool] = {}
         self._paths: list[str] = []
         self._ids: set[tuple[int, int]] = set()
         self._decided: dict[str, bool] = {}
@@ -101,6 +104,39 @@ class FolderSet:
         # a root on a network share that has gone away blocks for its
         # whole timeout, and most exports never need the later roots.
         self._waiting = [r for r in roots if r]
+
+    def _spelled_under_followed(self, written: str) -> bool:
+        return any(
+            written == f or written.startswith(f.rstrip(os.sep) + os.sep) for f in self._followed
+        )
+
+    def _is_followed_by_identity(self, written: str) -> bool:
+        """Another case or form of a followed root's own name (a volume
+        that ignores those) names the same folder. Asked only for a file
+        no root holds otherwise, and answered once per folder. A link is
+        never taken for the folder it points at (``lstat``): a link to
+        the root from somewhere else is not the root."""
+        known = self._followed_decided.get(written)
+        if known is not None:
+            return known
+        if self._followed_ids is None:
+            self._followed_ids = set()
+            for root in self._followed:
+                with contextlib.suppress(OSError, ValueError):
+                    st = os.lstat(root)
+                    if st.st_ino:
+                        self._followed_ids.add((st.st_dev, st.st_ino))
+        found, folder = False, written
+        while self._followed_ids and not found:
+            with contextlib.suppress(OSError, ValueError):
+                st = os.lstat(folder)
+                found = bool(st.st_ino and (st.st_dev, st.st_ino) in self._followed_ids)
+            parent = os.path.dirname(folder)
+            if parent == folder:
+                break
+            folder = parent
+        self._followed_decided[written] = found
+        return found
 
     def _look_at_next_root(self) -> bool:
         """Resolve one more root. False when none are left."""
@@ -129,14 +165,13 @@ class FolderSet:
         # folder than the spelling suggests, so such a path is never
         # accepted this way.
         stepped_up = os.pardir in str(path).replace("\\", "/").split("/")
-        if not stepped_up and any(
-            written == f or written.startswith(f.rstrip(os.sep) + os.sep) for f in self._followed
-        ):
+        follow = bool(self._followed) and not stepped_up
+        if follow and self._spelled_under_followed(written):
             return True
         decided = self._decided.get(folder)
         if decided is None:
             decided = self._decided[folder] = self._inside(folder)
-        return decided
+        return decided or (follow and self._is_followed_by_identity(written))
 
     def _inside(self, folder: str) -> bool:
         while True:

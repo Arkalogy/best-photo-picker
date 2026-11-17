@@ -104,7 +104,7 @@ def api_set_clip_max_override() -> tuple[Response, int]:
     except Exception:
         log.warning("get_clip_embedding_count failed in override toggle", exc_info=True)
         clip_count = 0
-    return jsonify(clip_cap_status(conn, clip_count)), 200
+    return jsonify({**clip_cap_status(conn, clip_count), "clip_embedding_count": clip_count}), 200
 
 
 # ──────────────────────────────────────────────────────────────────
