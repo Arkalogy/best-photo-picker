@@ -2688,11 +2688,17 @@ No GUI screen calls this endpoint yet.
   "embeddings_purged": 3944,
   "distinct_clusters_affected": 234,
   "distinct_photos_affected": 2627,
-  "purged": true
+  "purged": true,
+  "entry_removed": true
 }
 ```
 
-**Response (400):** if `model_id` or `purge_derived` is missing,
-or the entry can't be removed (e.g. is a bundled baseline that
-removal policy forbids).
+A built-in entry can't be removed (it follows the signed registry).
+With `purge_derived: true` its face data is still deleted, the
+face-crop cache is cleared, and the response has
+`"entry_removed": false`. Database backups made earlier keep the
+rows until the app has started twice more.
+
+**Response (400):** if `model_id` or `purge_derived` is missing, or
+the entry is built in and `purge_derived` is false (nothing to do).
 

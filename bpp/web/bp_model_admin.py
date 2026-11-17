@@ -9,6 +9,8 @@ catalog download endpoints live in ``bp_catalog``.
 
 from __future__ import annotations
 
+import os
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -183,8 +185,16 @@ def api_remove_model() -> tuple[Any, int]:
         conn.rollback()
         raise ValidationError(str(exc)) from exc
     conn.commit()
+    if result.purged:
+        # The face pictures cut from the photos and the grouping held in
+        # memory are the same data in another form.
+        crop_dir = ctx.dirs.get("face_crops")
+        if crop_dir and os.path.isdir(crop_dir) and not os.path.islink(crop_dir):
+            shutil.rmtree(crop_dir, ignore_errors=True)
+        ctx.invalidate_face_cluster_map()
     log.info(
-        "Model removed via API: id=%s kind=%s purged=%s",
+        "Model %s via API: id=%s kind=%s purged=%s",
+        "removed" if result.entry_removed else "data purged (built-in entry kept)",
         result.model_id,
         result.entry_kind,
         result.purged,
@@ -198,6 +208,7 @@ def api_remove_model() -> tuple[Any, int]:
                 "distinct_clusters_affected": (result.derived_summary.distinct_clusters),
                 "distinct_photos_affected": (result.derived_summary.distinct_photos),
                 "purged": result.purged,
+                "entry_removed": result.entry_removed,
             }
         ),
         200,

@@ -204,14 +204,23 @@ def import_from_legacy_caches(conn: Any, wd: str, lib_root: str, photo_count: in
     """
     _unscored = (
         photo_count > 0
-        and conn.execute("SELECT 1 FROM photos WHERE aggregate_score IS NULL LIMIT 1").fetchone()
+        and conn.execute(
+            # (Live Photo companions are stored unscored on purpose.)
+            "SELECT 1 FROM photos WHERE aggregate_score IS NULL"
+            " AND is_live_photo_sidecar = 0 LIMIT 1"
+        ).fetchone()
         is not None
     )
     if photo_count == 0 or _unscored:
         for search_dir in (wd, lib_root):
             json_path = os.path.join(search_dir, "analysis.json")
             if search_dir and os.path.exists(json_path):
-                _import_analysis_json_or_set_aside(conn, json_path)
+                # A library that already has photos (in the bin, hidden or
+                # missing ones count: `photo_count` leaves those out) only
+                # gets scores for those: the file may list photos deleted
+                # since.
+                has_rows = conn.execute("SELECT 1 FROM photos LIMIT 1").fetchone() is not None
+                _import_analysis_json_or_set_aside(conn, json_path, existing_only=has_rows)
                 break
 
     if photo_count == 0:
@@ -227,14 +236,16 @@ def import_from_legacy_caches(conn: Any, wd: str, lib_root: str, photo_count: in
             import_presets_from_json(conn, presets_json)
 
 
-def _import_analysis_json_or_set_aside(conn: Any, json_path: str) -> None:
+def _import_analysis_json_or_set_aside(
+    conn: Any, json_path: str, *, existing_only: bool = False
+) -> None:
     """Best-effort: a failed import must not stop this launch. A file
     whose content can't be imported is set aside (kept, under another
     name) so it doesn't fail the next launch too."""
     from bpp.utils.json_utils import move_aside
 
     try:
-        import_from_analysis_json(conn, json_path)
+        import_from_analysis_json(conn, json_path, existing_only=existing_only)
     except (ValueError, TypeError, KeyError, AttributeError, OverflowError):
         # What the file says can't be imported: it would fail again.
         log.error("Could not import %s; setting it aside", json_path, exc_info=True)

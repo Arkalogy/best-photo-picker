@@ -288,6 +288,11 @@ def api_clear_library() -> tuple[Response, int]:
     if not library_path:
         raise ValidationError("No library configured")
     result = clear_library(conn, library_path)
+    # The analysis stores and what was unpacked from archives hold the
+    # same photos: "delete all photos" covers them.
+    from bpp.db.analysis_leftovers import forget_all_analysis
+
+    forget_all_analysis(ctx.state.get("workdir") or ctx.dirs.get("data"), library_path)
     ctx.invalidate_analysis()
     with ctx.lock:
         ctx.thumbs = None

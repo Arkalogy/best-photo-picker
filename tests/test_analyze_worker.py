@@ -81,8 +81,10 @@ class TestZipPathTraversal:
 
         extract_dir = os.path.join(workdir, "extracted")
         assert os.path.isdir(extract_dir)
-        assert os.path.exists(os.path.join(extract_dir, "photo.jpg"))
-        assert os.path.exists(os.path.join(extract_dir, "subdir", "another.jpg"))
+        # Each archive is unpacked into its own folder under extracted/.
+        (folder,) = os.listdir(extract_dir)
+        assert os.path.exists(os.path.join(extract_dir, folder, "photo.jpg"))
+        assert os.path.exists(os.path.join(extract_dir, folder, "subdir", "another.jpg"))
 
     def test_path_traversal_zip_is_rejected(self, tmp_path):
         """A zip with ../ entries must be rejected."""
@@ -153,7 +155,8 @@ class TestTarExtraction:
         )
         worker._thread.join(timeout=10)
 
-        assert os.path.exists(os.path.join(workdir, "extracted", "photo.jpg"))
+        (folder,) = os.listdir(os.path.join(workdir, "extracted"))
+        assert os.path.exists(os.path.join(workdir, "extracted", folder, "photo.jpg"))
 
     def test_oversize_tar_rejected_with_message(self, tmp_path):
         """Tar with declared sizes over the cap must error out before

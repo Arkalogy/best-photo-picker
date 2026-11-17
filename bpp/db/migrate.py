@@ -40,8 +40,14 @@ def migrate(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def import_from_analysis_json(conn: sqlite3.Connection, json_path: str) -> int:
-    """Import photos from a legacy analysis.json file. Returns count imported."""
+def import_from_analysis_json(
+    conn: sqlite3.Connection, json_path: str, *, existing_only: bool = False
+) -> int:
+    """Import photos from a legacy analysis.json file. Returns count imported.
+
+    With *existing_only*, entries for photos the library does not have
+    are left out: the file is older than the library's deletions, and
+    importing them would bring permanently deleted photos back."""
     if not os.path.exists(json_path):
         log.warning("analysis.json not found at %s", json_path)
         return 0
@@ -60,6 +66,9 @@ def import_from_analysis_json(conn: sqlite3.Connection, json_path: str) -> int:
         log.warning(
             "Skipped %d entries without a file path in %s", len(data) - len(rows), json_path
         )
+    if existing_only:
+        known = {r[0] for r in conn.execute("SELECT filepath FROM photos")}
+        rows = [d for d in rows if d["filepath"] in known]
     count = bulk_upsert_photos(conn, rows)
     log.info("Imported %d photos from %s", count, json_path)
     return count

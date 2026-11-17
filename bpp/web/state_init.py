@@ -276,7 +276,10 @@ def load_analysis_if_needed(
             return ctx.state["analysis"]
         conn = ctx.get_conn()
         data = db_get_all_photos(conn, include_deleted=True)
-        if not data:
+        # Only a database with no photo rows at all is filled from a saved
+        # analysis file. One whose photos are all hidden, missing or
+        # companions has rows, and the file may list photos deleted since.
+        if not data and conn.execute("SELECT 1 FROM photos LIMIT 1").fetchone() is None:
             # Try loading from workdir (data/) then library root (legacy)
             json_data = None
             for search_dir in (ctx.state["workdir"], ctx.state.get("library_path")):

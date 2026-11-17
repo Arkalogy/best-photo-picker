@@ -28,6 +28,22 @@ _MAX_ARCHIVE_MEMBERS = 100_000
 _MAX_ARCHIVE_MEMBER_PATH_CHARS = 4096
 
 
+def _archive_folder(input_path: str) -> str:
+    """The folder name one archive is unpacked into: its own, so that
+    analysing it does not pick up photos of archives unpacked before."""
+    import hashlib
+    import re
+
+    stem = (
+        re.sub(r"[^A-Za-z0-9._-]+", "_", os.path.basename(input_path))[:60].strip("._") or "archive"
+    )
+    # By where the archive is, not by its size or date: analysing it
+    # again after adding photos lands on the same paths (rows are updated
+    # in place, not duplicated).
+    identity = os.path.abspath(input_path)
+    return f"{stem}-{hashlib.sha256(identity.encode()).hexdigest()[:10]}"
+
+
 def _files_and_folders(
     tf: tarfile.TarFile, input_path: str, emit: Callable[[dict[str, Any]], None]
 ) -> list[tarfile.TarInfo]:
@@ -61,7 +77,8 @@ def extract_archive_into_workdir(
     workdir: str,
     emit: Callable[[dict[str, Any]], None],
 ) -> str | None:
-    """Extract *input_path* into ``workdir/extracted`` and return that path.
+    """Extract *input_path* into its own folder under ``workdir/extracted``
+    and return that path.
 
     Emits ``{"type": "progress", ...}`` once at the start and
     ``{"type": "error", "message": ...}`` on any guard failure;
@@ -76,7 +93,7 @@ def extract_archive_into_workdir(
     * Tar entries validated via ``is_safe_tar_member`` (Py<3.12) or
       the stdlib ``filter="data"`` policy (Py 3.12+).
     """
-    extract_dir = os.path.join(workdir, "extracted")
+    extract_dir = os.path.join(workdir, "extracted", _archive_folder(input_path))
     os.makedirs(extract_dir, exist_ok=True)
     emit(
         {

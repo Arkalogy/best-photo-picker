@@ -39,6 +39,7 @@ def soft_delete_photos(conn: sqlite3.Connection, photo_ids: list[int]) -> int:
         deleted += conn.execute(
             f"UPDATE photos SET deleted_at=datetime('now') WHERE id IN ({ph})", batch
         ).rowcount
+    _companions_follow_or_surface(conn, affected_ids)
     conn.commit()
     log.info("Soft-deleted %d photos (requested %d)", deleted, len(photo_ids))
     # Post-commit hook dispatch for plugins. See bpp/db/photo_hooks.py.
@@ -46,6 +47,47 @@ def soft_delete_photos(conn: sqlite3.Connection, photo_ids: list[int]) -> int:
 
     dispatch_photo_deletion(conn, affected_ids, "soft")
     return deleted
+
+
+def _companions_follow_or_surface(conn: sqlite3.Connection, parent_ids: list[int]) -> None:
+    """The hidden companion frames of the photos just binned (caller's
+    transaction).
+
+    A companion is a row nobody can see or select. One that the hashes
+    prove is the same picture goes to the bin with its photo, and is
+    purged with it. One that was only linked by its file name
+    (``beach_2.jpg`` next to ``beach.jpg``) may be a different picture:
+    it is made an ordinary, visible photo again, never deleted unseen."""
+    from bpp.db.live_photo import _SIDECAR_PHASH_MAX_HAMMING, _phash_confirms_sidecar
+
+    follow: list[int] = []
+    surface: list[int] = []
+    for ph, batch in in_batches(parent_ids):
+        for side_id, s_phash, s_ahash, p_phash, p_ahash in conn.execute(
+            "SELECT s.id, s.phash, s.ahash, p.phash, p.ahash FROM photos s"
+            " JOIN photos p ON p.id = s.live_photo_parent_id"
+            f" WHERE s.live_photo_parent_id IN ({ph}) AND s.is_live_photo_sidecar = 1"
+            " AND s.deleted_at IS NULL",
+            batch,
+        ):
+            same = _phash_confirms_sidecar(
+                s_phash, s_ahash, p_phash, p_ahash, _SIDECAR_PHASH_MAX_HAMMING
+            )
+            (follow if same else surface).append(int(side_id))
+    for ph, batch in in_batches(follow):
+        conn.execute(f"UPDATE photos SET deleted_at=datetime('now') WHERE id IN ({ph})", batch)
+    for ph, batch in in_batches(surface):
+        conn.execute(
+            "UPDATE photos SET is_live_photo_sidecar = 0, live_photo_parent_id = NULL"
+            f" WHERE id IN ({ph})",
+            batch,
+        )
+    if surface:
+        log.info(
+            "%d hidden companion file(s) of deleted photos could not be shown to be the "
+            "same picture: they are back in the library as photos of their own",
+            len(surface),
+        )
 
 
 def restore_photos(conn: sqlite3.Connection, photo_ids: list[int]) -> int:
@@ -66,6 +108,11 @@ def restore_photos(conn: sqlite3.Connection, photo_ids: list[int]) -> int:
         restored += conn.execute(
             f"UPDATE photos SET deleted_at=NULL WHERE id IN ({ph})", batch
         ).rowcount
+        conn.execute(
+            f"UPDATE photos SET deleted_at=NULL WHERE live_photo_parent_id IN ({ph})"
+            " AND is_live_photo_sidecar = 1",
+            batch,
+        )
     conn.commit()
     log.info("Restored %d photos (requested %d)", restored, len(photo_ids))
     from bpp.db.photo_hooks import dispatch_photo_deletion
@@ -93,6 +140,7 @@ def get_deleted_photos(
 
     sql = (
         f"SELECT {PHOTO_COLS_SLIM} FROM photos WHERE deleted_at IS NOT NULL "
+        "AND is_live_photo_sidecar = 0 "  # companions are never shown; they follow their photo
         "ORDER BY deleted_at DESC"
     )
     if limit is not None:
@@ -105,7 +153,9 @@ def get_deleted_photos(
 
 def count_deleted_photos(conn: sqlite3.Connection) -> int:
     """Count soft-deleted photos. Pairs with get_deleted_photos(limit=...) for pagination."""
-    row = conn.execute("SELECT COUNT(*) FROM photos WHERE deleted_at IS NOT NULL").fetchone()
+    row = conn.execute(
+        "SELECT COUNT(*) FROM photos WHERE deleted_at IS NOT NULL AND is_live_photo_sidecar = 0"
+    ).fetchone()
     return int(row[0]) if row else 0
 
 
@@ -169,6 +219,21 @@ def count_hidden_photos(conn: sqlite3.Connection) -> int:
         "SELECT COUNT(*) FROM photos WHERE hidden_at IS NOT NULL AND deleted_at IS NULL"
     ).fetchone()
     return int(row[0]) if row else 0
+
+
+def sidecars_of(conn: sqlite3.Connection, photo_ids: list[int]) -> dict[str, int]:
+    """The hidden Live Photo companions of *photo_ids* that are in the
+    bin with them: ``{filepath: id}``. A permanent delete of a photo
+    takes these along (file and row)."""
+    found: dict[str, int] = {}
+    for ph, batch in in_batches(photo_ids):
+        for row in conn.execute(
+            f"SELECT filepath, id FROM photos WHERE live_photo_parent_id IN ({ph})"
+            " AND is_live_photo_sidecar = 1 AND deleted_at IS NOT NULL",
+            batch,
+        ):
+            found[row[0]] = int(row[1])
+    return found
 
 
 def permanent_delete_photos(conn: sqlite3.Connection, photo_ids: list[int]) -> list[str]:

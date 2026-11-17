@@ -64,6 +64,9 @@ class RemovalResult:
     entry_kind: str
     derived_summary: DerivedDataSummary
     purged: bool
+    #: False for a built-in entry: its derived data can be purged, the
+    #: entry itself stays (it follows the signed registry).
+    entry_removed: bool = True
 
 
 def preview_removal(model_id: str, conn: sqlite3.Connection) -> DerivedDataSummary:
@@ -130,12 +133,22 @@ def remove_model_with_derived_choice(
             f"No registered entry with id {model_id!r}. Use "
             "`bpp model list` to see registered entries."
         )
+    if purge_derived:
+        # The purge is what the owner asked for, and it stands: the
+        # caller commits. Only the entry itself can't be removed.
+        return RemovalResult(
+            model_id=model_id,
+            entry_kind="built_in",
+            derived_summary=summary,
+            purged=purged,
+            entry_removed=False,
+        )
     raise ModelRemovalError(
         f"Entry {model_id!r} is a built-in registry entry and cannot "
         "be removed in-process. Built-in entries follow the upstream "
         "lifecycle (BPP's signed model registry updates their status "
-        "when a model is withdrawn). The derived-data "
-        "purge ran successfully if requested, but the registry entry "
-        "remains. To stop using a built-in model, set "
-        "face_embedding_method to a different value in Settings."
+        "when a model is withdrawn). Nothing was changed. To delete the "
+        "face data this model produced, ask for the purge (--purge-derived). "
+        "To stop using a built-in model, set face_embedding_method to a "
+        "different value in Settings."
     )

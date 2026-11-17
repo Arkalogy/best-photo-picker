@@ -92,6 +92,9 @@ def auto_purge(ctx: WebAppState) -> None:
             result.rows_deleted,
             result.removed,
         )
+        from bpp.db.analysis_leftovers import forget_deleted
+
+        forget_deleted(conn, ctx.state.get("workdir"), filepaths, ctx.state.get("library_path"))
     except Exception:
         # include the traceback so a
         # silent auto-purge failure isn't an unsolvable mystery.

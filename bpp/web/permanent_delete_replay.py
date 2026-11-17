@@ -67,4 +67,8 @@ def replay_entry(ctx: object, conn: sqlite3.Connection, payload: dict[str, Any])
         retry = retry_payload(payload, leftover, attempts + 1)
         if retry is not None:
             journal_start(conn, "permanent_delete", retry)
+    # The delete that was interrupted never reached this step.
+    from bpp.db.analysis_leftovers import forget_deleted
+
+    forget_deleted(conn, state.get("workdir"), list(files), state.get("library_path"))
     return True
