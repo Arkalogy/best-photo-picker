@@ -165,7 +165,7 @@ def test_a_library_another_server_holds_keeps_its_unpackings(tmp_path):
     with open(os.path.join(work, ".serving.lock"), "w") as f:
         f.write(str(os.getppid()))  # a live process that is not this one
 
-    with pytest.raises(RuntimeError, match="Another bpp server"):
+    with pytest.raises(RuntimeError, match="Can't open"):
         create_app(workdir=work, library_path=str(lib))
 
     assert os.path.isdir(os.path.join(staging, "run-left")), "it may be that server's"

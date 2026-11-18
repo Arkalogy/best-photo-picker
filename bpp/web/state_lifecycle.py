@@ -58,19 +58,28 @@ def switch_library(ctx: WebAppState, new_path: str) -> None:
         _switch_library_locked(ctx, new_path, new_dirs)
 
 
+def _same_folder(a: str, b: str) -> bool:
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return a == b
+
+
 def _switch_library_locked(ctx: WebAppState, new_path: str, new_dirs: dict[str, str]) -> None:
     """Body of :func:`switch_library`, called with
     ``ctx._switch_library_lock`` already held. Split out so the lock
     boundary is the only thing the public function does.
     """
     old_workdir = ctx.state.get("workdir")
+    old_root = ctx.state.get("library_path")
     _drain_current_library(ctx)
     _adopt_library(ctx, new_path, new_dirs, new_dirs["data"])
-    # Served no longer: another process may open the old library now.
-    if old_workdir and old_workdir != new_dirs["data"]:
-        from bpp.utils.serving_lock import clear_lock
+    # Served no longer: another process may open the old library now
+    # (not when it is the same library, by another spelling of its path).
+    if old_workdir and not _same_folder(old_workdir, new_dirs["data"]):
+        from bpp.utils.serving_lock import clear_library_locks
 
-        clear_lock(old_workdir)
+        clear_library_locks(old_workdir, old_root)
 
 
 class RenameIncompleteError(RuntimeError):
@@ -290,10 +299,10 @@ def _adopt_library(ctx: WebAppState, new_path: str, new_dirs: dict[str, str], wo
         # Phase 1 may have taken the refused library's serving lock
         # before a later phase refused it: give it back, or the next
         # process to open that library is told we are serving it.
-        from bpp.utils.serving_lock import clear_lock
+        from bpp.utils.serving_lock import clear_library_locks
 
         with contextlib.suppress(Exception):
-            clear_lock(workdir)
+            clear_library_locks(workdir, new_path)
         paths, workdir, library_path, library_id, export_dirs = old
         with ctx.lock:
             # First: the refused library's sharing check is not this one's.

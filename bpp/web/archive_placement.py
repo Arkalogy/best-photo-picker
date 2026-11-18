@@ -28,6 +28,8 @@ import tempfile
 import threading
 from collections.abc import Iterator
 
+from bpp.utils.file_lock import release, same_file
+from bpp.utils.file_lock import try_lock as _try_lock
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -51,25 +53,6 @@ _ours_lock = threading.Lock()
 _removers: list[threading.Thread] = []
 
 
-def _try_lock(fd: int) -> bool | None:
-    """Lock the open file *fd*: True when locked, False when another
-    holder has it, None when this system can't lock it."""
-    try:
-        if os.name == "nt":
-            import msvcrt
-
-            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
-        else:
-            import fcntl
-
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError as e:
-        if e.errno in (errno.EWOULDBLOCK, errno.EAGAIN, errno.EACCES, errno.EDEADLK):
-            return False
-        return None
-    return True
-
-
 def _hold(folder: str) -> int | None:
     """*folder*'s in-use file, opened and locked; None when someone else
     holds it, it was moved meanwhile (by a sweep elsewhere), or it is not
@@ -79,12 +62,9 @@ def _hold(folder: str) -> int | None:
         fd = os.open(lock, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
     except OSError:
         return None
-    try:
-        if _try_lock(fd) is not False and os.path.samestat(os.fstat(fd), os.stat(lock)):
-            return fd
-    except OSError:
-        pass
-    os.close(fd)
+    if _try_lock(fd) is not False and same_file(fd, lock):
+        return fd
+    release(fd)
     return None
 
 
@@ -130,7 +110,7 @@ def unpacking_folder(workdir: str) -> Iterator[str]:
     finally:
         with _ours_lock:
             _ours.discard(identity)
-        os.close(fd)
+        release(fd)
         shutil.rmtree(folder, ignore_errors=True)
 
 
@@ -166,7 +146,7 @@ def set_aside_unfinished_unpacking(workdir: str) -> int:
                 if os.name == "nt":
                     # Windows won't move a folder with a file open in it:
                     # let go first (one that is taken now stays put).
-                    os.close(fd)
+                    release(fd)
                     fd = -1
                 os.replace(entry.path, aside)
                 moved += 1
@@ -174,7 +154,7 @@ def set_aside_unfinished_unpacking(workdir: str) -> int:
                 log.warning("Could not set aside %s", entry.path, exc_info=True)
             finally:
                 if fd >= 0:
-                    os.close(fd)
+                    release(fd)
     if moved:
         log.info("Set aside %d unfinished archive unpacking(s) in %s", moved, workdir)
     return moved

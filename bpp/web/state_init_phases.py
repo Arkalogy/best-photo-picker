@@ -45,34 +45,50 @@ if TYPE_CHECKING:
 log = get_logger(__name__)
 
 
-def acquire_serving_lock(wd: str) -> None:
-    """Phase 1 — refuse to boot if a sibling bpp server is using this
-    library, or if we can't write a lock file.
+def acquire_serving_lock(wd: str, library_root: str | None = None) -> None:
+    """Phase 1 — refuse to boot if a sibling bpp server (or a `bpp
+    analyze` run) is using this library, or if we can't write a lock file.
 
-    The lock prevents two ``bpp serve`` processes from colliding on
-    the same DB. Single-process libraries are the only safe shape;
-    a silent dual-process configuration corrupts the WAL.
+    The lock prevents two processes from colliding on the same DB and
+    analysis file. Single-process libraries are the only safe shape; a
+    silent dual-process configuration corrupts the WAL. The library's
+    root is locked too: an analysis may write its file there before the
+    library has a data folder.
 
     Raises :class:`RuntimeError` with an actionable message in both
-    failure modes (sibling alive, lock-file write failure).
+    failure modes (in use, lock-file write failure).
     """
-    from bpp.utils.serving_lock import ServingLockError, acquire_lock, clear_lock
+    from bpp.utils.serving_lock import (
+        ServingLockError,
+        acquire_lock,
+        clear_lock,
+        lock_advice,
+    )
 
-    try:
-        held_by = acquire_lock(wd)
-    except ServingLockError as e:
-        raise RuntimeError(
-            f"Cannot acquire serving lock for {wd}: {e}. "
-            "Refusing to start — running without a serving lock would "
-            "let a second bpp serve corrupt the DB."
-        ) from e
-    if held_by is not None:
-        raise RuntimeError(
-            f"Another bpp server (or a `bpp analyze` run) appears to be running (pid={held_by}) "
-            f"using {wd}. Stop it first, or remove {wd}/.serving.lock "
-            "if you're sure no server is up."
-        )
-    atexit.register(clear_lock, wd)
+    folders = [wd]
+    # Only the root of the library being served: one whose data folder
+    # this is (`bpp web` keeps its data elsewhere and serves no library).
+    with contextlib.suppress(OSError):
+        if library_root and os.path.samefile(os.path.join(library_root, "data"), wd):
+            folders.insert(0, library_root)
+    held: list[str] = []
+    for folder in folders:
+        try:
+            held_by = acquire_lock(folder)
+        except ServingLockError as e:
+            for done in held:
+                clear_lock(done)
+            raise RuntimeError(
+                f"Cannot acquire serving lock for {folder}: {e}. "
+                "Refusing to start — running without a serving lock would "
+                "let a second bpp serve corrupt the DB."
+            ) from e
+        if held_by is not None:
+            for done in held:
+                clear_lock(done)
+            raise RuntimeError(f"Can't open {folder}: {lock_advice(folder, held_by)}.")
+        held.append(folder)
+        atexit.register(clear_lock, folder)
 
 
 def backup_or_refuse_corrupt(db_p: str, wd: str) -> None:

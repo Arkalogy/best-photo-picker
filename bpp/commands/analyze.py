@@ -10,6 +10,7 @@ together to keep cross-calls local.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 
 from bpp.config import cfg_get, load_config, parse_scan_extensions
@@ -22,12 +23,17 @@ def _hold_library(workdir: str, log) -> list[str] | None:
     (a delete made in the app while this run is still going would be
     undone by what it writes). The folders locked, or None (after saying
     why) when the app or another run has it."""
-    from bpp.utils.serving_lock import ServingLockError, acquire_lock, clear_lock
+    from bpp.utils.serving_lock import (
+        ServingLockError,
+        acquire_lock,
+        clear_lock,
+        lock_advice,
+    )
 
     folders = [workdir]
     data = os.path.join(workdir, "data")
-    if os.path.isfile(os.path.join(data, "photopicker.db")):
-        folders.append(data)  # a library's root: the app keeps its lock in data/
+    if os.path.isdir(data):
+        folders.append(data)  # a library's root: the app also locks its data/
     held: list[str] = []
     for folder in folders:
         try:
@@ -36,11 +42,11 @@ def _hold_library(workdir: str, log) -> list[str] | None:
             log.error("Can't analyse into %s: %s", folder, exc)
             holder = -1
         if holder is not None:
-            if holder > 0:
+            if holder >= 0:
                 log.error(
-                    "The app (or another analysis) has this library open (process %d). "
-                    "Close it, or analyse from the app, then run this again.",
-                    holder,
+                    "Can't analyse into %s: %s. Or analyse from the app.",
+                    folder,
+                    lock_advice(folder, holder),
                 )
             for done in held:
                 clear_lock(done)
@@ -173,8 +179,10 @@ def do_select(args: argparse.Namespace) -> int:
         # The note of photos deleted for good is in the library's data
         # folder (or its root): checked whichever of the two this is.
         notes = [os.path.join(workdir, "data")]
-        if os.path.basename(workdir) == "data":
-            notes.append(os.path.dirname(workdir))
+        parent = os.path.dirname(os.path.realpath(workdir))
+        with contextlib.suppress(OSError):  # this is a library's data folder, by any name
+            if os.path.samefile(os.path.join(parent, "data"), workdir):
+                notes.append(parent)
         analysis = load_analysis(workdir, notes_in=tuple(notes))
 
     if not analysis:

@@ -28,8 +28,8 @@ class TestAcquireServingLock:
             with pytest.raises(RuntimeError) as exc:
                 state_init.acquire_serving_lock(wd)
             msg = str(exc.value)
-            assert "pid=12345" in msg
-            assert "Stop it first" in msg
+            assert "process 12345" in msg
+            assert "remove" in msg, "nothing holds the file: the owner is told how to clear it"
 
     def test_lock_io_failure_is_wrapped(self, tmp_path):
         from bpp.utils.serving_lock import ServingLockError

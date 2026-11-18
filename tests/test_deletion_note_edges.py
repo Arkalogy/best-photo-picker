@@ -148,6 +148,77 @@ def test_a_command_line_analysis_does_not_write_into_a_library_the_app_has_open(
     assert not os.path.exists(os.path.join(lib, ".serving.lock")), "nothing left held"
 
 
+_LOCK_HOLDER = """
+import sys
+from bpp.utils.serving_lock import acquire_lock
+print(acquire_lock(sys.argv[1]), flush=True)
+sys.stdin.readline()
+"""
+
+
+def _hold_elsewhere(folder):
+    """Another process (an analysis, or the app) holding *folder*'s lock."""
+    import subprocess
+    import sys
+
+    holder = subprocess.Popen(
+        [sys.executable, "-c", _LOCK_HOLDER, str(folder)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+        cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    )
+    assert holder.stdout.readline().strip() == "None"
+    return holder
+
+
+def test_an_app_that_serves_no_library_locks_no_library(tmp_path):
+    from bpp.db.library import ensure_library_dirs
+    from bpp.web.app import create_app
+
+    lib = tmp_path / "library"  # e.g. the default library, while `bpp web` serves a folder
+    ensure_library_dirs(str(lib))
+
+    create_app(workdir=str(tmp_path / "elsewhere"), library_path=str(lib))
+
+    assert not (lib / ".serving.lock").exists()
+
+
+def test_the_app_does_not_open_a_library_an_analysis_of_its_root_is_writing(tmp_path):
+    from bpp.web.app import create_app
+
+    root = tmp_path / "library"  # analysed before it was ever opened: no data folder yet
+    root.mkdir()
+    analysis = _hold_elsewhere(root)
+    try:
+        with pytest.raises(RuntimeError, match=r"Can't open .*wait for it to finish"):
+            create_app(workdir=str(root / "data"), library_path=str(root))
+    finally:
+        analysis.communicate("\n", timeout=30)
+
+    assert not (root / "data" / ".serving.lock").exists(), "nothing left held"
+
+
+def test_a_command_line_analysis_does_not_write_into_a_root_another_process_holds(
+    tmp_path, monkeypatch
+):
+    from bpp import commands
+    from bpp.scoring import aggregate
+
+    root = tmp_path / "library"
+    root.mkdir()
+    (tmp_path / "a.jpg").write_bytes(b"\xff\xd8\xff" + bytes(32))
+    ran = []
+    monkeypatch.setattr(aggregate, "analyze_all", lambda *a, **k: ran.append(1))
+    other = _hold_elsewhere(root)
+    try:
+        assert commands.do_analyze(_cli_args(tmp_path, root)) == 1
+    finally:
+        other.communicate("\n", timeout=30)
+
+    assert ran == []
+
+
 def test_a_command_line_analysis_frees_the_library_when_it_ends(tmp_path, monkeypatch):
     from bpp import commands
     from bpp.scoring import aggregate
@@ -166,6 +237,53 @@ def test_a_command_line_analysis_frees_the_library_when_it_ends(tmp_path, monkey
 
     assert seen == [True], "held while it runs"
     assert not (work / ".serving.lock").exists(), "the app can open the library after"
+
+
+@pytest.mark.parametrize("spelling", ["data", "a link", "another case"])
+def test_selecting_from_a_data_folder_honours_a_note_in_the_library_root(
+    tmp_path, monkeypatch, spelling
+):
+    import argparse
+
+    from bpp import commands
+    from bpp.db import analysis_leftovers as leftovers
+    from bpp.scoring import aggregate
+
+    root, work = tmp_path / "library", tmp_path / "library" / "data"
+    work.mkdir(parents=True)
+    with open(work / "analysis.json", "w") as f:
+        json.dump([{"filepath": p, "aggregate_score": 0.5} for p in ("/p/gone.jpg", "/p/b.jpg")], f)
+    leftovers._note_pending(str(root), ["/p/gone.jpg"])  # a session that kept its data in the root
+    if spelling == "a link":
+        given = tmp_path / "scores"
+        given.symlink_to(work, target_is_directory=True)
+    elif spelling == "another case":
+        given = root / "DATA"
+        if not given.exists():
+            pytest.skip("this volume tells letter cases apart")
+    else:
+        given = work
+    loaded = []
+    real = aggregate.load_analysis
+    monkeypatch.setattr(
+        aggregate, "load_analysis", lambda *a, **k: loaded.append(real(*a, **k)) or loaded[-1]
+    )
+    ns = argparse.Namespace(
+        workdir=str(given),
+        out=str(tmp_path / "out"),
+        config=None,
+        k=10,
+        export_mode="copy",
+        gallery=False,
+        force=False,
+        dry_run=True,
+        seed=42,
+        extensions=".jpg",
+    )
+
+    commands.do_select(ns)
+
+    assert [d["filepath"] for d in loaded[0]] == ["/p/b.jpg"]
 
 
 def test_selecting_from_a_library_root_leaves_out_a_photo_deleted_in_the_app(tmp_path, monkeypatch):

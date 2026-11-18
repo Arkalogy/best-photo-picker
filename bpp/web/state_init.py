@@ -78,8 +78,8 @@ def init_app_db(ctx: WebAppState) -> None:
     os.makedirs(wd, exist_ok=True)
     db_p = os.path.join(wd, "photopicker.db")
 
-    # Phase 1 — serving lock.
-    _acquire_serving_lock(wd)
+    # Phase 1 — serving lock (the library's root too).
+    _acquire_serving_lock(wd, ctx.state.get("library_path"))
     # Archives a quit or a crash left half unpacked (one still being
     # unpacked is held, and stays).
     from bpp.web.archive_placement import set_aside_and_remove_in_background
