@@ -1,13 +1,11 @@
-"""Edge cases of unpacking archives and of the note of deleted photos."""
+"""Edge cases of unpacking archives."""
 
 from __future__ import annotations
 
 import errno
 import io
-import json
 import os
 import tarfile
-import threading
 import zipfile
 
 import pytest
@@ -75,7 +73,7 @@ def test_a_zip_with_damaged_data_is_reported_not_raised(tmp_path):
     seen, emit = _errors()
 
     assert extract_archive_into_workdir(str(path), str(tmp_path / "data"), emit) is None
-    assert seen and seen[0].startswith("Could not extract archive")
+    assert seen and "it is damaged or holds an unsafe entry" in seen[0], seen
 
 
 @pytest.mark.parametrize(
@@ -96,40 +94,6 @@ def test_each_kind_of_failure_is_said_plainly(error, says):
     assert says in seen[0]
 
 
-# ── the note of deleted photos ───────────────────────────────────────────
-
-
-def test_a_pipe_at_the_notes_name_is_not_read(tmp_path):
-    from bpp.db.analysis_leftovers import PENDING, pending_forgets
-
-    os.mkfifo(tmp_path / PENDING)
-    result: list = []
-    reader = threading.Thread(target=lambda: result.append(pending_forgets(str(tmp_path))))
-    reader.start()
-    reader.join(5)
-    if reader.is_alive():  # unblock it before failing
-        with open(tmp_path / PENDING, "w"):
-            pass
-        pytest.fail("reading the note blocked on a pipe")
-    assert result == [set()]
-
-
-def test_a_failed_settling_of_companions_does_not_stop_the_start(tmp_path, monkeypatch):
-    import sqlite3
-
-    from bpp.web import state_init
-    from bpp.web.app import create_app
-
-    def locked(conn):
-        conn.execute("UPDATE photos SET is_live_photo_sidecar = 0 WHERE 0")
-        raise sqlite3.OperationalError("database is locked")
-
-    monkeypatch.setattr(state_init, "settle_companions_of_binned", locked)
-    app = create_app(library_path=str(tmp_path / "library"))
-    with app.app_context():
-        assert not app.extensions["bpp"].get_conn().in_transaction
-
-
 # ── unfinished unpackings: set aside at open, unless one is in use ───────
 
 
@@ -138,60 +102,106 @@ def _library_with_leftover(tmp_path):
 
     lib = tmp_path / "library"
     work = ensure_library_dirs(str(lib))["data"]
-    base = os.path.join(work, "extracted")
-    os.makedirs(os.path.join(base, ".unpacking-left", "x"))
-    os.symlink(tmp_path, os.path.join(base, ".unpacking-link"), target_is_directory=True)
-    return lib, work, base
+    staging = os.path.join(work, ".unpacking")
+    os.makedirs(os.path.join(staging, "run-left", "x"))
+    os.symlink(tmp_path, os.path.join(staging, "run-link"), target_is_directory=True)
+    return lib, work, staging
 
 
 def test_leftover_unpackings_are_removed_after_the_library_opens(tmp_path):
     from bpp.web.app import create_app
     from bpp.web.archive_placement import wait_for_removals
 
-    lib, work, base = _library_with_leftover(tmp_path)
+    lib, work, staging = _library_with_leftover(tmp_path)
 
     create_app(workdir=work, library_path=str(lib))  # as `bpp serve` opens it
     wait_for_removals()
 
-    assert sorted(os.listdir(base)) == [".unpacking-link"], "a link is not followed or removed"
+    assert sorted(os.listdir(staging)) == ["run-link"], "a link is not followed or removed"
+
+
+def test_folders_an_earlier_version_unpacked_are_never_taken_for_leftovers(tmp_path):
+    from bpp.db.library import ensure_library_dirs
+    from bpp.web.app import create_app
+    from bpp.web.archive_placement import wait_for_removals
+
+    lib = tmp_path / "library"
+    work = ensure_library_dirs(str(lib))["data"]
+    names = (".discarded-duplicates", ".unpacking-old", "run-1", "discarded-2")
+    for name in names:  # archives once went straight into extracted/, under any name
+        os.makedirs(os.path.join(work, "extracted", name))
+        with open(os.path.join(work, "extracted", name, "photo.jpg"), "wb") as f:
+            f.write(b"an imported photo")
+
+    create_app(workdir=work, library_path=str(lib))
+    wait_for_removals()
+
+    for name in names:
+        assert os.path.isfile(os.path.join(work, "extracted", name, "photo.jpg")), name
+
+
+def test_a_link_in_place_of_the_unpacking_folder_is_never_followed(tmp_path):
+    from bpp.web.analyze_archive import extract_archive_into_workdir
+    from bpp.web.archive_placement import sweep_unfinished_unpacking
+
+    work = tmp_path / "data"
+    work.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / "run-x").mkdir(parents=True)
+    (work / ".unpacking").symlink_to(elsewhere, target_is_directory=True)
+
+    sweep_unfinished_unpacking(str(work))
+    assert (elsewhere / "run-x").is_dir(), "a sweep does not reach through the link"
+
+    out = extract_archive_into_workdir(_tar(tmp_path / "a.tar", ("a.jpg", b"x")), str(work), print)
+    assert out and os.listdir(out) == ["a.jpg"]
+    assert not (work / ".unpacking").is_symlink() and os.listdir(elsewhere) == ["run-x"]
 
 
 def test_a_library_another_server_holds_keeps_its_unpackings(tmp_path):
     from bpp.web.app import create_app
 
-    lib, work, base = _library_with_leftover(tmp_path)
+    lib, work, staging = _library_with_leftover(tmp_path)
     with open(os.path.join(work, ".serving.lock"), "w") as f:
         f.write(str(os.getppid()))  # a live process that is not this one
 
     with pytest.raises(RuntimeError, match="Another bpp server"):
         create_app(workdir=work, library_path=str(lib))
 
-    assert os.path.isdir(os.path.join(base, ".unpacking-left")), "it may be that server's"
+    assert os.path.isdir(os.path.join(staging, "run-left")), "it may be that server's"
 
 
+@pytest.mark.parametrize("spelling", ["link", "case"], ids=["by a link", "in another case"])
 @pytest.mark.parametrize("can_lock", [True, False], ids=["locks", "a drive that can't lock"])
 def test_opening_the_library_again_mid_unpacking_leaves_the_unpacking_alone(
-    tmp_path, monkeypatch, can_lock
+    tmp_path, monkeypatch, can_lock, spelling
 ):
     from bpp.web import analyze_archive, archive_placement
     from bpp.web.archive_placement import set_aside_and_remove_in_background, wait_for_removals
 
     if not can_lock:
         monkeypatch.setattr(archive_placement, "_try_lock", lambda fd: None)
-
-    work = str(tmp_path / "data")
+    work = tmp_path / "data"
+    work.mkdir()
+    if spelling == "link":
+        alias = tmp_path / "alias"  # the same library, by another path
+        alias.symlink_to(work, target_is_directory=True)
+    else:
+        alias = tmp_path / "DATA"
+        if not alias.exists():
+            pytest.skip("this volume tells letter cases apart")
     archive = _tar(tmp_path / "a.tar", *((f"p{i}.jpg", b"x") for i in range(10)))
     real_extract = analyze_archive._extract_tar
 
     def library_opens_again_halfway(tf, members, dest):  # as init_app_db does
         real_extract(tf, members[:5], dest)
-        set_aside_and_remove_in_background(work)
+        set_aside_and_remove_in_background(str(alias))
         wait_for_removals()
         real_extract(tf, members[5:], dest)
 
     monkeypatch.setattr(analyze_archive, "_extract_tar", library_opens_again_halfway)
 
-    out = analyze_archive.extract_archive_into_workdir(archive, work, lambda e: None)
+    out = analyze_archive.extract_archive_into_workdir(archive, str(work), lambda e: None)
 
     assert out is not None and len(os.listdir(out)) == 10
 
@@ -211,10 +221,8 @@ def test_an_unpacking_another_process_holds_is_left_alone(tmp_path):
 
     from bpp.web.archive_placement import sweep_unfinished_unpacking
 
-    base = tmp_path / "extracted"
-    base.mkdir()
     holder = subprocess.Popen(
-        [sys.executable, "-c", _HOLDER, str(base)],
+        [sys.executable, "-c", _HOLDER, str(tmp_path)],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         text=True,
@@ -230,125 +238,9 @@ def test_an_unpacking_another_process_holds_is_left_alone(tmp_path):
     finally:
         holder.communicate("\n", timeout=30)
 
-    os.makedirs(os.path.join(base, ".unpacking-left"))  # a crash left one
+    os.makedirs(tmp_path / ".unpacking" / "run-left")  # a crash left one
     sweep_unfinished_unpacking(str(tmp_path))
-    assert os.listdir(base) == []
-
-
-# ── a later analysis never ends a deletion ───────────────────────────────
-
-
-def _external_photo_deleted(tmp_path):
-    from bpp.db import analysis_leftovers as leftovers
-
-    work = tmp_path / "data"
-    work.mkdir()
-    photo = tmp_path / "external.jpg"  # an original outside the library stays on disk
-    photo.write_bytes(b"x")
-    leftovers._note_pending(str(work), [str(photo)])  # its rewrite has not run yet
-    return work, str(photo)
-
-
-def test_a_command_line_analysis_written_after_a_delete_keeps_the_photo_out(tmp_path, monkeypatch):
-    from bpp.db import analysis_leftovers as leftovers
-    from bpp.db.connection import init_db
-    from bpp.scoring import aggregate
-    from bpp.web.state_init_phases import import_from_legacy_caches
-
-    work, photo = _external_photo_deleted(tmp_path)
-    old = {"filepath": photo, "blur_raw": 200.0, "gps_lat": 39.1}  # scored before the delete
-    monkeypatch.setattr(aggregate, "parallel_map", lambda *a, **k: [old])
-
-    aggregate.analyze_all([photo], str(work), {}, workers=1)
-
-    assert leftovers.pending_forgets(str(work)) == {photo}
-    conn = init_db(str(work / "photopicker.db"))
-    import_from_legacy_caches(conn, str(work), str(tmp_path), 0)
-    assert conn.execute("SELECT COUNT(*) FROM photos").fetchone()[0] == 0
-
-
-def test_an_analysis_in_the_app_does_not_clear_a_note(tmp_path, offline_downloads):
-    from unittest.mock import patch
-
-    from bpp.db import analysis_leftovers as leftovers
-    from bpp.web.analyze_worker import AnalyzeWorker
-
-    work, photo = _external_photo_deleted(tmp_path)
-    scored = [
-        {
-            "filepath": photo,
-            "date": "2024-01-01T00:00:00",
-            "file_size": 1,
-            "file_mtime": 1.0,
-            "blur_raw": 100.0,
-            "blur_score": 0.5,
-            "exposure_score": 0.5,
-            "face_score": 0.5,
-            "composition_score": 0.5,
-            "face_count": 0,
-        }
-    ]
-    worker = AnalyzeWorker()
-    with patch.object(AnalyzeWorker, "_score", return_value=scored):
-        worker.start(str(tmp_path), str(work), {"max_long_side": 256}, [".jpg"])
-        worker._thread.join(timeout=60)
-
-    assert leftovers.pending_forgets(str(work)) == {photo}
-
-
-# ── a note in the library root ───────────────────────────────────────────
-
-
-def _root_with_note(tmp_path, *paths):
-    from bpp.db import analysis_leftovers as leftovers
-
-    root, work = tmp_path, tmp_path / "data"
-    work.mkdir()
-    with open(root / "analysis.json", "w") as f:
-        json.dump([{"filepath": p} for p in paths], f)
-    leftovers._note_pending(str(root), [paths[0]])  # a session that kept its data in the root
-    return root, work
-
-
-def test_a_note_in_the_library_root_is_honoured_and_then_done(tmp_path):
-    from bpp.db.analysis_leftovers import PENDING
-    from bpp.db.connection import init_db
-    from bpp.web.state_init_phases import import_from_legacy_caches
-
-    root, work = _root_with_note(tmp_path, "/p/gone.jpg", "/p/b.jpg")
-    conn = init_db(str(work / "photopicker.db"))
-
-    import_from_legacy_caches(conn, str(work), str(root), 0)
-
-    assert [r[0] for r in conn.execute("SELECT filepath FROM photos")] == ["/p/b.jpg"]
-    assert not (root / PENDING).exists()
-    assert [d["filepath"] for d in json.loads((root / "analysis.json").read_text())] == ["/p/b.jpg"]
-
-
-def test_clear_library_removes_a_note_in_the_library_root(tmp_path):
-    from bpp.db.analysis_leftovers import PENDING, forget_analysis_files
-
-    root, work = _root_with_note(tmp_path, "/p/gone.jpg")
-
-    forget_analysis_files(str(work), str(root))
-
-    assert not (root / PENDING).exists()
-
-
-def test_a_photo_added_back_after_its_delete_keeps_its_analysis(tmp_path):
-    from bpp.db import analysis_leftovers as leftovers
-    from bpp.db.connection import init_db
-    from bpp.db.photos import upsert_photo
-
-    work, photo = _external_photo_deleted(tmp_path)
-    with open(work / "analysis.json", "w") as f:
-        json.dump([{"filepath": photo}], f)
-    upsert_photo(init_db(str(work / "photopicker.db")), {"filepath": photo})  # added back
-
-    leftovers.apply_pending_forgets(str(work))
-
-    assert json.loads((work / "analysis.json").read_text()) == [{"filepath": photo}]
-    assert leftovers.pending_forgets(str(work)) == set()
+    assert os.listdir(tmp_path / ".unpacking") == []
 
 
 # ── sparse members, merged folders and damaged archives ──────────────────
@@ -442,7 +334,37 @@ def test_a_zip_with_a_damaged_directory_is_reported(tmp_path, monkeypatch):
     assert (
         analyze_archive.extract_archive_into_workdir(str(path), str(tmp_path / "d"), emit) is None
     )
-    assert seen and seen[0].startswith("Could not extract archive")
+    assert seen and "it is damaged or holds an unsafe entry" in seen[0], seen
+
+
+def test_a_file_that_is_no_archive_this_app_reads_is_said_plainly(tmp_path):
+    from bpp.web.analyze_archive import extract_archive_into_workdir
+
+    path = tmp_path / "a.zip"
+    path.write_bytes(b"photos, but not an archive\n" * 10)
+    seen, emit = _errors()
+
+    assert extract_archive_into_workdir(str(path), str(tmp_path / "data"), emit) is None
+    assert "not a zip or tar archive this app can read, or it is damaged" in seen[0]
+
+
+def test_a_tar_xz_damaged_late_is_reported(tmp_path):
+    from bpp.web.analyze_archive import extract_archive_into_workdir
+
+    path = tmp_path / "a.tar.xz"
+    with tarfile.open(path, "w:xz") as tf:
+        for i in range(20):
+            info = tarfile.TarInfo(f"p{i}.jpg")
+            data = os.urandom(4096)
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+    raw = bytearray(path.read_bytes())
+    raw[len(raw) // 2 : len(raw) // 2 + 64] = bytes(64)  # damaged in the middle
+    path.write_bytes(bytes(raw))
+    seen, emit = _errors()
+
+    assert extract_archive_into_workdir(str(path), str(tmp_path / "data"), emit) is None
+    assert seen and "it is damaged or holds an unsafe entry" in seen[0], seen
 
 
 def test_a_tar_gz_cut_short_is_reported(tmp_path):
@@ -459,4 +381,24 @@ def test_a_tar_gz_cut_short_is_reported(tmp_path):
     seen, emit = _errors()
 
     assert extract_archive_into_workdir(str(path), str(tmp_path / "data"), emit) is None
-    assert seen and "damaged" in seen[0]
+    assert seen and "it is damaged or holds an unsafe entry" in seen[0], seen
+
+
+def test_clear_library_removes_a_leftover_unpacking(tmp_path):
+    from bpp.db.library import ensure_library_dirs
+    from bpp.web.app import create_app
+
+    lib = tmp_path / "library"
+    work = ensure_library_dirs(str(lib))["data"]
+    app = create_app(workdir=work, library_path=str(lib))
+    app.config["TESTING"] = True
+    leftover = os.path.join(work, ".unpacking", "run-left")
+    os.makedirs(leftover)  # a crash left an archive's photos here
+    with open(os.path.join(leftover, "photo.jpg"), "wb") as f:
+        f.write(b"x")
+
+    with app.test_client() as client:
+        r = client.delete("/api/v1/library", json={"confirmation": "delete"})
+
+    assert r.status_code == 200, r.get_json()
+    assert os.listdir(os.path.join(work, ".unpacking")) == []

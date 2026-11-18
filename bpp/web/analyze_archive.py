@@ -143,13 +143,26 @@ def _extract_tar(tf: tarfile.TarFile, members: list[tarfile.TarInfo], dest: str)
         tf.extract(member, dest)
 
 
+def _decoder_errors() -> tuple[type[BaseException], ...]:
+    """A damaged .tar.xz raises its decoder's own error (when this
+    Python has the decoder at all)."""
+    try:
+        import lzma
+    except ImportError:
+        return ()
+    return (lzma.LZMAError,)
+
+
+_DECODER_ERRORS = _decoder_errors()
+
 #: What can go wrong while an archive is read: a damaged or truncated
-#: file (zlib.error, EOFError), a password (RuntimeError), a compression
+#: file (zlib.error, LZMAError, EOFError), a password (RuntimeError), a compression
 #: this Python can't read (NotImplementedError), an unsafe entry.
 _UNPACK_ERRORS = (
     zipfile.BadZipFile,
     tarfile.TarError,
     zlib.error,
+    *_DECODER_ERRORS,
     EOFError,
     RuntimeError,
     NotImplementedError,
@@ -233,9 +246,8 @@ def extract_archive_into_workdir(
     # there (a hard link of an exported copy, a link), whatever the
     # archive's names turn into on this system. Only a complete, checked
     # unpacking is moved into place.
-    base = os.path.dirname(extract_dir)
     sweep_unfinished_unpacking(workdir)  # leftovers no one is unpacking into
-    with unpacking_folder(base) as fresh:
+    with unpacking_folder(workdir) as fresh:
         if not _unpack(input_path, fresh, emit):
             return None
         clash = _first_clash(fresh, extract_dir)
@@ -363,7 +375,13 @@ def _unpack_checked(input_path: str, dest: str, emit: Callable[[dict[str, Any]],
                 return False
             _extract_tar(tf, members, dest)
     else:
-        emit({"type": "error", "message": "Unsupported archive format"})
+        emit(
+            {
+                "type": "error",
+                "message": "Could not extract archive: it is not a zip or tar archive this app "
+                "can read, or it is damaged. Unpack it yourself, then analyse the folder",
+            }
+        )
         return False
     return True
 

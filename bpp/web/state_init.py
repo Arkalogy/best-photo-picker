@@ -304,7 +304,10 @@ def load_analysis_if_needed(
             json_data = None
             for search_dir in (ctx.state["workdir"], ctx.state.get("library_path")):
                 if search_dir and os.path.isdir(search_dir):
-                    json_data = load_analysis(search_dir, notes_in=ctx.state["workdir"])
+                    json_data = load_analysis(
+                        search_dir,
+                        notes_in=(ctx.state["workdir"], ctx.state.get("library_path")),
+                    )
                     if json_data:
                         break
             if json_data:

@@ -1,16 +1,20 @@
 """Putting an unpacked archive in place.
 
-An archive is unpacked whole into a new, empty folder of its own
-(``extracted/.unpacking-…``), then moved into the archive's folder by
-name. Nothing the archive names is ever written into a file that is
+An archive is unpacked whole into a new, empty folder of the app's own
+(``<workdir>/.unpacking/run-…``), then moved into the archive's folder
+by name. Nothing the archive names is ever written into a file that is
 already there (a hard link of an exported copy, a link), whatever its
-names turn into on this system.
+names turn into on this system. The folder is beside ``extracted/``,
+never in it: archives unpacked by earlier versions went straight into
+``extracted/`` and can have any name there.
 
 An unpacking folder is held locked while it is written to. One that no
 one holds was left by a run that ended early (a quit, a crash): it is
 set aside and removed. Its dates say nothing (an archive can give its
-folder any date), and the lock is what tells another process sharing
-the library, or a library opened again in this one, to leave it alone.
+folder any date). The lock tells another process, or a library opened
+again in this one, to leave it alone. Where the system can't lock files,
+the library's serving lock (one app per library) and this process's
+own list of the folders it writes do.
 """
 
 from __future__ import annotations
@@ -24,23 +28,25 @@ import tempfile
 import threading
 from collections.abc import Iterator
 
-from bpp.db.analysis_leftovers import EXTRACTED_DIR
 from bpp.utils.logging import get_logger
 
 log = get_logger(__name__)
 
-#: Name prefix of the folder an archive is unpacked into before it is moved into place.
-UNPACKING = ".unpacking-"
-#: ...and of one set aside, to be removed.
-DISCARDED = ".discarded-"
+#: The app's own folder (in the workdir) that archives are unpacked in.
+STAGING_DIR = ".unpacking"
+#: In it: the folder of one unpacking...
+RUN = "run-"
+#: ...and one set aside, to be removed.
+DISCARDED = "discarded-"
 #: In an unpacking folder: the file held locked while it is in use...
 IN_USE = "in-use.lock"
 #: ...and the folder the archive's files go into, beside it.
 CONTENT = "content"
 
-#: Unpackings this process is writing (guards them where the system
-#: can't lock files), and the lock that orders taking one against a sweep.
-_ours: set[str] = set()
+#: Unpackings this process is writing, by the folder itself (any
+#: spelling of its path: case, links), which guards them where the system
+#: can't lock files; and the lock that orders taking one against a sweep.
+_ours: set[tuple[int, int]] = set()
 _ours_lock = threading.Lock()
 _removers: list[threading.Thread] = []
 
@@ -66,7 +72,8 @@ def _try_lock(fd: int) -> bool | None:
 
 def _hold(folder: str) -> int | None:
     """*folder*'s in-use file, opened and locked; None when someone else
-    holds it or it was moved meanwhile (by a sweep elsewhere)."""
+    holds it, it was moved meanwhile (by a sweep elsewhere), or it is not
+    a file this app made (left alone)."""
     lock = os.path.join(folder, IN_USE)
     try:
         fd = os.open(lock, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
@@ -81,32 +88,56 @@ def _hold(folder: str) -> int | None:
     return None
 
 
+def _identity(folder: str) -> tuple[int, int]:
+    st = os.stat(folder)
+    return (st.st_dev, st.st_ino)
+
+
+def _staging(workdir: str, *, make: bool = False) -> str | None:
+    """``<workdir>/.unpacking`` as a real folder, never through a link (a
+    library folder may have been prepared by someone else): made when
+    *make*, else None when it is not there."""
+    path = os.path.join(workdir, STAGING_DIR)
+    if os.path.islink(path):
+        if not make:
+            return None
+        log.warning("Removed a link at %s: archives are unpacked into a real folder", path)
+        os.unlink(path)
+    if make:
+        os.makedirs(path, exist_ok=True)
+    return path if os.path.isdir(path) else None
+
+
 @contextlib.contextmanager
-def unpacking_folder(base: str) -> Iterator[str]:
-    """A new, empty folder in *base* to unpack an archive into, held as
-    in use until the block ends; then it is removed."""
+def unpacking_folder(workdir: str) -> Iterator[str]:
+    """A new, empty folder to unpack an archive into, held as in use
+    until the block ends; then it is removed."""
+    base = _staging(workdir, make=True)
     with _ours_lock:
         for _ in range(5):
-            folder = tempfile.mkdtemp(prefix=UNPACKING, dir=base)
+            folder = tempfile.mkdtemp(prefix=RUN, dir=base)
             fd = _hold(folder)
             if fd is not None:
-                _ours.add(os.path.abspath(folder))
+                _ours.add(_identity(folder))
                 break
         else:
             raise OSError(errno.EBUSY, "could not make a folder to unpack the archive into", base)
+    identity = _identity(folder)
     try:
         content = os.path.join(folder, CONTENT)
         os.mkdir(content)
         yield content
     finally:
         with _ours_lock:
-            _ours.discard(os.path.abspath(folder))
+            _ours.discard(identity)
         os.close(fd)
         shutil.rmtree(folder, ignore_errors=True)
 
 
-def _extracted_entries(workdir: str, prefix: str) -> list[os.DirEntry]:
-    base = os.path.join(workdir, EXTRACTED_DIR)
+def _entries(workdir: str, prefix: str) -> list[os.DirEntry]:
+    base = _staging(workdir)
+    if base is None:
+        return []
     try:
         with os.scandir(base) as entries:
             return [
@@ -121,15 +152,16 @@ def set_aside_unfinished_unpacking(workdir: str) -> int:
     removal, a whole archive's worth of files, is left for later)."""
     moved = 0
     with _ours_lock:
-        for entry in _extracted_entries(workdir, UNPACKING):
-            if os.path.abspath(entry.path) in _ours:
-                continue
+        for entry in _entries(workdir, RUN):
+            try:
+                if _identity(entry.path) in _ours:
+                    continue
+            except OSError:
+                continue  # gone meanwhile
             fd = _hold(entry.path)
             if fd is None:
                 continue  # in use
-            aside = os.path.join(
-                os.path.dirname(entry.path), DISCARDED + entry.name[len(UNPACKING) :]
-            )
+            aside = os.path.join(os.path.dirname(entry.path), DISCARDED + entry.name[len(RUN) :])
             try:
                 if os.name == "nt":
                     # Windows won't move a folder with a file open in it:
@@ -151,7 +183,7 @@ def set_aside_unfinished_unpacking(workdir: str) -> int:
 def remove_discarded(workdir: str) -> int:
     """Remove what :func:`set_aside_unfinished_unpacking` set aside."""
     removed = 0
-    for entry in _extracted_entries(workdir, DISCARDED):
+    for entry in _entries(workdir, DISCARDED):
         shutil.rmtree(entry.path, ignore_errors=True)
         removed += 1
     if removed:
@@ -160,7 +192,8 @@ def remove_discarded(workdir: str) -> int:
 
 
 def sweep_unfinished_unpacking(workdir: str) -> int:
-    """Before an unpacking: set aside and remove every unpacking no one holds."""
+    """Before an unpacking, and when the library is cleared: set aside
+    and remove every unpacking no one holds."""
     set_aside_unfinished_unpacking(workdir)
     return remove_discarded(workdir)
 
@@ -168,7 +201,7 @@ def sweep_unfinished_unpacking(workdir: str) -> int:
 def set_aside_and_remove_in_background(workdir: str) -> None:
     """When the library opens: set aside at once, remove in the background."""
     set_aside_unfinished_unpacking(workdir)
-    if _extracted_entries(workdir, DISCARDED):
+    if _entries(workdir, DISCARDED):
         remover = threading.Thread(
             target=remove_discarded, args=(workdir,), name="remove-unpacking-leftovers", daemon=True
         )

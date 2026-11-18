@@ -475,10 +475,10 @@ def analyze_all(
     return {"processed": len(valid), "skipped": skipped, "results": valid}
 
 
-def load_analysis(workdir: str, *, notes_in: str | None = None) -> list[dict[str, Any]]:
+def load_analysis(workdir: str, *, notes_in: tuple[str | None, ...] = ()) -> list[dict[str, Any]]:
     """Load previously saved analysis results, without the photos noted
     as deleted for good: in a note beside the file, or in the library's
-    workdir (*notes_in*, when this is the copy in the library root)."""
+    other folders (*notes_in*: its workdir and its root)."""
     from bpp.utils.retry import retry_io
 
     results_path = os.path.join(workdir, "analysis.json")
@@ -493,4 +493,4 @@ def load_analysis(workdir: str, *, notes_in: str | None = None) -> list[dict[str
     from bpp.db.analysis_leftovers import without_pending
 
     # Photos deleted for good whose removal from the file is still waiting.
-    return without_pending(retry_io(_read, label="load_analysis_json"), workdir, notes_in)
+    return without_pending(retry_io(_read, label="load_analysis_json"), workdir, *notes_in)

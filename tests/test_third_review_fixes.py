@@ -46,7 +46,7 @@ def test_a_refused_member_touches_nothing_outside_or_inside(tmp_path):
 
     assert (base / "other.jpg").read_bytes() == b"an older flat-layout photo"
     assert (folder / "first.jpg").read_bytes() == b"an earlier first", "nothing moved in"
-    assert not [n for n in os.listdir(base) if n.startswith(".unpacking-")]
+    assert os.listdir(work / ".unpacking") == [], "the unpacking folder is gone"
 
 
 def test_a_file_named_with_a_trailing_slash_is_not_written_through(tmp_path):
@@ -81,12 +81,12 @@ def test_an_unfinished_unpacking_left_by_an_earlier_run_is_removed(tmp_path):
     from bpp.web.analyze_archive import extract_archive_into_workdir
 
     work = tmp_path / "data"
-    (work / "extracted" / ".unpacking-old" / "x").mkdir(parents=True)
+    (work / ".unpacking" / "run-old" / "x").mkdir(parents=True)
     archive = _tar(tmp_path / "a.tar", ("a.jpg", b"x"))
 
     extract_archive_into_workdir(archive, str(work), lambda e: None)
 
-    assert not (work / "extracted" / ".unpacking-old").exists()
+    assert not (work / ".unpacking" / "run-old").exists()
 
 
 # ── a failed switch restores the old library unchecked ───────────────────

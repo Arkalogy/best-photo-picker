@@ -46,6 +46,7 @@ def import_from_analysis_json(
     *,
     existing_only: bool = False,
     workdir: str | None = None,
+    library_root: str | None = None,
 ) -> int:
     """Import photos from a legacy analysis.json file. Returns count imported.
 
@@ -77,9 +78,9 @@ def import_from_analysis_json(
     # waiting (the rewrite failed, or has not run): never imported.
     from bpp.db.analysis_leftovers import without_pending
 
-    # The note is in the workdir, or beside the file when a session kept
-    # its data in the library root.
-    rows = without_pending(rows, workdir, os.path.dirname(json_path))
+    # The note is in the workdir, or in the library root when a session
+    # kept its data there: every one is checked, whichever copy is read.
+    rows = without_pending(rows, workdir, os.path.dirname(json_path), library_root)
     count = bulk_upsert_photos(conn, rows)
     log.info("Imported %d photos from %s", count, json_path)
     return count

@@ -68,7 +68,7 @@ def acquire_serving_lock(wd: str) -> None:
         ) from e
     if held_by is not None:
         raise RuntimeError(
-            f"Another bpp server appears to be running (pid={held_by}) "
+            f"Another bpp server (or a `bpp analyze` run) appears to be running (pid={held_by}) "
             f"using {wd}. Stop it first, or remove {wd}/.serving.lock "
             "if you're sure no server is up."
         )
@@ -224,7 +224,7 @@ def import_from_legacy_caches(conn: Any, wd: str, lib_root: str, photo_count: in
                 # since.
                 has_rows = conn.execute("SELECT 1 FROM photos LIMIT 1").fetchone() is not None
                 _import_analysis_json_or_set_aside(
-                    conn, json_path, existing_only=has_rows, workdir=wd
+                    conn, json_path, existing_only=has_rows, workdir=wd, library_root=lib_root
                 )
                 break
 
@@ -242,7 +242,12 @@ def import_from_legacy_caches(conn: Any, wd: str, lib_root: str, photo_count: in
 
 
 def _import_analysis_json_or_set_aside(
-    conn: Any, json_path: str, *, existing_only: bool = False, workdir: str | None = None
+    conn: Any,
+    json_path: str,
+    *,
+    existing_only: bool = False,
+    workdir: str | None = None,
+    library_root: str | None = None,
 ) -> None:
     """Best-effort: a failed import must not stop this launch. A file
     whose content can't be imported is set aside (kept, under another
@@ -250,7 +255,13 @@ def _import_analysis_json_or_set_aside(
     from bpp.utils.json_utils import move_aside
 
     try:
-        import_from_analysis_json(conn, json_path, existing_only=existing_only, workdir=workdir)
+        import_from_analysis_json(
+            conn,
+            json_path,
+            existing_only=existing_only,
+            workdir=workdir,
+            library_root=library_root,
+        )
     except (ValueError, TypeError, KeyError, AttributeError, OverflowError):
         # What the file says can't be imported: it would fail again.
         log.error("Could not import %s; setting it aside", json_path, exc_info=True)

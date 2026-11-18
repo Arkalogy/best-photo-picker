@@ -42,7 +42,7 @@ def api_analyze() -> tuple[Response, int]:
     input_dir = data.get("input_dir") or ctx.input_dir
     recursive = json_bool(data, "recursive", default=False)
 
-    archive_exts = (".zip", ".tar.gz", ".tgz", ".tar.bz2", ".tar")
+    archive_exts = (".zip", ".tar.gz", ".tgz", ".tar.bz2", ".tar.xz", ".txz", ".tar")
     is_archive = (
         input_dir
         and os.path.isfile(input_dir)
@@ -313,7 +313,12 @@ def api_clear_library() -> tuple[Response, int]:
     from bpp.db.analysis_leftovers import forget_all_analysis, forget_database_copies
     from bpp.db.dialect import dialect
 
-    forget_all_analysis(ctx.state.get("workdir") or ctx.dirs.get("data"), library_path)
+    workdir = ctx.state.get("workdir") or ctx.dirs.get("data")
+    forget_all_analysis(workdir, library_path)
+    if workdir:  # an unpacking a quit or a crash left: archive photos too
+        from bpp.web.archive_placement import sweep_unfinished_unpacking
+
+        sweep_unfinished_unpacking(workdir)
     db_path = dialect.database_path(conn)
     if db_path:
         forget_database_copies(db_path)
