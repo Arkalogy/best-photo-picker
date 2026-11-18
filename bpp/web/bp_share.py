@@ -11,13 +11,63 @@ bpp.web.share.
 
 from __future__ import annotations
 
+from typing import Any, NamedTuple
+
 from flask import Blueprint, Response, jsonify, request
 
 from bpp.errors import NotFoundError, RateLimitedError, ValidationError
+from bpp.web.request_validation import json_bool
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx
 
 bp = Blueprint("share", __name__)
+
+
+class _SharingNow(NamedTuple):
+    #: A link can be shown: switched on, checked, reachable from the LAN.
+    enabled: bool
+    lan_ip: str | None
+    #: Switched on, but this run chose to listen on this computer only
+    #: (sharing was off when it started): no phone can reach it yet. Not
+    #: when the owner asked for that address (``--host``, a proxy).
+    restart_required: bool
+    #: This installation's key file can't be read: sharing is held off.
+    key_unreadable: bool
+
+
+def _sharing_now(ctx: Any) -> _SharingNow:
+    """The one answer to "can a share link be shown?" for the Share
+    tab, the QR code and a new link."""
+    from bpp.web import share_seal_store
+    from bpp.web.share import (
+        check_sharing_state_if_waiting,
+        detect_lan_ip,
+        is_lan_sharing_enabled,
+    )
+
+    check_sharing_state_if_waiting(ctx)
+    lan_ip = detect_lan_ip()
+    switched_on = bool(
+        is_lan_sharing_enabled(ctx.get_conn()) and getattr(ctx, "share_state_checked", True)
+    )
+    restart_required = bool(
+        switched_on
+        and getattr(ctx, "bound_host_chosen_by_app", False)
+        and _listens_on_this_computer_only(ctx)
+    )
+    return _SharingNow(
+        bool(switched_on and lan_ip and not restart_required),
+        lan_ip,
+        restart_required,
+        share_seal_store.unreadable() is not None,
+    )
+
+
+def _listens_on_this_computer_only(ctx: object) -> bool:
+    """True when this run's server is bound to loopback (`127.0.0.1`,
+    `::1`, `localhost`, any case): no other device can reach it."""
+    host = str(getattr(ctx, "bound_host", "127.0.0.1")).lower()
+    return host.startswith(("127.", "::1", "localhost"))
 
 
 @bp.get("/api/v1/share/info")
@@ -35,21 +85,20 @@ def api_share_info() -> tuple[Response, int]:
     forward state. The bare token is *not* returned as a separate field.
     """
     from bpp.web.share import (
-        detect_lan_ip,
         get_lan_share_url,
         get_share_token,
-        is_lan_sharing_enabled,
         recent_share_access,
     )
 
     ctx = get_ctx()
-    conn = ctx.get_conn()
-    lan_ip = detect_lan_ip()
-    enabled = bool(is_lan_sharing_enabled(conn) and lan_ip)
+    now = _sharing_now(ctx)
+    conn, lan_ip, enabled = ctx.get_conn(), now.lan_ip, now.enabled
     share_url = get_lan_share_url(ctx.port, get_share_token(conn), ip=lan_ip) if enabled else None
     resp = jsonify(
         {
             "enabled": enabled,
+            "restart_required": now.restart_required,
+            "key_unreadable": now.key_unreadable,
             "lan_ip": lan_ip,
             "port": ctx.port,
             "share_url": share_url,
@@ -84,9 +133,9 @@ def api_share_toggle() -> tuple[Response, int]:
     from bpp.web.share import set_lan_sharing_enabled
 
     body = request.get_json(silent=True) or {}
-    if "enabled" not in body:
-        raise ValidationError("missing 'enabled' field", field="enabled")
-    enabled = bool(body["enabled"])
+    # Only a JSON true/false: bool() would read "on", "off" or "false" as
+    # true, so a malformed request to turn sharing off would leave it on.
+    enabled = json_bool(body, "enabled")
     ctx = get_ctx()
 
     # Loopback-only bind + enable request = restart-required 409.
@@ -96,20 +145,18 @@ def api_share_toggle() -> tuple[Response, int]:
     # branch fires unconditionally when enabling — no `is not None`
     # fallthrough that would silently bypass the gate. Lowercase the
     # value before comparing so `--host=LOCALHOST` still trips it.
-    if enabled:
-        loopback_prefixes = ("127.", "::1", "localhost")
-        if ctx.bound_host.lower().startswith(loopback_prefixes):
-            return jsonify(
-                {
-                    "error": (
-                        "Restart required to enable LAN sharing — server "
-                        f"is bound to {ctx.bound_host} (loopback only). "
-                        "Restart with `--host=0.0.0.0` or restart with "
-                        "sharing already enabled in the database."
-                    ),
-                    "restart_required": True,
-                }
-            ), 409
+    if enabled and _listens_on_this_computer_only(ctx):
+        return jsonify(
+            {
+                "error": (
+                    "Restart required to enable LAN sharing — server "
+                    f"is bound to {ctx.bound_host} (loopback only). "
+                    "Restart with `--host=0.0.0.0` or restart with "
+                    "sharing already enabled in the database."
+                ),
+                "restart_required": True,
+            }
+        ), 409
 
     set_lan_sharing_enabled(ctx.get_conn(), enabled)
     return jsonify({"enabled": enabled}), 200
@@ -128,21 +175,15 @@ def api_share_revoke() -> tuple[Response, int]:
     vector indistinguishable from device approve/revoke.
     """
     from bpp.web.share import (
-        detect_lan_ip,
         get_lan_share_url,
-        is_lan_sharing_enabled,
         regenerate_share_token,
     )
 
     ctx = get_ctx()
     conn = ctx.get_conn()
     new_token = regenerate_share_token(conn)
-    lan_ip = detect_lan_ip()
-    share_url = (
-        get_lan_share_url(ctx.port, new_token, ip=lan_ip)
-        if (is_lan_sharing_enabled(conn) and lan_ip)
-        else None
-    )
+    now = _sharing_now(ctx)
+    share_url = get_lan_share_url(ctx.port, new_token, ip=now.lan_ip) if now.enabled else None
     resp = jsonify({"share_url": share_url})
     resp.headers["Cache-Control"] = "no-store"  # token embedded in URL
     return resp, 200
@@ -287,17 +328,16 @@ def api_share_qr() -> tuple[Response, int]:
     the rationale.
     """
     from bpp.web.share import (
-        detect_lan_ip,
         get_lan_share_url,
         get_share_token,
-        is_lan_sharing_enabled,
         render_qr_png,
     )
 
     ctx = get_ctx()
     conn = ctx.get_conn()
-    lan_ip = detect_lan_ip()
-    if not (is_lan_sharing_enabled(conn) and lan_ip):
+    now = _sharing_now(ctx)
+    lan_ip = now.lan_ip
+    if not now.enabled:
         raise NotFoundError("LAN sharing not enabled")
     share_url = get_lan_share_url(ctx.port, get_share_token(conn), ip=lan_ip)
     png = render_qr_png(share_url)

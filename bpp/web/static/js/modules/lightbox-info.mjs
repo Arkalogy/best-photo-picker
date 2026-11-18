@@ -23,7 +23,7 @@
 
 import { apiFetch, authedSrc } from "./api-client.mjs";
 import { appConfirm } from "./dialogs.mjs";
-import { esc } from "./text-format.mjs";
+import { esc, escVal } from "./text-format.mjs";
 import { _formatDuration } from "./photos.mjs";
 import { toast, toastError } from "./toast.mjs";
 
@@ -251,8 +251,8 @@ export function updateLightboxTrim(p) {
     <div class="lb-trim-label">Trim Video</div>
     <div class="lb-trim-range">
       <span class="lb-trim-time" id="lb-trim-start-val">0:00</span>
-      <input type="range" id="lb-trim-start" min="0" max="${dur}" step="0.1" value="0">
-      <input type="range" id="lb-trim-end" min="0" max="${dur}" step="0.1" value="${dur}">
+      <input type="range" id="lb-trim-start" min="0" max="${escVal(dur)}" step="0.1" value="0">
+      <input type="range" id="lb-trim-end" min="0" max="${escVal(dur)}" step="0.1" value="${escVal(dur)}">
       <span class="lb-trim-time" id="lb-trim-end-val">${esc(durStr)}</span>
     </div>
     <div class="lb-trim-actions">

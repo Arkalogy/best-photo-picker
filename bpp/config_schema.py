@@ -29,6 +29,7 @@ future ``/api/v1/settings/schema`` endpoint.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -162,6 +163,8 @@ def validate_value(key: str, value: Any) -> Any:
         )
 
     if isinstance(coerced, (int, float)) and not isinstance(coerced, bool):
+        if isinstance(coerced, float) and not math.isfinite(coerced):
+            raise ConfigValidationError(key, f"value {coerced} is not a finite number")
         if schema.min is not None and coerced < schema.min:
             raise ConfigValidationError(key, f"value {coerced} below minimum {schema.min}")
         if schema.max is not None and coerced > schema.max:

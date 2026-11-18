@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import os
 
-from flask import Blueprint, Response, jsonify, send_file
+from flask import Blueprint, Response, jsonify
 
 from bpp.config import cfg_get
 from bpp.db.photos import get_photo_id_by_path
@@ -26,9 +26,11 @@ from bpp.errors import NotFoundError
 from bpp.media_types import MediaKind, media_kind_from_path
 from bpp.utils import raw as raw_support
 from bpp.utils.logging import get_logger
+from bpp.utils.typed_values import as_int
 from bpp.web.box_crop import RawUnreadable
 from bpp.web.face_worker import generate_face_crop
 from bpp.web.media_support import crop_failure_error, raw_full_jpeg_path, raw_preview_error
+from bpp.web.photo_cache import send_cache_file
 from bpp.web.state import get_ctx
 
 log = get_logger(__name__)
@@ -192,8 +194,9 @@ def api_faces_for_photo(path_hash: str) -> tuple[Response, int]:
                 (photo_id,),
             ).fetchall()
             for tr in tag_rows:
-                cid = tr["cluster_id"]
-                person_tags.append({"cluster_id": cid, "name": name_map.get(cid)})
+                cid = as_int(tr["cluster_id"])
+                if cid is not None:
+                    person_tags.append({"cluster_id": cid, "name": name_map.get(cid)})
     except Exception as e:
         log.warning("Failed to load person tags for photo: %s", e)
 
@@ -263,4 +266,4 @@ def api_face_crop(path_hash: str, face_index: int) -> Response | tuple[Response,
             face_index=face_index,
         )
 
-    return send_file(crop_path, mimetype="image/jpeg")
+    return send_cache_file(crop_path, mimetype="image/jpeg")

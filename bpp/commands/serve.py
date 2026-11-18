@@ -10,12 +10,16 @@ the CLI and tests.
 from __future__ import annotations
 
 import argparse
-import logging
 import os
 from typing import Any
 
+from bpp.commands.serve_launch import configure_loopback_boot as _configure_loopback_boot
+from bpp.commands.serve_launch import (
+    hold_loopback,
+    open_browser_when_ours,
+)
 from bpp.utils.logging import get_logger, setup_logging
-from bpp.web.wsgi_bind import bind_without_reverse_dns
+from bpp.web.wsgi_bind import bind_without_reverse_dns, lazy_tls, request_handler
 
 
 def do_web(args: argparse.Namespace) -> int:
@@ -45,18 +49,18 @@ def do_web(args: argparse.Namespace) -> int:
     _launch_url = _configure_loopback_boot(app.extensions["bpp"], port, args)
 
     if not args.no_browser:
-        import threading
-        import webbrowser
-
-        threading.Timer(1.0, webbrowser.open, args=[_launch_url]).start()
+        open_browser_when_ours(_launch_url, port, app.extensions["bpp"].boot_secret)
 
     host = getattr(args, "host", None) or "127.0.0.1"
+    ctx = app.extensions["bpp"]
+    ctx.bound_host, ctx.bound_host_chosen_by_app = host, not getattr(args, "host", None)
     log.info("Starting web UI on %s:%d", host, port)
     # ``--debug`` means verbose logging (setup_logging above), never
     # Werkzeug's interactive debugger: that would hand a traceback page
     # and a code console to anyone who can reach the port.
+    hold_loopback(app, host, port, None)
     bind_without_reverse_dns()
-    app.run(host=host, port=port, debug=False, threaded=True)
+    app.run(host=host, port=port, debug=False, threaded=True, request_handler=request_handler())
     return 0
 
 
@@ -71,7 +75,13 @@ def do_serve(args: argparse.Namespace) -> int:
         log.error("Flask is not installed. Install with: pip install bppicker[web]")
         return 1
 
-    library_path, dirs = _resolve_library(args)
+    from bpp.errors import ValidationError
+
+    try:
+        library_path, dirs = _resolve_library(args)
+    except ValidationError as e:
+        log.error("%s", e)
+        return 1
     workdir = dirs["data"]  # DB and caches live in data/ subdir
     port = args.port
 
@@ -89,21 +99,31 @@ def do_serve(args: argparse.Namespace) -> int:
     add_file_handler(os.path.join(dirs["logs"], "server.log"))
 
     _startup_integrity_gate(os.path.join(workdir, "photopicker.db"))
+    # Said again now that the log file is attached: the first read of the
+    # sharing key happened before it, and this is what explains "sharing
+    # is off" to whoever reads server.log.
+    from bpp.web import share_seal_store
 
-    app = create_app(
-        workdir=workdir,
-        config_path=getattr(args, "config", None),
-        library_path=library_path,
-    )
+    if share_seal_store.unreadable():
+        log.error(
+            "This installation's sharing key %s can't be read (%s): sharing stays off "
+            "until it can. Check the file's permissions, then restart.",
+            share_seal_store.key_file(),
+            share_seal_store.unreadable(),
+        )
+
+    try:
+        app = create_app(
+            workdir=workdir,
+            config_path=getattr(args, "config", None),
+            library_path=library_path,
+        )
+    except ValidationError as e:
+        log.error("%s", e)
+        return 1
 
     ctx = app.extensions["bpp"]
     _launch_url = _configure_loopback_boot(ctx, port, args)
-
-    if not args.no_browser:
-        import threading
-        import webbrowser
-
-        threading.Timer(1.0, webbrowser.open, args=[_launch_url]).start()
 
     _install_shutdown_handlers()
 
@@ -123,6 +143,7 @@ def do_serve(args: argparse.Namespace) -> int:
     # would show a LAN URL, but no phone could actually connect
     # because the process never opened the LAN interface.
     ctx.bound_host = host
+    ctx.bound_host_chosen_by_app = not getattr(args, "host", None)  # as _bind_host decides
 
     log.info("Library: %s", library_path)
     log.info("Starting server on %s:%d", host, port)
@@ -135,13 +156,19 @@ def do_serve(args: argparse.Namespace) -> int:
     # Werkzeug's interactive debugger: with sharing on the server binds the
     # LAN, and the debugger's traceback pages and console would be reachable
     # by any device that can send a loopback Host header.
+    ssl_context = _ssl_context(ctx.config or {})
+    ssl_context = lazy_tls(ssl_context)
+    hold_loopback(app, host, port, ssl_context)
+    if not args.no_browser:
+        open_browser_when_ours(_launch_url, port, ctx.boot_secret, tls=bool(ssl_context))
     bind_without_reverse_dns()
     app.run(
         host=host,
         port=port,
         debug=False,
         threaded=True,
-        ssl_context=_ssl_context(ctx.config or {}),
+        ssl_context=ssl_context,
+        request_handler=request_handler(),
     )
     return 0
 
@@ -172,10 +199,39 @@ def _resolve_library(args: argparse.Namespace) -> tuple[str, dict[str, str]]:
     except OSError:
         pass  # non-fatal; proceed even if stat fails
 
+    _warn_if_state_inside_library(library_path)
+    # Before the library is registered: the sharing key's first creation
+    # lists the libraries already in use (see bpp.web.share_seal).
+    from bpp.web.share_seal import ensure_installation
+
+    ensure_installation()
     # Auto-register library in the registry
     add_library(library_path)
     set_active_library(library_path)
     return library_path, dirs
+
+
+def _warn_if_state_inside_library(library_path: str) -> None:
+    """Per-user state (licence acceptances, the sharing key, models) is
+    this installation's. Kept inside a library folder it would travel
+    with, and be supplied by, that folder."""
+    from bpp.db.registry import get_registry_path
+    from bpp.utils.path_validation import is_path_under_any
+    from bpp.utils.paths import cache_dir
+
+    for what, path in (
+        ("config", os.path.dirname(get_registry_path())),
+        ("cache", str(cache_dir())),
+    ):
+        if is_path_under_any(path, [library_path]):
+            get_logger(__name__).warning(
+                "The app's own %s folder (%s) is inside the library folder (%s). "
+                "Keep it elsewhere: set XDG_CONFIG_HOME / BPP_CACHE_DIR to a "
+                "folder outside the library.",
+                what,
+                path,
+                library_path,
+            )
 
 
 def _startup_integrity_gate(db_path: str) -> None:
@@ -255,75 +311,6 @@ def _install_shutdown_handlers() -> None:
     atexit.register(_shutdown)
     signal.signal(signal.SIGTERM, _graceful_shutdown)
     signal.signal(signal.SIGINT, _graceful_shutdown)
-
-
-def _configure_loopback_boot(ctx: Any, port: int, args: argparse.Namespace) -> str:
-    """Set the loopback boot secret and return the URL to open.
-
-    Any local process can reach 127.0.0.1:port; without a secret the
-    index page would hand it the owner token (other OS users, sandboxed
-    apps). The desktop shell passes ``BPP_BOOT_SECRET``; ``bpp serve``
-    makes one and prints the tokenized URL, as notebooks do.
-    ``--open-loopback`` / ``BPP_OPEN_LOOPBACK=1`` keep the old open
-    behaviour (the e2e runner, a dev reloading the page by hand).
-    """
-    import secrets
-
-    log = get_logger(__name__)
-    base = f"http://127.0.0.1:{port}"
-    if getattr(args, "open_loopback", False) or os.environ.get("BPP_OPEN_LOOPBACK") == "1":
-        ctx.boot_secret = None
-        get_logger(__name__).info("Loopback open: no boot key (--open-loopback)")
-        return base
-    secret = os.environ.get("BPP_BOOT_SECRET")
-    ctx.boot_secret = secret or secrets.token_urlsafe(24)
-    url = f"{base}/?_boot={ctx.boot_secret}"
-    if secret:  # the desktop shell made it: it already knows
-        _replace_bare_url_banner(None)
-        log.info("Loopback boot key supplied by the launcher")
-    else:
-        # To the terminal only: server.log is on disk for the run's
-        # lifetime, and the key is what keeps other local users out.
-        # Printed when Werkzeug reports the bind (its "Running on" line),
-        # so a failed bind prints no link and the keyed link is the
-        # last, most visible thing in the terminal.
-        _replace_bare_url_banner(url)
-        log.info("Loopback boot key generated; the URL to open is printed when the port is bound")
-    return url
-
-
-class _KeyedUrlBanner(logging.Filter):
-    """Swap Werkzeug's "Running on http://127.0.0.1:5001" lines for the
-    keyed link: with a boot key in force the bare URL leads to the
-    locked page, and the README tells the user to click the link the
-    terminal prints. ``url`` None (the launcher knows the key) drops
-    the lines without printing anything."""
-
-    def __init__(self, url: str | None) -> None:
-        super().__init__()
-        self.url = url
-        self.printed = False
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        msg = record.getMessage()
-        if "Running on" in msg:
-            if self.url and not self.printed:
-                self.printed = True
-                print(
-                    f"\nOpen Best Photo Picker at {self.url}\n"
-                    "(the key is for this run only; the page without it is locked)",
-                    flush=True,
-                )
-            return False
-        return "Press CTRL+C" not in msg
-
-
-def _replace_bare_url_banner(url: str | None) -> None:
-    werkzeug = logging.getLogger("werkzeug")
-    for f in list(werkzeug.filters):
-        if isinstance(f, _KeyedUrlBanner):
-            werkzeug.removeFilter(f)
-    werkzeug.addFilter(_KeyedUrlBanner(url))
 
 
 def _bind_host(user_host: str | None, sharing_enabled: bool) -> str:
@@ -443,7 +430,9 @@ def _ssl_context(config: dict[str, Any]) -> Any:
     "adhoc", an actual SSLContext) pass through.
     """
     ssl_context = config.get("ssl_context")
-    if isinstance(ssl_context, list) and len(ssl_context) == 2:
+    if ssl_context is None or ssl_context == "adhoc":
+        return ssl_context
+    if isinstance(ssl_context, (list, tuple)) and len(ssl_context) == 2:
         return tuple(ssl_context)
     if isinstance(ssl_context, list):
         get_logger(__name__).error(
@@ -452,4 +441,8 @@ def _ssl_context(config: dict[str, Any]) -> Any:
             len(ssl_context),
         )
         return None
-    return ssl_context
+    get_logger(__name__).error(
+        "config.ssl_context must be 'adhoc' or [cert_path, key_path]; got %s. Disabling SSL.",
+        type(ssl_context).__name__,
+    )
+    return None

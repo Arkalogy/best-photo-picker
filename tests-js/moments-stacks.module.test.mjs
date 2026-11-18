@@ -16,6 +16,7 @@ vi.mock("../bpp/web/static/js/modules/compare-sibling.mjs", () => ({
 vi.mock("../bpp/web/static/js/modules/api-client.mjs", () => ({
   apiFetch,
   authedSrc: (/** @type {string} */ s) => s,
+  thumbUrl: (/** @type {string} */ h) => "/thumb/" + h,
   faceCropUrl: (/** @type {string} */ h, /** @type {number} */ i) => `/api/v1/faces/crop/${h}/${i}`,
 }));
 vi.mock("../bpp/web/static/js/modules/dialogs.mjs", () => ({ appConfirm }));

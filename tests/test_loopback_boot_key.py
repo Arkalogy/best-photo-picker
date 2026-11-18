@@ -219,8 +219,8 @@ class TestDeviceRedactionHasNoRouteExemption:
 class TestDemoUsesTheBootKey:
     def test_demo_wires_the_launch_url_through_the_boot_helper(self):
         src = (ROOT / "bpp" / "commands" / "demo.py").read_text()
-        assert '_configure_loopback_boot(app.extensions["bpp"], port, args)' in src
-        assert "args=[launch_url]" in src
+        assert 'configure_loopback_boot(app.extensions["bpp"], port, args)' in src
+        assert "open_browser_when_ours(launch_url, port" in src
         assert 'args=[f"http://127.0.0.1:{port}"]' not in src
 
 

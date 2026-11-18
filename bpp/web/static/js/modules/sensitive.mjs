@@ -11,10 +11,11 @@
  * can always correct the model.
  */
 
-import { apiFetch, authedSrc } from "./api-client.mjs";
+import { apiFetch, thumbUrl } from "./api-client.mjs";
 import { appConfirm } from "./dialogs.mjs";
 import { saveSetting } from "./settings-client.mjs";
 import { toast, toastError } from "./toast.mjs";
+import { escVal } from "./text-format.mjs";
 
 /**
  * Chip for the lightbox quality panel. Empty string when the photo
@@ -75,8 +76,8 @@ export function sensitiveReviewListHTML(flagged, thumbSrc) {
       (p, i) =>
         '<label class="sensitive-review-row">' +
         `<input type="checkbox" class="sensitive-review-keep" data-idx="${i}" checked>` +
-        `<img class="sensitive-review-thumb" src="${thumbSrc(p.thumb_hash)}" alt="">` +
-        `<span class="sensitive-review-name">${(p.filename || "").replace(/[<>&"]/g, "")}</span>` +
+        `<img class="sensitive-review-thumb" src="${escVal(thumbSrc(p.thumb_hash))}" alt="">` +
+        `<span class="sensitive-review-name">${escVal(p.filename || "")}</span>` +
         "</label>",
     )
     .join("");
@@ -126,7 +127,7 @@ export async function reviewSensitiveBeforeExport(exportPaths) {
 
   const bodyHTML =
     '<div class="sensitive-review-list">' +
-    sensitiveReviewListHTML(flagged, (h) => authedSrc("/thumb/" + h)) +
+    sensitiveReviewListHTML(flagged, thumbUrl) +
     "</div>";
   const ok = await appConfirm(
     `${flagged.length} of ${exportPaths.length} photo${exportPaths.length !== 1 ? "s" : ""} may be sensitive`,

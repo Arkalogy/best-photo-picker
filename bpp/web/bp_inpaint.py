@@ -169,13 +169,18 @@ def api_inpaint(photo_id: int) -> tuple[Response, int]:
         # Save as non-destructive edit variant keyed by content SHA-256
         # so the cache survives batch renames (filepath changes, content doesn't)
         if ctx.thumbs:
-            from bpp.constants import HASH_PREFIX_LEN, PHOTO_CACHE_SUFFIX_INPAINTED
+            from bpp.constants import PHOTO_CACHE_SUFFIX_INPAINTED
+            from bpp.db.photos_sha import content_cache_key
 
-            sha = photo["sha256"]
-            cache_key = sha[:HASH_PREFIX_LEN] if sha else ctx.thumbs.get_hash(filepath)
+            cache_key = content_cache_key(photo["sha256"]) or ctx.thumbs.get_hash(filepath)
             cache_dir = ctx.thumbs.cache_dir
             inpaint_path = os.path.join(cache_dir, f"{cache_key}{PHOTO_CACHE_SUFFIX_INPAINTED}.png")
-            result.save(inpaint_path, format="PNG")
+            from bpp.utils.fresh_file import replace_fresh
+
+            # Replaces whatever is under that name (a link included);
+            # never writes into it.
+            with replace_fresh(inpaint_path) as fh:
+                result.save(fh, format="PNG")
 
         # Return the inpainted image as base64 PNG
         buf = BytesIO()

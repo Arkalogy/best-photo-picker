@@ -345,6 +345,9 @@ def do_model_remove(args: argparse.Namespace) -> int:
     from bpp.db.library import get_library_dirs
 
     try:
+        from bpp.db.library_layout import check_library_layout
+
+        check_library_layout(args.library)
         db_path = os.path.join(get_library_dirs(args.library)["data"], "photopicker.db")
     except Exception as exc:
         print(
@@ -383,10 +386,31 @@ def do_model_remove(args: argparse.Namespace) -> int:
         )
         return 1
 
-    print(
-        f"Removed entry: {result.model_id} (kind={result.entry_kind}). "
-        f"Derived data purged: {result.purged}."
-    )
+    if result.entry_removed:
+        print(
+            f"Removed entry: {result.model_id} (kind={result.entry_kind}). "
+            f"Derived data purged: {result.purged}."
+        )
+    else:
+        print(
+            f"Face data produced by {result.model_id} was deleted from this library "
+            f"({result.derived_summary.embeddings} rows). The entry itself is built in "
+            "and stays; to stop using it, set face_embedding_method in Settings."
+        )
+    if result.purged:
+        # The face pictures cut from the photos are the same data in
+        # another form; the database backups still hold the rows until
+        # the app has started twice more (each start replaces one).
+        import shutil
+
+        crops = get_library_dirs(args.library).get("face_crops")
+        if crops and os.path.isdir(crops) and not os.path.islink(crops):
+            shutil.rmtree(crops, ignore_errors=True)
+        print(
+            "The face-crop cache was cleared. Database backups made before this "
+            "(photopicker.db.backup, .backup.prev) still contain the rows until the "
+            "app has been started twice more."
+        )
     return 0
 
 

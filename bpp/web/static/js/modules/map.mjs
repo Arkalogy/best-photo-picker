@@ -10,10 +10,10 @@
  * navigateTo dispatcher, albums.js sidebar tree).
  */
 
-import { apiFetch, authedSrc } from "./api-client.mjs";
+import { apiFetch, thumbUrl } from "./api-client.mjs";
 import { formatDate } from "./date-format.mjs";
 import { qualityLabel } from "./score-format.mjs";
-import { esc } from "./text-format.mjs";
+import { esc, escVal } from "./text-format.mjs";
 import { toast, toastError } from "./toast.mjs";
 
 /** @type {any} */
@@ -197,7 +197,7 @@ export function _renderMapMarkers(photos) {
 
     bounds.push([lat, lon]);
 
-    const thumbUrl = p.thumb_hash ? authedSrc("/thumb/" + p.thumb_hash) : "";
+    const thumb = p.thumb_hash ? thumbUrl(p.thumb_hash) : "";
     const score = p.aggregate_score || 0;
     const pct = (score * 100).toFixed(0);
     const q = qualityLabel(score);
@@ -205,12 +205,12 @@ export function _renderMapMarkers(photos) {
 
     let popupHtml =
       '<div class="map-popup" data-photo-id="' +
-      p.id +
+      escVal(p.id) +
       '" style="cursor:pointer" data-action="openMapPhoto" data-arg0="' +
-      p.id +
+      escVal(p.id) +
       '">';
-    if (thumbUrl) {
-      popupHtml += '<img src="' + thumbUrl + '" class="map-popup-img" loading="lazy">';
+    if (thumb) {
+      popupHtml += '<img src="' + escVal(thumb) + '" class="map-popup-img" loading="lazy">';
     }
     popupHtml += '<div class="map-popup-info">';
     popupHtml += '<div class="map-popup-name">' + esc(p.filename || "") + "</div>";

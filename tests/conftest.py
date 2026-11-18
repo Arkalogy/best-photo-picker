@@ -47,6 +47,20 @@ def _isolate_default_library(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_listeners_or_browsers(monkeypatch):
+    """Tests that run a launch command stub the server's ``run``; the
+    launch helpers beside it would still bind 127.0.0.1 on the real port
+    and poll it to open a browser. (Their own tests import them from
+    ``serve_launch`` directly.)"""
+    from bpp.commands import serve, serve_launch
+
+    monkeypatch.setattr(serve, "hold_loopback", lambda *a, **k: None)
+    monkeypatch.setattr(serve, "open_browser_when_ours", lambda *a, **k: None)
+    # `bpp demo` takes it from the module at call time.
+    monkeypatch.setattr(serve_launch, "open_browser_when_ours", lambda *a, **k: None)
+
+
+@pytest.fixture(autouse=True)
 def _reset_pairing_rate_limits():
     """The pairing and destructive-request buckets are process-global and
     keyed by IP; every LAN test uses the same few addresses, so a worker

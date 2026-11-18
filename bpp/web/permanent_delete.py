@@ -368,6 +368,18 @@ def retry_payload(
     }
 
 
+def _forget_in_analysis_stores(ctx: object, conn: sqlite3.Connection, filepaths: list[str]) -> None:
+    """Drop the deleted photos from the analysis file and cache (those
+    of *filepaths* whose row is gone). Best effort: the delete stands."""
+    from bpp.db.analysis_leftovers import forget_deleted
+
+    state = getattr(ctx, "state", None) or {}
+    try:
+        forget_deleted(conn, state.get("workdir"), filepaths, state.get("library_path"))
+    except Exception:
+        log.warning("Could not clear deleted photos from the analysis stores", exc_info=True)
+
+
 def run_permanent_delete(
     ctx: object,
     conn: sqlite3.Connection,
@@ -422,6 +434,9 @@ def run_permanent_delete(
         _close(outcome.stuck + outcome.failed)
         raise
     outcome = reconcile(ctx, conn, files, token, sha256_map, allowed_dirs)
+    # Before the journal entry is closed: a crash from here on is
+    # replayed, and the replay finishes this too.
+    _forget_in_analysis_stores(ctx, conn, list(path_ids))
     _close(outcome.stuck + outcome.failed)
     if unclaimed:
         log.warning("%d files could not be claimed and keep their rows", len(unclaimed))
@@ -447,39 +462,12 @@ def register_permanent_delete_recovery(ctx: object, library_path: str | None = N
     paths against the new library's allowlist and ``ctx.thumbs``, which
     could remove files that share names across libraries.
     """
-    from bpp.db.journal import journal_start, library_bound_recovery, register_recovery_handler
+    from bpp.db.journal import library_bound_recovery, register_recovery_handler
 
     def _recover(conn: sqlite3.Connection, payload: dict) -> bool:
-        files: dict[str, FileRecord] = dict(payload.get("files") or {})
-        token = payload.get("token") or ""
-        if not files or not token:
-            # Nothing was claimed (a crash before the plan was journaled,
-            # or an entry from a build without records): nothing on disk
-            # is touched.
-            if payload.get("filepaths"):
-                log.warning(
-                    "Permanent-delete entry names %d files without records; leaving them",
-                    len(payload["filepaths"]),
-                )
-            return True
-        log.info("Recovering interrupted permanent_delete for %d files", len(files))
-        outcome = reconcile(
-            ctx,
-            conn,
-            files,
-            token,
-            payload.get("sha256_map") or {},
-            payload.get("allowed_dirs") or [],
-        )
-        leftover = outcome.stuck + outcome.failed
-        if leftover:
-            # A fresh entry naming only what is still stuck replaces this
-            # one (returning True consumes it); both carry the records.
-            attempts = int(payload.get("attempts") or 0) + 1
-            retry = retry_payload(payload, leftover, attempts)
-            if retry is not None:
-                journal_start(conn, "permanent_delete", retry)
-        return True
+        from bpp.web.permanent_delete_replay import replay_entry
+
+        return replay_entry(ctx, conn, payload)
 
     if library_path is not None:
 

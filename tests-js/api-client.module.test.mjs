@@ -83,6 +83,29 @@ describe("apiFetch", () => {
     });
   });
 
+  test("an owner-only refusal is shown to the caller, not treated as a lost session", async () => {
+    // A paired device that touches an owner-only route keeps its page.
+    const reload = vi.fn();
+    vi.stubGlobal("location", { reload });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: "Owner-only endpoint", code: "owner_only" }), {
+            status: 403,
+            headers: { "content-type": "application/json" },
+          })
+      )
+    );
+    const err = await apiFetch("/api/v1/faces/review-pairs/count").catch((e) => e);
+    // In words the person on the phone can act on, and flagged for callers.
+    expect(err.message).toBe("only the computer running Best Photo Picker can do this");
+    expect(err.ownerOnly).toBe(true);
+    expect(err.status).toBe(403);
+    await new Promise((r) => setTimeout(r, 80));
+    expect(reload).not.toHaveBeenCalled();
+  });
+
   test("403 triggers a single page reload (session-lost handling)", async () => {
     // Simulates the revoke-on-Mac case: phone's next API call gets 403,
     // and we want it to redirect to the pair page automatically.

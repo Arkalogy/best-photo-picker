@@ -13,7 +13,7 @@ import { NO_PICKER_LIBRARY_MESSAGE, pickFolder } from "./native-pick.mjs";
 import { focusInto, restoreFocusFrom } from "./dialog-focus.mjs";
 import { appConfirm, appPrompt } from "./dialogs.mjs";
 import { formatDate } from "./date-format.mjs";
-import { esc, escapeAttr } from "./text-format.mjs";
+import { esc, escapeAttr, escVal } from "./text-format.mjs";
 import { toast, toastError } from "./toast.mjs";
 
 let libraryPickerOpen = false;
@@ -97,7 +97,7 @@ export function renderLibraryList(libraries, activePath) {
             <div class="library-item-name">${esc(lib.name)} ${badge}${missingBadge}</div>
             <div class="library-item-path">${esc(lib.path)}</div>
             ${missing ? '<div class="library-item-date" style="color:var(--red)">Folder no longer exists</div>' : ""}
-            ${!missing && lastOpened ? `<div class="library-item-date">Last opened ${lastOpened}</div>` : ""}
+            ${!missing && lastOpened ? `<div class="library-item-date">Last opened ${escVal(lastOpened)}</div>` : ""}
           </div>
         </div>
         <div class="library-item-actions">

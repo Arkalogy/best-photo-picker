@@ -11,9 +11,9 @@
  * Re-exported from pets.mjs.
  */
 
-import { apiFetch, authedSrc, petCropUrl } from "./api-client.mjs";
+import { apiFetch, petCropUrl, thumbUrl } from "./api-client.mjs";
 import { appConfirm } from "./dialogs.mjs";
-import { esc } from "./text-format.mjs";
+import { esc, escVal } from "./text-format.mjs";
 import { toast, toastError } from "./toast.mjs";
 import { openPicker, pickable } from "./picker-overlay.mjs";
 import {
@@ -66,7 +66,7 @@ export async function showIdentifyPicker(clusterId) {
   header.className = "merge-picker-header";
   header.style.position = "relative";
   const sampleNote = total > detections.length ? ` (showing ${detections.length} of ${total})` : "";
-  header.innerHTML = `Identify a pet in "${esc(clusterName)}"<small>Select all photos of the same individual pet${sampleNote}</small>`;
+  header.innerHTML = `Identify a pet in "${esc(clusterName)}"<small>Select all photos of the same individual pet${escVal(sampleNote)}</small>`;
   const closeX = document.createElement("button");
   closeX.textContent = "×";
   closeX.style.cssText =
@@ -249,7 +249,7 @@ function _installPreviewOnRightClick(grid) {
     previewEl.appendChild(closeBtn);
     const big = document.createElement("img");
     const th = /** @type {HTMLElement} */ (cell).dataset.thumbHash;
-    big.src = th ? authedSrc("/thumb/" + th) : /** @type {HTMLImageElement} */ (img).src;
+    big.src = th ? thumbUrl(th) : /** @type {HTMLImageElement} */ (img).src;
     big.style.cssText =
       "max-width:92vw;max-height:92vh;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.5)";
     previewEl.appendChild(big);
@@ -313,7 +313,7 @@ export function showPetMergePicker(sourceClusterId) {
         ? `<img class="merge-picker-avatar" src="${avatarUrl}" alt="">`
         : `<div class="merge-picker-avatar"></div>`) +
       `<div class="merge-picker-info"><div class="merge-picker-name">${esc(name)}</div>` +
-      `<div class="merge-picker-count">${c.photo_count} photo${c.photo_count === 1 ? "" : "s"}</div></div>`;
+      `<div class="merge-picker-count">${escVal(c.photo_count)} photo${c.photo_count === 1 ? "" : "s"}</div></div>`;
     item.onclick = async () => {
       close();
       const targetName = petDisplayName(cid) || _petDefaultLabel(pcls) || `Pet ${cid + 1}`;

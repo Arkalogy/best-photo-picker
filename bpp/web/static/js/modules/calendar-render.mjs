@@ -8,10 +8,11 @@
  * from calendar.mjs.
  */
 
-import { authedSrc } from "./api-client.mjs";
+import { thumbUrl } from "./api-client.mjs";
 import { MONTHS_FULL } from "./date-format.mjs";
 import { _calViewToggle, getCalendarMonths } from "./calendar.mjs";
 import { _calDateInSelection, _calUpdateSelectionBar } from "./calendar-selection.mjs";
+import { escVal } from "./text-format.mjs";
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -53,7 +54,7 @@ export function renderCalendarGrid(year, month, days) {
   let html = `<div class="cal-header">
     <button class="cal-nav-btn" data-action="calendarPrev" ${hasPrev ? "" : "disabled"} aria-label="Previous month">&lsaquo;</button>
     <div class="cal-title-group">
-      <span class="cal-title">${MONTHS_FULL[month - 1]} ${year}</span>
+      <span class="cal-title">${MONTHS_FULL[month - 1]} ${escVal(year)}</span>
       <button class="cal-year-btn" data-action="calendarShowYearPicker" aria-label="Jump to month">${ICONS.calendar || ""}</button>
     </div>
     <button class="cal-nav-btn" data-action="calendarNext" ${hasNext ? "" : "disabled"} aria-label="Next month">&rsaquo;</button>
@@ -85,7 +86,7 @@ export function renderCalendarGrid(year, month, days) {
     const hasPhotos = count > 0;
     const isToday = d === todayDay;
     const thumbStyle =
-      info && info.top_hash ? `background-image:url(${authedSrc("/thumb/" + info.top_hash)})` : "";
+      info && info.top_hash ? `background-image:url(${thumbUrl(info.top_hash)})` : "";
 
     const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
     const cls = ["cal-cell"];
@@ -93,9 +94,9 @@ export function renderCalendarGrid(year, month, days) {
     if (isToday) cls.push("cal-today");
     if (_calDateInSelection(dateStr)) cls.push("cal-selected");
 
-    html += `<div class="${cls.join(" ")}" data-date="${dateStr}" `;
+    html += `<div class="${cls.join(" ")}" data-date="${escVal(dateStr)}" `;
     if (hasPhotos) {
-      html += `data-action="calendarDayClick" data-pass-event="true" data-arg0="${dateStr}"`;
+      html += `data-action="calendarDayClick" data-pass-event="true" data-arg0="${escVal(dateStr)}"`;
     }
     html += `style="--cal-intensity: ${intensity}">`;
 
@@ -104,7 +105,7 @@ export function renderCalendarGrid(year, month, days) {
     }
     html += `<div class="cal-day-num">${d}</div>`;
     if (count > 0) {
-      html += `<div class="cal-day-count">${count}</div>`;
+      html += `<div class="cal-day-count">${escVal(count)}</div>`;
     }
     html += "</div>";
   }
@@ -119,7 +120,7 @@ export function renderCalendarGrid(year, month, days) {
       <span class="cal-legend-swatch" style="--cal-intensity:0.65"></span>
       <span class="cal-legend-swatch" style="--cal-intensity:0.9"></span>
       <span class="cal-legend-label">More</span>
-      <span class="cal-legend-max">(max ${maxCount})</span>
+      <span class="cal-legend-max">(max ${escVal(maxCount)})</span>
     </div>`;
   }
 
@@ -138,16 +139,16 @@ export function renderCalendarYearGrid(year, monthsData) {
   const el = document.getElementById("calendar-view");
   if (!el) return;
 
-  const years = [...new Set(getCalendarMonths().map((m) => m.year))].sort();
+  const years = [...new Set(getCalendarMonths().map((m) => Number(m.year)))].sort();
   const hasPrevYear = years.some((y) => y < year);
   const hasNextYear = years.some((y) => y > year);
 
   let html = `<div class="cal-header">
     <button class="cal-nav-btn" data-action="loadCalendarYear" data-arg0="${year - 1}" ${hasPrevYear ? "" : "disabled"} aria-label="Previous year">&lsaquo;</button>
     <div class="cal-title-group">
-      <span class="cal-title">${year}</span>
+      <span class="cal-title">${escVal(year)}</span>
     </div>
-    <button class="cal-nav-btn" data-action="loadCalendarYear" data-arg0="${year + 1}" ${hasNextYear ? "" : "disabled"} aria-label="Next year">&rsaquo;</button>
+    <button class="cal-nav-btn" data-action="loadCalendarYear" data-arg0="${escVal(year + 1)}" ${hasNextYear ? "" : "disabled"} aria-label="Next year">&rsaquo;</button>
   </div>`;
 
   html += _calViewToggle();
@@ -172,8 +173,8 @@ export function renderCalendarYearGrid(year, monthsData) {
     }
 
     const hasData = days.length > 0;
-    html += `<div class="cal-mini-month${hasData ? " cal-mini-clickable" : ""}" ${hasData ? `data-action="loadCalendarMonth" data-arg0="${year}" data-arg1="${m}"` : ""}>`;
-    html += `<div class="cal-mini-label">${MONTHS_FULL[m - 1].slice(0, 3)}${monthTotal > 0 ? ` <span class="cal-mini-count">${monthTotal}</span>` : ""}</div>`;
+    html += `<div class="cal-mini-month${hasData ? " cal-mini-clickable" : ""}" ${hasData ? `data-action="loadCalendarMonth" data-arg0="${escVal(year)}" data-arg1="${m}"` : ""}>`;
+    html += `<div class="cal-mini-label">${MONTHS_FULL[m - 1].slice(0, 3)}${monthTotal > 0 ? ` <span class="cal-mini-count">${escVal(monthTotal)}</span>` : ""}</div>`;
 
     const firstDay = new Date(year, m - 1, 1).getDay();
     const daysInMonth = new Date(year, m, 0).getDate();
@@ -196,7 +197,7 @@ export function renderCalendarYearGrid(year, monthsData) {
     html += '<div class="cal-strip">';
     for (const y of years) {
       const active = y === year;
-      html += `<button class="cal-strip-btn${active ? " active" : ""}" data-action="loadCalendarYear" data-arg0="${y}">${y}</button>`;
+      html += `<button class="cal-strip-btn${active ? " active" : ""}" data-action="loadCalendarYear" data-arg0="${escVal(y)}">${escVal(y)}</button>`;
     }
     html += "</div>";
   }
@@ -234,7 +235,7 @@ export function renderCalendarWeek(weekStart, weekData, stripYear, stripMonth) {
   let html = `<div class="cal-header">
     <button class="cal-nav-btn" data-action="calendarWeekPrev" aria-label="Previous week">&lsaquo;</button>
     <div class="cal-title-group">
-      <span class="cal-title">${startLabel} – ${endLabel}</span>
+      <span class="cal-title">${escVal(startLabel)} – ${escVal(endLabel)}</span>
     </div>
     <button class="cal-nav-btn" data-action="calendarWeekNext" aria-label="Next week">&rsaquo;</button>
   </div>`;
@@ -271,13 +272,13 @@ export function renderCalendarWeek(weekStart, weekData, stripYear, stripMonth) {
     html += `</div>`;
 
     if (thumbHash) {
-      html += `<div class="cal-week-thumb" style="background-image:url(${authedSrc("/thumb/" + thumbHash)})"></div>`;
+      html += `<div class="cal-week-thumb" style="background-image:url(${thumbUrl(thumbHash)})"></div>`;
     } else {
       html += `<div class="cal-week-thumb cal-week-empty-thumb"></div>`;
     }
 
     if (count > 0) {
-      html += `<div class="cal-week-count">${count} photo${count !== 1 ? "s" : ""}</div>`;
+      html += `<div class="cal-week-count">${escVal(count)} photo${count !== 1 ? "s" : ""}</div>`;
     }
     html += `</div>`;
   }
@@ -298,7 +299,7 @@ export function renderCalendarStrip(currentYear, currentMonth) {
     const label = MONTHS_FULL[m.month - 1].slice(0, 3);
     const yearLabel =
       m.month === 1 || m === months[0] ? ` '${String(m.year).slice(2)}` : "";
-    html += `<button class="cal-strip-btn${active ? " active" : ""}" data-action="loadCalendarMonth" data-arg0="${m.year}" data-arg1="${m.month}">${label}${yearLabel}</button>`;
+    html += `<button class="cal-strip-btn${active ? " active" : ""}" data-action="loadCalendarMonth" data-arg0="${escVal(m.year)}" data-arg1="${escVal(m.month)}">${label}${escVal(yearLabel)}</button>`;
   }
   html += "</div>";
   return html;

@@ -130,10 +130,10 @@ def test_a_refused_switch_restores_the_previous_library(tmp_path, monkeypatch):
     ctx = app.extensions["bpp"]
     real = state_init._acquire_serving_lock
 
-    def refuse_b(wd):
+    def refuse_b(wd, library_root=None):
         if wd == str(b / "data"):
             raise RuntimeError("Another bpp server appears to be running")
-        return real(wd)
+        return real(wd, library_root)
 
     monkeypatch.setattr(state_init, "_acquire_serving_lock", refuse_b)
     with pytest.raises(RuntimeError):

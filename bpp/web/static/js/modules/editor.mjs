@@ -22,7 +22,7 @@
  * on `window`.
  */
 
-import { apiFetch, authedSrc } from "./api-client.mjs";
+import { apiFetch, authedSrc, thumbUrl } from "./api-client.mjs";
 import { state } from "./state.mjs";
 import { toast, toastError } from "./toast.mjs";
 import { updateCardInPlace } from "./photos.mjs";
@@ -185,7 +185,7 @@ function _bustGridThumb(thumbHash, cacheBust) {
     grid.querySelector(`img[src*="/thumb/${thumbHash}"]`)
   );
   if (img) {
-    img.src = authedSrc("/thumb/" + thumbHash + cacheBust);
+    img.src = thumbUrl(thumbHash, cacheBust.slice(3));
   } else if (vgrid) {
     vgrid.invalidateMeasure();
   }

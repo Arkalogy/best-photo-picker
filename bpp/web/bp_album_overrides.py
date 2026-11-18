@@ -33,6 +33,7 @@ from bpp.db.albums import (
 from bpp.db.photos import get_photo_by_path, get_photo_ids_by_paths
 from bpp.errors import NotFoundError, ValidationError
 from bpp.utils.logging import get_logger
+from bpp.web.request_validation import json_bool
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx
 
@@ -111,10 +112,10 @@ def api_album_batch_favorite(album_id: int) -> tuple[Response, int]:
     ctx = get_ctx()
     data = request.get_json(silent=True) or {}
     filepaths = data.get("filepaths", [])
-    favorite = data.get("favorite", True)
+    favorite = json_bool(data, "favorite", default=True)
     if not filepaths:
         raise ValidationError("filepaths required", field="filepaths")
     conn = ctx.get_conn()
     photo_ids = get_photo_ids_by_paths(conn, filepaths)
-    count = db_set_favorites_bulk(conn, album_id, photo_ids, bool(favorite))
+    count = db_set_favorites_bulk(conn, album_id, photo_ids, favorite)
     return jsonify({"status": "ok", "count": count}), 200

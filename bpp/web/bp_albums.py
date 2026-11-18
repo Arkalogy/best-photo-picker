@@ -27,6 +27,7 @@ from bpp.db.photos import (
 from bpp.db.smart_albums import SmartAlbumRegistry
 from bpp.errors import NotFoundError, ValidationError
 from bpp.utils.logging import get_logger
+from bpp.utils.typed_values import as_date_text
 from bpp.web import album_siblings  # noqa: F401  (registers the Duplicates response hook)
 from bpp.web.recompute import (
     recompute_weight_keys,
@@ -338,8 +339,8 @@ def api_album_stats(album_id: int) -> tuple[Response, int]:
     return jsonify(
         {
             "total": total,
-            "date_min": min_date,
-            "date_max": max_date,
+            "date_min": as_date_text(min_date) or None,
+            "date_max": as_date_text(max_date) or None,
             "avg_score": round(avg_score, 3) if avg_score else None,
             "gps_count": gps_count or 0,
             "people_count": people_count,

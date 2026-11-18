@@ -27,15 +27,12 @@ def resolve_sensitive_threshold(conn: sqlite3.Connection) -> float:
     analyze_finalize) flag with the SAME threshold the Python derivation
     uses, so per-photo flag and album membership never drift.
     """
+    from bpp.config_resolver import checked_setting
     from bpp.constants import SENSITIVE_NUDITY_THRESHOLD
 
-    raw = get_setting(conn, "sensitive_nudity_threshold")
-    if raw is None:
-        return SENSITIVE_NUDITY_THRESHOLD
-    try:
-        return float(raw)
-    except (TypeError, ValueError):
-        return SENSITIVE_NUDITY_THRESHOLD
+    # Inside the setting's declared limits, or not used at all.
+    value = checked_setting(conn, "sensitive_nudity_threshold")
+    return float(value) if isinstance(value, (int, float)) else SENSITIVE_NUDITY_THRESHOLD
 
 
 def set_setting(conn: sqlite3.Connection, key: str, value: Any) -> None:

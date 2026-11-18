@@ -83,9 +83,9 @@ def _make_thumbnail(src: str, dest: str, size: int = THUMBNAIL_MAX_SIZE) -> bool
 
     try:
         if kind is MediaKind.RAW:
-            from bpp.utils.raw import open_raw_as_pil
+            from bpp.utils.raw import open_raw_as_pil_bounded
 
-            img = open_raw_as_pil(src)
+            img = open_raw_as_pil_bounded(src)
             if img is None:
                 return False
         else:

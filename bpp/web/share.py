@@ -16,9 +16,6 @@ toggle.)
 from __future__ import annotations
 
 import hmac
-import os
-import secrets
-import sqlite3
 
 from bpp.utils.logging import get_logger
 
@@ -26,99 +23,6 @@ log = get_logger(__name__)
 
 # DB settings keys for LAN sharing state. Stored as strings (the
 # settings table is generic key/value).
-_KEY_SHARE_TOKEN = "lan_share_token"
-_KEY_LAN_ENABLED = "lan_sharing_enabled"
-
-
-def get_share_token(conn: sqlite3.Connection) -> str:
-    """Return the persisted LAN share token, creating one on first use.
-
-    Distinct from `WebAppState.auth_token` (which rotates on every
-    server boot) — the share token must survive restarts so that share
-    URLs handed to family members keep working.
-    """
-    from bpp.db.settings import get_setting, set_setting
-
-    token = get_setting(conn, _KEY_SHARE_TOKEN)
-    if token:
-        return token
-    token = secrets.token_hex(32)  # 256-bit
-    set_setting(conn, _KEY_SHARE_TOKEN, token)
-    log.info(
-        "LAN share token created on first use — old share URLs "
-        "(none yet) will not work; new ones use this token."
-    )
-    return token
-
-
-def _propagate_token_rotation_to_backups(db_path: str, new_token: str) -> None:
-    """Rewrite the rotated share token into ``.backup`` and
-    ``.backup.prev`` so a "user revoked because they suspect compromise"
-    flow doesn't leave the old token sitting in a sibling file.
-
-    The startup ``backup_db()`` snapshot is meant to be a recovery
-    artifact for schema migration failures — but until this fix, it
-    captured every value in ``settings`` at boot time, including the
-    LAN share token. After a user clicks "Revoke link" expecting the
-    old token to be gone, ``.backup`` (mode 0644 like the live DB
-    until ``_restrict_db_perms`` chmods it) still held the
-    compromised credential, readable by Time Machine, iCloud sync,
-    Dropbox auto-backup, support bundles, etc.
-
-    Best-effort: a failure here doesn't undo the rotation in the live
-    DB. Worst case the user has to manually delete the backup files —
-    which is the previous behaviour for the same scenario, so the
-    failure mode is no worse than what we ship today. Logged at
-    WARNING so an operator can surface the gap.
-    """
-    if not db_path:
-        return
-    from bpp.db.settings import set_setting
-
-    for suffix in (".backup", ".backup.prev"):
-        backup_path = db_path + suffix
-        if not os.path.isfile(backup_path):
-            continue
-        try:
-            from bpp.db.connection import get_db
-
-            backup_conn = get_db(backup_path)
-            set_setting(backup_conn, _KEY_SHARE_TOKEN, new_token)
-            backup_conn.commit()
-        except Exception:
-            log.warning(
-                "Failed to propagate rotated share token to %s — old token "
-                "may still be readable in this backup file. Delete the "
-                "backup manually if compromise is suspected.",
-                backup_path,
-                exc_info=True,
-            )
-
-
-def regenerate_share_token(conn: sqlite3.Connection) -> str:
-    """Rotate the share token. Existing share URLs become invalid.
-
-    User-driven: invoked from the "Revoke link" button in Settings →
-    Share when a leaked URL needs to be killed.
-
-    Also propagates the new token into ``.backup`` and ``.backup.prev``
-    so the old (presumed-compromised) token doesn't outlive the
-    rotation in the on-disk recovery snapshots — see
-    ``_propagate_token_rotation_to_backups``.
-    """
-    from bpp.db.dialect import dialect
-    from bpp.db.settings import set_setting
-
-    token = secrets.token_hex(32)
-    set_setting(conn, _KEY_SHARE_TOKEN, token)
-    # Audit trail: a support case "my share link stopped working"
-    # leaves a clear log breadcrumb showing user-driven rotation.
-    log.info("LAN share token rotated — all existing share URLs invalidated.")
-
-    db_path = dialect.database_path(conn)
-    if db_path:
-        _propagate_token_rotation_to_backups(db_path, token)
-    return token
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -127,13 +31,16 @@ def regenerate_share_token(conn: sqlite3.Connection) -> str:
 # and OSS contributors can swap in OAuth/JWT/LDAP without re-doing the
 # Flask integration.
 # ──────────────────────────────────────────────────────────────────
-
-
 import enum  # noqa: E402
 import re  # noqa: E402
 from dataclasses import dataclass, field  # noqa: E402
 
-LOOPBACK_ADDRS = frozenset({"127.0.0.1", "::1", "localhost"})
+from bpp.web.share_token import (  # noqa: E402, F401 - re-exported
+    _propagate_token_rotation_to_backups,
+    get_share_token,
+    regenerate_share_token,
+)
+
 PAIR_STATUS_PATH = "/api/v1/share/pair/status"
 PAIR_REQUEST_PATH = "/api/v1/share/pair/request"
 FP_COOKIE_NAME = "bpp_share_fp"
@@ -207,7 +114,7 @@ def _require_local_app() -> tuple[object, int] | None:
 
     principal = getattr(g, "bpp_principal", None)
     if principal is None or principal.kind != PRINCIPAL_LOCAL_APP:
-        return jsonify({"error": "Owner-only endpoint"}), 403
+        return jsonify({"error": "Owner-only endpoint", "code": "owner_only"}), 403
     return None
 
 
@@ -344,6 +251,47 @@ class AuthResult:
     principal: Principal | None = None
 
 
+def is_loopback_address(remote: str | None) -> bool:
+    """Whether *remote* is an address of this computer (127.0.0.0/8 or
+    ::1). Parsed, not matched as text: behind a reverse proxy the value
+    comes from a header, and "127.0.0.1.example" is not this computer."""
+    import ipaddress
+
+    try:
+        addr = ipaddress.ip_address((remote or "").split("%", 1)[0])
+    except ValueError:
+        return False
+    mapped = getattr(addr, "ipv4_mapped", None)
+    return (mapped or addr).is_loopback
+
+
+def _check_sharing_state_again(ctx: object, conn: object, library: object) -> None:
+    """The open-time check could not be made (the key file was not
+    readable). Once it is, make it, so sharing works again without a
+    restart. *library* is ``ctx.library_id`` as it was before *conn* was
+    taken: the result counts only if that is still the open library, so
+    a switch meanwhile leaves the new one to its own start-up check."""
+    import contextlib
+
+    from bpp.web import share_seal, share_seal_store
+
+    if share_seal_store.unreadable():
+        return
+    checked = share_seal.check_on_open(conn) != share_seal.UNCHECKED  # type: ignore[arg-type]
+    with getattr(ctx, "lock", None) or contextlib.nullcontext():
+        still_waiting = getattr(ctx, "share_check_waits_for_key", False)
+        if still_waiting and getattr(ctx, "library_id", None) == library:
+            ctx.share_state_checked = checked  # type: ignore[attr-defined]
+            ctx.share_check_waits_for_key = not checked  # type: ignore[attr-defined]
+
+
+def check_sharing_state_if_waiting(ctx: object) -> None:
+    """For the owner's own Share requests: same recheck as a device's."""
+    if getattr(ctx, "share_check_waits_for_key", False):
+        library = getattr(ctx, "library_id", None)
+        _check_sharing_state_again(ctx, ctx.get_conn(), library)  # type: ignore[attr-defined]
+
+
 def authorize_request(request: object, ctx: object) -> AuthResult:
     """Single-source-of-truth auth check.
 
@@ -371,13 +319,19 @@ def authorize_request(request: object, ctx: object) -> AuthResult:
     args = getattr(request, "args", {}) or {}
     cookies = getattr(request, "cookies", {}) or {}
 
-    is_loopback = remote in LOOPBACK_ADDRS or remote.startswith("127.") or _is_trusted_peer(remote)
+    is_loopback = is_loopback_address(remote) or _is_trusted_peer(remote)
+    library = getattr(ctx, "library_id", None)  # before the connection: see the recheck
     conn = ctx.get_conn()  # type: ignore[attr-defined]
 
     anonymous = Principal(kind=PRINCIPAL_ANONYMOUS)
 
-    # LAN gate first
-    if not is_loopback and not is_lan_sharing_enabled(conn):
+    # LAN gate first. During a library switch the new library's sharing
+    # state is not ours until share_seal has checked it.
+    if not is_loopback and getattr(ctx, "share_check_waits_for_key", False):
+        _check_sharing_state_again(ctx, conn, library)
+    if not is_loopback and not (
+        getattr(ctx, "share_state_checked", True) and is_lan_sharing_enabled(conn)
+    ):
         return AuthResult(AuthDecision.DENY)
 
     # Static + index — anonymous
@@ -411,11 +365,10 @@ def authorize_request(request: object, ctx: object) -> AuthResult:
             return AuthResult(AuthDecision.DENY)
         if is_app:
             return AuthResult(AuthDecision.ALLOW, Principal(kind=PRINCIPAL_LOCAL_APP))
-        # Share token from loopback: power-user escape hatch.
-        # Treated as LOCAL_APP because it's the dev machine.
-        if is_loopback:
-            return AuthResult(AuthDecision.ALLOW, Principal(kind=PRINCIPAL_LOCAL_APP))
-        # Share token from LAN: must be a paired, trusted device.
+        # The share token is a device's credential wherever the request
+        # comes from: every invited device has it, and other accounts on
+        # this computer can reach loopback. Only the app token (behind
+        # the boot key) makes the owner. So: a paired, trusted device.
         fp = cookies.get(FP_COOKIE_NAME)
         if not fp:
             return AuthResult(AuthDecision.PAIR_REQUIRED)

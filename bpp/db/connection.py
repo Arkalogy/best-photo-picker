@@ -160,6 +160,34 @@ def _restrict_db_perms(db_path: str) -> None:
         if os.path.isfile(path):
             with contextlib.suppress(OSError, NotImplementedError):
                 os.chmod(path, 0o600)
+    _warn_if_readable_by_others(db_path)
+
+
+#: Data folders already reported as readable by others (said once each).
+_perms_warned: set[str] = set()
+
+
+def _warn_if_readable_by_others(db_path: str) -> None:
+    """Some storage ignores permissions (many external drives, network
+    shares): the lock-down above then does nothing, silently. Tell the
+    owner, once per library, that the sharing link stored in it is
+    readable by anyone who can read the folder."""
+    folder = os.path.dirname(db_path)  # the database and its backups: one warning
+    if os.name != "posix" or folder in _perms_warned:
+        return
+    try:
+        mode = os.stat(db_path).st_mode
+    except OSError:
+        return
+    if mode & 0o077:
+        _perms_warned.add(folder)
+        _log.warning(
+            "This library's database can be read by other accounts on this computer: "
+            "its file permissions could not be restricted (some drives ignore them; so "
+            "does a file another account owns). Anyone who can read the folder can read "
+            "its sharing link. (%s)",
+            db_path,
+        )
 
 
 def get_db(db_path: str) -> sqlite3.Connection:

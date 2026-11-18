@@ -119,7 +119,10 @@ class TestAnalyzeWorkerLifecycle:
             # Should not contain filesystem paths or raw exception strings
             assert "Traceback" not in msg["message"]
             # Error messages should be generic, not contain local paths
-            assert "Check server logs" in msg["message"] or "Unsupported" in msg["message"]
+            assert str(tmp_path) not in msg["message"]
+            assert "Check server logs" in msg["message"] or msg["message"].startswith(
+                "Could not extract archive"
+            )
 
 
 class TestImportWorkerLifecycle:

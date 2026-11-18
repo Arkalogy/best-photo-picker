@@ -12,9 +12,9 @@ from bpp.constants import ACTIVE_PHOTO_SQL
 def get_daily_counts(conn: sqlite3.Connection, year: int, month: int) -> list[dict[str, Any]]:
     """Return photo counts per day for a given year/month.
 
-    Returns list of {"day": int, "count": int, "top_hash": str|None}
-    ordered by day. Each entry includes the sha256 of the highest-scored
-    photo that day for use as a thumbnail.
+    Returns list of {"day": int, "count": int, "top_path": str|None}
+    ordered by day. ``top_path`` is the highest-scored photo of that day
+    (the API layer turns it into the thumbnail hash).
     """
     month_prefix = f"{year:04d}-{month:02d}"
     active = ACTIVE_PHOTO_SQL
@@ -33,18 +33,18 @@ def get_daily_counts(conn: sqlite3.Connection, year: int, month: int) -> list[di
 
     # 2. Top-scored photo per day (single pass with window function)
     top_rows = conn.execute(
-        "SELECT day, sha256 FROM ("
-        "  SELECT CAST(substr(date, 9, 2) AS INTEGER) AS day, sha256, "
+        "SELECT day, filepath FROM ("
+        "  SELECT CAST(substr(date, 9, 2) AS INTEGER) AS day, filepath, "
         "    ROW_NUMBER() OVER (PARTITION BY CAST(substr(date, 9, 2) AS INTEGER) "
         "      ORDER BY aggregate_score DESC) AS rn "
         f"  FROM photos WHERE substr(date, 1, 7) = ? AND LENGTH(date) >= 10 AND {active}"
         ") WHERE rn = 1",
         (month_prefix,),
     ).fetchall()
-    top_map = {r["day"]: r["sha256"] for r in top_rows}
+    top_map = {r["day"]: r["filepath"] for r in top_rows}
 
     return [
-        {"day": r["day"], "count": r["count"], "top_hash": top_map.get(r["day"])}
+        {"day": r["day"], "count": r["count"], "top_path": top_map.get(r["day"])}
         for r in count_rows
     ]
 

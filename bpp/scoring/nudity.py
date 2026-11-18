@@ -139,6 +139,11 @@ _INPUT_SIZE = 320
 _MIN_CONFIDENCE = 0.2
 
 
+#: Longest side an image keeps before it is padded to a square (the
+#: square is then at most 192 MB).
+_PAD_LIMIT = 8000
+
+
 def _to_blob(img):
     """Square the image by padding black on the bottom/right, resize to
     the model input, scale to [0, 1], NCHW float32.
@@ -153,6 +158,21 @@ def _to_blob(img):
 
     h, w = img.shape[:2]
     side = max(h, w)
+    if side > _PAD_LIMIT:
+        # The square is side x side whatever the pixel count: a long
+        # image at the decode cap would need gigabytes. Shrink it first.
+        # Images up to _PAD_LIMIT on the long side take the path the
+        # scores were tuned on, unchanged; larger ones (very large
+        # panoramas, mostly) are resampled once more, which can move
+        # their score slightly.
+        scale = _PAD_LIMIT / side
+        img = cv2.resize(
+            img,
+            (max(1, round(w * scale)), max(1, round(h * scale))),
+            interpolation=cv2.INTER_AREA,
+        )
+        h, w = img.shape[:2]
+        side = max(h, w)
     padded = cv2.copyMakeBorder(img, 0, side - h, 0, side - w, cv2.BORDER_CONSTANT, value=0)
     return cv2.dnn.blobFromImage(
         padded, 1.0 / 255, (_INPUT_SIZE, _INPUT_SIZE), (0, 0, 0), swapRB=False, crop=False

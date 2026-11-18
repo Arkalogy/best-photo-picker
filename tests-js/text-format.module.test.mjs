@@ -6,12 +6,7 @@
 
 import { describe, expect, test } from "vitest";
 
-import {
-  esc,
-  escapeAttr,
-  escapeJsAttr,
-  shortCount,
-} from "../bpp/web/static/js/modules/text-format.mjs";
+import { esc, escapeAttr, escVal, shortCount } from "../bpp/web/static/js/modules/text-format.mjs";
 
 describe("esc (module)", () => {
   test("escapes angle brackets and ampersand", () => {
@@ -33,15 +28,17 @@ describe("escapeAttr (module)", () => {
   });
 });
 
-describe("escapeJsAttr (module)", () => {
-  test("escapes backslashes and single quotes", () => {
-    expect(escapeJsAttr("a\\b")).toBe("a\\\\b");
-    expect(escapeJsAttr("a'b")).toBe("a\\'b");
+describe("escVal (module)", () => {
+  test("a value that carries markup stays text, in an attribute or as content", () => {
+    expect(escVal('x"><b>')).toBe("x&quot;&gt;&lt;b&gt;");
+    expect(escVal("a'b&c")).toBe("a&#39;b&amp;c");
   });
 
-  test("still HTML-escapes angle brackets and double quotes", () => {
-    expect(escapeJsAttr('"')).toBe("&quot;");
-    expect(escapeJsAttr("<>")).toBe("\\x3c\\x3e");
+  test("prints what a template would have printed", () => {
+    expect(escVal(42)).toBe("42");
+    expect(escVal(0)).toBe("0");
+    expect(escVal(null)).toBe("null");
+    expect(escVal(undefined)).toBe("undefined");
   });
 });
 

@@ -85,8 +85,22 @@ export function toast(msg, type, opts) {
  * @param {unknown} [err] - the caught error / rejected value.
  * @param {string} [recovery="try again"] - short recovery hint.
  */
+/** @type {Map<string, number>} */
+const _ownerOnlyToastAt = new Map();
+const OWNER_ONLY_TOAST_EVERY_MS = 10_000;
+
 export function toastError(action, err, recovery = "try again") {
   const reason = (/** @type {any} */ (err) && /** @type {any} */ (err).message) || "unknown error";
+  if (/** @type {any} */ (err) && /** @type {any} */ (err).ownerOnly) {
+    // A paired device asked for something only the owner's computer may
+    // do. Said once in a while, not once per slider tick.
+    // Per action: a second, different thing tried is still answered.
+    const now = Date.now();
+    if (now - (_ownerOnlyToastAt.get(action) || 0) < OWNER_ONLY_TOAST_EVERY_MS) return;
+    _ownerOnlyToastAt.set(action, now);
+    toast(`Couldn't ${action}: ${reason} — do it on that computer`, true);
+    return;
+  }
   toast(`Couldn't ${action}: ${reason} — ${recovery}`, true);
 }
 

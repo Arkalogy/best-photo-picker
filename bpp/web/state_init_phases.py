@@ -23,6 +23,7 @@ Each helper is unit-testable in isolation; see
 from __future__ import annotations
 
 import atexit
+import contextlib
 import os
 import threading
 from typing import TYPE_CHECKING, Any
@@ -44,34 +45,50 @@ if TYPE_CHECKING:
 log = get_logger(__name__)
 
 
-def acquire_serving_lock(wd: str) -> None:
-    """Phase 1 — refuse to boot if a sibling bpp server is using this
-    library, or if we can't write a lock file.
+def acquire_serving_lock(wd: str, library_root: str | None = None) -> None:
+    """Phase 1 — refuse to boot if a sibling bpp server (or a `bpp
+    analyze` run) is using this library, or if we can't write a lock file.
 
-    The lock prevents two ``bpp serve`` processes from colliding on
-    the same DB. Single-process libraries are the only safe shape;
-    a silent dual-process configuration corrupts the WAL.
+    The lock prevents two processes from colliding on the same DB and
+    analysis file. Single-process libraries are the only safe shape; a
+    silent dual-process configuration corrupts the WAL. The library's
+    root is locked too: an analysis may write its file there before the
+    library has a data folder.
 
     Raises :class:`RuntimeError` with an actionable message in both
-    failure modes (sibling alive, lock-file write failure).
+    failure modes (in use, lock-file write failure).
     """
-    from bpp.utils.serving_lock import ServingLockError, acquire_lock, clear_lock
+    from bpp.utils.serving_lock import (
+        ServingLockError,
+        acquire_lock,
+        clear_lock,
+        lock_advice,
+    )
 
-    try:
-        held_by = acquire_lock(wd)
-    except ServingLockError as e:
-        raise RuntimeError(
-            f"Cannot acquire serving lock for {wd}: {e}. "
-            "Refusing to start — running without a serving lock would "
-            "let a second bpp serve corrupt the DB."
-        ) from e
-    if held_by is not None:
-        raise RuntimeError(
-            f"Another bpp server appears to be running (pid={held_by}) "
-            f"using {wd}. Stop it first, or remove {wd}/.serving.lock "
-            "if you're sure no server is up."
-        )
-    atexit.register(clear_lock, wd)
+    folders = [wd]
+    # Only the root of the library being served: one whose data folder
+    # this is (`bpp web` keeps its data elsewhere and serves no library).
+    with contextlib.suppress(OSError):
+        if library_root and os.path.samefile(os.path.join(library_root, "data"), wd):
+            folders.insert(0, library_root)
+    held: list[str] = []
+    for folder in folders:
+        try:
+            held_by = acquire_lock(folder)
+        except ServingLockError as e:
+            for done in held:
+                clear_lock(done)
+            raise RuntimeError(
+                f"Cannot acquire serving lock for {folder}: {e}. "
+                "Refusing to start — running without a serving lock would "
+                "let a second bpp serve corrupt the DB."
+            ) from e
+        if held_by is not None:
+            for done in held:
+                clear_lock(done)
+            raise RuntimeError(f"Can't open {folder}: {lock_advice(folder, held_by)}.")
+        held.append(folder)
+        atexit.register(clear_lock, folder)
 
 
 def backup_or_refuse_corrupt(db_p: str, wd: str) -> None:
@@ -201,16 +218,30 @@ def import_from_legacy_caches(conn: Any, wd: str, lib_root: str, photo_count: in
     For a fresh library only, also imports the v0 face_embeddings
     sidecar DB and the presets JSON, if present.
     """
+    from bpp.db.analysis_leftovers import forget_interrupted_deletes
+
+    forget_interrupted_deletes(conn, wd, lib_root)
     _unscored = (
         photo_count > 0
-        and conn.execute("SELECT 1 FROM photos WHERE aggregate_score IS NULL LIMIT 1").fetchone()
+        and conn.execute(
+            # (Live Photo companions are stored unscored on purpose.)
+            "SELECT 1 FROM photos WHERE aggregate_score IS NULL"
+            " AND is_live_photo_sidecar = 0 LIMIT 1"
+        ).fetchone()
         is not None
     )
     if photo_count == 0 or _unscored:
         for search_dir in (wd, lib_root):
             json_path = os.path.join(search_dir, "analysis.json")
             if search_dir and os.path.exists(json_path):
-                import_from_analysis_json(conn, json_path)
+                # A library that already has photos (in the bin, hidden or
+                # missing ones count: `photo_count` leaves those out) only
+                # gets scores for those: the file may list photos deleted
+                # since.
+                has_rows = conn.execute("SELECT 1 FROM photos LIMIT 1").fetchone() is not None
+                _import_analysis_json_or_set_aside(
+                    conn, json_path, existing_only=has_rows, workdir=wd, library_root=lib_root
+                )
                 break
 
     if photo_count == 0:
@@ -224,6 +255,44 @@ def import_from_legacy_caches(conn: Any, wd: str, lib_root: str, photo_count: in
         presets_json = os.path.join(config_home, "bpp", "presets.json")
         if os.path.exists(presets_json):
             import_presets_from_json(conn, presets_json)
+
+
+def _import_analysis_json_or_set_aside(
+    conn: Any,
+    json_path: str,
+    *,
+    existing_only: bool = False,
+    workdir: str | None = None,
+    library_root: str | None = None,
+) -> None:
+    """Best-effort: a failed import must not stop this launch. A file
+    whose content can't be imported is set aside (kept, under another
+    name) so it doesn't fail the next launch too."""
+    from bpp.utils.json_utils import move_aside
+
+    try:
+        import_from_analysis_json(
+            conn,
+            json_path,
+            existing_only=existing_only,
+            workdir=workdir,
+            library_root=library_root,
+        )
+    except (ValueError, TypeError, KeyError, AttributeError, OverflowError):
+        # What the file says can't be imported: it would fail again.
+        log.error("Could not import %s; setting it aside", json_path, exc_info=True)
+        with contextlib.suppress(Exception):
+            conn.rollback()
+        try:
+            move_aside(json_path, context="analysis.json")
+        except OSError:
+            log.error("Could not set %s aside", json_path, exc_info=True)
+    except Exception:
+        # Not the file's fault (a busy database, a full disk): keep it for
+        # the next launch.
+        log.error("Could not import %s this time", json_path, exc_info=True)
+        with contextlib.suppress(Exception):
+            conn.rollback()
 
 
 def backfill_dup_clusters_and_refresh(

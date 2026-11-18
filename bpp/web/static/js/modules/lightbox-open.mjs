@@ -8,7 +8,7 @@
  * from lightbox.mjs.
  */
 
-import { authedSrc } from "./api-client.mjs";
+import { authedSrc, thumbUrl } from "./api-client.mjs";
 import { focusInto } from "./dialog-focus.mjs";
 import { formatDate } from "./date-format.mjs";
 import { qualityLabel } from "./score-format.mjs";
@@ -197,7 +197,7 @@ function _showMedia(p, img, video) {
     img.classList.add("hidden");
     video.classList.remove("hidden");
     video.src = authedSrc("/video/" + p.thumb_hash);
-    video.poster = authedSrc("/thumb/" + p.thumb_hash);
+    video.poster = thumbUrl(p.thumb_hash);
     return;
   }
   img.classList.remove("hidden");
@@ -209,7 +209,7 @@ function _showMedia(p, img, video) {
   img.onerror = () => {
     console.error("[lightbox] Full photo failed to load:", photoUrl, "— falling back to thumbnail");
     img.onerror = null;
-    img.src = authedSrc("/thumb/" + p.thumb_hash + "?t=" + Date.now());
+    img.src = thumbUrl(p.thumb_hash, Date.now());
   };
   img.src = photoUrl;
 }

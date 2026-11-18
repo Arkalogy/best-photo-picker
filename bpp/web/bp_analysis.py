@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import os
 from typing import Any
 
@@ -12,8 +11,9 @@ from bpp.constants import WORKER_JOIN_TIMEOUT_S
 from bpp.db.library import clear_library
 from bpp.db.settings import get_all_settings
 from bpp.db.smart_albums import get_affected_album_types, refresh_smart_albums
-from bpp.errors import ConflictError, ValidationError
+from bpp.errors import BppError, ConflictError, ValidationError
 from bpp.utils.logging import get_logger
+from bpp.web.request_validation import json_bool
 from bpp.web.share import requires_local_app
 from bpp.web.sse import captured_device_fingerprint, stream_worker_progress
 from bpp.web.state import get_ctx, refuse_while_face_recovery
@@ -40,9 +40,9 @@ def api_analyze() -> tuple[Response, int]:
     ctx = get_ctx()
     data = request.get_json(silent=True) or {}
     input_dir = data.get("input_dir") or ctx.input_dir
-    recursive = data.get("recursive", False)
+    recursive = json_bool(data, "recursive", default=False)
 
-    archive_exts = (".zip", ".tar.gz", ".tgz", ".tar.bz2", ".tar")
+    archive_exts = (".zip", ".tar.gz", ".tgz", ".tar.bz2", ".tar.xz", ".txz", ".tar")
     is_archive = (
         input_dir
         and os.path.isfile(input_dir)
@@ -88,6 +88,14 @@ def api_analyze() -> tuple[Response, int]:
     if not started:
         raise ConflictError("Analysis already in progress")
 
+    # The owner chose this folder: export may read from it (see bp_export).
+    from bpp.config import cfg_get
+    from bpp.web import export_sources
+
+    followed = bool(cfg_get(merged_config, "follow_symlinks"))
+    ctx.export_source_dirs.add(ctx.input_dir)
+    (ctx.export_followed_dirs.add if followed else ctx.export_followed_dirs.discard)(ctx.input_dir)
+    export_sources.remember(ctx.library_path, ctx.input_dir, followed=followed)
     ctx.invalidate_analysis()
     return jsonify({"status": "started", "workdir": wd}), 202
 
@@ -101,10 +109,8 @@ def run_config_for_analyze(ctx: Any, conn: Any) -> dict[str, Any]:
 
     db_settings = get_all_settings(conn)
     merged_config = dict(ctx.config)
-    for key in ("face_detection_confidence", "face_embedding_confidence", "max_long_side"):
-        if key in db_settings:
-            with contextlib.suppress(ValueError, TypeError):
-                merged_config[key] = float(db_settings[key])
+    # dict(ctx.config) already carries the library's stored tuning, each
+    # value checked against the limits its setting declares.
     # Model toggle settings (stored as "true"/"false" strings in DB)
     for key in all_toggle_keys():
         if key in db_settings:
@@ -287,7 +293,35 @@ def api_clear_library() -> tuple[Response, int]:
     library_path = ctx.library_path
     if not library_path:
         raise ValidationError("No library configured")
+    # The saved analysis goes first: with an empty database it is what
+    # the next start imports, so a Clear cut short after the rows went
+    # would bring every photo back.
+    from bpp.db.analysis_leftovers import forget_analysis_files
+
+    try:
+        forget_analysis_files(ctx.state.get("workdir") or ctx.dirs.get("data"), library_path)
+    except OSError as e:
+        raise BppError(
+            "Clear library failed",
+            user_message="the saved analysis file couldn't be removed "
+            f"({e.strerror or e}); nothing was cleared. Check the library folder's permissions",
+            diagnostic_message=f"clear library: could not remove analysis files: {e!r}",
+        ) from e
     result = clear_library(conn, library_path)
+    # The analysis stores and what was unpacked from archives hold the
+    # same photos: "delete all photos" covers them.
+    from bpp.db.analysis_leftovers import forget_all_analysis, forget_database_copies
+    from bpp.db.dialect import dialect
+
+    workdir = ctx.state.get("workdir") or ctx.dirs.get("data")
+    forget_all_analysis(workdir, library_path)
+    if workdir:  # an unpacking a quit or a crash left: archive photos too
+        from bpp.web.archive_placement import sweep_unfinished_unpacking
+
+        sweep_unfinished_unpacking(workdir)
+    db_path = dialect.database_path(conn)
+    if db_path:
+        forget_database_copies(db_path)
     ctx.invalidate_analysis()
     with ctx.lock:
         ctx.thumbs = None
@@ -337,7 +371,7 @@ def api_import() -> tuple[Response, int]:
     # User opt-in: include Live Photo motion sidecars in the import.
     # Default False — sidecars are filtered at scan time when the parent
     # exists in the same source directory.  See bpp/db/live_photo.py.
-    import_live_photo_sidecars = bool(data.get("import_live_photo_sidecars", False))
+    import_live_photo_sidecars = json_bool(data, "import_live_photo_sidecars", default=False)
     from bpp.web.base_worker import raise_if_blocked
 
     raise_if_blocked(ctx.import_worker)  # before preparing the library

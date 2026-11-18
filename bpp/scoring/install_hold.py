@@ -96,7 +96,10 @@ def _sweep_stale_files(folder: Path) -> None:
     exit to remove them) — ours too, left by one that had this process id."""
     for path in folder.glob("held-*.txt"):
         pid = path.stem.removeprefix("held-")
-        if pid.isdigit() and (int(pid) == os.getpid() or not _process_alive(int(pid))):
+        # Only names this app writes: plain digits, a real process id.
+        if not (pid.isascii() and pid.isdigit() and 0 < len(pid) <= 10):
+            continue
+        if int(pid) == os.getpid() or not _process_alive(int(pid)):
             with contextlib.suppress(OSError):
                 path.unlink()
 
@@ -104,12 +107,14 @@ def _sweep_stale_files(folder: Path) -> None:
 def _process_alive(pid: int) -> bool:
     if os.name != "posix":
         return True  # (on Windows os.kill would end it): left in place
+    if pid <= 0:
+        return False  # 0 and negatives name process groups, not a process
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
-    except OSError:
-        return True  # exists, not ours to signal
+    except (OSError, OverflowError):
+        return True  # exists and isn't ours to signal, or can't be asked: left in place
     return True
 
 
@@ -181,7 +186,11 @@ def _write_held_file(path: Path, held: frozenset[str]) -> None:
             return
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(",".join(sorted(held)), encoding="utf-8")
+        with contextlib.suppress(FileNotFoundError):
+            tmp.unlink()  # whatever is at that name (a link, too) is not followed
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        with os.fdopen(os.open(tmp, flags, 0o600), "w", encoding="utf-8") as f:
+            f.write(",".join(sorted(held)))
         tmp.replace(path)  # a starting process never reads half a list
     except OSError:
         # Analysis processes then don't know the hold and would load what

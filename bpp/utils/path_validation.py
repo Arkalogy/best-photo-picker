@@ -17,6 +17,7 @@ This module is the single source of truth.
 
 from __future__ import annotations
 
+import contextlib
 import os
 from pathlib import Path
 
@@ -72,3 +73,136 @@ def build_library_allowlist(
         if home != os.path.realpath(os.sep):
             out.append(home)
     return out
+
+
+class FolderSet:
+    """Folders a file may be read from, for checking many files against
+    the same few folders (an export run).
+
+    A file is inside when the folder it really sits in (links resolved)
+    is one of the roots or below one. Folders are compared by what they
+    are on disk, not only by spelling, so a root typed in another case
+    or Unicode form on a volume that ignores those still matches. Roots
+    are resolved once and each source folder is decided once.
+    """
+
+    def __init__(
+        self, roots: list[str] | tuple[str, ...], followed: list[str] | tuple[str, ...] = ()
+    ) -> None:
+        """*followed* are folders of the owner's own that were scanned
+        with links followed: a file reached through a link inside one
+        was imported from there on the owner's say, so it is inside by
+        its path as written. (Never the library's own folders: links in
+        those are not the owner's.)"""
+        self._followed = [os.path.abspath(f) for f in followed if f]
+        self._followed_ids: set[tuple[int, int]] | None = None  # looked up when first needed
+        self._followed_decided: dict[str, bool] = {}
+        self._paths: list[str] = []
+        self._ids: set[tuple[int, int]] = set()
+        self._decided: dict[str, bool] = {}
+        # Looked at one by one, and only until a file is found inside:
+        # a root on a network share that has gone away blocks for its
+        # whole timeout, and most exports never need the later roots.
+        self._waiting = [r for r in roots if r]
+
+    def _spelled_under_followed(self, written: str) -> bool:
+        return any(
+            written == f or written.startswith(f.rstrip(os.sep) + os.sep) for f in self._followed
+        )
+
+    def _is_followed_by_identity(self, written: str) -> bool:
+        """Another case or form of a followed root's own name (a volume
+        that ignores those) names the same folder. Asked only for a file
+        no root holds otherwise, and answered once per folder. A link is
+        never taken for the folder it points at (``lstat``): a link to
+        the root from somewhere else is not the root."""
+        known = self._followed_decided.get(written)
+        if known is not None:
+            return known
+        if self._followed_ids is None:
+            self._followed_ids = set()
+            for root in self._followed:
+                with contextlib.suppress(OSError, ValueError):
+                    st = os.lstat(root)
+                    if st.st_ino:
+                        self._followed_ids.add((st.st_dev, st.st_ino))
+        found, folder = False, written
+        while self._followed_ids and not found:
+            with contextlib.suppress(OSError, ValueError):
+                st = os.lstat(folder)
+                found = bool(st.st_ino and (st.st_dev, st.st_ino) in self._followed_ids)
+            parent = os.path.dirname(folder)
+            if parent == folder:
+                break
+            folder = parent
+        self._followed_decided[written] = found
+        return found
+
+    def _look_at_next_root(self) -> bool:
+        """Resolve one more root. False when none are left."""
+        if not self._waiting:
+            return False
+        root = self._waiting.pop(0)
+        try:
+            real = os.path.realpath(root)
+            st = os.stat(real)
+        except (OSError, ValueError):
+            return True  # a folder that isn't there holds nothing
+        self._paths.append(real)
+        if st.st_ino:
+            self._ids.add((st.st_dev, st.st_ino))
+        return True
+
+    def holds(self, path: str) -> bool:
+        """True iff ``path`` resolves to a file in or below a root. A path
+        that can't be resolved (a NUL byte, a link loop) is not."""
+        try:
+            folder = os.path.dirname(os.path.realpath(path))
+            written = os.path.dirname(os.path.abspath(path))
+        except (OSError, ValueError):
+            return False
+        # As written means as written: a ".." after a link names another
+        # folder than the spelling suggests, so such a path is never
+        # accepted this way.
+        stepped_up = os.pardir in str(path).replace("\\", "/").split("/")
+        follow = bool(self._followed) and not stepped_up
+        if follow and self._spelled_under_followed(written):
+            return True
+        decided = self._decided.get(folder)
+        if decided is None:
+            decided = self._decided[folder] = self._inside(folder)
+        return decided or (follow and self._is_followed_by_identity(written))
+
+    def _inside(self, folder: str) -> bool:
+        while True:
+            if self._inside_known_roots(folder):
+                return True
+            if not self._look_at_next_root():
+                return False
+
+    def _inside_known_roots(self, folder: str) -> bool:
+        if is_path_under_any(folder, self._paths):
+            return True
+        while self._ids:
+            try:
+                st = os.stat(folder)
+                if st.st_ino and (st.st_dev, st.st_ino) in self._ids:
+                    return True
+            except OSError:
+                pass  # a missing level: keep climbing
+            parent = os.path.dirname(folder)
+            if parent == folder:
+                break
+            folder = parent
+        return False
+
+
+def split_existing_folders(values: list[str]) -> tuple[list[str], list[str]]:
+    """Folders named on a command line, as ``(existing, missing)``: each
+    with ``~`` expanded and made absolute."""
+    existing: list[str] = []
+    missing: list[str] = []
+    for value in values:
+        folder = os.path.abspath(os.path.expanduser(value))
+        (existing if os.path.isdir(folder) else missing).append(folder)
+    return existing, missing

@@ -12,10 +12,11 @@ def _make_photo(tmp_path, name="photo.jpg"):
 
 
 def _make_fake_video(tmp_path, name="video.mp4"):
-    """Create a fake video file (not valid but has the right extension)."""
+    """Create a fake video file: the right extension and an MP4's first
+    box (what the video route checks), nothing a decoder could play."""
     path = str(tmp_path / name)
     with open(path, "wb") as f:
-        f.write(b"\x00" * 1024)
+        f.write(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 1012)
     return path
 
 

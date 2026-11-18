@@ -230,12 +230,35 @@ def extract_new_embeddings(
     )
 
 
+#: Most face-extraction workers one run starts, whatever the config asks.
+MAX_FACE_WORKERS = 8
+
+
+_said_capped: set[int] = set()
+
+
+def face_worker_count(config: dict[str, Any]) -> int:
+    """How many face-extraction workers to start: what the config asks,
+    kept between 1 and the smaller of the CPU count and
+    :data:`MAX_FACE_WORKERS`. Anything unreadable, zero or negative is 1."""
+    try:
+        asked = int(config.get("_face_extract_workers") or 1)
+    except (TypeError, ValueError):
+        asked = 1
+    n_workers = max(1, min(asked, MAX_FACE_WORKERS, os.cpu_count() or 1))
+    if asked > n_workers and asked not in _said_capped:
+        _said_capped.add(asked)
+        log.warning(
+            "_face_extract_workers=%d is more than this computer is given: using %d",
+            asked,
+            n_workers,
+        )
+    return n_workers
+
+
 def _pool_for(config: dict[str, Any]) -> tuple[type, int]:
     """The executor class and worker count the config asks for."""
-    try:
-        n_workers = int(config.get("_face_extract_workers") or 1)
-    except (TypeError, ValueError):
-        n_workers = 1
+    n_workers = face_worker_count(config)
     pool_kind = (
         config.get("_face_extract_pool") or ("process" if n_workers > 1 else "thread")
     ).lower()

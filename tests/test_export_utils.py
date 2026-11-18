@@ -46,7 +46,7 @@ class TestExportSelectedCopyMode:
         analysis = _make_analysis(selected, extra=1)
         outdir = str(tmp_path / "out")
 
-        export_selected(selected, analysis, outdir, config={"k": 10})
+        export_selected(selected, analysis, outdir, config={"default_selection_k": 10})
 
         report_path = os.path.join(outdir, "report.json")
         assert os.path.isfile(report_path)
@@ -56,11 +56,12 @@ class TestExportSelectedCopyMode:
         from bpp import __version__
 
         assert report["version"] == __version__
-        assert report["config"] == {"k": 10}
+        assert report["config"] == {"default_selection_k": 10}
         assert report["total_analyzed"] == 3
         assert report["total_selected"] == 2
         assert len(report["selected"]) == 2
-        assert len(report["skipped"]) == 1
+        assert report["total_skipped"] == 1
+        assert "skipped" not in report  # photos that were not exported are not named
         assert report["selected"][0]["index"] == 1
         assert report["selected"][0]["blur_score"] == 0.7
 
@@ -109,20 +110,20 @@ class TestExportSelectedCopyMode:
             }
 
     def test_skipped_items_in_report(self, tmp_path):
-        """Skipped entries also get the sanitized filepath.
-        The fixture uses /fake/skipped_N.jpg sources, which are
-        outside the (empty) library_path so they fall back to the
-        basename only."""
+        """The owner's diagnostic report (``include_source_paths``) lists
+        the photos that were left out; the default report, which goes out
+        with the export folder, only counts them."""
         selected = _make_selected(tmp_path, n=1)
         analysis = _make_analysis(selected, extra=3)
         outdir = str(tmp_path / "out")
 
-        export_selected(selected, analysis, outdir)
+        export_selected(selected, analysis, outdir, include_source_paths=True)
 
         with open(os.path.join(outdir, "report.json")) as f:
             report = json.load(f)
+        assert report["total_skipped"] == 3
         assert len(report["skipped"]) == 3
-        assert report["skipped"][0]["filepath"] == "skipped_0.jpg"
+        assert report["skipped"][0]["filepath"].endswith("skipped_0.jpg")
 
     def test_config_defaults_to_empty_dict(self, tmp_path):
         selected = _make_selected(tmp_path, n=1)

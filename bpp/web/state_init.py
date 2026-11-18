@@ -22,6 +22,7 @@ from bpp.db.clip import load_clip_matrix
 from bpp.db.connection import get_db, init_db
 from bpp.db.photos import bulk_upsert_photos, get_photo_count
 from bpp.db.photos import get_all_photos as db_get_all_photos
+from bpp.db.photos_lifecycle import settle_companions_of_binned
 from bpp.scoring.aggregate import load_analysis
 from bpp.utils.logging import get_logger
 from bpp.web.thumbnails import ThumbnailCache
@@ -77,8 +78,13 @@ def init_app_db(ctx: WebAppState) -> None:
     os.makedirs(wd, exist_ok=True)
     db_p = os.path.join(wd, "photopicker.db")
 
-    # Phase 1 — serving lock.
-    _acquire_serving_lock(wd)
+    # Phase 1 — serving lock (the library's root too).
+    _acquire_serving_lock(wd, ctx.state.get("library_path"))
+    # Archives a quit or a crash left half unpacked (one still being
+    # unpacked is held, and stays).
+    from bpp.web.archive_placement import set_aside_and_remove_in_background
+
+    set_aside_and_remove_in_background(wd)
 
     # Phase 2 — backup or refuse on corrupt DB.
     _backup_or_refuse_corrupt(db_p, wd)
@@ -91,12 +97,29 @@ def init_app_db(ctx: WebAppState) -> None:
     photo_count = get_photo_count(conn)
     lib_root = ctx.state.get("library_path", "")
 
+    # Sharing state this installation didn't make is not honoured.
+    from bpp.web.share_seal import UNCHECKED, check_on_open
+
+    # Unchecked (this app's own key can't be read): devices stay out,
+    # and the check is made again when one asks (share.authorize).
+    ctx.share_state_checked = check_on_open(conn) != UNCHECKED
+    ctx.share_check_waits_for_key = not ctx.share_state_checked
+
     # Phase 4 — sidecar backfill + legacy-cache import. The "true"
     # return from 4a forces the smart-album refresh in 5 even when no
     # new dup clusters are assigned, because sidecar linking moves
     # rows in/out of every domain album.
     sidecars_linked = _backfill_live_photo_sidecars(conn) if photo_count > 0 else False
     _import_from_legacy_caches(conn, wd, lib_root, photo_count)
+    # Companions an earlier version left behind, before the albums are
+    # synced and the background refresh reads them (and before the purge).
+    try:
+        sidecars_linked = bool(settle_companions_of_binned(conn)) or sidecars_linked
+    except Exception:
+        log.warning(
+            "Could not settle hidden Live Photo companions; tried again next start", exc_info=True
+        )
+        conn.rollback()
 
     ensure_all_photos_album(conn)
     sync_all_photos_album(conn)
@@ -270,12 +293,21 @@ def load_analysis_if_needed(
             return ctx.state["analysis"]
         conn = ctx.get_conn()
         data = db_get_all_photos(conn, include_deleted=True)
-        if not data:
+        # Only a database with no photo rows at all is filled from a saved
+        # analysis file. One whose photos are all hidden, missing or
+        # companions has rows, and the file may list photos deleted since.
+        if not data and conn.execute("SELECT 1 FROM photos LIMIT 1").fetchone() is None:
+            from bpp.db.analysis_leftovers import forget_interrupted_deletes
+
+            forget_interrupted_deletes(conn, ctx.state["workdir"], ctx.state.get("library_path"))
             # Try loading from workdir (data/) then library root (legacy)
             json_data = None
             for search_dir in (ctx.state["workdir"], ctx.state.get("library_path")):
                 if search_dir and os.path.isdir(search_dir):
-                    json_data = load_analysis(search_dir)
+                    json_data = load_analysis(
+                        search_dir,
+                        notes_in=(ctx.state["workdir"], ctx.state.get("library_path")),
+                    )
                     if json_data:
                         break
             if json_data:

@@ -58,19 +58,28 @@ def switch_library(ctx: WebAppState, new_path: str) -> None:
         _switch_library_locked(ctx, new_path, new_dirs)
 
 
+def _same_folder(a: str, b: str) -> bool:
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return a == b
+
+
 def _switch_library_locked(ctx: WebAppState, new_path: str, new_dirs: dict[str, str]) -> None:
     """Body of :func:`switch_library`, called with
     ``ctx._switch_library_lock`` already held. Split out so the lock
     boundary is the only thing the public function does.
     """
     old_workdir = ctx.state.get("workdir")
+    old_root = ctx.state.get("library_path")
     _drain_current_library(ctx)
     _adopt_library(ctx, new_path, new_dirs, new_dirs["data"])
-    # Served no longer: another process may open the old library now.
-    if old_workdir and old_workdir != new_dirs["data"]:
-        from bpp.utils.serving_lock import clear_lock
+    # Served no longer: another process may open the old library now
+    # (not when it is the same library, by another spelling of its path).
+    if old_workdir and not _same_folder(old_workdir, new_dirs["data"]):
+        from bpp.utils.serving_lock import clear_library_locks
 
-        clear_lock(old_workdir)
+        clear_library_locks(old_workdir, old_root)
 
 
 class RenameIncompleteError(RuntimeError):
@@ -197,6 +206,9 @@ def _drain_current_library(ctx: WebAppState) -> None:
     # Cancel all running workers and wait for them to finish
     # Single canonical cancel-all path lives on WorkerPool.
     ctx.workers.cancel_and_join_all(timeout=WORKER_JOIN_TIMEOUT_S)
+    # What they reported (file names, batch names) belongs to the
+    # library being left, and to the devices approved for it.
+    ctx.workers.forget_runs()
 
     # Stop health-check threads and wait for them to release their
     # thread-local DB connections before switching databases.
@@ -226,6 +238,7 @@ def _adopt_library(ctx: WebAppState, new_path: str, new_dirs: dict[str, str], wo
         ctx.state.get("workdir"),
         ctx.state.get("library_path"),
         getattr(ctx, "library_id", None),
+        (ctx.export_source_dirs, ctx.export_followed_dirs),
     )
     with ctx.lock:
         close_all_connections(new_epoch=True)
@@ -244,6 +257,14 @@ def _adopt_library(ctx: WebAppState, new_path: str, new_dirs: dict[str, str], wo
         ctx.state["workdir"] = workdir
         ctx.state["library_path"] = new_path
         ctx.library_id = secrets.token_hex(8)
+        # Folders analyzed in place belong to the library they were
+        # analyzed for: this one's are the ones remembered for it.
+        from bpp.web import export_sources
+
+        ctx.export_source_dirs, ctx.export_followed_dirs = export_sources.remembered(new_path)
+        # Devices wait until this library's sharing state has been checked.
+        ctx.share_state_checked = False
+        ctx.share_check_waits_for_key = False  # the old library's wait is not this one's
         # keep `ctx.dirs` consistent with the immutable
         # mapping `ctx.paths.dirs` now wraps. Pre-fix this
         # assigned the raw dict directly, so callers could
@@ -278,12 +299,16 @@ def _adopt_library(ctx: WebAppState, new_path: str, new_dirs: dict[str, str], wo
         # Phase 1 may have taken the refused library's serving lock
         # before a later phase refused it: give it back, or the next
         # process to open that library is told we are serving it.
-        from bpp.utils.serving_lock import clear_lock
+        from bpp.utils.serving_lock import clear_library_locks
 
         with contextlib.suppress(Exception):
-            clear_lock(workdir)
-        paths, workdir, library_path, library_id = old
+            clear_library_locks(workdir, new_path)
+        paths, workdir, library_path, library_id, export_dirs = old
         with ctx.lock:
+            # First: the refused library's sharing check is not this one's.
+            # Devices wait for the restored library's own check below.
+            ctx.share_state_checked = False
+            ctx.share_check_waits_for_key = False
             close_all_connections(new_epoch=True)
             ctx.paths = paths
             ctx.state["workdir"] = workdir
@@ -294,6 +319,7 @@ def _adopt_library(ctx: WebAppState, new_path: str, new_dirs: dict[str, str], wo
             ctx.caches.clip_cache = {"embeddings": {}, "ready": False}
             _invalidate_caches(ctx)
             ctx.library_id = library_id
+            ctx.export_source_dirs, ctx.export_followed_dirs = export_dirs
         try:
             ctx.startup()
         except Exception:

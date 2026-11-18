@@ -11,7 +11,7 @@
  * output to the same vgrid every album uses.
  */
 
-import { apiFetch, authedSrc } from "./api-client.mjs";
+import { apiFetch, thumbUrl } from "./api-client.mjs";
 import { appConfirm } from "./dialogs.mjs";
 import { escapeAttr } from "./text-format.mjs";
 import { toast, toastError } from "./toast.mjs";
@@ -176,7 +176,7 @@ function _flyoutInnerHTML(cover, keeperPath) {
       const fp = escapeAttr(p.filepath || "");
       return (
         `<div class="moment-burst-thumb${isKeeper ? " is-keeper" : ""}" data-sib-idx="${sibIdx}">` +
-        `<img src="${escapeAttr(authedSrc("/thumb/" + p.thumb_hash))}" loading="lazy" alt="">` +
+        `<img src="${escapeAttr(thumbUrl(p.thumb_hash))}" loading="lazy" alt="">` +
         `<span class="mbt-score">${score}%</span>` +
         `<button class="mbt-crown${isKeeper ? " active" : ""}" data-fp="${fp}" ` +
         `title="Keep this one" aria-label="Keep this shot">&#9733;</button>` +

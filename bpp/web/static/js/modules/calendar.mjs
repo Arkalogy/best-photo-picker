@@ -19,6 +19,7 @@ import { fetchAllPages } from "./paging.mjs";
 import { MONTHS_FULL } from "./date-format.mjs";
 import { renderGridFromItems } from "./memories.mjs";
 import { toast, toastError } from "./toast.mjs";
+import { escVal } from "./text-format.mjs";
 
 /** @type {Array<{year: number, month: number}>} */
 let calendarMonths = [];
@@ -106,7 +107,7 @@ export function _calViewToggle() {
   let html = '<div class="cal-mode-toggle">';
   for (const m of modes) {
     const active = m.key === calendarViewMode ? " active" : "";
-    html += `<button class="cal-mode-btn${active}" data-action="calendarSetMode" data-arg0="${m.key}">${m.label}</button>`;
+    html += `<button class="cal-mode-btn${active}" data-action="calendarSetMode" data-arg0="${escVal(m.key)}">${escVal(m.label)}</button>`;
   }
   html += "</div>";
   return html;
@@ -239,10 +240,10 @@ export function calendarShowYearPicker() {
   }
   let html = "";
   for (const [yr, months] of Object.entries(years).sort((a, b) => Number(b[0]) - Number(a[0]))) {
-    html += `<div class="cal-yp-year"><span class="cal-yp-label">${yr}</span><div class="cal-yp-months">`;
+    html += `<div class="cal-yp-year"><span class="cal-yp-label">${escVal(yr)}</span><div class="cal-yp-months">`;
     for (const m of months) {
       const active = m.year === calendarYear && m.month === calendarMonth;
-      html += `<button class="cal-yp-btn${active ? " active" : ""}" data-action="loadCalendarMonth" data-arg0="${m.year}" data-arg1="${m.month}">${MONTHS_FULL[m.month - 1].slice(0, 3)}</button>`;
+      html += `<button class="cal-yp-btn${active ? " active" : ""}" data-action="loadCalendarMonth" data-arg0="${escVal(m.year)}" data-arg1="${escVal(m.month)}">${MONTHS_FULL[m.month - 1].slice(0, 3)}</button>`;
     }
     html += "</div></div>";
   }

@@ -16,6 +16,12 @@ const globalsSource = readFileSync("bpp/web/static/js/globals.js", "utf8");
 beforeAll(() => {
   // eslint-disable-next-line no-new-func
   new Function("window", "document", globalsSource)(window, document);
+  // These tests exercise the dispatch mechanics with stand-in handler
+  // names; which names the app allows is tested in event-handlers.test.mjs.
+  /** @type {any} */ (window).eventHandler = (
+    /** @type {string} */ _kind,
+    /** @type {string} */ name
+  ) => /** @type {any} */ (window)[name];
 });
 
 beforeEach(() => {
@@ -199,7 +205,7 @@ describe("_bppBackdropClose", () => {
 
     // Simulate click where e.target === overlay
     const handler = /** @type {any} */ (window)._bppBackdropClose.bind(overlay);
-    handler({ target: overlay });
+    handler({ target: overlay, type: "click" });
     expect(spy).toHaveBeenCalledOnce();
   });
 
@@ -224,7 +230,7 @@ describe("_bppBackdropClose", () => {
     overlay.dataset.backdropArg = "false";
 
     const handler = /** @type {any} */ (window)._bppBackdropClose.bind(overlay);
-    handler({ target: overlay });
+    handler({ target: overlay, type: "click" });
     expect(spy).toHaveBeenCalledWith(false);
   });
 });

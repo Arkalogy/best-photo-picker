@@ -24,7 +24,7 @@ import { _getTimelineFilter, _setTimelineFilter } from "./timeline.mjs";
 import { apiFetch, authedSrc } from "./api-client.mjs";
 import { appConfirm, appPrompt } from "./dialogs.mjs";
 import { doRecompute, showSkeletonGrid, updateStats } from "./analysis.mjs";
-import { esc, escapeAttr, escapeJsAttr } from "./text-format.mjs";
+import { esc, escapeAttr } from "./text-format.mjs";
 import { formatVal } from "./format-helpers.mjs";
 import { hide, show } from "./utils.mjs";
 import { loadAlbumFaces } from "./faces.mjs";

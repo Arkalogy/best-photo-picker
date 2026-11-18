@@ -209,3 +209,29 @@ describe("humanizeActivity — a person's name could not be placed", () => {
     );
   });
 });
+
+describe("sharing settings removed from an opened library", () => {
+  test("the owner is told, with the way to turn it back on", () => {
+    const out = humanizeActivity(
+      e(
+        "Sharing was turned off for this library: its sharing settings were not made by this installation. The share link and approved devices it carried were removed. Turn sharing on again in Settings > Share if you want it.",
+        "WARNING"
+      )
+    );
+    expect(out?.level).toBe("WARNING");
+    expect(out?.text).toContain("Sharing was turned off");
+    expect(out?.text).toContain("Settings → Share");
+  });
+
+  test("a database other accounts can read is surfaced", () => {
+    const out = humanizeActivity(
+      e(
+        "This library's database can be read by other accounts on this computer: its file permissions could not be restricted (some drives ignore them; so does a file another account owns). Anyone who can read the folder can read its sharing link. (/Volumes/X/lib/data/photopicker.db)",
+        "WARNING"
+      )
+    );
+    expect(out?.level).toBe("WARNING");
+    expect(out?.text).toContain("Other accounts on this computer can read");
+    expect(out?.text).not.toContain("/Volumes");
+  });
+});

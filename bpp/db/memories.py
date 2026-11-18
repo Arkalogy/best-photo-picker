@@ -7,12 +7,14 @@ import sqlite3
 from datetime import datetime, timedelta
 from typing import Any
 
-from bpp.constants import ACTIVE_PHOTO_SQL
+from bpp.constants import ACTIVE_PHOTO_SQL, active_photo_sql
 from bpp.utils.logging import get_logger
+from bpp.utils.typed_values import as_date_text, as_float, as_int
 
 log = get_logger(__name__)
 
 _ACTIVE = ACTIVE_PHOTO_SQL
+_ACTIVE_P = active_photo_sql("p")
 _MIN_PHOTOS = 3  # Minimum photos to form a memory
 
 
@@ -141,37 +143,41 @@ def generate_memories(
 
 
 def list_memories(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    """List all memories with hero hash for thumbnails."""
+    """List all memories, each with its hero photo's path (``hero_path``;
+    the API layer turns it into the thumbnail hash)."""
     rows = conn.execute(
         "SELECT m.id, m.title, m.date_start, m.date_end, m.hero_photo_id, "
-        "m.photo_count, m.score, m.generated_at, p.sha256 AS hero_hash "
+        "m.photo_count, m.score, m.generated_at, p.filepath AS hero_path "
         "FROM memories m "
-        "LEFT JOIN photos p ON p.id = m.hero_photo_id "
+        f"LEFT JOIN photos p ON p.id = m.hero_photo_id AND {_ACTIVE_P} "
         "ORDER BY m.date_start DESC"
     ).fetchall()
-    return [
-        {
-            "id": r["id"],
-            "title": r["title"],
-            "date_start": r["date_start"],
-            "date_end": r["date_end"],
-            "hero_photo_id": r["hero_photo_id"],
-            "photo_count": r["photo_count"],
-            "score": r["score"],
-            "generated_at": r["generated_at"],
-            "hero_hash": r["hero_hash"],
-        }
-        for r in rows
-    ]
+    return [_memory_dict(r) for r in rows]
+
+
+def _memory_dict(row: sqlite3.Row) -> dict[str, Any]:
+    """One memory: dates, count and score are that type, or empty (the
+    row can hold any text)."""
+    return {
+        "id": as_int(row["id"]),
+        "title": row["title"],
+        "date_start": as_date_text(row["date_start"]) or None,
+        "date_end": as_date_text(row["date_end"]) or None,
+        "hero_photo_id": as_int(row["hero_photo_id"]),
+        "photo_count": as_int(row["photo_count"]) or 0,
+        "score": as_float(row["score"]),
+        "generated_at": as_date_text(row["generated_at"]) or None,
+        "hero_path": row["hero_path"],
+    }
 
 
 def get_memory(conn: sqlite3.Connection, memory_id: int) -> dict[str, Any] | None:
     """Get a single memory with its photo IDs."""
     row = conn.execute(
         "SELECT m.id, m.title, m.date_start, m.date_end, m.hero_photo_id, "
-        "m.photo_count, m.score, m.generated_at, p.sha256 AS hero_hash "
+        "m.photo_count, m.score, m.generated_at, p.filepath AS hero_path "
         "FROM memories m "
-        "LEFT JOIN photos p ON p.id = m.hero_photo_id "
+        f"LEFT JOIN photos p ON p.id = m.hero_photo_id AND {_ACTIVE_P} "
         "WHERE m.id = ?",
         (memory_id,),
     ).fetchone()
@@ -187,15 +193,7 @@ def get_memory(conn: sqlite3.Connection, memory_id: int) -> dict[str, Any] | Non
     ]
 
     return {
-        "id": row["id"],
-        "title": row["title"],
-        "date_start": row["date_start"],
-        "date_end": row["date_end"],
-        "hero_photo_id": row["hero_photo_id"],
-        "photo_count": row["photo_count"],
-        "score": row["score"],
-        "generated_at": row["generated_at"],
-        "hero_hash": row["hero_hash"],
+        **_memory_dict(row),
         "photo_ids": photo_ids,
     }
 

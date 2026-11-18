@@ -54,6 +54,20 @@ def _add_analyze(sub: argparse._SubParsersAction) -> None:
     p_analyze.add_argument("--dry-run", action="store_true", help="Show what would be done")
 
 
+def _add_source_root(parser: argparse.ArgumentParser, home: str) -> None:
+    parser.add_argument(
+        "--source-root",
+        action="append",
+        default=[],
+        dest="source_root",
+        metavar="DIR",
+        help=(
+            f"Another folder the photos sit in, when it is not inside {home} "
+            "(repeatable). Export reads only from these folders."
+        ),
+    )
+
+
 def _add_select(sub: argparse._SubParsersAction) -> None:
     """`bpp select`: select best photos from analyzed data."""
     p_select = sub.add_parser("select", help="Select best photos from analyzed data")
@@ -63,6 +77,7 @@ def _add_select(sub: argparse._SubParsersAction) -> None:
     p_select.add_argument("--config", help="Path to YAML config file")
     p_select.add_argument("--gallery", action="store_true", help="Generate HTML gallery")
     p_select.add_argument("--dry-run", action="store_true", help="Show what would be done")
+    _add_source_root(p_select, "the workdir")
     mode = p_select.add_mutually_exclusive_group()
     mode.add_argument("--copy", action="store_const", const="copy", dest="export_mode")
     mode.add_argument("--hardlink", action="store_const", const="hardlink", dest="export_mode")
@@ -82,6 +97,7 @@ def _add_run(sub: argparse._SubParsersAction) -> None:
     p_run.add_argument("--gallery", action="store_true", help="Generate HTML gallery")
     p_run.add_argument("--debug", action="store_true", help="Enable debug logging")
     p_run.add_argument("--dry-run", action="store_true", help="Show what would be done")
+    _add_source_root(p_run, "the input folder")
     run_mode = p_run.add_mutually_exclusive_group()
     run_mode.add_argument("--copy", action="store_const", const="copy", dest="export_mode")
     run_mode.add_argument("--hardlink", action="store_const", const="hardlink", dest="export_mode")
@@ -182,6 +198,7 @@ def _add_pick(sub: argparse._SubParsersAction) -> None:
         help="Export JPEG quality preset (default: original)",
     )
     p_pick.add_argument("--dry-run", action="store_true", help="Show selection without exporting")
+    _add_source_root(p_pick, "the library")
 
 
 def _add_model(sub: argparse._SubParsersAction) -> None:

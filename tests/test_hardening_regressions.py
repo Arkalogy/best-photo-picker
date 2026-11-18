@@ -5,6 +5,7 @@ command registration, schema, CSP)."""
 from __future__ import annotations
 
 import json
+import os
 import zipfile
 from pathlib import Path
 
@@ -74,7 +75,12 @@ def test_zip_member_count_bomb_rejected_before_extract(tmp_path, monkeypatch):
     assert any(
         e.get("type") == "error" and "too many" in e.get("message", "").lower() for e in events
     )
-    assert not (tmp_path / "work" / "extracted" / "empty" / "100.txt").exists()
+    # Nothing was unpacked, wherever under extracted/ it would have gone
+    # (each archive has a folder of its own there).
+    unpacked = [
+        name for _dir, _subdirs, files in os.walk(tmp_path / "work" / "extracted") for name in files
+    ]
+    assert unpacked == []
 
 
 def test_tauri_webview_does_not_expose_shell_plugin_to_js():

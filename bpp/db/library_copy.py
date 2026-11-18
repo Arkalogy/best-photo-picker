@@ -19,6 +19,7 @@ import threading
 from collections.abc import Iterator
 from typing import Any
 
+from bpp.utils.file_modes import copy_mode
 from bpp.utils.logging import get_logger
 from bpp.utils.raw import is_raw_file
 from bpp.utils.retry import retry_io
@@ -113,6 +114,7 @@ def _copy_atomically(src_path: str, tmp_path: str, dest_path: str) -> None:
     the batch folder."""
     try:
         retry_io(shutil.copy2, src_path, tmp_path, label="copy")
+        os.chmod(tmp_path, copy_mode(os.stat(tmp_path).st_mode))
         src_size = retry_io(os.path.getsize, src_path, label="src_size")
         tmp_size = retry_io(os.path.getsize, tmp_path, label="tmp_size")
         if src_size != tmp_size:
@@ -199,7 +201,13 @@ def remove_stale_import_tmp(photos_dir: str, *, older_than_s: float = STALE_TMP_
     except OSError as e:
         log.warning("Could not list %s for stale copies: %s", photos_dir, e)
         return 0
-    return sum(_remove_stale_tmp(b, older_than_s=older_than_s) for b in batches if os.path.isdir(b))
+    # A batch folder is a real folder: one that is a link leads out of
+    # the library, and nothing behind it is ours to delete.
+    return sum(
+        _remove_stale_tmp(b, older_than_s=older_than_s)
+        for b in batches
+        if os.path.isdir(b) and not os.path.islink(b)
+    )
 
 
 def _photo_record(dest_path: str, filename: str, batch_name: str, sha: str) -> dict[str, Any]:

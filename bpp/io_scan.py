@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import stat
 from collections.abc import Callable
 
 from bpp.utils.logging import get_logger
@@ -13,6 +14,26 @@ log = get_logger(__name__)
 # *files inspected* (not just matched), so deeply nested empty trees
 # still get periodic ticks.
 _SCAN_PROGRESS_EVERY = 500
+
+
+def _is_importable(filepath: str, follow_symlinks: bool) -> bool:
+    """A regular file (or, when links are followed, a link to one).
+    Opening a named pipe waits for a writer that never comes, and Cancel
+    can't reach it; a device file is not a photo either."""
+    try:
+        st = os.lstat(filepath)
+        if stat.S_ISLNK(st.st_mode):
+            if not follow_symlinks:
+                log.debug("Skipping symlink: %s", filepath)
+                return False
+            st = os.stat(filepath)
+    except OSError as e:
+        log.warning("Skipping %s: it can't be read (%s)", filepath, e)
+        return False
+    if not stat.S_ISREG(st.st_mode):
+        log.warning("Skipping %s: not a regular file", filepath)
+        return False
+    return True
 
 
 def scan_images(
@@ -73,12 +94,9 @@ def scan_images(
                     continue  # hidden: OS metadata, editors' and bpp's own temp files
                 scanned += 1
                 filepath = os.path.join(dirpath, name)
-                if not follow_symlinks and os.path.islink(filepath):
-                    log.debug("Skipping symlink: %s", filepath)
-                else:
-                    _, ext = os.path.splitext(name)
-                    if ext.lower() in ext_set:
-                        found.append(filepath)
+                _, ext = os.path.splitext(name)
+                if ext.lower() in ext_set and _is_importable(filepath, follow_symlinks):
+                    found.append(filepath)
                 if on_progress is not None and scanned % _SCAN_PROGRESS_EVERY == 0:
                     try:
                         on_progress(scanned, len(found))

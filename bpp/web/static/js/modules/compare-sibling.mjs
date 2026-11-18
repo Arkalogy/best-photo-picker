@@ -11,9 +11,9 @@
  * Re-exported from compare.mjs.
  */
 
-import { apiFetch, authedSrc } from "./api-client.mjs";
+import { apiFetch, thumbUrl } from "./api-client.mjs";
 import { appConfirm } from "./dialogs.mjs";
-import { escapeAttr } from "./text-format.mjs";
+import { escapeAttr, escVal } from "./text-format.mjs";
 import { toast, toastError } from "./toast.mjs";
 import {
   _renderCompareSide,
@@ -134,7 +134,7 @@ function _renderSiblingStrip() {
     return;
   }
   const parent = _compareSiblingParent;
-  let html = `<img class="css-thumb-best" src="${authedSrc("/thumb/" + parent.thumb_hash)}" alt="Current" title="Current pick">`;
+  let html = `<img class="css-thumb-best" src="${thumbUrl(parent.thumb_hash)}" alt="Current" title="Current pick">`;
   html += '<div class="css-strip-sep"></div>';
   html += _compareSiblings
     .map((s, i) => {
@@ -142,7 +142,7 @@ function _renderSiblingStrip() {
       // Moment siblings carry no per-pair similarity (null) — show a neutral
       // tooltip instead of "NaN% similar".
       const tip = s.similarity != null ? (s.similarity * 100).toFixed(0) + "% similar" : "Burst shot";
-      return `<img class="css-thumb${active}" src="${authedSrc("/thumb/" + s.thumb_hash)}" alt="" title="${escapeAttr(tip)}" data-action="_siblingJump" data-arg0="${i}">`;
+      return `<img class="css-thumb${active}" src="${thumbUrl(s.thumb_hash)}" alt="" title="${escapeAttr(tip)}" data-action="_siblingJump" data-arg0="${i}">`;
     })
     .join("");
   strip.innerHTML = html;
@@ -305,7 +305,7 @@ export function _renderSiblingToolbar() {
     <button class="ct-action ct-pick" data-action="_siblingUseThis" title="Use this photo instead">&#10003; Use this instead <kbd>Enter</kbd></button>
     <button class="ct-action ct-del" data-action="_siblingDelete" title="Delete this similar photo">&#10005; Delete <kbd>D</kbd></button>
     <div class="ct-sep"></div>
-    <span class="ct-info">${cur} of ${n}</span>`;
+    <span class="ct-info">${escVal(cur)} of ${n}</span>`;
 
   if (n > 1) {
     html += `<div class="ct-sep"></div>
@@ -317,7 +317,7 @@ export function _renderSiblingToolbar() {
     const gIdx = typeof win._getDupeIndex === "function" ? win._getDupeIndex() : 0;
     const gTotal = (win._getDupeGroups() || []).length;
     html += `<div class="ct-sep"></div>
-    <span class="ct-info" style="font-weight:600">Group ${gIdx + 1} of ${gTotal}</span>
+    <span class="ct-info" style="font-weight:600">Group ${escVal(gIdx + 1)} of ${gTotal}</span>
     <button data-action="_dupeSkip" title="Skip this group">Skip <kbd>&rarr;</kbd></button>`;
   }
 

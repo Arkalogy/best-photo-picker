@@ -10,7 +10,7 @@
  * Re-exported from deleted.mjs.
  */
 
-import { esc } from "./text-format.mjs";
+import { esc, escVal } from "./text-format.mjs";
 import { toast } from "./toast.mjs";
 import { menuClosed, menuOpened } from "./menu-a11y.mjs";
 import {
@@ -192,9 +192,9 @@ export function initCardCtxMenu() {
           list.innerHTML = manualAlbums
             .map(
               (a) =>
-                `<div class="album-picker-item" data-action="batchAddToAlbum" data-arg0="${a.id}">
+                `<div class="album-picker-item" data-action="batchAddToAlbum" data-arg0="${escVal(a.id)}">
             <span>${esc(a.name)}</span>
-            <span class="album-picker-count">${a.photo_count} photos</span>
+            <span class="album-picker-count">${escVal(a.photo_count)} photos</span>
           </div>`
             )
             .join("");

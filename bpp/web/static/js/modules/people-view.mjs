@@ -11,7 +11,7 @@
 
 import { faceCropUrl } from "./api-client.mjs";
 import { state } from "./state.mjs";
-import { esc, escapeAttr } from "./text-format.mjs";
+import { esc, escapeAttr, escVal } from "./text-format.mjs";
 import { hide, show } from "./utils.mjs";
 import { updateToolbarTitle } from "./core.mjs";
 import {
@@ -22,6 +22,7 @@ import { setPersonAlbumClusterId } from "./people-album-bar.mjs";
 import { expandDismissedSection } from "./people-actions.mjs";
 import {
   getAmbiguousPairCount,
+  isPairReviewOwnerOnly,
   refreshAmbiguousPairCount,
 } from "./people-review.mjs";
 import { FACE_MIN_PHOTOS } from "./constants.mjs";
@@ -71,8 +72,8 @@ export function personLabelHTML(clusterId, photoCount) {
   const defaultName = `Person ${clusterId + 1}`;
   const displayName = name || defaultName;
   const cls = name ? "person-name" : "person-name unnamed";
-  return `<div class="${cls}" data-stop-propagation="true" data-action="startPersonRename" data-arg0="${clusterId}">${esc(displayName)}</div>` +
-    `<div class="person-count">${count} photo${count === 1 ? '' : 's'}</div>`;
+  return `<div class="${cls}" data-stop-propagation="true" data-action="startPersonRename" data-arg0="${escVal(clusterId)}">${esc(displayName)}</div>` +
+    `<div class="person-count">${escVal(count)} photo${count === 1 ? '' : 's'}</div>`;
 }
 
 export function isClusterExcluded(c) {
@@ -152,7 +153,7 @@ function _filterBarHTML(mainIncluded, minor, excluded) {
     ignored: "Faces you dismissed as not real people",
   };
   const pill = (val, label, count) =>
-    `<span class="people-filter-pill${state.peopleFilter === val ? ' active' : ''}${count === 0 ? ' disabled' : ''}" title="${escapeAttr(pillTips[val] || '')}" ${count > 0 ? `data-action="setPeopleFilter" data-arg0="${escapeAttr(val)}"` : ''}>${label} (${count})</span>`;
+    `<span class="people-filter-pill${state.peopleFilter === val ? ' active' : ''}${count === 0 ? ' disabled' : ''}" title="${escapeAttr(pillTips[val] || '')}" ${count > 0 ? `data-action="setPeopleFilter" data-arg0="${escapeAttr(val)}"` : ''}>${label} (${escVal(count)})</span>`;
   const sortPill = (val, label) =>
     `<span class="people-filter-pill${state.peopleSort === val ? ' active' : ''}" data-action="setPeopleSort" data-arg0="${val}">${label}</span>`;
   const unnamedIncluded = mainIncluded.filter(c => !personDisplayName(c.cluster_id));
@@ -168,8 +169,8 @@ function _filterBarHTML(mainIncluded, minor, excluded) {
     : '';
   const pairCount = getAmbiguousPairCount();
   const pairLabel = pairCount === null ? "Review pairs (…)" : `Review pairs (${pairCount})`;
-  const pairDisabled = pairCount === 0 ? " disabled" : "";
-  const reviewPairsBtn = `<button class="people-review-btn" id="btn-review-pairs" data-action="startFacePairReview" title="Find ambiguous cluster pairs and mark same/different to teach the adaptive threshold"${pairDisabled}>${pairLabel}</button>`;
+  const pairDisabled = (pairCount === 0 ? " disabled" : "") + (isPairReviewOwnerOnly() ? " hidden" : "");
+  const reviewPairsBtn = `<button class="people-review-btn" id="btn-review-pairs" data-action="startFacePairReview" title="Find ambiguous cluster pairs and mark same/different to teach the adaptive threshold"${pairDisabled}>${escVal(pairLabel)}</button>`;
   return `<div class="people-filter-bar">
     ${pill("included", "Included", mainIncluded.length)}
     ${pill("minor", "Other", minor.length)}
@@ -199,15 +200,15 @@ function _personCardHTML(c) {
   const cls = _isSignificant(c) ? "person-card" : "person-card person-card-minor";
   const selCls = _selectedPeople.has(cid) ? " person-card-selected" : "";
   const boostCls = /** @type {any} */ (window).selectedFaceIds?.has(cid) ? " person-card-boosted" : "";
-  return `<div class="${cls}${cardCls}${selCls}${boostCls}" data-cluster-id="${cid}"${cardTitle}
+  return `<div class="${cls}${cardCls}${selCls}${boostCls}" data-cluster-id="${escVal(cid)}"${cardTitle}
         tabindex="0" role="button" data-key-activate
-        data-action="_personCardClick" data-pass-event="true" data-arg0="${cid}"
-        data-oncontextmenu="_personCtxMenuDispatch" data-arg0="${cid}"
-        data-onpointerdown="_personPointerDownDispatch" data-arg0="${cid}">
+        data-action="_personCardClick" data-pass-event="true" data-arg0="${escVal(cid)}"
+        data-oncontextmenu="_personCtxMenuDispatch"
+        data-onpointerdown="_personPointerDownDispatch">
         <div class="person-avatar">
           <img src="${faceCropUrl(rep.thumb_hash, rep.face_index)}" loading="lazy" draggable="false">
         </div>
-        <div class="person-label" id="person-label-${cid}">${personLabelHTML(cid, c.photo_count)}</div>
+        <div class="person-label" id="person-label-${escVal(cid)}">${personLabelHTML(cid, c.photo_count)}</div>
       </div>`;
 }
 
@@ -257,7 +258,7 @@ export function showPeopleView(afterLoad) {
     bodyHTML = `<div class="dismissed-section-body" style="padding:12px 0">
       <div class="dismissed-faces-grid" id="dismissed-faces-grid"></div>
       <div class="dismissed-section-actions">
-        <button class="btn btn-secondary btn-sm" data-action="restoreDismissed">Restore all (${state._dismissedCount})</button>
+        <button class="btn btn-secondary btn-sm" data-action="restoreDismissed">Restore all (${escVal(state._dismissedCount)})</button>
         <button class="btn btn-sm" style="color:var(--red);border-color:var(--red)" data-action="deleteAllDismissed">Delete all permanently</button>
         <span class="dismissed-hint">Restored faces appear as new people. Deleted faces are gone until re-analysis.</span>
       </div>

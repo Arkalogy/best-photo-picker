@@ -65,6 +65,7 @@ class TestSslContextNormalization:
     def test_production_code_contains_normalization(self):
         """Source-scan: do_serve hands the normalized value to app.run."""
         src = Path("bpp/commands/serve.py").read_text()
-        assert "ssl_context=_ssl_context(ctx.config or {})" in src, (
+        assert "ssl_context = _ssl_context(ctx.config or {})" in src
+        assert "ssl_context=ssl_context," in src, (
             "do_serve must pass the normalized ssl_context to app.run"
         )

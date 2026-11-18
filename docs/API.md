@@ -7,9 +7,9 @@ Best Photo Picker exposes a full REST API on `localhost:5001`. All endpoints are
 **Authentication.** Every `/api/v1/*` request must carry a valid token in the `X-Auth-Token` header (or the `_token=` query string for `<img>` / `<video>` URLs that can't send custom headers). Two tokens are accepted:
 
 - **App session token** — generated fresh on every server boot, embedded in the index page's `<meta name="auth-token">` tag for the local Tauri app to read.
-- **Persistent share token** — DB-backed, used by phones via the LAN share URL. From a non-loopback address it is only accepted when the device's fingerprint cookie maps to a *trusted* `share_devices` row. From loopback it is accepted as the local owner (a power-user escape hatch on the host machine).
+- **Persistent share token** — DB-backed, used by phones via the LAN share URL. It is only accepted when the device's fingerprint cookie maps to a *trusted* `share_devices` row, from any address: on the host machine too it is a device's credential, never the owner's.
 
-Responses to a paired device never carry the owner's real paths: `filepath` and every other path-shaped string is library-relative, `~/…` for the home folder, or an opaque `@ext/<hash>/<name>` for a photo outside both; the device's path-based lookups accept those forms. `/boot-check` (outside `/api`) exists for the desktop app's start-up probe and is not part of the API.
+Responses to a paired device never carry the owner's real paths: `filepath` and every other path-shaped string is library-relative, `~/…` for the home folder, or an `@ext/<hash>/<name>` handle for a photo outside both; the device's path-based lookups accept those forms. (`thumb_hash` is a hash of the full path: it does not reveal the path, but it lets a device confirm a guessed one.) `/boot-check` (outside `/api`) exists for the desktop app's start-up probe and is not part of the API.
 
 When **LAN sharing is off** (Settings → Share toggle), all non-loopback requests are denied at the gate before the token check runs. When LAN sharing is on, untrusted phones can only reach a small allow-list (`/`, `/static/*`, `/api/v1/share/pair/status`, `/api/v1/share/pair/request`) until the owner approves them. See [security.md](security.md) for the full threat model.
 
@@ -87,6 +87,8 @@ curl -X POST http://localhost:5001/api/v1/export \
 ## Building on the API
 
 Best Photo Picker exposes a full REST API on `localhost:5001`. You can build custom frontends, integrate with automation tools (Shortcuts, Hazel, cron), or use it as a photo scoring microservice. By default the server binds to `127.0.0.1`, and every `/api/v1/*` request still has to carry the token described under **Authentication** — binding to loopback does not make the API unauthenticated. For LAN sharing (multi-device access from a phone or tablet on the same Wi-Fi), see [`docs/security.md`](security.md) for the pairing model and auth boundary. All state-changing operations use `POST`, `PUT`, or `DELETE`, so read-only tools can safely call any `GET` endpoint without side effects.
+
+A paired device that calls a route marked **Owner-only** gets `403` with `"code": "owner_only"` in the body. Its session is still valid: the route is simply not open to it.
 
 ---
 
@@ -385,7 +387,7 @@ fixture — used by the Playwright suite's safety gate.
 
 ### POST /api/v1/settings/clip_max_override
 
-Owner-only. Set or clear the per-library CLIP load-cap bypass.
+Owner-only. Set or clear the per-library CLIP load-cap override. While set, the limit is what this computer's memory holds instead of the default.
 Body: `{"enable": true}` to set, `{"enable": false}` to clear.
 
 ## Photos
@@ -560,8 +562,15 @@ curl -X POST http://localhost:5001/api/v1/export \
 **Response:**
 
 ```json
-{ "status": "exported", "outdir": "/tmp/export", "count": 50, "failed": 0, "disk_error": null, "metadata_kept": 0 }
+{ "status": "exported", "outdir": "/tmp/export", "count": 50, "failed": 0, "disk_error": null, "metadata_kept": 0, "outside_source": 0 }
 ```
+
+An export reads photos only from the open library, its workdir and
+folders analyzed in place for this library. A photo anywhere else is
+not copied: it counts in `failed`, and `outside_source` is how many of
+the failures were refused for that reason (analyze the folder, then
+export again). The `done` event of `POST /api/v1/export/start` carries
+the same field.
 
 ### POST /api/v1/open-folder
 
@@ -664,6 +673,9 @@ point loses nothing. A file that could not be checked or renamed keeps
 its row (delete it again later); one the OS refused to remove is
 retried at the next start. Both are listed in `files_failed` with
 `"status": "partial"`.
+
+Answers `409` with `"blocker": "analysis_or_import"` while an analysis
+or an import is running: wait for it to finish, then delete again.
 
 ### GET /api/v1/photos/deleted
 
@@ -813,7 +825,7 @@ Returns `{"angle": -1.8}` (degrees; 0 when no dominant line found).
 
 ### GET /api/v1/photos/enhance-preview
 
-Return auto-enhance parameters for a photo without saving anything
+Owner-only. Return auto-enhance parameters for a photo without saving anything
 (`?filepath=...`) — powers the editor's per-section AUTO buttons.
 
 ### GET /api/v1/duplicates/groups
@@ -1605,12 +1617,12 @@ Feedback-corpus statistics and whether re-clustering is recommended
 
 ### GET /api/v1/faces/review-pairs/count
 
-Count of reviewable ambiguous pairs — gates the "Review pairs (N)"
+Owner-only. Count of reviewable ambiguous pairs — gates the "Review pairs (N)"
 button without building full pair metadata.
 
 ### GET /api/v1/faces/review-pairs/next
 
-Ambiguous cluster pairs for the "Same person?" flow (`?limit=30`),
+Owner-only. Ambiguous cluster pairs for the "Same person?" flow (`?limit=30`),
 closest-first, enriched with names + representative crops. Pairs the
 user already answered (either way) are excluded.
 
@@ -1750,6 +1762,11 @@ curl -X POST http://localhost:5001/api/v1/libraries/switch \
   -H 'Content-Type: application/json' \
   -d '{"path": "~/Pictures/AnotherLibrary"}'
 ```
+
+Answers `400` when the folder can't be opened as a library. When the
+reason is a link inside it (`photos`, `data`, `cache`, `logs`, or an
+entry of `data` / `logs` is a link to another location), the body names
+it in `entry`; the previous library stays open.
 
 ### GET /api/v1/libraries/active
 
@@ -2688,11 +2705,17 @@ No GUI screen calls this endpoint yet.
   "embeddings_purged": 3944,
   "distinct_clusters_affected": 234,
   "distinct_photos_affected": 2627,
-  "purged": true
+  "purged": true,
+  "entry_removed": true
 }
 ```
 
-**Response (400):** if `model_id` or `purge_derived` is missing,
-or the entry can't be removed (e.g. is a bundled baseline that
-removal policy forbids).
+A built-in entry can't be removed (it follows the signed registry).
+With `purge_derived: true` its face data is still deleted, the
+face-crop cache is cleared, and the response has
+`"entry_removed": false`. Database backups made earlier keep the
+rows until the app has started twice more.
+
+**Response (400):** if `model_id` or `purge_derived` is missing, or
+the entry is built in and `purge_derived` is false (nothing to do).
 

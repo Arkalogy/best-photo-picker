@@ -83,7 +83,17 @@ def get_library_dirs(library_path: str) -> dict[str, str]:
 
 
 def ensure_library_dirs(library_path: str) -> dict[str, str]:
-    """Create all standard library subdirectories and return their paths."""
+    """Create all standard library subdirectories and return their paths.
+
+    Raises ValidationError for a library whose own folders or fixed
+    files are links leading elsewhere (see ``library_layout``). The
+    switch route and ``bpp serve`` open a library through here; code
+    that reaches into a library by another way calls
+    ``check_library_layout`` itself.
+    """
+    from bpp.db.library_layout import check_library_layout
+
+    check_library_layout(library_path)
     dirs = get_library_dirs(library_path)
     for key in ("photos", "data", "cache", "logs", "thumbs", "face_crops", "pet_crops"):
         os.makedirs(dirs[key], exist_ok=True)
@@ -132,6 +142,9 @@ def import_folder(
 
     photos_dir = get_library_dirs(library_path)["photos"]
     batch_dir = os.path.join(photos_dir, batch_name)
+    if os.path.islink(batch_dir):
+        # Copies would land wherever the link leads, outside the library.
+        raise ValueError(f"Batch folder {batch_name!r} is a link to another location")
     os.makedirs(batch_dir, exist_ok=True)
     _remove_stale_tmp(batch_dir)
     with active_import(batch_dir):
@@ -309,13 +322,40 @@ def _dispatch_post_import(conn: sqlite3.Connection, imported_paths: list[str]) -
     dispatch_post_import(conn, imported_ids, list(imported_paths))
 
 
+def _batch_folder(base: str, batch: object, dirs: dict[str, str]) -> str | None:
+    """The folder ``base/batch`` when clear_library may remove it, else None.
+
+    Batch names are read back from the library database, which travels
+    with the library folder, so they are checked here and not only when
+    an import writes them: one plain path component, a real folder (not
+    a link) that resolves inside the library, and never one of the
+    library's own folders (photos/, data/, cache/, logs/).
+    """
+    from bpp.utils.path_validation import is_path_under_any
+
+    if not isinstance(batch, str) or batch in ("", ".", "..") or os.path.basename(batch) != batch:
+        return None
+    folder = os.path.join(base, batch)
+    if os.path.islink(folder) or not os.path.isdir(folder):
+        return None
+    # samefile, not a string compare: on a case-insensitive volume
+    # "Data" is the library's data/ folder.
+    own = any(os.path.exists(p) and os.path.samefile(folder, p) for p in dirs.values())
+    if own or not is_path_under_any(folder, [dirs["root"]]):
+        log.warning(
+            "Not removing batch folder %s: it is not a batch folder of this library", folder
+        )
+        return None
+    return folder
+
+
 def clear_library(conn: sqlite3.Connection, library_path: str) -> dict[str, int]:
     """Delete all photos from DB and remove imported files from disk.
 
     Clears: photos, album_photos, face_embeddings, clip_embeddings, dedup_feedback.
     Keeps: albums (structure), presets.
     Removes batch folders under library_path/photos/ (but not the DB).
-    Also clears the thumbnail and face_crops caches.
+    Also clears the thumbnail, face_crops and pet_crops caches.
     """
     dirs = get_library_dirs(library_path)
 
@@ -348,8 +388,8 @@ def clear_library(conn: sqlite3.Connection, library_path: str) -> dict[str, int]
     for batch in batch_names:
         # Check new layout first, then legacy flat layout
         for base in (dirs["photos"], library_path):
-            batch_dir = os.path.join(base, batch)
-            if os.path.isdir(batch_dir):
+            batch_dir = _batch_folder(base, batch, dirs)
+            if batch_dir is not None:
                 try:
                     retry_io(shutil.rmtree, batch_dir, label="rmtree_batch")
                     removed_dirs += 1
@@ -358,8 +398,8 @@ def clear_library(conn: sqlite3.Connection, library_path: str) -> dict[str, int]
                     log.warning("Failed to remove batch folder %s: %s", batch_dir, e)
                 break
 
-    # Clear cache dirs (thumbnails and face crops)
-    for cache_dir in (dirs["thumbs"], dirs["face_crops"]):
+    # Clear cache dirs (thumbnails, face crops and pet crops)
+    for cache_dir in (dirs["thumbs"], dirs["face_crops"], dirs["pet_crops"]):
         if os.path.isdir(cache_dir):
             try:
                 retry_io(shutil.rmtree, cache_dir, label="rmtree_cache")

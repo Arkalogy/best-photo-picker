@@ -9,7 +9,7 @@
  * gates its own keyboard handler on `_isSlideshowActive()`.
  */
 
-import { authedSrc } from "./api-client.mjs";
+import { authedSrc, thumbUrl } from "./api-client.mjs";
 import { esc } from "./text-format.mjs";
 import { state } from "./state.mjs";
 import { focusInto, restoreFocusFrom } from "./dialog-focus.mjs";
@@ -181,7 +181,7 @@ function _slideshowShowVideo(p, videoEl) {
   if (imgB) imgB.classList.remove("ss-active");
 
   videoEl.classList.remove("hidden");
-  videoEl.poster = authedSrc("/thumb/" + p.thumb_hash);
+  videoEl.poster = thumbUrl(p.thumb_hash);
   videoEl.src = authedSrc("/video/" + p.thumb_hash);
   videoEl.play().catch((e) => console.warn("Slideshow video autoplay blocked:", e));
 

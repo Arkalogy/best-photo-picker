@@ -6,8 +6,8 @@
  * what `executeSearchResult` reads back.
  */
 
-import { authedSrc } from "./api-client.mjs";
-import { esc } from "./text-format.mjs";
+import { thumbUrl } from "./api-client.mjs";
+import { esc, escVal } from "./text-format.mjs";
 
 /**
  * @param {number} idx
@@ -63,14 +63,14 @@ function _photoSection(photos, pct, badgeClass, ICONS, items) {
     const idx = items.length;
     items.push({ type: "photo", ...p });
     const fname = p.filename || p.filepath.split("/").pop();
-    const thumbSrc = p.thumb_hash ? authedSrc(`/thumb/${p.thumb_hash}`) : "";
-    const imgTag = thumbSrc ? `<img src="${thumbSrc}" alt="" loading="lazy">` : ICONS.library || "";
+    const thumbSrc = p.thumb_hash ? thumbUrl(p.thumb_hash) : "";
+    const imgTag = thumbSrc ? `<img src="${escVal(thumbSrc)}" alt="" loading="lazy">` : ICONS.library || "";
     html += _row(
       idx,
       imgTag,
       esc(fname),
       esc(p.date_day || ""),
-      `<span class="${badgeClass}">${pct(p)}%</span>`
+      `<span class="${badgeClass}">${escVal(pct(p))}%</span>`
     );
   }
   return html;
@@ -109,7 +109,7 @@ export function searchResultsHTML(data, ICONS, items) {
       "person",
       ICONS.people || "",
       (p) => esc(p.name),
-      (p) => `${p.photo_count} photos`,
+      (p) => `${escVal(p.photo_count)} photos`,
       items
     );
   }
@@ -120,7 +120,7 @@ export function searchResultsHTML(data, ICONS, items) {
       "album",
       ICONS.folder || "",
       (a) => esc(a.name),
-      (a) => `${a.photo_count} photos`,
+      (a) => `${escVal(a.photo_count)} photos`,
       items
     );
   }
@@ -142,7 +142,7 @@ export function searchResultsHTML(data, ICONS, items) {
       "tag",
       ICONS.tag || "",
       (t) => esc(t.name),
-      (t) => `${t.photo_count} photos`,
+      (t) => `${escVal(t.photo_count)} photos`,
       items
     );
   }

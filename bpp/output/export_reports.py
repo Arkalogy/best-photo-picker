@@ -8,6 +8,7 @@ from __future__ import annotations
 import csv
 import json
 import os
+import re
 from typing import Any
 
 from bpp import __version__
@@ -63,6 +64,27 @@ def _csv_safe(value: Any) -> Any:
     return value
 
 
+#: Setting names that never go into a report, whatever else is allowed.
+_PRIVATE_NAME = re.compile(r"token|secret|password|seal|fingerprint|_key$|^ssl_", re.IGNORECASE)
+
+
+def report_config(config: dict[str, Any]) -> dict[str, Any]:
+    """The settings a report may carry: the app's own options (the ones
+    with a default or a schema entry), never a credential and never a
+    row the library's settings table happens to hold. The report sits in
+    the export folder, which is handed to other people."""
+    from bpp.config import DEFAULTS
+    from bpp.config_schema import get_schema
+
+    return {
+        key: value
+        for key, value in (config or {}).items()
+        if isinstance(key, str)
+        and not _PRIVATE_NAME.search(key)
+        and (key in DEFAULTS or get_schema(key) is not None)
+    }
+
+
 def _write_reports(
     outdir: str,
     selected: list[dict[str, Any]],
@@ -104,21 +126,34 @@ def _write_reports(
         out["cluster_size"] = item.get("cluster_size", 1)
         return out
 
-    report = {
+    # Photos that were looked at and not exported. Not those in the bin
+    # or hidden: they were never candidates.
+    skipped = [
+        item
+        for item in analysis
+        if item["filepath"] not in selected_paths
+        and not item.get("deleted_at")
+        and not item.get("hidden_at")
+    ]
+    report: dict[str, Any] = {
         "version": __version__,
-        "config": config,
-        "total_analyzed": len(analysis),
+        "config": report_config(config),
+        "total_analyzed": len(selected) + len(skipped),
         "total_selected": len(selected),
+        "total_skipped": len(skipped),
         "selected": [_selected_entry(i, item) for i, item in enumerate(selected)],
-        "skipped": [
+    }
+    if include_source_paths:
+        # The owner's own diagnostic report: the photos left out, by path.
+        # The default report goes out with the export folder and names
+        # only what is in it.
+        report["skipped"] = [
             {
                 "filepath": _entry_filename(item),
                 "aggregate_score": item.get("aggregate_score", 0),
             }
-            for item in analysis
-            if item["filepath"] not in selected_paths
-        ],
-    }
+            for item in skipped
+        ]
 
     report_path = os.path.join(outdir, "report.json")
 

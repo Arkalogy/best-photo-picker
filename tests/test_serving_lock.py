@@ -9,6 +9,7 @@ non-existent edge cases.
 from __future__ import annotations
 
 import os
+import time
 
 import pytest
 
@@ -227,57 +228,210 @@ class TestAcquireLock:
         with pytest.raises(ServingLockError, match="OS error"):
             acquire_lock(wd)
 
-    def test_stale_recovery_loser_does_not_double_acquire(self, tmp_path, monkeypatch):
-        """The actual race: two contenders both
-        see the same stale lockfile; both write their tmp; both call
-        os.replace (which can't fail in this scenario — it just
-        overwrites). With the old code, both returned success.
+    def test_a_process_paused_before_writing_its_pid_still_holds_the_lock(self, tmp_path):
+        """The window the PID text alone can't cover: one process has the
+        file but has not written its PID yet. Another must not take it."""
+        import subprocess
+        import sys
 
-        Fix: after os.replace, verify the lockfile contains OUR PID.
-        If a different PID is there, the other process won the race
-        and we report them as the holder (caller refuses to start).
-
-        Simulate the race by making os.replace a no-op for the
-        loser (their content gets immediately overwritten by the
-        winner). The loser must detect this and return the winner's PID.
-        """
         from bpp.utils.serving_lock import acquire_lock
 
         wd = str(tmp_path)
-        winner_pid = os.getpid() + 999  # Pretend a sibling process
-
-        # Plant a stale lock so both contenders go down the recovery path
-        with open(lock_path(wd), "w") as f:
-            f.write("99999999")  # unlikely-to-be-alive PID
-
-        # After we call os.replace(tmp, path), the file's content gets
-        # overwritten by the "winner" — simulate by patching os.replace
-        # to write the winner's PID instead of our temp content.
-        def _winning_replace(src, dst):
-            # Discard our tmp, plant winner's PID
-            import contextlib
-
-            with contextlib.suppress(OSError):
-                os.remove(src)
-            with open(dst, "w") as f:
-                f.write(str(winner_pid))
-
-        monkeypatch.setattr(os, "replace", _winning_replace)
-
-        # And make kill think the winner is alive (so the post-replace
-        # verification sees a live PID, not a stale one)
-        original_kill = os.kill
-
-        def _kill_fake(pid, sig):
-            if pid == winner_pid and sig == 0:
-                return
-            return original_kill(pid, sig)
-
-        monkeypatch.setattr(os, "kill", _kill_fake)
-
-        result = acquire_lock(wd)
-        assert result == winner_pid, (
-            f"Loser must report the winner's PID, got {result}. "
-            "Without this verification, both contenders would return "
-            "None (success) and two servers would silently corrupt the DB."
+        paused, go_on = tmp_path / "paused", tmp_path / "go-on"
+        script = (
+            "import os, sys, time\n"
+            "from bpp.utils import serving_lock\n"
+            "real = serving_lock._write_pid\n"
+            "def slow(fd, path, pid, created):\n"
+            "    open(sys.argv[2], 'w').close()\n"
+            "    while not os.path.exists(sys.argv[3]): time.sleep(0.01)\n"
+            "    real(fd, path, pid, created)\n"
+            "serving_lock._write_pid = slow\n"
+            "print(serving_lock.acquire_lock(sys.argv[1]), flush=True)\n"
+            "sys.stdin.readline()\n"
         )
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        first = subprocess.Popen(
+            [sys.executable, "-c", script, wd, str(paused), str(go_on)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+            cwd=repo,
+        )
+        try:
+            for _ in range(3000):
+                if paused.exists():
+                    break
+                time.sleep(0.01)
+            assert paused.exists(), "the first process never reached its write"
+
+            second = acquire_lock(wd)
+
+            go_on.write_text("")
+            assert first.stdout.readline().strip() == "None", "the first holds it"
+        finally:
+            first.communicate("\n", timeout=30)
+        assert second is not None, "two processes held the lock at once"
+
+    def test_a_holder_that_dies_lets_go(self, tmp_path):
+        import signal
+        import subprocess
+        import sys
+
+        from bpp.utils.serving_lock import acquire_lock
+
+        wd = str(tmp_path)
+        script = (
+            "import sys\n"
+            "from bpp.utils.serving_lock import acquire_lock\n"
+            "print(acquire_lock(sys.argv[1]), flush=True)\n"
+            "sys.stdin.readline()\n"
+        )
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        holder = subprocess.Popen(
+            [sys.executable, "-c", script, wd],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+            cwd=repo,
+        )
+        assert holder.stdout.readline().strip() == "None"
+        assert acquire_lock(wd) == holder.pid, "held while it runs"
+        holder.send_signal(signal.SIGKILL)
+        holder.wait(30)
+        assert acquire_lock(wd) is None, "a crash lets go without anyone removing the file"
+        clear_lock(wd)
+
+    def test_where_files_cant_be_locked_a_left_lock_is_not_taken_over(self, tmp_path, monkeypatch):
+        from bpp.utils import serving_lock
+
+        monkeypatch.setattr(serving_lock, "try_lock", lambda fd: None)
+        wd = str(tmp_path)
+        with open(lock_path(wd), "w") as f:
+            f.write("99999999")  # a run that ended, or one still starting
+
+        assert serving_lock.acquire_lock(wd) == 0
+        assert "remove " + lock_path(wd) in serving_lock.lock_advice(wd, 0)
+        os.remove(lock_path(wd))
+        assert serving_lock.acquire_lock(wd) is None, "made by this process: held"
+        clear_lock(wd)
+        assert not os.path.exists(lock_path(wd))
+
+    def test_a_live_holder_is_never_told_to_remove_its_lock(self, tmp_path):
+        import subprocess
+        import sys
+
+        from bpp.utils.serving_lock import acquire_lock, lock_advice
+
+        wd = str(tmp_path)
+        script = (
+            "import sys\n"
+            "from bpp.utils.serving_lock import acquire_lock\n"
+            "print(acquire_lock(sys.argv[1]), flush=True)\n"
+            "sys.stdin.readline()\n"
+        )
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        holder = subprocess.Popen(
+            [sys.executable, "-c", script, wd],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+            cwd=repo,
+        )
+        try:
+            assert holder.stdout.readline().strip() == "None"
+            advice = lock_advice(wd, acquire_lock(wd))
+        finally:
+            holder.communicate("\n", timeout=30)
+        assert "wait for it to finish" in advice and "remove" not in advice
+
+    def test_a_holder_with_this_processs_pid_is_still_another_holder(self, tmp_path):
+        """In containers each app can be PID 1: the system's lock, not the
+        PID written in the file, says who holds it."""
+        from bpp.utils.serving_lock import acquire_lock
+
+        wd = str(tmp_path)
+        holder = _hold_in_another_process(wd)
+        try:
+            with open(lock_path(wd), "w") as f:
+                f.write(str(os.getpid()))  # the same PID, in its own namespace
+            assert acquire_lock(wd) is not None
+        finally:
+            holder.communicate("\n", timeout=30)
+
+    def test_clearing_leaves_a_lock_another_process_is_still_starting_with(self, tmp_path):
+        import subprocess
+        import sys
+
+        wd = str(tmp_path)
+        script = (
+            "import fcntl, os, sys\n"
+            "fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o600)\n"
+            "fcntl.flock(fd, fcntl.LOCK_EX)\n"  # locked, its PID not written yet
+            "print('LOCKED', flush=True)\n"
+            "sys.stdin.readline()\n"
+        )
+        starting = subprocess.Popen(
+            [sys.executable, "-c", script, lock_path(wd)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            assert starting.stdout.readline().strip() == "LOCKED"
+            clear_lock(wd)
+            assert os.path.exists(lock_path(wd))
+        finally:
+            starting.communicate("\n", timeout=30)
+
+    def test_a_lock_whose_file_was_removed_meanwhile_is_taken_again(self, tmp_path):
+        from bpp.utils.serving_lock import acquire_lock
+
+        wd = str(tmp_path)
+        assert acquire_lock(wd) is None
+        os.remove(lock_path(wd))  # removed by hand while held
+
+        assert acquire_lock(wd) is None
+        assert os.path.exists(lock_path(wd)), "held for real, not only on record"
+        clear_lock(wd)
+
+    def test_a_lock_that_could_not_be_written_is_not_left_behind(self, tmp_path, monkeypatch):
+        import errno
+
+        from bpp.utils import serving_lock
+
+        wd = str(tmp_path)
+        monkeypatch.setattr(serving_lock, "try_lock", lambda fd: None)  # a drive without locks
+
+        def full(fd):
+            raise OSError(errno.ENOSPC, "No space left on device")
+
+        with monkeypatch.context() as m:
+            m.setattr(os, "fsync", full)
+            with pytest.raises(serving_lock.ServingLockError):
+                serving_lock.acquire_lock(wd)
+
+        assert not os.path.exists(lock_path(wd)), "it would keep every later start out"
+        assert serving_lock.acquire_lock(wd) is None
+        clear_lock(wd)
+
+
+def _hold_in_another_process(wd):
+    import subprocess
+    import sys
+
+    script = (
+        "import sys\n"
+        "from bpp.utils.serving_lock import acquire_lock\n"
+        "print(acquire_lock(sys.argv[1]), flush=True)\n"
+        "sys.stdin.readline()\n"
+    )
+    holder = subprocess.Popen(
+        [sys.executable, "-c", script, wd],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+        cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    )
+    assert holder.stdout.readline().strip() == "None"
+    return holder

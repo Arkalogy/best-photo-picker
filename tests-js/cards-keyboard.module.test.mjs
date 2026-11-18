@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 vi.mock("../bpp/web/static/js/modules/people-pair-review.mjs", () => ({
   refreshAmbiguousPairCount: vi.fn(async () => {}),
   getAmbiguousPairCount: () => 0,
+  isPairReviewOwnerOnly: () => false,
 }));
 
 import { showPeopleView } from "../bpp/web/static/js/modules/people-view.mjs";

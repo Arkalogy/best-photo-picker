@@ -80,6 +80,11 @@ class MyPlugin:
         Use for: registering Flask blueprints, hooking the photo event bus."""
         if app is not None:
             from .blueprint import bp
+            # Put routes under /api/: only /api/, /thumb/, /photo/ and
+            # /video/ require the app or share token. A route anywhere
+            # else answers every program on the machine, and every LAN
+            # host once sharing is on. Owner-only routes also take
+            # @requires_local_app (bpp.web.share).
             app.register_blueprint(bp)
 
     def on_library_open(self, ctx):
@@ -126,6 +131,22 @@ plugins: install only from sources you trust. The opt-in env var
 exists so a malicious package landing in your venv (typo-squatting,
 compromised dependency, accidental install) doesn't auto-execute on
 the next `bpp serve`.
+
+## What a library may carry
+
+A library folder can come from another person or computer, so the app
+does not let its contents decide things for the owner. Two of the
+rules reach plugins:
+
+- **Triggers and views in the library database are removed every time
+  it is opened**, unless the app itself defines them. Tables are kept.
+  Keep plugin state in your own tables (or your own database file) and
+  do in code what a trigger would have done.
+- **Settings stored in a library are checked again when they are
+  read.** A field declared as `bool`, `int`, `float` or `str` falls
+  back to its default when the stored value is outside its `min`,
+  `max` or `choices`, or its `validator` refuses it. Fields of other
+  types are returned as stored.
 
 ## Extension points
 
@@ -705,6 +726,13 @@ Contract:
 `unregister_photo_deletion_hook(callback)` removes a hook (returns
 `True` if found). Useful in tests; production plugins typically
 register once and never deregister.
+
+A Live Photo's hidden companion row follows its photo to the bin, back
+out of it, and out of the library, without an event of its own for
+`soft` and `restore`; a `permanent` event lists it. Companions left
+behind by an earlier version are settled when the library opens, with
+no event. A plugin that mirrors photo state should treat rows with
+`is_live_photo_sidecar = 1` as part of their parent.
 
 ## Custom dedup strategies
 

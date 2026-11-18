@@ -50,6 +50,16 @@ _MAX_SEMANTIC_RESULTS = 20
 _SEMANTIC_MIN_SIMILARITY = 0.22
 
 
+#: Longest search text looked at. Nobody types more, and the smart-search
+#: tokenizer's work grows faster than the length of an unbroken run.
+MAX_QUERY_CHARS = 200
+
+
+def _query() -> str:
+    """The search text of this request, trimmed and cut to the limit."""
+    return request.args.get("q", "").strip()[:MAX_QUERY_CHARS]
+
+
 @bp.get("/api/v1/search")
 def api_search() -> tuple[Response, int]:
     """Universal search across photos, albums, people, dates, tags, and
@@ -60,7 +70,7 @@ def api_search() -> tuple[Response, int]:
     date queries (year, month, "Month YYYY"), and CLIP text-to-image
     similarity. The response also reports ``clip_status`` so the UI
     can prompt the user when CLIP isn't ready."""
-    q = request.args.get("q", "").strip()
+    q = _query()
     if not q:
         raise ValidationError("Query parameter 'q' is required", field="q")
 

@@ -17,7 +17,7 @@
  */
 
 import { faceCropUrl } from "./api-client.mjs";
-import { esc } from "./text-format.mjs";
+import { esc, escVal } from "./text-format.mjs";
 import { CLUSTER_DISMISSED } from "./constants.mjs";
 import { _lbActiveCleanups, _lbPickerItems } from "./lightbox.mjs";
 import { _lbReassignFace } from "./lightbox-face-assign.mjs";
@@ -150,7 +150,7 @@ function _renderPeopleList(list, filter, personDisplayName, onChoose) {
         ? `<img class="merge-picker-avatar" src="${avatarUrl}" alt="">`
         : `<div class="merge-picker-avatar"></div>`) +
       `<div class="merge-picker-info"><div class="merge-picker-name">${esc(name)}</div>` +
-      `<div class="merge-picker-count">${c.photo_count} photo${c.photo_count === 1 ? "" : "s"}</div></div>`;
+      `<div class="merge-picker-count">${escVal(c.photo_count)} photo${c.photo_count === 1 ? "" : "s"}</div></div>`;
     item.onclick = () => onChoose(c, name);
     list.appendChild(item);
   }
@@ -307,7 +307,7 @@ export function _lbShowFaceAssignPicker(e, face, thumbHash) {
           ? `<img class="merge-picker-avatar" src="${avatarUrl}" alt="">`
           : `<div class="merge-picker-avatar"></div>`) +
         `<div class="merge-picker-info"><div class="merge-picker-name">${esc(name)}</div>` +
-        `<div class="merge-picker-count">${c.photo_count} photo${c.photo_count === 1 ? "" : "s"}</div></div>` +
+        `<div class="merge-picker-count">${escVal(c.photo_count)} photo${c.photo_count === 1 ? "" : "s"}</div></div>` +
         numKey;
       item.onclick = async () => {
         overlay.remove();

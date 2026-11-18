@@ -15,6 +15,7 @@ import { getParams } from "./analysis.mjs";
 import { renderGridFromItems } from "./memories.mjs";
 import { toast, toastError } from "./toast.mjs";
 import { calendarOpenDay } from "./calendar.mjs";
+import { escVal } from "./text-format.mjs";
 
 /** @type {string | null} */
 let _calSelStart = null;
@@ -102,7 +103,7 @@ export function _calUpdateSelectionBar() {
     const d2 = new Date(_calSelEnd + "T00:00:00");
     const label1 = d1.toLocaleDateString(undefined, { month: "short", day: "numeric" });
     const label2 = d2.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-    bar.innerHTML = `<span>${label1} – ${label2}</span><span>${totalPhotos} photos in ${dayCount} days</span><button class="cal-sel-view-btn" data-action="calendarOpenRange">View photos</button><button class="cal-sel-view-btn" data-action="calendarPickBestFromRange">Pick best</button><button class="cal-sel-clear-btn" data-action="_calClearSelection">&times;</button>`;
+    bar.innerHTML = `<span>${escVal(label1)} – ${escVal(label2)}</span><span>${totalPhotos} photos in ${dayCount} days</span><button class="cal-sel-view-btn" data-action="calendarOpenRange">View photos</button><button class="cal-sel-view-btn" data-action="calendarPickBestFromRange">Pick best</button><button class="cal-sel-clear-btn" data-action="_calClearSelection">&times;</button>`;
     bar.classList.remove("hidden");
   } else {
     bar.classList.add("hidden");
