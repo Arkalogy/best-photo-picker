@@ -45,7 +45,8 @@ class TestDesktopShellBoot:
         assert "reclaim_port_from_stale_sidecar(port);" in src
         assert "STARTUP_PORT_IN_USE" in src and "Address already in use" in src
         assert "Another copy is already running" in src
-        assert "inv('restart_app')" in src and "fn restart_app" in src
+        assert '"restart_app")' in src and "fn restart_app" in src
+        assert "inv(b.cmd,b.args)" in src, "a screen's button invokes its command"
         assert "generate_handler![set_app_theme, exit_app, restart_app, open_url]" in src
 
     def test_desktop_shell_opens_links_through_its_own_command(self):
@@ -59,7 +60,9 @@ class TestDesktopShellBoot:
         # (even the whole-page ones replace its body), and that page's
         # CSP has no unsafe-inline, so an inline handler is inert.
         assert "onclick=" not in src
-        assert src.count("inv('open_url',{url:'https://github.com/Arkalogy/") >= 2
+        assert src.count('link_button("') >= 3
+        assert src.count('"https://github.com/Arkalogy/') >= 3
+        assert '"cmd": "open_url", "args": {"url": url}' in src
         assert src.count("invoke('open_url'") == 0
         assert "getrandom::getrandom(&mut buf)" in src
         assert 'getrandom = "0.2"' in (ROOT / "desktop" / "src-tauri" / "Cargo.toml").read_text()

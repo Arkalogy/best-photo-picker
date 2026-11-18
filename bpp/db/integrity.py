@@ -40,6 +40,11 @@ def check_integrity(db_path: str) -> bool:
         return False
 
 
+#: Starts the verdict when the file could not be read at all (its
+#: permissions, the drive it is on): that says nothing of what is in it.
+UNREADABLE = "could not read the database: "
+
+
 def full_integrity_check(db_path: str) -> tuple[bool, list[str]]:
     """Run ``PRAGMA integrity_check`` (the FULL version, not
     ``quick_check``). Returns ``(ok, errors)``.
@@ -64,7 +69,10 @@ def full_integrity_check(db_path: str) -> tuple[bool, list[str]]:
             rows = conn.execute("PRAGMA integrity_check").fetchall()
         finally:
             conn.close()
-    except Exception as exc:
+    except (sqlite3.OperationalError, OSError) as exc:  # can't open it, an I/O error
+        _log.error("full_integrity_check could not read %s — %s", db_path, exc)
+        return False, [f"{UNREADABLE}{exc}"]
+    except Exception as exc:  # not a database, malformed
         _log.error("full_integrity_check raised: %s — %s", db_path, exc)
         return False, [f"check raised: {exc}"]
     if len(rows) == 1 and rows[0][0] == "ok":

@@ -13,7 +13,8 @@ import shutil
 import sqlite3
 
 from bpp.constants import SQLITE_TIMEOUT_S
-from bpp.db.integrity import check_integrity, full_integrity_check
+from bpp.db.integrity import UNREADABLE, check_integrity, full_integrity_check
+from bpp.errors import LibraryUnavailableError
 from bpp.utils.logging import get_logger
 
 _log = get_logger(__name__)
@@ -296,6 +297,42 @@ def read_backup_meta(backup_path: str) -> dict | None:
     return data
 
 
+def _good_backup_or_refuse(db_path: str, errors: list[str]) -> str:
+    """The backup to restore *db_path* (which failed its check with
+    *errors*) from; LibraryUnavailableError when there is none to use."""
+    if errors and errors[0].startswith(UNREADABLE):
+        # Not read is not damaged: an older backup never replaces a
+        # database that may be fine.
+        raise LibraryUnavailableError(
+            f"The library's database can't be read ({errors[0][len(UNREADABLE) :]}). "
+            "Check the file's permissions and the drive it is on, then try again."
+        )
+    _log.error(
+        "DB integrity check FAILED at %s — %d error(s): %s",
+        db_path,
+        len(errors),
+        errors[:3],  # first 3 inline; full list in DEBUG below
+    )
+    _log.debug("Full integrity check errors: %s", errors)
+    backup_path = db_path + ".backup"
+    if not os.path.isfile(backup_path):
+        raise LibraryUnavailableError(
+            f"DB at {db_path} is corrupt and no .backup found. "
+            f"Cannot auto-restore. Options: (1) restore .backup.prev "
+            f"manually if it exists, (2) bpp db restore-backup --force, "
+            f"(3) start with a fresh library."
+        )
+    backup_ok, backup_errors = full_integrity_check(backup_path)
+    if not backup_ok:
+        raise LibraryUnavailableError(
+            f"DB at {db_path} is corrupt AND .backup is also corrupt "
+            f"({len(backup_errors)} error(s) in backup). "
+            f"Try .backup.prev (bpp db restore-backup --prev) or start "
+            f"with a fresh library."
+        )
+    return backup_path
+
+
 def restore_from_backup_if_corrupt(db_path: str) -> str | None:
     """Auto-restore from ``.backup`` when the current DB is corrupt.
 
@@ -306,10 +343,11 @@ def restore_from_backup_if_corrupt(db_path: str) -> str | None:
           decide whether to triage / forensic the broken file.
 
     Raises:
-        ``RuntimeError`` if the DB is corrupt AND no good backup is
-        available. The caller (server startup) catches and surfaces a
-        clear "DB corrupted, no backup, options:" message instead of
-        crashing on the next query.
+        ``LibraryUnavailableError`` (a ``RuntimeError``) if the DB is
+        corrupt AND no good backup is available, or can't be read at
+        all. The caller (server startup) catches and surfaces a clear
+        "DB corrupted, no backup, options:" message instead of crashing
+        on the next query.
 
     This is exactly the manual sequence the user ran during the Jun-2
     incident. Auto-running it at boot means a transient
@@ -332,31 +370,7 @@ def restore_from_backup_if_corrupt(db_path: str) -> str | None:
     ok, errors = full_integrity_check(db_path)
     if ok:
         return None
-
-    _log.error(
-        "DB integrity check FAILED at %s — %d error(s): %s",
-        db_path,
-        len(errors),
-        errors[:3],  # first 3 inline; full list in DEBUG below
-    )
-    _log.debug("Full integrity check errors: %s", errors)
-
-    backup_path = db_path + ".backup"
-    if not os.path.isfile(backup_path):
-        raise RuntimeError(
-            f"DB at {db_path} is corrupt and no .backup found. "
-            f"Cannot auto-restore. Options: (1) restore .backup.prev "
-            f"manually if it exists, (2) bpp db restore-backup --force, "
-            f"(3) start with a fresh library."
-        )
-    backup_ok, backup_errors = full_integrity_check(backup_path)
-    if not backup_ok:
-        raise RuntimeError(
-            f"DB at {db_path} is corrupt AND .backup is also corrupt "
-            f"({len(backup_errors)} error(s) in backup). "
-            f"Try .backup.prev (bpp db restore-backup --prev) or start "
-            f"with a fresh library."
-        )
+    backup_path = _good_backup_or_refuse(db_path, errors)
 
     import datetime as _dt
     import shutil as _shutil
