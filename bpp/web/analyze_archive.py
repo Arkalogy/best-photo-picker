@@ -12,22 +12,19 @@ Imported from ``analyze_worker.py``; not part of the public API.
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import os
 import shutil
 import tarfile
-import tempfile
 import zipfile
 import zlib
 from collections.abc import Callable
 from typing import Any
 
-from bpp.db.analysis_leftovers import EXTRACTED_DIR
+from bpp.db.analysis_leftovers import EXTRACTED_DIR, photos_with_rows
 from bpp.utils.logging import get_logger
 from bpp.utils.paths import is_safe_archive_member, is_safe_tar_member
-from bpp.web.archive_placement import (
-    UNPACKING as _UNPACKING,
-)
 from bpp.web.archive_placement import (
     first_clash as _first_clash,
 )
@@ -36,6 +33,7 @@ from bpp.web.archive_placement import (
 )
 from bpp.web.archive_placement import (
     sweep_unfinished_unpacking,
+    unpacking_folder,
 )
 
 log = get_logger(__name__)
@@ -93,11 +91,12 @@ def _files_and_folders(
     left out are reported: an archive made from a folder with
     hard-linked duplicates or linked photos imports fewer."""
     everything = tf.getmembers()
-    members = [m for m in everything if m.isfile() or m.isdir()]
+    members = [m for m in everything if (m.isfile() and _within_its_size(m)) or m.isdir()]
     left_out = len(everything) - len(members)
     if left_out:
         log.warning(
-            "Archive %s: %d link entries were not unpacked (links are not imported)",
+            "Archive %s: %d entries were not unpacked: links, and sparse files "
+            "with pieces beyond their size, are not imported",
             os.path.basename(input_path),
             left_out,
         )
@@ -106,49 +105,42 @@ def _files_and_folders(
                 "type": "progress",
                 "current": 0,
                 "total": 0,
-                "filepath": f"Skipping {left_out} links in the archive (files only)…",
+                "filepath": f"Skipping {left_out} links or damaged entries in the archive…",
             }
         )
     return members
 
 
-def _unpack_tar(
-    tf: tarfile.TarFile,
-    members: list[tarfile.TarInfo],
-    dest: str,
-    emit: Callable[[dict[str, Any]], None],
-) -> bool:
+def _within_its_size(member: tarfile.TarInfo) -> bool:
+    """A sparse file's pieces all lie within the size it states. Each
+    piece is written where it says before the file is cut to that size,
+    so one beyond it would fill more of the disk than was counted."""
+    return all(
+        offset >= 0 and length >= 0 and offset + length <= member.size
+        for offset, length in (member.sparse or ())
+    )
+
+
+def _extract_tar(tf: tarfile.TarFile, members: list[tarfile.TarInfo], dest: str) -> None:
     """Write the checked members of a tar into *dest* (a new, empty
-    folder). False (after an error event) when the archive is damaged
-    or holds an unsafe entry."""
-    try:
-        if hasattr(tarfile, "data_filter"):
-            # filter="data" (3.11.4+ ships it) rejects absolute
-            # paths, links escaping the tree, device files, and
-            # drops the archive's mode bits.
-            tf.extractall(dest, members=members, filter="data")
-        else:
-            # Python 3.11: no filter kwarg yet — validate
-            # each member via is_safe_tar_member, which
-            # checks BOTH path containment AND tar entry
-            # type. Rejecting symlinks / hardlinks /
-            # device nodes here mirrors what filter="data"
-            # does on 3.12+, so a malicious archive can't
-            # plant a non-file entry on the older Python.
-            for member in members:
-                if not is_safe_tar_member(member, dest):
-                    raise ValueError(
-                        f"Unsafe tar entry rejected: {member.name} (type={member.type!r})"
-                    )
-                tf.extract(member, dest)
-    except _UNPACK_ERRORS as e:
-        # Py3.12+ tarfile filters raise FilterError /
-        # AbsolutePathError / OutsideDestinationError on
-        # malicious entries. Surface as a user-readable
-        # message instead of a 500 crashing the worker.
-        _report_unpack_failure(e, emit)
-        return False
-    return True
+    folder). Raises one of ``_UNPACK_ERRORS`` when the archive is
+    damaged or holds an unsafe entry."""
+    if hasattr(tarfile, "data_filter"):
+        # filter="data" (3.11.4+ ships it) rejects absolute paths, links
+        # escaping the tree, device files, and drops the archive's mode
+        # bits (Py3.12+ raises FilterError / AbsolutePathError /
+        # OutsideDestinationError on such entries).
+        tf.extractall(dest, members=members, filter="data")
+        return
+    # Python 3.11: no filter kwarg yet — validate each member via
+    # is_safe_tar_member, which checks BOTH path containment AND tar
+    # entry type. Rejecting symlinks / hardlinks / device nodes here
+    # mirrors what filter="data" does on 3.12+, so a malicious archive
+    # can't plant a non-file entry on the older Python.
+    for member in members:
+        if not is_safe_tar_member(member, dest):
+            raise ValueError(f"Unsafe tar entry rejected: {member.name} (type={member.type!r})")
+        tf.extract(member, dest)
 
 
 #: What can go wrong while an archive is read: a damaged or truncated
@@ -175,6 +167,12 @@ def _report_unpack_failure(e: BaseException, emit: Callable[[dict[str, Any]], No
     elif isinstance(e, NotImplementedError):
         reason = (
             "it uses a compression this app can't read: unpack it yourself, then analyse the folder"
+        )
+    elif isinstance(e, OSError) and e.errno is not None:
+        # The system's own error (not a damaged gzip stream, which has none).
+        reason = (
+            f"{e.strerror or e}: check that the archive and the library's folder can be "
+            "read and written, then analyse it again"
         )
     else:
         reason = "it is damaged or holds an unsafe entry (see server.log)"
@@ -236,9 +234,8 @@ def extract_archive_into_workdir(
     # archive's names turn into on this system. Only a complete, checked
     # unpacking is moved into place.
     base = os.path.dirname(extract_dir)
-    sweep_unfinished_unpacking(workdir)  # one analysis at a time: none is in use
-    fresh = tempfile.mkdtemp(prefix=_UNPACKING, dir=base)
-    try:
+    sweep_unfinished_unpacking(workdir)  # leftovers no one is unpacking into
+    with unpacking_folder(base) as fresh:
         if not _unpack(input_path, fresh, emit):
             return None
         clash = _first_clash(fresh, extract_dir)
@@ -265,8 +262,6 @@ def extract_archive_into_workdir(
                 }
             )
             return None
-    finally:
-        shutil.rmtree(fresh, ignore_errors=True)
 
     _drop_twins_of_the_old_layout(os.path.join(workdir, EXTRACTED_DIR), extract_dir)
     log.info("Extracted archive to %s", extract_dir)
@@ -276,6 +271,14 @@ def extract_archive_into_workdir(
 def _unpack(input_path: str, dest: str, emit: Callable[[dict[str, Any]], None]) -> bool:
     """Unpack the whole archive into *dest*, a new empty folder. False
     (after an error event) when it is refused or fails."""
+    try:
+        return _unpack_checked(input_path, dest, emit)
+    except _UNPACK_ERRORS as e:  # damaged, cut short, unreadable, or an unsafe entry
+        _report_unpack_failure(e, emit)
+        return False
+
+
+def _unpack_checked(input_path: str, dest: str, emit: Callable[[dict[str, Any]], None]) -> bool:
     if zipfile.is_zipfile(input_path):
         with zipfile.ZipFile(input_path, "r") as zf:
             infos = zf.infolist()
@@ -312,14 +315,10 @@ def _unpack(input_path: str, dest: str, emit: Callable[[dict[str, Any]], None]) 
                 return False
             if not _room_for(dest, total_size, emit):
                 return False
-            try:
-                for info in infos:
-                    if not is_safe_archive_member(info.filename, dest):
-                        raise ValueError(f"Zip entry escapes target: {info.filename}")
-                    zf.extract(info, dest)
-            except _UNPACK_ERRORS as e:
-                _report_unpack_failure(e, emit)
-                return False
+            for info in infos:
+                if not is_safe_archive_member(info.filename, dest):
+                    raise ValueError(f"Zip entry escapes target: {info.filename}")
+                zf.extract(info, dest)
     elif tarfile.is_tarfile(input_path):
         with tarfile.open(input_path, "r:*") as tf:
             # Files and folders only. A photo archive needs no links, and
@@ -362,8 +361,7 @@ def _unpack(input_path: str, dest: str, emit: Callable[[dict[str, Any]], None]) 
                 return False
             if not _room_for(dest, total_size, emit):
                 return False
-            if not _unpack_tar(tf, members, dest, emit):
-                return False
+            _extract_tar(tf, members, dest)
     else:
         emit({"type": "error", "message": "Unsupported archive format"})
         return False
@@ -389,46 +387,26 @@ def _drop_twins_of_the_old_layout(base: str, extract_dir: str) -> None:
     workdir = os.path.dirname(base)
     # A photo the library already has at the NEW place too stays: its
     # row, albums and choices point at this file.
-    has_row_here = set(_in_the_library(workdir, list(pairs.values())))
-    for old in _in_the_library(workdir, list(pairs)):
+    has_row_here = set(photos_with_rows(workdir, list(pairs.values())))
+    folder_times: dict[str, os.stat_result] = {}
+    for old in photos_with_rows(workdir, list(pairs)):
         if pairs[old] in has_row_here:
             continue
         try:
             if filecmp.cmp(old, pairs[old], shallow=False):
+                folder = os.path.dirname(pairs[old])
+                folder_times.setdefault(folder, os.stat(folder))
                 os.unlink(pairs[old])
                 dropped += 1
         except OSError:
             continue
+    # Removing a file changed its folder's date: give back the archive's.
+    for folder, st in folder_times.items():
+        with contextlib.suppress(OSError):
+            os.utime(folder, ns=(st.st_atime_ns, st.st_mtime_ns))
     if dropped:
         log.info(
             "%d photos of this archive are already in the library from an earlier "
             "unpacking; they were not unpacked again",
             dropped,
         )
-
-
-def _in_the_library(workdir: str, paths: list[str]) -> list[str]:
-    """Those of *paths* that have a photo row in the library whose
-    database is in *workdir* (none when there is no database there)."""
-    import sqlite3
-
-    from bpp.db.connection import get_db
-    from bpp.db.sql_batches import in_batches
-
-    db_path = os.path.join(workdir, "photopicker.db")
-    if not paths or not os.path.isfile(db_path):
-        return []
-    found: list[str] = []
-    try:
-        conn = get_db(db_path)
-        for marks, batch in in_batches(paths):
-            found.extend(
-                r[0]
-                for r in conn.execute(
-                    f"SELECT filepath FROM photos WHERE filepath IN ({marks})", batch
-                )
-            )
-    except sqlite3.Error:
-        log.warning("Could not look up earlier unpackings in %s", db_path, exc_info=True)
-        return []
-    return found

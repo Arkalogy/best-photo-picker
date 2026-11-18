@@ -132,12 +132,6 @@ def start_health_checks(
 
             if dirs.get("photos") and os.path.isdir(dirs["photos"]):
                 remove_stale_import_tmp(dirs["photos"])
-            # ...and archives a quit or a crash left half unpacked.
-            if dirs.get("data"):
-                from bpp.db.library_copy import STALE_TMP_AGE_S
-                from bpp.web.analyze_archive import sweep_unfinished_unpacking
-
-                sweep_unfinished_unpacking(dirs["data"], older_than_s=STALE_TMP_AGE_S)
             conn = get_conn()
             if get_photo_count(conn) == 0:
                 return

@@ -80,6 +80,11 @@ def init_app_db(ctx: WebAppState) -> None:
 
     # Phase 1 — serving lock.
     _acquire_serving_lock(wd)
+    # Archives a quit or a crash left half unpacked (one still being
+    # unpacked is held, and stays).
+    from bpp.web.archive_placement import set_aside_and_remove_in_background
+
+    set_aside_and_remove_in_background(wd)
 
     # Phase 2 — backup or refuse on corrupt DB.
     _backup_or_refuse_corrupt(db_p, wd)

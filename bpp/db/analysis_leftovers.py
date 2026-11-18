@@ -95,7 +95,7 @@ def forget_analysis(
     gone = sorted(set(filepaths))
     if workdir:
         _forget_in_cache(os.path.join(workdir, ANALYSIS_CACHE), gone)
-    folders = [d for d in (workdir, library_path) if d]
+    folders = _folders(workdir, library_path)
     if not any(os.path.isfile(os.path.join(d, ANALYSIS_JSON)) for d in folders):
         return
     if not workdir or not _note_pending(workdir, gone):
@@ -141,44 +141,17 @@ def _names_one_of(entry: object, keys: set[str]) -> bool:
     return isinstance(fp, str) and path_key(fp) in keys
 
 
+def _folders(*folders: str | None) -> list[str]:
+    """*folders* without the empty ones and repeats (the workdir is the
+    library root when a session keeps its data there)."""
+    return list(dict.fromkeys(os.path.normpath(f) for f in folders if f))
+
+
 def without_pending(rows: list, *folders: str | None) -> list:
     """*rows* (entries of an analysis file) without the photos noted as
     deleted for good in *folders*: every reader of that file uses this."""
     gone = pending_forgets(*folders)
     return [d for d in rows if not _names_one_of(d, gone)] if gone else rows
-
-
-def drop_notes_for_present_files(workdir: str | None, listed: list) -> None:
-    """A new analysis file was just written listing *listed*: a photo
-    noted as deleted that is on disk again (put back from a backup and
-    analysed) is not deleted any more. Its note goes, so the next start
-    does not remove it from the file. One still missing keeps its note."""
-    if not workdir:
-        return
-    path = os.path.join(workdir, PENDING)
-    with _pending_lock:
-        gone, _size = _read_pending(path)
-        if not gone:
-            return
-        back = {
-            fp
-            for fp in (d.get("filepath") for d in listed if isinstance(d, dict))
-            if isinstance(fp, str)
-            and path_key(fp) in {path_key(g) for g in gone}
-            and os.path.exists(fp)
-        }
-        if not back:
-            return
-        keys = {path_key(fp) for fp in back}
-        kept = [g for g in sorted(gone) if path_key(g) not in keys]
-        try:
-            if kept:
-                with replace_fresh(path, "w") as f:
-                    f.writelines(json.dumps(g) + "\n" for g in kept)
-            else:
-                os.unlink(path)
-        except OSError:
-            log.warning("Could not update %s", path, exc_info=True)
 
 
 def pending_forgets(*folders: str | None) -> set[str]:
@@ -187,9 +160,8 @@ def pending_forgets(*folders: str | None) -> set[str]:
     file leaves them out."""
     gone: set[str] = set()
     with _pending_lock:
-        for folder in folders:
-            if folder:
-                gone |= _read_pending(os.path.join(folder, PENDING))[0]
+        for folder in _folders(*folders):
+            gone |= _read_pending(os.path.join(folder, PENDING))[0]
     return {path_key(p) for p in gone}
 
 
@@ -220,16 +192,25 @@ def _read_pending(path: str) -> tuple[set[str], int]:
 
 def apply_pending_forgets(workdir: str | None, library_path: str | None = None) -> None:
     """Rewrite the analysis files without the paths noted as deleted,
-    then drop the note. Safe to run again: paths noted meanwhile stay."""
+    then drop the note. A note is also taken from the library root
+    (left there by a session that kept its data in the root). A photo
+    that has a row again was added back after its delete and stays.
+    Safe to run again: paths noted meanwhile stay."""
     if not workdir:
         return
-    path = os.path.join(workdir, PENDING)
+    folders = _folders(workdir, library_path)
+    for folder in folders:
+        _apply_note(os.path.join(folder, PENDING), workdir, folders)
+
+
+def _apply_note(path: str, workdir: str, folders: list[str]) -> None:
     if os.path.islink(path) or not os.path.isfile(path):
         return
     with _rewrite_lock:
         with _pending_lock:
             gone, size = _read_pending(path)
-        if gone and not _forget_in_json_files([d for d in (workdir, library_path) if d], gone):
+        gone -= set(photos_with_rows(workdir, sorted(gone)))
+        if gone and not _forget_in_json_files(folders, gone):
             return  # keep the note: tried again at the next delete or start
         with _pending_lock:
             try:
@@ -243,6 +224,30 @@ def apply_pending_forgets(workdir: str | None, library_path: str | None = None) 
                     os.unlink(path)
             except OSError:
                 log.warning("Could not update %s", path, exc_info=True)
+
+
+def photos_with_rows(workdir: str, paths: list[str]) -> list[str]:
+    """Those of *paths* that have a photo row in the library whose
+    database is in *workdir* (none when there is no database there)."""
+    from bpp.db.connection import get_db
+
+    db_path = os.path.join(workdir, "photopicker.db")
+    if not paths or not os.path.isfile(db_path):
+        return []
+    found: list[str] = []
+    try:
+        conn = get_db(db_path)
+        for marks, batch in in_batches(paths):
+            found.extend(
+                r[0]
+                for r in conn.execute(
+                    f"SELECT filepath FROM photos WHERE filepath IN ({marks})", batch
+                )
+            )
+    except sqlite3.Error:
+        log.warning("Could not look up photos in %s", db_path, exc_info=True)
+        return []
+    return found
 
 
 def _start_applying(workdir: str, library_path: str | None) -> None:
@@ -369,9 +374,8 @@ def forget_analysis_files(workdir: str | None, library_path: str | None = None) 
     go on to empty the database. Waits for a rewrite in progress, which
     would otherwise put the file back."""
     with _rewrite_lock, _pending_lock:
-        for folder in {d for d in (workdir, library_path) if d}:
-            names = [ANALYSIS_JSON, ANALYSIS_JSON + PART]
-            for name in [*names, PENDING] if folder == workdir else names:
+        for folder in _folders(workdir, library_path):
+            for name in (ANALYSIS_JSON, ANALYSIS_JSON + PART, PENDING):
                 with contextlib.suppress(FileNotFoundError):
                     os.unlink(os.path.join(folder, name))
 
