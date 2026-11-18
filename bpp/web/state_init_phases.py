@@ -35,6 +35,7 @@ from bpp.db.migrate import (
     import_from_analysis_json,
     import_presets_from_json,
 )
+from bpp.errors import LibraryUnavailableError
 from bpp.scoring.aggregate import DB_NAME
 from bpp.utils.logging import get_logger
 from bpp.web.state_helpers import consume_restore_sentinel as _consume_restore_sentinel
@@ -78,7 +79,7 @@ def acquire_serving_lock(wd: str, library_root: str | None = None) -> None:
         except ServingLockError as e:
             for done in held:
                 clear_lock(done)
-            raise RuntimeError(
+            raise LibraryUnavailableError(
                 f"Cannot acquire serving lock for {folder}: {e}. "
                 "Refusing to start — running without a serving lock would "
                 "let a second bpp serve corrupt the DB."
@@ -86,7 +87,7 @@ def acquire_serving_lock(wd: str, library_root: str | None = None) -> None:
         if held_by is not None:
             for done in held:
                 clear_lock(done)
-            raise RuntimeError(f"Can't open {folder}: {lock_advice(folder, held_by)}.")
+            raise LibraryUnavailableError(f"Can't open {folder}: {lock_advice(folder, held_by)}.")
         held.append(folder)
         atexit.register(clear_lock, folder)
 
@@ -124,7 +125,7 @@ def backup_or_refuse_corrupt(db_p: str, wd: str) -> None:
             return
         backup_path = db_p + ".backup"
         if os.path.isfile(backup_path):
-            raise RuntimeError(
+            raise LibraryUnavailableError(
                 f"Database at {db_p} appears to be corrupt and is "
                 f"NOT openable. A backup is preserved at "
                 f"{backup_path}. To restore, quit this app and run:\n"
@@ -137,7 +138,7 @@ def backup_or_refuse_corrupt(db_p: str, wd: str) -> None:
             "Aborting startup — manual recovery required.",
             db_p,
         )
-        raise RuntimeError(
+        raise LibraryUnavailableError(
             f"Database at {db_p} is corrupt and no backup exists. "
             "Manual recovery required: restore from your own backup "
             "or move the .db file aside and let bpp create a new "

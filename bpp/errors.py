@@ -152,6 +152,12 @@ class BppError(Exception, metaclass=_BppErrorMeta):
         return envelope
 
 
+class LibraryUnavailableError(RuntimeError):
+    """The library can't be opened, for a reason a retry won't change:
+    another process holds it, or its database is damaged. `bpp serve`
+    reports it on a line of its own for the desktop app to show."""
+
+
 class ValidationError(BppError):
     """User input failed validation (400)."""
 

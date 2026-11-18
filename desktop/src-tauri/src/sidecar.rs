@@ -1,6 +1,7 @@
 //! The server sidecar: spawning it, reading its output for the
-//! failures that are final (a newer-schema library, a held port),
-//! respawning it with backoff, and the menu's Restart Server.
+//! failures that are final (a newer-schema library, a held port, a
+//! library it refuses to open), respawning it with backoff, and the
+//! menu's Restart Server.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
@@ -9,7 +10,10 @@ use tauri::{AppHandle, Manager};
 use tauri_plugin_shell::ShellExt;
 
 use crate::boot::boot_secret;
-use crate::screens::{show_fatal_error, show_reconnecting_overlay, show_start_failure, show_update_required};
+use crate::screens::{
+    show_fatal_error, show_library_refused, show_reconnecting_overlay, show_start_failure,
+    show_update_required,
+};
 
 pub(crate) const MAX_RESPAWN_ATTEMPTS: u32 = 5;
 
@@ -33,6 +37,93 @@ pub(crate) const STARTUP_NEWER_SCHEMA: u8 = 1;
 // Something else holds the port (a `bpp serve` the user runs, or a
 // sidecar of ours that survived a force-quit and could not be reclaimed).
 pub(crate) const STARTUP_PORT_IN_USE: u8 = 2;
+// The server can't open the library for a reason a retry won't change
+// (a link where one of its folders should be, another bpp holding it,
+// a damaged database). Its own line says why: `REFUSAL_MARKER`.
+pub(crate) const STARTUP_LIBRARY_REFUSED: u8 = 3;
+
+/// How `bpp serve` starts that line (bpp/commands/serve.py).
+const REFUSAL_MARKER: &str = "BPP_LIBRARY_REFUSED:";
+/// What the last such line said, for the screen that shows it.
+static REFUSAL: Mutex<Option<String>> = Mutex::new(None);
+/// Where it is also written, in the app's log folder: the library's own
+/// log may be what could not be opened.
+const REFUSAL_LOG: &str = "startup.log";
+
+/// The reason on a refusal line, or None for any other line. Only a
+/// line that starts with the marker: the server prints it so, and any
+/// other line (a logged request) may carry text a sender chose.
+pub(crate) fn refusal_reason(line: &str) -> Option<String> {
+    let reason = line.strip_prefix(REFUSAL_MARKER)?.trim();
+    if reason.is_empty() {
+        None
+    } else {
+        Some(reason.to_string())
+    }
+}
+
+/// The reason the server last gave for refusing the library.
+pub(crate) fn last_refusal() -> String {
+    REFUSAL.lock().ok().and_then(|r| r.clone()).unwrap_or_default()
+}
+
+pub(crate) fn clear_refusal() {
+    if let Ok(mut r) = REFUSAL.lock() {
+        *r = None;
+    }
+}
+
+/// The app's own log file for refusals (outside every library).
+pub(crate) fn refusal_log_path(handle: &AppHandle) -> Option<std::path::PathBuf> {
+    handle.path().app_log_dir().ok().map(|d| d.join(REFUSAL_LOG))
+}
+
+/// `secs` since 1970 as a UTC date and time (no date library here).
+pub(crate) fn utc_stamp(secs: u64) -> String {
+    let (days, rest) = ((secs / 86_400) as i64, secs % 86_400);
+    // Days to a civil date: H. Hinnant's algorithm.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
+        year,
+        month,
+        day,
+        rest / 3_600,
+        rest % 3_600 / 60,
+        rest % 60
+    )
+}
+
+fn note_refusal(handle: &AppHandle, reason: &str) {
+    if let Ok(mut r) = REFUSAL.lock() {
+        *r = Some(reason.to_string());
+    }
+    if let Some(path) = refusal_log_path(handle) {
+        use std::io::Write;
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let stamp = utc_stamp(secs);
+        let written = path
+            .parent()
+            .map(std::fs::create_dir_all)
+            .unwrap_or(Ok(()))
+            .and_then(|_| std::fs::OpenOptions::new().create(true).append(true).open(&path))
+            .and_then(|mut f| writeln!(f, "{} the library was not opened: {}", stamp, reason));
+        if let Err(e) = written {
+            eprintln!("[server] could not write {}: {}", path.display(), e);
+        }
+    }
+}
 
 /// Scan a sidecar log line for a known, deterministic startup failure.
 /// Returns the matching STARTUP_* code, or STARTUP_OK if nothing matched.
@@ -102,7 +193,7 @@ pub(crate) fn spawn_sidecar(
         use tauri_plugin_shell::process::CommandEvent;
         while let Some(event) = rx.recv().await {
             match event {
-                CommandEvent::Stdout(line) => {
+                CommandEvent::Stdout(line) | CommandEvent::Stderr(line) => {
                     let s = String::from_utf8_lossy(&line);
                     // The schema-guard error can surface on either stream
                     // depending on how the logger is wired — scan both.
@@ -110,13 +201,9 @@ pub(crate) fn spawn_sidecar(
                     if code != STARTUP_OK {
                         startup_failure.store(code, Ordering::SeqCst);
                     }
-                    eprintln!("[server] {}", s);
-                }
-                CommandEvent::Stderr(line) => {
-                    let s = String::from_utf8_lossy(&line);
-                    let code = classify_startup_failure(&s);
-                    if code != STARTUP_OK {
-                        startup_failure.store(code, Ordering::SeqCst);
+                    if let Some(reason) = refusal_reason(&s) {
+                        note_refusal(&handle_clone, &reason);
+                        startup_failure.store(STARTUP_LIBRARY_REFUSED, Ordering::SeqCst);
                     }
                     eprintln!("[server] {}", s);
                 }
@@ -137,6 +224,13 @@ pub(crate) fn spawn_sidecar(
                     if startup_failure.load(Ordering::SeqCst) == STARTUP_NEWER_SCHEMA {
                         eprintln!("[server] DB newer than this build — not respawning; prompting to update");
                         show_update_required(&handle_clone);
+                        break;
+                    }
+                    // The library can't be opened, and the server said why:
+                    // respawning refuses it the same way.
+                    if startup_failure.load(Ordering::SeqCst) == STARTUP_LIBRARY_REFUSED {
+                        eprintln!("[server] library refused — not respawning; showing why");
+                        show_library_refused(&handle_clone, &last_refusal());
                         break;
                     }
                     // The port is taken by another process: respawning only
@@ -215,6 +309,7 @@ pub(crate) fn restart_server(handle: &AppHandle) {
     respawn_count.store(0, Ordering::SeqCst);
     respawning.store(true, Ordering::SeqCst);
     startup_failure.store(STARTUP_OK, Ordering::SeqCst);
+    clear_refusal();
     show_reconnecting_overlay(handle);
 
     // Brief pause for port release, then spawn, unless the app began to
@@ -279,4 +374,43 @@ fn process_alive(pid: u32) -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_refusal_line_gives_its_reason() {
+        let line = "BPP_LIBRARY_REFUSED: This library can't be opened: 'photos' inside it is a link.";
+        assert_eq!(
+            refusal_reason(line).as_deref(),
+            Some("This library can't be opened: 'photos' inside it is a link.")
+        );
+    }
+
+    #[test]
+    fn a_logged_request_naming_the_marker_is_not_a_refusal() {
+        let line = "12:00:01 [INFO ] werkzeug: 192.0.2.7 - - \"GET /BPP_LIBRARY_REFUSED: x HTTP/1.1\" 404 -";
+        assert_eq!(refusal_reason(line), None);
+    }
+
+    #[test]
+    fn other_lines_and_an_empty_reason_are_not_refusals() {
+        assert_eq!(refusal_reason("12:00:00 [INFO ] bpp: Starting server on 127.0.0.1:5001"), None);
+        assert_eq!(refusal_reason("BPP_LIBRARY_REFUSED:   "), None);
+    }
+
+    #[test]
+    fn the_log_says_when_in_utc() {
+        assert_eq!(utc_stamp(0), "1970-01-01 00:00:00 UTC");
+        assert_eq!(utc_stamp(1_795_037_490), "2026-11-18 21:31:30 UTC");
+        assert_eq!(utc_stamp(951_782_400), "2000-02-29 00:00:00 UTC");
+    }
+
+    #[test]
+    fn a_refusal_is_not_mistaken_for_another_failure() {
+        let line = "BPP_LIBRARY_REFUSED: Can't open /x/data: another bpp app is using it";
+        assert_eq!(classify_startup_failure(line), STARTUP_OK);
+    }
 }

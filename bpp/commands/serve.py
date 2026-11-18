@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from typing import Any
 
 from bpp.commands.serve_launch import configure_loopback_boot as _configure_loopback_boot
@@ -64,6 +65,18 @@ def do_web(args: argparse.Namespace) -> int:
     return 0
 
 
+#: Starts the one line `bpp serve` prints when it can't open the library
+#: for a reason a retry won't change; the desktop app shows the rest of
+#: the line instead of retrying (desktop/src-tauri/src/sidecar.rs).
+REFUSAL_MARKER = "BPP_LIBRARY_REFUSED:"
+
+
+def _refuse(reason: object) -> int:
+    get_logger(__name__).error("%s", reason)
+    print(f"{REFUSAL_MARKER} {' '.join(str(reason).split())}", file=sys.stderr, flush=True)
+    return 1
+
+
 def do_serve(args: argparse.Namespace) -> int:
     """Start photo management server with library-based workflow."""
     setup_logging(debug=getattr(args, "debug", False))
@@ -75,13 +88,12 @@ def do_serve(args: argparse.Namespace) -> int:
         log.error("Flask is not installed. Install with: pip install bppicker[web]")
         return 1
 
-    from bpp.errors import ValidationError
+    from bpp.errors import LibraryUnavailableError, ValidationError
 
     try:
         library_path, dirs = _resolve_library(args)
     except ValidationError as e:
-        log.error("%s", e)
-        return 1
+        return _refuse(e)
     workdir = dirs["data"]  # DB and caches live in data/ subdir
     port = args.port
 
@@ -98,7 +110,15 @@ def do_serve(args: argparse.Namespace) -> int:
 
     add_file_handler(os.path.join(dirs["logs"], "server.log"))
 
-    _startup_integrity_gate(os.path.join(workdir, "photopicker.db"))
+    # The library is this process's before anything checks or repairs
+    # its database: one another process holds is left exactly as it is.
+    from bpp.web.state_init_phases import acquire_serving_lock
+
+    try:
+        acquire_serving_lock(workdir, library_path)
+        _startup_integrity_gate(os.path.join(workdir, "photopicker.db"))
+    except LibraryUnavailableError as e:  # held elsewhere; damaged with no good backup; unreadable
+        return _refuse(e)
     # Said again now that the log file is attached: the first read of the
     # sharing key happened before it, and this is what explains "sharing
     # is off" to whoever reads server.log.
@@ -118,9 +138,8 @@ def do_serve(args: argparse.Namespace) -> int:
             config_path=getattr(args, "config", None),
             library_path=library_path,
         )
-    except ValidationError as e:
-        log.error("%s", e)
-        return 1
+    except (ValidationError, LibraryUnavailableError) as e:
+        return _refuse(e)
 
     ctx = app.extensions["bpp"]
     _launch_url = _configure_loopback_boot(ctx, port, args)

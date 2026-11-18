@@ -300,8 +300,9 @@ def test_every_reload_the_page_or_shell_offers_goes_through_the_boot_proof():
     html = (ROOT / "bpp" / "web" / "templates" / "index.html").read_text()
     assert "_bppReload" not in html
     shell = (ROOT / "desktop" / "src-tauri" / "src" / "screens.rs").read_text()
-    reload_button = shell.split("#bpp-ov-reload')")[1].split("\n")[0]
+    reload_button = next(line for line in shell.splitlines() if "if(b.reload)" in line)
     assert "reloadSafely" in reload_button
+    assert '"reload": true' in shell, "the overlay's Reload button is that one"
 
 
 def test_a_restore_lock_that_keeps_vanishing_is_reported(tmp_path, monkeypatch):
