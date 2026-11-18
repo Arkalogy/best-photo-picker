@@ -22,6 +22,7 @@ from bpp.db.clip import load_clip_matrix
 from bpp.db.connection import get_db, init_db
 from bpp.db.photos import bulk_upsert_photos, get_photo_count
 from bpp.db.photos import get_all_photos as db_get_all_photos
+from bpp.db.photos_lifecycle import settle_companions_of_binned
 from bpp.scoring.aggregate import load_analysis
 from bpp.utils.logging import get_logger
 from bpp.web.thumbnails import ThumbnailCache
@@ -105,6 +106,15 @@ def init_app_db(ctx: WebAppState) -> None:
     # rows in/out of every domain album.
     sidecars_linked = _backfill_live_photo_sidecars(conn) if photo_count > 0 else False
     _import_from_legacy_caches(conn, wd, lib_root, photo_count)
+    # Companions an earlier version left behind, before the albums are
+    # synced and the background refresh reads them (and before the purge).
+    try:
+        sidecars_linked = bool(settle_companions_of_binned(conn)) or sidecars_linked
+    except Exception:
+        log.warning(
+            "Could not settle hidden Live Photo companions; tried again next start", exc_info=True
+        )
+        conn.rollback()
 
     ensure_all_photos_album(conn)
     sync_all_photos_album(conn)
@@ -289,15 +299,10 @@ def load_analysis_if_needed(
             json_data = None
             for search_dir in (ctx.state["workdir"], ctx.state.get("library_path")):
                 if search_dir and os.path.isdir(search_dir):
-                    json_data = load_analysis(search_dir)
+                    json_data = load_analysis(search_dir, notes_in=ctx.state["workdir"])
                     if json_data:
                         break
             if json_data:
-                from bpp.db.analysis_leftovers import pending_forgets
-
-                # Deleted for good, removal from the file still waiting.
-                gone = pending_forgets(ctx.state["workdir"])
-                json_data = [d for d in json_data if d.get("filepath") not in gone]
                 bulk_upsert_photos(conn, json_data)
                 sync_all_photos_album(conn)
                 data = db_get_all_photos(conn, include_deleted=True)

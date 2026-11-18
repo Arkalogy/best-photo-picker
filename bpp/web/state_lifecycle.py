@@ -256,7 +256,6 @@ def _adopt_library(ctx: WebAppState, new_path: str, new_dirs: dict[str, str], wo
         # Devices wait until this library's sharing state has been checked.
         ctx.share_state_checked = False
         ctx.share_check_waits_for_key = False  # the old library's wait is not this one's
-        ctx.share_recovered_this_run = False
         # keep `ctx.dirs` consistent with the immutable
         # mapping `ctx.paths.dirs` now wraps. Pre-fix this
         # assigned the raw dict directly, so callers could
@@ -297,6 +296,10 @@ def _adopt_library(ctx: WebAppState, new_path: str, new_dirs: dict[str, str], wo
             clear_lock(workdir)
         paths, workdir, library_path, library_id, export_dirs = old
         with ctx.lock:
+            # First: the refused library's sharing check is not this one's.
+            # Devices wait for the restored library's own check below.
+            ctx.share_state_checked = False
+            ctx.share_check_waits_for_key = False
             close_all_connections(new_epoch=True)
             ctx.paths = paths
             ctx.state["workdir"] = workdir

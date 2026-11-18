@@ -357,6 +357,7 @@ class TestInitAppDbPhase5Deferred:
         monkeypatch.setattr(state_init, "_recover_interrupted_rename", lambda *a, **k: None)
         monkeypatch.setattr(state_init, "_backfill_live_photo_sidecars", lambda *a, **k: False)
         monkeypatch.setattr(state_init, "_import_from_legacy_caches", lambda *a, **k: None)
+        monkeypatch.setattr(state_init, "settle_companions_of_binned", lambda *a, **k: 0)
         monkeypatch.setattr(state_init, "ensure_all_photos_album", lambda *a, **k: None)
         monkeypatch.setattr(state_init, "sync_all_photos_album", lambda *a, **k: None)
         monkeypatch.setattr(state_init, "get_photo_count", lambda *a, **k: 0)

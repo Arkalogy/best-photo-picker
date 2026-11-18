@@ -283,8 +283,6 @@ def _check_sharing_state_again(ctx: object, conn: object, library: object) -> No
         if still_waiting and getattr(ctx, "library_id", None) == library:
             ctx.share_state_checked = checked  # type: ignore[attr-defined]
             ctx.share_check_waits_for_key = not checked  # type: ignore[attr-defined]
-            # This run chose its address while sharing read as off.
-            ctx.share_recovered_this_run = checked  # type: ignore[attr-defined]
 
 
 def check_sharing_state_if_waiting(ctx: object) -> None:

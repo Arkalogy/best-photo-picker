@@ -52,6 +52,8 @@ def do_web(args: argparse.Namespace) -> int:
         open_browser_when_ours(_launch_url, port, app.extensions["bpp"].boot_secret)
 
     host = getattr(args, "host", None) or "127.0.0.1"
+    ctx = app.extensions["bpp"]
+    ctx.bound_host, ctx.bound_host_chosen_by_app = host, not getattr(args, "host", None)
     log.info("Starting web UI on %s:%d", host, port)
     # ``--debug`` means verbose logging (setup_logging above), never
     # Werkzeug's interactive debugger: that would hand a traceback page
@@ -141,6 +143,7 @@ def do_serve(args: argparse.Namespace) -> int:
     # would show a LAN URL, but no phone could actually connect
     # because the process never opened the LAN interface.
     ctx.bound_host = host
+    ctx.bound_host_chosen_by_app = not getattr(args, "host", None)  # as _bind_host decides
 
     log.info("Library: %s", library_path)
     log.info("Starting server on %s:%d", host, port)

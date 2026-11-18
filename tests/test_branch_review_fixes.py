@@ -272,23 +272,6 @@ def test_clear_library_removes_pet_crops_and_every_copy_of_the_database(tmp_path
             assert b"private-holiday" not in f.read(), f"{name} still names the photos"
 
 
-def test_the_start_up_purge_settles_companions_first(tmp_path):
-    from bpp.web.app import create_app
-
-    app = create_app(library_path=str(tmp_path / "library"))
-    ctx = app.extensions["bpp"]
-    with app.app_context():
-        conn = ctx.get_conn()
-        orphan = _photo(conn, "/x/IMG_9_1.HEIC", is_live_photo_sidecar=1)
-        ctx.auto_purge()
-        assert (
-            conn.execute(
-                "SELECT is_live_photo_sidecar FROM photos WHERE id = ?", (orphan,)
-            ).fetchone()[0]
-            == 0
-        )
-
-
 # ── companions an earlier version left behind ────────────────────────────
 
 
@@ -428,7 +411,6 @@ def test_devices_are_let_in_again_once_the_key_can_be_read(tmp_path):
     _check_sharing_state_again(ctx, conn, "A")  # the key is readable now
 
     assert ctx.share_state_checked and not ctx.share_check_waits_for_key
-    assert ctx.share_recovered_this_run
 
 
 # ── a plugin's own kind of setting is read back as it was stored ─────────

@@ -65,6 +65,8 @@ def do_demo(args: argparse.Namespace) -> int:
         open_browser_when_ours(launch_url, port, app.extensions["bpp"].boot_secret)
 
     log.info("Starting demo at http://127.0.0.1:%d", port)
+    # This computer only, always: sharing can't be turned on for a demo.
+    app.extensions["bpp"].bound_host = "127.0.0.1"
     # ``--debug`` means verbose logging (setup_logging above), never
     # Werkzeug's interactive debugger (same rule as ``bpp serve``).
     from bpp.web.wsgi_bind import request_handler

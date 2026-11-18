@@ -150,7 +150,7 @@ def test_share_info_asks_for_a_restart_instead_of_showing_a_link_no_phone_can_op
     with app.app_context():
         set_lan_sharing_enabled(ctx.get_conn(), True)
     ctx.bound_host = "127.0.0.1"
-    ctx.share_recovered_this_run = True  # started while sharing read as off
+    ctx.bound_host_chosen_by_app = True  # chosen at start, when sharing was off
     with patch("bpp.web.share.detect_lan_ip", return_value="192.168.1.50"):
         with app.test_client() as client:
             info = client.get("/api/v1/share/info").get_json()
@@ -161,8 +161,8 @@ def test_share_info_asks_for_a_restart_instead_of_showing_a_link_no_phone_can_op
         assert qr.status_code == 404, "no QR for a link no phone can open"
         assert fresh["share_url"] is None
 
-        # Behind a proxy on this computer, switched on from the start: served.
-        ctx.share_recovered_this_run = False
+        # Behind a proxy on this computer (the owner chose the address): served.
+        ctx.bound_host_chosen_by_app = False
         with app.test_client() as client:
             info = client.get("/api/v1/share/info").get_json()
         assert info["restart_required"] is False and info["enabled"] is True
@@ -181,34 +181,6 @@ def test_share_info_says_when_the_key_file_cant_be_read(tmp_path, monkeypatch):
 
 
 # ── companions brought back into view are in All Photos ──────────────────
-
-
-def test_a_companion_made_a_photo_again_at_start_up_joins_all_photos(tmp_path):
-    from bpp.db.photos import upsert_photo
-    from bpp.web.app import create_app
-
-    app = create_app(library_path=str(tmp_path / "library"))
-    ctx = app.extensions["bpp"]
-    with app.app_context():
-        conn = ctx.get_conn()
-        photo = tmp_path / "IMG_9_1.jpg"  # a real file: a missing one is in no album
-        photo.write_bytes(b"x")
-        orphan = upsert_photo(conn, {"filepath": str(photo)})
-        conn.execute("UPDATE photos SET is_live_photo_sidecar = 1 WHERE id = ?", (orphan,))
-        conn.execute("DELETE FROM album_photos WHERE photo_id = ?", (orphan,))
-        conn.commit()
-
-        ctx.auto_purge()
-
-        albums = [
-            r[0]
-            for r in conn.execute(
-                "SELECT a.album_type FROM album_photos ap JOIN albums a ON a.id = ap.album_id"
-                " WHERE ap.photo_id = ?",
-                (orphan,),
-            )
-        ]
-    assert albums, "the photo is in no album: it would be missing from All Photos"
 
 
 # ── a bare MPEG-4 video (.m4v) is a video ────────────────────────────────

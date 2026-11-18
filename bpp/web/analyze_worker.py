@@ -191,6 +191,9 @@ class AnalyzeWorker(BackgroundWorker):
         # copy, read before this write, would replace this run's results.
         with ANALYSIS_FILE_LOCK:
             retry_io(_write_analysis_json, results_path, valid, label="write_analysis_json")
+            from bpp.db.analysis_leftovers import drop_notes_for_present_files
+
+            drop_notes_for_present_files(workdir, valid)
 
         # Write final results with normalized scores to DB. The counts
         # are filled in phase by phase, so a failure in a later phase

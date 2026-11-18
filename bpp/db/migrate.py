@@ -75,11 +75,11 @@ def import_from_analysis_json(
         rows = [d for d in rows if d["filepath"] in known]
     # Photos deleted for good whose removal from this file is still
     # waiting (the rewrite failed, or has not run): never imported.
-    from bpp.db.analysis_leftovers import pending_forgets
+    from bpp.db.analysis_leftovers import without_pending
 
-    gone = pending_forgets(workdir, os.path.dirname(json_path))  # the note is kept in the workdir
-    if gone:
-        rows = [d for d in rows if d["filepath"] not in gone]
+    rows = without_pending(
+        rows, workdir or os.path.dirname(json_path)
+    )  # the note is in the workdir
     count = bulk_upsert_photos(conn, rows)
     log.info("Imported %d photos from %s", count, json_path)
     return count

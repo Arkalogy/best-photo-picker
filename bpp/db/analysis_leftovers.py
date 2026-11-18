@@ -17,6 +17,7 @@ import json
 import os
 import shutil
 import sqlite3
+import stat
 import threading
 
 from bpp.db.sql_batches import in_batches
@@ -128,6 +129,58 @@ def _note_pending(workdir: str, gone: list[str]) -> bool:
         return False
 
 
+def path_key(path: str) -> str:
+    """How deleted paths are matched: ``/a/./b.jpg`` and ``/a//b.jpg``
+    are ``/a/b.jpg``. Not case-folded: on a volume that tells cases
+    apart they are different files."""
+    return os.path.normpath(path)
+
+
+def _names_one_of(entry: object, keys: set[str]) -> bool:
+    fp = entry.get("filepath") if isinstance(entry, dict) else None
+    return isinstance(fp, str) and path_key(fp) in keys
+
+
+def without_pending(rows: list, *folders: str | None) -> list:
+    """*rows* (entries of an analysis file) without the photos noted as
+    deleted for good in *folders*: every reader of that file uses this."""
+    gone = pending_forgets(*folders)
+    return [d for d in rows if not _names_one_of(d, gone)] if gone else rows
+
+
+def drop_notes_for_present_files(workdir: str | None, listed: list) -> None:
+    """A new analysis file was just written listing *listed*: a photo
+    noted as deleted that is on disk again (put back from a backup and
+    analysed) is not deleted any more. Its note goes, so the next start
+    does not remove it from the file. One still missing keeps its note."""
+    if not workdir:
+        return
+    path = os.path.join(workdir, PENDING)
+    with _pending_lock:
+        gone, _size = _read_pending(path)
+        if not gone:
+            return
+        back = {
+            fp
+            for fp in (d.get("filepath") for d in listed if isinstance(d, dict))
+            if isinstance(fp, str)
+            and path_key(fp) in {path_key(g) for g in gone}
+            and os.path.exists(fp)
+        }
+        if not back:
+            return
+        keys = {path_key(fp) for fp in back}
+        kept = [g for g in sorted(gone) if path_key(g) not in keys]
+        try:
+            if kept:
+                with replace_fresh(path, "w") as f:
+                    f.writelines(json.dumps(g) + "\n" for g in kept)
+            else:
+                os.unlink(path)
+        except OSError:
+            log.warning("Could not update %s", path, exc_info=True)
+
+
 def pending_forgets(*folders: str | None) -> set[str]:
     """The paths noted as deleted whose removal from the analysis file
     has not been done yet (in any of *folders*). An importer of that
@@ -137,7 +190,7 @@ def pending_forgets(*folders: str | None) -> set[str]:
         for folder in folders:
             if folder:
                 gone |= _read_pending(os.path.join(folder, PENDING))[0]
-    return gone
+    return {path_key(p) for p in gone}
 
 
 def _read_pending(path: str) -> tuple[set[str], int]:
@@ -145,6 +198,10 @@ def _read_pending(path: str) -> tuple[set[str], int]:
     from bpp.utils.json_utils import safe_json_loads
 
     try:
+        # A regular file only: a pipe or a link left at this name in a
+        # library folder from elsewhere would block or lead out.
+        if not stat.S_ISREG(os.lstat(path).st_mode):
+            return set(), 0
         with open(path, "rb") as f:
             raw = f.read()
     except OSError:
@@ -241,7 +298,8 @@ def _forget_in_json(path: str, gone: set[str]) -> bool:
     del raw
     if data is None:
         return True  # not a list of photos: nothing in it is imported either
-    kept = [d for d in data if not (isinstance(d, dict) and d.get("filepath") in gone)]
+    keys = {path_key(p) for p in gone}
+    kept = [d for d in data if not _names_one_of(d, keys)]
     if len(kept) == len(data):
         return True
     try:

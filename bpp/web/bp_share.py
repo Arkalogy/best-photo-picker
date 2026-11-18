@@ -27,8 +27,9 @@ class _SharingNow(NamedTuple):
     #: A link can be shown: switched on, checked, reachable from the LAN.
     enabled: bool
     lan_ip: str | None
-    #: Switched on, but this run started while sharing read as off and
-    #: listens on this computer only: no phone can reach it yet.
+    #: Switched on, but this run chose to listen on this computer only
+    #: (sharing was off when it started): no phone can reach it yet. Not
+    #: when the owner asked for that address (``--host``, a proxy).
     restart_required: bool
     #: This installation's key file can't be read: sharing is held off.
     key_unreadable: bool
@@ -51,7 +52,7 @@ def _sharing_now(ctx: Any) -> _SharingNow:
     )
     restart_required = bool(
         switched_on
-        and getattr(ctx, "share_recovered_this_run", False)
+        and getattr(ctx, "bound_host_chosen_by_app", False)
         and _listens_on_this_computer_only(ctx)
     )
     return _SharingNow(
