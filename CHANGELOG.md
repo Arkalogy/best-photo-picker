@@ -6,6 +6,70 @@ this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.5] — 2026-11-18
+
+### Fixed
+- **Settings switches turn off.** LAN sharing, the update check and
+  following shortcuts could be switched on but not off, and the
+  first-run choice of how you use the app was dropped.
+- **Controls that did nothing now work:** the editor's sliders, tag
+  suggestions in the photo viewer, the Timeline's months, the
+  pick-count box's Enter and arrow keys, and clicking outside a dialog
+  to close it. Right-clicking a person or pet in the sidebar opens the
+  menu for that one, and calendar thumbnails show.
+- **A photo deleted for good stays deleted.** Permanent delete, the
+  30-day purge and Clear Library also remove it from the saved
+  analysis and its cache and from what was unpacked from archives, so
+  it no longer comes back at the next start. A Live Photo's hidden
+  companion goes with it.
+- **The Mac app says why a library can't be opened** (a link in place
+  of one of its folders, another app or `bpp analyze` using it, a
+  damaged or unreadable database) instead of restarting its server
+  five times, and saves the reason in
+  `~/Library/Logs/com.arkalogy.bpp/startup.log`. Its own error screens
+  show their layout again.
+- **Analysing an archive** unpacks it into a folder of its own and
+  then moves it into place, so a refused, damaged or clashing archive
+  changes nothing. No room, a password or a compression the app can't
+  read is said plainly. `.tar.xz` archives are accepted.
+- Export no longer waits on a remembered folder that is offline, and
+  its report names only the photos it exported.
+- Renaming a pet or a group by clicking its name works; bare MPEG
+  video files play.
+
+### Security
+- **A library folder made by someone else is handled with more care.**
+  Its own folders being links makes the app refuse it; each file the
+  app deletes, moves, writes or sends must be inside the open library;
+  sharing settings and approved devices stored in it count only if this
+  installation set them, its stored server settings are held to their
+  limits and database triggers it brings are dropped; values from its
+  database reach the page as text, not markup; and export reads only from the
+  library and the folders you analysed or named (`--source-root` names
+  another for `bpp pick`, `select` and `run`).
+- **Other accounts on the same computer:** the share link no longer
+  acts as the owner on 127.0.0.1; on macOS the app keeps 127.0.0.1 to
+  itself while it also listens on the network; on Linux the boot key is
+  refused on another account's connection.
+- **Paired devices stay read-only:** pair review and the auto-enhance
+  preview are owner-only, recent access is recorded under the name you
+  approved, and pairing requests are rate-limited.
+- Limits on the work one file or one connection can cause: long
+  request paths in the log, very thin images and narrow videos, pipes
+  in an import folder and silent connections.
+
+### Changed
+- **Docker:** downloaded models, model-license acceptances and the
+  sharing key are kept in a `/state` volume of their own, apart from
+  the library at `/data`. Mount a host folder at `/state`; when
+  upgrading, see the README's Docker section for what to move: without
+  it, models download again, the license questions are asked again and
+  sharing is turned off.
+- One app or `bpp analyze` run uses a library at a time: `bpp analyze`
+  won't write into a library the app has open, and the app won't open
+  one an analysis is writing. Each says which is using it.
+- Server on/off options accept only true or false.
+
 ## [0.2.4] — 2026-11-14
 
 ### Fixed
