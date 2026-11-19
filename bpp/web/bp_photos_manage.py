@@ -227,6 +227,7 @@ def _absolute_library_path(ctx: Any, filepath: str) -> str:
 
 
 @bp.get("/api/v1/photos/enhance-preview")
+@requires_local_app
 def api_enhance_preview() -> tuple[Response, int]:
     """Return auto-enhance parameters without saving (for per-section AUTO)."""
     from bpp.scoring.enhance import auto_enhance
@@ -314,11 +315,10 @@ def api_save_edits() -> tuple[Response, int]:
 
     # Invalidate cache
     if ctx.thumbs:
-        from bpp.constants import HASH_PREFIX_LEN
+        from bpp.db.photos_sha import content_cache_key
 
         h = ctx.thumbs.get_hash(filepath)
-        sha = photo.get("sha256") or ""
-        c_hash = sha[:HASH_PREFIX_LEN] if sha else None
+        c_hash = content_cache_key(photo.get("sha256"))
         invalidate_photo_cache(ctx, h, content_hash=c_hash, edits_only=True)
 
     return jsonify({"status": "ok"}), 200

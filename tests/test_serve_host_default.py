@@ -21,10 +21,6 @@ import pytest
 from bpp import commands
 
 
-def _dummy_timer(*_a, **_kw):
-    return type("T", (), {"start": lambda self: None})()
-
-
 @pytest.fixture
 def fake_library(tmp_path):
     """Build the minimum on-disk skeleton `do_serve` needs to run."""
@@ -55,7 +51,6 @@ def _run_serve(library, **arg_overrides):
     with (
         patch("flask.Flask.run", _capture),
         patch("webbrowser.open", lambda *_a, **_kw: True),
-        patch("threading.Timer", lambda *_a, **_kw: type("T", (), {"start": lambda self: None})()),
     ):
         commands.do_serve(args_ns)
     return captured.get("host")
@@ -74,12 +69,13 @@ class TestHostDefault:
     def test_zero_bind_when_lan_sharing_on(self, fake_library):
         """Default: sharing ON → 0.0.0.0 so paired phones can connect."""
         from bpp.db.connection import close_all_connections, init_db
-        from bpp.db.settings import set_setting
+        from bpp.web.share import set_lan_sharing_enabled
 
-        # Pre-init the library DB and enable sharing.
+        # Pre-init the library DB and enable sharing the way the owner
+        # does: a bare settings row is not honoured (see share_seal).
         db_path = str(fake_library / "data" / "photopicker.db")
         conn = init_db(db_path)
-        set_setting(conn, "lan_sharing_enabled", "1")
+        set_lan_sharing_enabled(conn, True)
         close_all_connections()
 
         host = _run_serve(fake_library)
@@ -167,7 +163,6 @@ class TestWebCommandHost:
         with (
             patch("flask.Flask.run", _cap),
             patch("webbrowser.open", lambda *_a, **_kw: True),
-            patch("threading.Timer", _dummy_timer),
         ):
             commands.do_web(args)
 
@@ -194,7 +189,6 @@ class TestWebCommandHost:
         with (
             patch("flask.Flask.run", _cap),
             patch("webbrowser.open", lambda *_a, **_kw: True),
-            patch("threading.Timer", _dummy_timer),
         ):
             commands.do_web(args)
 

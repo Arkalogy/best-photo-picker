@@ -16,7 +16,7 @@ def test_remove_for_hash_cleans_thumb_and_crops(tmp_path):
     # Init cache first (writes .version), then create test files
     cache = ThumbnailCache(str(thumb_dir))
 
-    h = "abc123"
+    h = "abc123".ljust(32, "0")  # a cache hash is 32 hex characters
     (thumb_dir / f"{h}.jpg").write_bytes(b"thumb")
     (thumb_dir / f"{h}_full.jpg").write_bytes(b"full")
     (thumb_dir / f"{h}_edited.jpg").write_bytes(b"edited")
@@ -49,8 +49,8 @@ def test_remove_for_hash_cleans_content_hash_inpaint(tmp_path):
     thumb_dir.mkdir()
     cache = ThumbnailCache(str(thumb_dir))
 
-    path_hash = "aaa111"
-    content_hash = "bbb222"
+    path_hash = "aaa111".ljust(32, "0")
+    content_hash = "bbb222".ljust(32, "0")
 
     # path-hash-keyed variants
     (thumb_dir / f"{path_hash}.jpg").write_bytes(b"thumb")
@@ -80,7 +80,7 @@ def test_remove_for_hash_sweeps_every_registered_suffix_in_both_formats(tmp_path
     thumb_dir.mkdir()
     cache = ThumbnailCache(str(thumb_dir))
 
-    h = "abc12300"
+    h = "abc12300".ljust(32, "0")
     names = [f"{h}{suffix}{ext}" for suffix in PHOTO_CACHE_SUFFIXES for ext in (".jpg", ".png")]
     for n in names:
         (thumb_dir / n).write_bytes(b"x")
@@ -99,8 +99,8 @@ def test_remove_for_hash_does_not_touch_other_hashes(tmp_path):
     thumb_dir.mkdir()
     cache = ThumbnailCache(str(thumb_dir))
 
-    target = "a1b2c3d4e500"
-    other = "a1b2c3d4e600"  # similar but different
+    target = "a1b2c3d4e500".ljust(32, "0")
+    other = "a1b2c3d4e600".ljust(32, "0")  # similar but different
     (thumb_dir / f"{target}.jpg").write_bytes(b"target")
     (thumb_dir / f"{other}.jpg").write_bytes(b"other")
 

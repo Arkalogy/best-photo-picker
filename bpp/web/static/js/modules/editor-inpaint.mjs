@@ -22,6 +22,7 @@ import {
   toastInstallError,
 } from "./install-done.mjs";
 import { toast, toastError } from "./toast.mjs";
+import { escVal } from "./text-format.mjs";
 
 export function _renderRemoveControls() {
   /** @type {any} */
@@ -43,11 +44,11 @@ export function _renderRemoveControls() {
         <div class="editor-slider-header">
           <span class="editor-slider-icon">&#9711;</span>
           <span class="editor-slider-label">Size</span>
-          <span class="editor-slider-value" id="ev-inpaint-brush">${brushSize}px</span>
+          <span class="editor-slider-value" id="ev-inpaint-brush">${escVal(brushSize)}px</span>
         </div>
         <div class="editor-slider-track-wrap">
           <input type="range" class="editor-slider" id="es-inpaint-brush"
-            min="5" max="100" step="1" value="${brushSize}"
+            min="5" max="100" step="1" value="${escVal(brushSize)}"
             data-oninput="_inpaintSetBrushSize"
             style="--pct: ${(((brushSize - 5) / 95) * 100).toFixed(0)}%">
         </div>

@@ -55,6 +55,40 @@ def _looks_like_a_manifest(filepath: str) -> bool:
     return text[:1] in (b"<", b"#") or all(32 <= b < 127 or b in (9, 10, 13) for b in head)
 
 
+#: How the containers this app plays begin. MP4 / MOV / M4V / 3GP are a
+#: list of boxes: four bytes of size, then one of these names.
+_FIRST_BOXES = (
+    *(b"ftyp", b"styp", b"moov", b"moof", b"mdat", b"wide"),
+    *(b"free", b"skip", b"junk", b"pict", b"pnot", b"uuid"),
+)
+_MATROSKA = b"\x1a\x45\xdf\xa3"  # MKV, WebM
+_ASF = bytes.fromhex("3026b2758e66cf11a6d900aa0062ce6c")  # WMV
+#: Pack header, visual object sequence, sequence header, visual object, VOP.
+_MPEG_START_CODES = tuple(b"\x00\x00\x01" + bytes([c]) for c in (0xBA, 0xB0, 0xB3, 0xB5, 0xB6))
+
+
+def has_video_header(filepath: str) -> bool:
+    """True when the file's own first bytes are a video container's.
+    The name says nothing: a row, or a link in the photos folder, can
+    give any file a video extension, and a video is sent as it is."""
+    try:
+        with open(filepath, "rb") as f:
+            head = f.read(189)
+    except OSError:
+        return False
+    return (
+        head[4:8] in _FIRST_BOXES
+        or head.startswith(_MATROSKA)
+        or (head[:4] in (b"RIFF", b"RF64") and head[8:12] == b"AVI ")
+        # MPEG program / transport streams, sometimes saved as .mp4 / .avi,
+        # and bare MPEG-4 / MPEG-2 video (a raw .m4v): start codes
+        or head[:4] in _MPEG_START_CODES
+        or (len(head) == 189 and head[0] == 0x47 and head[188] == 0x47)
+        or head.startswith(_ASF)
+        or head.startswith(b"FLV")
+    )
+
+
 def open_capture(filepath: str) -> cv2.VideoCapture | None:
     """The one way this app decodes a video: refuses manifests (the one
     real guard against a playlist with a video extension), returns None
@@ -155,6 +189,15 @@ def format_duration(seconds: float) -> str:
     return f"{s // 3600}:{(s % 3600) // 60:02d}:{s % 60:02d}"
 
 
+def sprite_cell_size(width: int, height: int, thumb_width: int) -> tuple[int, int]:
+    """(width, height) of one preview cell for a frame of this size:
+    *thumb_width* wide, the frame's shape kept up to three times as tall
+    as wide. A frame narrower than that (4 x 300, say) would otherwise
+    make each cell thousands of pixels high."""
+    cell_h = int(height * thumb_width / max(1, width))
+    return thumb_width, max(1, min(cell_h, 3 * thumb_width))
+
+
 def generate_video_sprite(
     filepath: str,
     output_path: str,
@@ -196,9 +239,7 @@ def generate_video_sprite(
             if not ret or frame is None:
                 continue
             h, w = frame.shape[:2]
-            scale = thumb_width / w
-            new_h = int(h * scale)
-            resized = cv2.resize(frame, (thumb_width, new_h))
+            resized = cv2.resize(frame, sprite_cell_size(w, h, thumb_width))
             thumbs.append(resized)
 
         cap.release()

@@ -8,6 +8,7 @@ const pairMock = vi.hoisted(() => ({ count: 0 }));
 vi.mock("../bpp/web/static/js/modules/people-pair-review.mjs", () => ({
   refreshAmbiguousPairCount: vi.fn(async () => {}),
   getAmbiguousPairCount: () => pairMock.count,
+  isPairReviewOwnerOnly: () => false,
 }));
 
 import {

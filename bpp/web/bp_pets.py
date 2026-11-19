@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 
-from flask import Blueprint, Response, jsonify, request, send_file
+from flask import Blueprint, Response, jsonify, request
 
 from bpp.config import cfg_get
 from bpp.constants import ACTIVE_PHOTO_SQL, PET_CROP_PADDING, PET_CROP_SIZE, active_photo_sql
@@ -23,6 +23,7 @@ from bpp.errors import NotFoundError, ValidationError
 from bpp.utils.logging import get_logger
 from bpp.web import box_crop
 from bpp.web.media_support import crop_failure_error, raw_full_jpeg_path, raw_preview_error
+from bpp.web.photo_cache import own_cache_file, send_cache_file
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx
 
@@ -53,7 +54,7 @@ def _generate_pet_crop(
     bbox = (bx, by, bw, bh)
     bbox_tag = hashlib.md5(f"{bbox}".encode()).hexdigest()[:8]
     crop_path = os.path.join(crop_dir, f"pet_{path_hash}_{detection_index}_{bbox_tag}.jpg")
-    if os.path.exists(crop_path):
+    if own_cache_file(crop_path):
         return crop_path
 
     return box_crop.generate_box_crop(
@@ -123,7 +124,7 @@ def api_pet_crop(path_hash: str, detection_index: int) -> Response | tuple[Respo
             detection_index=detection_index,
         )
 
-    return send_file(crop_path, mimetype="image/jpeg")
+    return send_cache_file(crop_path, mimetype="image/jpeg")
 
 
 @bp.get("/api/v1/pets/clusters")

@@ -60,6 +60,43 @@ def _give_up_run(conn: sqlite3.Connection, run_id: str) -> None:
     journal.force_complete_after_retries(conn, run_id)
 
 
+#: Most interrupted runs one open resumes (oldest first). Two can be real
+#: (a run interrupted while an earlier one still waited); the rows come
+#: from the library file, so more than that are closed, not run.
+MAX_RESUMED_RUNS = 2
+
+
+def _runs_to_resume(conn: sqlite3.Connection, pending: list[dict]) -> list[dict]:
+    """The newest :data:`MAX_RESUMED_RUNS` pending runs, oldest first,
+    after closing every older one in a single statement."""
+    from bpp.web import face_extraction_journal as journal
+
+    keep = pending[-MAX_RESUMED_RUNS:]
+    if len(pending) > len(keep):
+        marks = ", ".join("?" for _ in keep)
+        conn.execute(
+            "UPDATE face_extraction_journal SET completed_at = ? "
+            f"WHERE completed_at IS NULL AND run_id NOT IN ({marks})",
+            (journal.GAVE_UP_SENTINEL, *(entry["run_id"] for entry in keep)),
+        )
+        conn.commit()
+        log.warning(
+            "Recovery: closed %d older interrupted face extraction runs without resuming them",
+            len(pending) - len(keep),
+        )
+    return keep
+
+
+def _attempts_so_far(conn: sqlite3.Connection, run_id: str) -> int:
+    """The run's stored retry count; -1 when it isn't a whole number."""
+    from bpp.web import face_extraction_journal as journal
+
+    try:
+        return journal.get_retry_count(conn, run_id)
+    except (TypeError, ValueError):
+        return -1
+
+
 def recover_pending_face_extractions(
     conn: sqlite3.Connection, *, ctx: Any = None, cancel_event: Any = None
 ) -> int:
@@ -98,14 +135,15 @@ def recover_pending_face_extractions(
         return 0
 
     resumed = 0
-    for entry in pending:
+    for entry in _runs_to_resume(conn, pending):
         run_id = entry["run_id"]
         # Bound retry attempts so a deterministic failure
         # (corrupt snapshot, unrecoverable phase-7 crash) doesn't loop
         # on every server restart forever. Pre-check before incrementing
         # so the count reflects "attempts so far," not "this attempt."
-        prior_attempts = journal.get_retry_count(conn, run_id)
-        if prior_attempts >= journal.MAX_RECOVERY_RETRIES:
+        # A stored count outside 0..MAX-1 (negative, text) is used up.
+        prior_attempts = _attempts_so_far(conn, run_id)
+        if not 0 <= prior_attempts < journal.MAX_RECOVERY_RETRIES:
             log.warning(
                 "Recovery: run %s exceeded MAX_RECOVERY_RETRIES (%d). "
                 "Force-completing with GAVE_UP_SENTINEL so future startups "

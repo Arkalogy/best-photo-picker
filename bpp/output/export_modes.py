@@ -13,7 +13,6 @@ import contextlib
 import errno
 import os
 import shutil
-import stat
 import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -21,6 +20,7 @@ from typing import Any, ClassVar
 
 from bpp.constants import RAW_EXTENSIONS
 from bpp.output.export_pixels import encoder_args, scrubbed, upright_pixels, writer_mode
+from bpp.utils.file_modes import copy_mode
 from bpp.utils.fresh_file import open_fresh, replace_fresh
 from bpp.utils.logging import get_logger
 from bpp.utils.retry import retry_io
@@ -246,7 +246,7 @@ def _copy_bytes(src: str, tmp: str) -> None:
         fd = fdst.fileno()
         shutil.copyfile(src, os.dup(fd))
         with contextlib.suppress(OSError):
-            os.fchmod(fd, stat.S_IMODE(st.st_mode))
+            os.fchmod(fd, copy_mode(st.st_mode))
         if hasattr(os, "listxattr"):
             with contextlib.suppress(OSError):
                 for name in os.listxattr(src):

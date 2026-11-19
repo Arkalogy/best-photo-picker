@@ -28,8 +28,8 @@ class TestAcquireServingLock:
             with pytest.raises(RuntimeError) as exc:
                 state_init.acquire_serving_lock(wd)
             msg = str(exc.value)
-            assert "pid=12345" in msg
-            assert "Stop it first" in msg
+            assert "process 12345" in msg
+            assert "remove" in msg, "nothing holds the file: the owner is told how to clear it"
 
     def test_lock_io_failure_is_wrapped(self, tmp_path):
         from bpp.utils.serving_lock import ServingLockError
@@ -205,13 +205,17 @@ class TestImportFromLegacyCaches:
 
         conn = MagicMock()
         # photo_count == 0 path: SELECT for unscored is short-circuited.
+        # No photo rows at all (not even binned ones): a full import.
+        conn.execute.return_value.fetchone.return_value = None
         with (
             patch.object(state_init, "import_from_analysis_json") as mock_imp,
             patch.object(state_init, "import_face_embeddings") as mock_emb,
             patch.object(state_init, "import_presets_from_json"),
         ):
             state_init.import_from_legacy_caches(conn, wd, "", 0)
-            mock_imp.assert_called_once_with(conn, json_path)
+            mock_imp.assert_called_once_with(
+                conn, json_path, existing_only=False, workdir=wd, library_root=""
+            )
             mock_emb.assert_not_called()  # the legacy DB doesn't exist
 
     def test_populated_db_with_scored_photos_skips_import(self, tmp_path):
@@ -240,7 +244,11 @@ class TestImportFromLegacyCaches:
             patch.object(state_init, "import_face_embeddings") as mock_emb,
         ):
             state_init.import_from_legacy_caches(conn, wd, "", photo_count=100)
-            mock_imp.assert_called_once_with(conn, json_path)
+            # Scores only for photos the library has: the file may list
+            # photos that were deleted since it was written.
+            mock_imp.assert_called_once_with(
+                conn, json_path, existing_only=True, workdir=wd, library_root=""
+            )
             # Phase 4b ONLY imports face_embeddings on the photo_count==0 branch.
             mock_emb.assert_not_called()
 
@@ -353,6 +361,7 @@ class TestInitAppDbPhase5Deferred:
         monkeypatch.setattr(state_init, "_recover_interrupted_rename", lambda *a, **k: None)
         monkeypatch.setattr(state_init, "_backfill_live_photo_sidecars", lambda *a, **k: False)
         monkeypatch.setattr(state_init, "_import_from_legacy_caches", lambda *a, **k: None)
+        monkeypatch.setattr(state_init, "settle_companions_of_binned", lambda *a, **k: 0)
         monkeypatch.setattr(state_init, "ensure_all_photos_album", lambda *a, **k: None)
         monkeypatch.setattr(state_init, "sync_all_photos_album", lambda *a, **k: None)
         monkeypatch.setattr(state_init, "get_photo_count", lambda *a, **k: 0)

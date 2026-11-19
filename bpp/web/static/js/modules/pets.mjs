@@ -15,7 +15,7 @@
 import { apiFetch, petCropUrl } from "./api-client.mjs";
 import { appConfirm } from "./dialogs.mjs";
 import { menuClosed, menuOpened } from "./menu-a11y.mjs";
-import { esc } from "./text-format.mjs";
+import { esc, escVal } from "./text-format.mjs";
 import { refreshSmartAlbums } from "./faces.mjs";
 import { show } from "./utils.mjs";
 import { toast, toastError } from "./toast.mjs";
@@ -142,6 +142,11 @@ export async function renamePet(clusterId, newName) {
  * @param {HTMLElement} el
  */
 export function startPetRename(clusterId, el) {
+  // From a click on the name the dispatcher passes no element and sets
+  // `this` to the name; its parent is the label that is redrawn. Menus
+  // pass the label itself.
+  if (!(el instanceof Element)) el = this instanceof Element ? this.parentElement : null;
+  if (!el) return;
   const cls = petClassFromCluster(clusterId);
   const current = petDisplayName(clusterId) || _petDefaultLabel(cls) || "";
   const input = document.createElement("input");
@@ -182,8 +187,8 @@ export function petLabelHTML(clusterId, photoCount) {
   const displayName = name || defaultName;
   const nameCls = name ? "person-name" : "person-name unnamed";
   return (
-    `<div class="${nameCls}" data-stop-propagation="true" data-action="startPetRename" data-arg0="${clusterId}" data-arg1="this.parentElement">${esc(displayName)}</div>` +
-    `<div class="person-count">${count} photo${count === 1 ? "" : "s"}</div>`
+    `<div class="${nameCls}" data-stop-propagation="true" data-action="startPetRename" data-arg0="${escVal(clusterId)}">${esc(displayName)}</div>` +
+    `<div class="person-count">${escVal(count)} photo${count === 1 ? "" : "s"}</div>`
   );
 }
 
@@ -232,14 +237,14 @@ export function showPetsView() {
         rep && rep.thumb_hash
           ? petCropUrl(rep.thumb_hash, rep.detection_index)
           : "";
-      return `<div class="person-card pet-card" data-cluster-id="${cid}"
+      return `<div class="person-card pet-card" data-cluster-id="${escVal(cid)}"
       tabindex="0" role="button" data-key-activate
-      data-action="navigateToPetAlbum" data-arg0="${cid}"
-      data-oncontextmenu="showPetCtxMenu" data-arg0="${cid}">
+      data-action="navigateToPetAlbum" data-arg0="${escVal(cid)}"
+      data-oncontextmenu="showPetCtxMenu">
       <div class="person-avatar pet-avatar">
         ${cropSrc ? `<img src="${cropSrc}" loading="lazy" draggable="false">` : `<div class="pet-avatar-icon">${ICONS.paw || ""}</div>`}
       </div>
-      <div class="person-label" id="pet-label-${cid}">${petLabelHTML(cid, c.photo_count)}</div>
+      <div class="person-label" id="pet-label-${escVal(cid)}">${petLabelHTML(cid, c.photo_count)}</div>
     </div>`;
     })
     .join("");
@@ -300,6 +305,16 @@ export function showPetCtxMenu(e, clusterId) {
       menu.style.top = window.innerHeight - rect.height - 8 + "px";
   });
   menuOpened(menu, { trigger: e.target });
+}
+
+/**
+ * Right-click on a pet's sidebar row. The row's `data-arg0` is the album
+ * (for the click that opens it); the pet's id is in `data-cid`.
+ * @this {HTMLElement}
+ * @param {MouseEvent} e
+ */
+export function _petRowCtxMenu(e) {
+  showPetCtxMenu(e, Number(this.dataset.cid));
 }
 
 export function hidePetCtxMenu() {

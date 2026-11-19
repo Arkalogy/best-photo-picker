@@ -16,7 +16,7 @@
 
 import { apiFetch, faceCropUrl } from "./api-client.mjs";
 import { appPrompt } from "./dialogs.mjs";
-import { esc, escapeAttr } from "./text-format.mjs";
+import { esc, escapeAttr, escVal } from "./text-format.mjs";
 import { toast, toastError } from "./toast.mjs";
 
 /**
@@ -52,7 +52,7 @@ export async function _iphLoadFaces(thumbHash) {
         html += `<div class="iph-face-chip${small ? " iph-face-small" : ""}" title="${escapeAttr(label + (small ? " (small)" : "") + (clickable ? " — click to rename" : ""))}">`;
         html += `<img class="iph-face-img" src="${cropUrl}" alt="" loading="lazy">`;
         html += clickable
-          ? `<span class="iph-face-label iph-face-rename" data-action="iphRenameFace" data-pass-event="true" data-arg0="${f.cluster_id}">${esc(label)}</span>`
+          ? `<span class="iph-face-label iph-face-rename" data-action="iphRenameFace" data-pass-event="true" data-arg0="${escVal(f.cluster_id)}">${esc(label)}</span>`
           : `<span class="iph-face-label">${esc(label)}</span>`;
         html += `</div>`;
       }
@@ -72,14 +72,14 @@ export async function _iphLoadFaces(thumbHash) {
         } else {
           html += `<span class="iph-face-img iph-face-placeholder"></span>`;
         }
-        html += `<span class="iph-face-label iph-face-rename" data-action="iphRenameFace" data-pass-event="true" data-arg0="${pt.cluster_id}">${esc(label)}</span>`;
-        html += `<span class="iph-face-untag" title="Remove tag" data-action="_iphUntagPerson" data-pass-event="true" data-arg0="${thumbHash}" data-arg1="${pt.cluster_id}">&times;</span>`;
+        html += `<span class="iph-face-label iph-face-rename" data-action="iphRenameFace" data-pass-event="true" data-arg0="${escVal(pt.cluster_id)}">${esc(label)}</span>`;
+        html += `<span class="iph-face-untag" title="Remove tag" data-action="_iphUntagPerson" data-pass-event="true" data-arg0="${escVal(thumbHash)}" data-arg1="${escVal(pt.cluster_id)}">&times;</span>`;
         html += `</div>`;
       }
     }
 
     if (faceClusters.length > 0) {
-      html += `<div class="iph-face-chip iph-face-add" title="Tag a person" data-action="_iphShowTagPicker" data-pass-event="true" data-arg0="${thumbHash}">`;
+      html += `<div class="iph-face-chip iph-face-add" title="Tag a person" data-action="_iphShowTagPicker" data-pass-event="true" data-arg0="${escVal(thumbHash)}">`;
       html += `<span class="iph-face-add-icon">+</span>`;
       html += `</div>`;
     }
@@ -175,7 +175,7 @@ export function _iphShowTagPicker(e, thumbHash) {
       item.innerHTML =
         (avatarUrl ? `<img class="iph-tag-avatar" src="${avatarUrl}" alt="">` : "") +
         `<span class="iph-tag-name">${esc(name)}</span>` +
-        `<span class="iph-tag-count">${c.photo_count}</span>`;
+        `<span class="iph-tag-count">${escVal(c.photo_count)}</span>`;
       item.onclick = () => _iphTagPerson(thumbHash, c.cluster_id);
       list.appendChild(item);
     }

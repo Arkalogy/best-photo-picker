@@ -57,8 +57,11 @@ _REDACT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"([?&]_boot=)([^\s\"'&#]+)"), r"\1[REDACTED]"),
     # *_auth_token / *_share_token / *_app_token bare key=value or
     # key: value (YAML / Python dict-repr / debug dumps).
-    # Optional prefix `\w+_` catches `lan_share_token`,
-    # `legacy_app_token`, etc. — the actual DB key shape that the
+    # Unanchored on the left, so it also matches inside `lan_share_token`,
+    # `legacy_app_token`, etc. (whatever precedes stays as it is). No
+    # `\w+_` prefix group: that rescanned every long run of word
+    # characters from each position, and request paths are logged. This is
+    # the actual DB key shape that the
     # The original word-boundary anchor missed traceback-local assignments.
     # The middle `['\"]?\s*[=:]\s*['\"]?` admits Python dict-repr
     # form where the key is quoted: `'lan_share_token': 'value'`.
@@ -67,7 +70,7 @@ _REDACT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # match doesn't eat past the value.
     (
         re.compile(
-            r"((?:\w+_)?(?:auth|share|app)_token['\"]?\s*[=:]\s*['\"]?)"
+            r"((?:auth|share|app)_token['\"]?\s*[=:]\s*['\"]?)"
             r"([^\s,}#'\"&]+)"
         ),
         r"\1[REDACTED]",

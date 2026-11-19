@@ -21,9 +21,13 @@ use boot::{
     server_knows_boot_secret, wait_for_server, SERVER_START_TIMEOUT_SECS,
 };
 use menu::install_menu;
-use screens::{hide_reconnecting_overlay, show_reconnecting_overlay, show_start_failure, show_update_required};
+use screens::{
+    hide_reconnecting_overlay, show_library_refused, show_reconnecting_overlay, show_start_failure,
+    show_update_required,
+};
 use sidecar::{
-    spawn_sidecar, RestartState, ServerState, STARTUP_NEWER_SCHEMA, STARTUP_OK, STARTUP_PORT_IN_USE,
+    last_refusal, spawn_sidecar, RestartState, ServerState, STARTUP_LIBRARY_REFUSED,
+    STARTUP_NEWER_SCHEMA, STARTUP_OK, STARTUP_PORT_IN_USE,
 };
 
 #[tauri::command]
@@ -141,14 +145,26 @@ fn main() {
                             show_update_required(&handle_nav);
                             return;
                         }
-                        let port_held = startup_failure_nav.load(Ordering::SeqCst) == STARTUP_PORT_IN_USE
-                            || port_is_held(port);
-                        eprintln!(
-                            "Server failed to start within {} seconds (port held by another process: {})",
-                            SERVER_START_TIMEOUT_SECS, port_held
-                        );
-                        show_start_failure(&handle_nav, port_held);
-                        return;
+                        if startup_failure_nav.load(Ordering::SeqCst) == STARTUP_LIBRARY_REFUSED {
+                            eprintln!("Server refused to open the library — showing why");
+                            show_library_refused(&handle_nav, &last_refusal());
+                            // Once the cause is fixed, Restart Server (menu)
+                            // starts it again: from our own server's answer
+                            // on, go on as after any start.
+                            while !server_knows_boot_secret(port) {
+                                std::thread::sleep(Duration::from_secs(1));
+                            }
+                        } else {
+                            let port_held = startup_failure_nav.load(Ordering::SeqCst)
+                                == STARTUP_PORT_IN_USE
+                                || port_is_held(port);
+                            eprintln!(
+                                "Server failed to start within {} seconds (port held by another process: {})",
+                                SERVER_START_TIMEOUT_SECS, port_held
+                            );
+                            show_start_failure(&handle_nav, port_held);
+                            return;
+                        }
                     }
 
                     // Show splash for at least 1.5s

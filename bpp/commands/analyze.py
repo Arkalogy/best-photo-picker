@@ -10,10 +10,49 @@ together to keep cross-calls local.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 
 from bpp.config import cfg_get, load_config, parse_scan_extensions
 from bpp.utils.logging import get_logger, setup_logging
+
+
+def _hold_library(workdir: str, log) -> list[str] | None:
+    """Take the library's lock for this run, as the app does while it has
+    the library open: the two never write its analysis at the same time
+    (a delete made in the app while this run is still going would be
+    undone by what it writes). The folders locked, or None (after saying
+    why) when the app or another run has it."""
+    from bpp.utils.serving_lock import (
+        ServingLockError,
+        acquire_lock,
+        clear_lock,
+        lock_advice,
+    )
+
+    folders = [workdir]
+    data = os.path.join(workdir, "data")
+    if os.path.isdir(data):
+        folders.append(data)  # a library's root: the app also locks its data/
+    held: list[str] = []
+    for folder in folders:
+        try:
+            holder = acquire_lock(folder)
+        except ServingLockError as exc:
+            log.error("Can't analyse into %s: %s", folder, exc)
+            holder = -1
+        if holder is not None:
+            if holder >= 0:
+                log.error(
+                    "Can't analyse into %s: %s. Or analyse from the app.",
+                    folder,
+                    lock_advice(folder, holder),
+                )
+            for done in held:
+                clear_lock(done)
+            return None
+        held.append(folder)
+    return held
 
 
 def do_analyze(args: argparse.Namespace) -> int:
@@ -64,6 +103,9 @@ def do_analyze(args: argparse.Namespace) -> int:
 
     from bpp.scoring.model_base import ModelIntegrityError
 
+    held = _hold_library(workdir, log)
+    if held is None:
+        return 1
     try:
         with timer.section("analyze"):
             results = analyze_all(
@@ -84,6 +126,11 @@ def do_analyze(args: argparse.Namespace) -> int:
         # e.g. a worker process died: say so plainly, exit non-zero.
         log.error("Analysis stopped: %s", exc)
         return 1
+    finally:
+        from bpp.utils.serving_lock import clear_lock
+
+        for folder in held:
+            clear_lock(folder)
 
     log.info(
         "Analysis complete: %d processed, %d skipped",
@@ -121,8 +168,22 @@ def do_select(args: argparse.Namespace) -> int:
         log.error("Workdir does not exist: %s", workdir)
         return 1
 
+    from bpp.utils.path_validation import split_existing_folders
+
+    named_roots, missing = split_existing_folders(getattr(args, "source_root", None) or [])
+    if missing:
+        log.error("--source-root folder does not exist: %s", ", ".join(missing))
+        return 1
+
     with timer.section("load"):
-        analysis = load_analysis(workdir)
+        # The note of photos deleted for good is in the library's data
+        # folder (or its root): checked whichever of the two this is.
+        notes = [os.path.join(workdir, "data")]
+        parent = os.path.dirname(os.path.realpath(workdir))
+        with contextlib.suppress(OSError):  # this is a library's data folder, by any name
+            if os.path.samefile(os.path.join(parent, "data"), workdir):
+                notes.append(parent)
+        analysis = load_analysis(workdir, notes_in=tuple(notes))
 
     if not analysis:
         log.error("No analysis data found in %s. Run 'analyze' first.", workdir)
@@ -147,17 +208,28 @@ def do_select(args: argparse.Namespace) -> int:
         return 0
 
     with timer.section("export"):
-        export_selected(
+        result = export_selected(
             selected,
             analysis=analysis,
             outdir=outdir,
             mode=args.export_mode,
             gallery=args.gallery,
             config=cfg,
+            # Folders the owner named on this command line: never one the
+            # workdir's own files supply.
+            source_roots=[workdir, *named_roots],
         )
 
     log.info("Output written to %s", outdir)
     timer.summary()
+    if result.outside_source:
+        log.error(
+            "%d photo(s) were not exported: their files are outside %s. "
+            "Name the folder they were analyzed from with --source-root DIR.",
+            result.outside_source,
+            workdir,
+        )
+        return 1
     return 0
 
 
@@ -196,5 +268,6 @@ def do_run(args: argparse.Namespace) -> int:
         gallery=getattr(args, "gallery", False),
         dry_run=args.dry_run,
         extensions=args.extensions,
+        source_root=[os.path.abspath(args.input), *(getattr(args, "source_root", None) or [])],
     )
     return do_select(select_ns)

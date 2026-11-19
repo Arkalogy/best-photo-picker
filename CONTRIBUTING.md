@@ -4,10 +4,11 @@ Thanks for your interest in contributing! This guide will help you get started.
 
 ## Git workflow
 
-- **`main`** is the only long-lived branch. Releases are tagged from it.
-- Feature branches: `feat/<topic>` or `fix/<topic>`, branched off `main`, merged back to `main` through a PR.
-- Never push directly to `main`. Always go through a PR.
-- **CI runs on every PR to `main`.** It is not a required status check, so run the local gates below before opening one. Python 3.11 only — matches the Tauri sidecar pin.
+- **`develop`** is the integration branch. Open every pull request against it.
+- **`main`** is the release branch. It takes a pull request from `develop` only, when a release is ready; releases are tagged from it. A required check refuses any other pull request into `main`.
+- Feature branches: `feat/<topic>` or `fix/<topic>`, branched off `develop`, merged back to `develop` through a PR.
+- Never push directly to `main` or `develop`. Always go through a PR.
+- **CI runs on the `develop` → `main` pull request** (the release gate), not on pull requests into `develop`, so run the local gates below before opening one. Python 3.11 only — matches the Tauri sidecar pin.
 
 ## Development Setup
 
@@ -39,7 +40,7 @@ npm run test:js                 # Vitest + jsdom
 
 ## Making Changes
 
-1. **Create a branch** from `main` for your work
+1. **Create a branch** from `develop` for your work
 2. **Write tests** for new functionality or bug fixes
 3. **Run the checks** before committing:
    ```bash

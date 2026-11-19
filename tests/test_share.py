@@ -187,6 +187,7 @@ class TestShareInfoEndpoint:
         from bpp.web.share import set_lan_sharing_enabled
 
         ctx = share_client.extensions["bpp"]
+        ctx.bound_host = "0.0.0.0"  # this run serves the LAN
         ctx.port = 5001
         with share_client.app_context():
             set_lan_sharing_enabled(ctx.get_conn(), True)

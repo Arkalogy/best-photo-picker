@@ -48,20 +48,17 @@ export function escapeAttr(s) {
 }
 
 /**
- * Escape text for a JS string literal inline in an HTML attribute
- * (e.g. `data-action="doThing" data-arg0="${escapeJsAttr(x)}"`). Still HTML-escapes
- * `"` and angle brackets, but also escapes backslashes and single
- * quotes.
- * @param {string} s
+ * Encode any value for HTML, as an attribute value or as text. Use it
+ * for values the page expects to be a number, a date or a hash: they
+ * come from the library, which can hold any text there. Unlike
+ * `escapeAttr`, null and undefined print as they would in a template
+ * ("null", "undefined"), so wrapping a value never changes what a
+ * well-formed one renders as.
+ * @param {unknown} value
  * @returns {string}
  */
-export function escapeJsAttr(s) {
-  return s
-    .replace(/\\/g, "\\\\")
-    .replace(/'/g, "\\'")
-    .replace(/"/g, "&quot;")
-    .replace(/</g, "\\x3c")
-    .replace(/>/g, "\\x3e");
+export function escVal(value) {
+  return escapeAttr(String(value));
 }
 
 /**

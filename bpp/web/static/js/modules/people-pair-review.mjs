@@ -12,9 +12,9 @@
  * Re-exported from people-review.mjs and (transitively) from people.mjs.
  */
 
-import { apiFetch, authedSrc, faceCropUrl } from "./api-client.mjs";
+import { apiFetch, faceCropUrl, thumbUrl } from "./api-client.mjs";
 import { focusInto, restoreFocusFrom } from "./dialog-focus.mjs";
-import { esc, escapeAttr } from "./text-format.mjs";
+import { esc, escapeAttr, escVal } from "./text-format.mjs";
 import { loadFaceClusters } from "./faces.mjs";
 import {toast, toastError} from "./toast.mjs";
 import { personDisplayName } from "./people.mjs";
@@ -37,6 +37,13 @@ let _pairZoomedOut = {a: false, b: false};
 // Cache for the "Review pairs (N)" button label. null = not yet fetched.
 let _ambiguousPairCount = null;
 
+let _pairReviewOwnerOnly = false;
+
+/** True on a paired device: pair review is the owner's. */
+export function isPairReviewOwnerOnly() {
+  return _pairReviewOwnerOnly;
+}
+
 export function getAmbiguousPairCount() {
   return _ambiguousPairCount;
 }
@@ -45,14 +52,19 @@ export async function refreshAmbiguousPairCount() {
   try {
     const resp = await apiFetch("/api/v1/faces/review-pairs/count");
     _ambiguousPairCount = resp && typeof resp.count === "number" ? resp.count : 0;
-  } catch {
+    _pairReviewOwnerOnly = false;
+  } catch (e) {
     _ambiguousPairCount = 0;
+    // A paired device may not review pairs: no button, rather than
+    // one that says there is nothing to review.
+    _pairReviewOwnerOnly = Boolean(/** @type {any} */ (e) && /** @type {any} */ (e).ownerOnly);
   }
   // Patch just the button in place — avoids re-rendering the whole grid
   const btn = /** @type {HTMLButtonElement | null} */ (
     document.getElementById("btn-review-pairs")
   );
   if (btn) {
+    btn.hidden = _pairReviewOwnerOnly;
     btn.textContent = `Review pairs (${_ambiguousPairCount})`;
     btn.disabled = _ambiguousPairCount === 0;
   }
@@ -98,7 +110,7 @@ export function _closePairReviewOverlay() {
   const total = s.same + s.different + s.skipped;
   if (total > 0) {
     const plural = total !== 1 ? "s" : "";
-    const skipPart = s.skipped ? `, ${s.skipped} skipped` : "";
+    const skipPart = s.skipped ? `, ${escVal(s.skipped)} skipped` : "";
     toast(
       `Reviewed ${total} pair${plural} — ${s.same} same, ${s.different} different${skipPart}`,
       "success"
@@ -137,7 +149,7 @@ export function _renderPairReviewCard() {
     ? faceCropUrl(c.representative.thumb_hash, c.representative.face_index)
     : "";
   const fullUrl = (c) => c.representative.thumb_hash
-    ? authedSrc(`/thumb/${esc(c.representative.thumb_hash)}`)
+    ? thumbUrl(c.representative.thumb_hash)
     : "";
 
   const card = (c, side) => {
@@ -152,7 +164,7 @@ export function _renderPairReviewCard() {
         <img src="${escapeAttr(zoomedOut ? fullUrl(c) : cropUrl(c))}" alt="${escapeAttr(c.name)}">
       </div>
       <div class="pair-review-name">${esc(c.name)}</div>
-      <div class="pair-review-count">${c.face_count} face${c.face_count !== 1 ? "s" : ""} in ${c.photo_count} photo${c.photo_count !== 1 ? "s" : ""}</div>
+      <div class="pair-review-count">${escVal(c.face_count)} face${c.face_count !== 1 ? "s" : ""} in ${escVal(c.photo_count)} photo${c.photo_count !== 1 ? "s" : ""}</div>
       ${reviewMetaLine(c.representative)}
     </div>`;
   };
@@ -309,8 +321,8 @@ function _renderBatchDoneCard(overlay) {
         <h3>Batch done</h3>
       </div>
       <div class="pair-review-complete">
-        <div>You reviewed ${total} pair${total === 1 ? "" : "s"} this session &mdash;
-          ${s.same} same, ${s.different} different${s.skipped ? `, ${s.skipped} skipped` : ""}.</div>
+        <div>You reviewed ${escVal(total)} pair${total === 1 ? "" : "s"} this session &mdash;
+          ${escVal(s.same)} same, ${escVal(s.different)} different${s.skipped ? `, ${escVal(s.skipped)} skipped` : ""}.</div>
         <div id="pair-review-remaining">Checking for more&hellip;</div>
       </div>
       <div class="pair-review-actions">
@@ -331,7 +343,7 @@ function _renderBatchDoneCard(overlay) {
       );
       if (!remainingEl || !btn) return;
       if (n > 0) {
-        remainingEl.innerHTML = `<strong>${n}</strong> pair${n === 1 ? "" : "s"} left to review.`;
+        remainingEl.innerHTML = `<strong>${escVal(n)}</strong> pair${n === 1 ? "" : "s"} left to review.`;
         btn.disabled = false;
         btn.innerHTML = `Continue (next ${Math.min(30, n)}) <kbd>&crarr;</kbd>`;
       } else {

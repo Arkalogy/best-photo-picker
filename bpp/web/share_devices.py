@@ -26,6 +26,7 @@ import sqlite3
 import time
 
 from bpp.utils.logging import get_logger
+from bpp.web import share_seal
 
 log = get_logger(__name__)
 
@@ -59,9 +60,12 @@ def find_or_create_pending_device(
     now = int(time.time())
     if existing is None:
         cur = conn.execute(
+            # Every trust column is written out: a table definition that
+            # came with the library file can't supply "already approved".
             "INSERT INTO share_devices"
-            " (fingerprint, name, ip_at_pair, first_seen, last_seen)"
-            " VALUES (?, ?, ?, ?, ?)",
+            " (fingerprint, name, ip_at_pair, first_seen, last_seen,"
+            "  trusted_at, revoked_at, prev_revoked)"
+            " VALUES (?, ?, ?, ?, ?, NULL, NULL, 0)",
             (fingerprint, name, ip, now, now),
         )
         # Defensive: if the INSERT silently failed (disk full, schema
@@ -140,6 +144,7 @@ def approve_device(conn: sqlite3.Connection, device_id: int) -> bool:
     """
     conn.execute("BEGIN IMMEDIATE")
     try:
+        share_seal.ensure_ours(conn)  # never seal a device list that was not checked
         row = conn.execute("SELECT id FROM share_devices WHERE id = ?", (device_id,)).fetchone()
         if row is None:
             conn.rollback()
@@ -148,7 +153,9 @@ def approve_device(conn: sqlite3.Connection, device_id: int) -> bool:
             "UPDATE share_devices SET trusted_at = ?, revoked_at = NULL WHERE id = ?",
             (int(time.time()), device_id),
         )
+        staged = share_seal.stage(conn)  # the device list is sealed with the change
         conn.commit()
+        share_seal.confirm(staged)
         # success breadcrumb. Without this, a user who reports
         # "I approved a device but it still says pending" has no log
         # evidence the approve actually committed — the only existing
@@ -178,6 +185,7 @@ def revoke_device(conn: sqlite3.Connection, device_id: int) -> bool:
     """
     conn.execute("BEGIN IMMEDIATE")
     try:
+        share_seal.ensure_ours(conn)  # never seal a device list that was not checked
         row = conn.execute("SELECT id FROM share_devices WHERE id = ?", (device_id,)).fetchone()
         if row is None:
             conn.rollback()
@@ -188,7 +196,16 @@ def revoke_device(conn: sqlite3.Connection, device_id: int) -> bool:
             " WHERE id = ?",
             (int(time.time()), device_id),
         )
+        # The revoke has to be what the database now says: a trigger that
+        # came with the library file could undo it in the same statement.
+        after = conn.execute(
+            "SELECT trusted_at, revoked_at FROM share_devices WHERE id = ?", (device_id,)
+        ).fetchone()
+        if after is None or after["revoked_at"] is None or after["trusted_at"] is not None:
+            raise RuntimeError(f"revoking device {device_id} did not take effect")
+        staged = share_seal.stage(conn)  # the device list is sealed with the change
         conn.commit()
+        share_seal.confirm(staged)
         # success breadcrumb. Mirrors approve_device — pairs
         # with the existing error-path log so revoke success/failure
         # are both visible in server.log without further code changes.
@@ -237,7 +254,9 @@ def list_devices(conn: sqlite3.Connection) -> dict[str, list[dict[str, object]]]
     """
     prune_expired_pending(conn)
     rows = conn.execute(
-        "SELECT * FROM share_devices WHERE revoked_at IS NULL ORDER BY last_seen DESC"
+        # Arrival order, not "last seen": a waiting device refreshes that
+        # itself, and must not move its row under the owner's finger.
+        "SELECT * FROM share_devices WHERE revoked_at IS NULL ORDER BY first_seen, id"
     ).fetchall()
     pending: list[dict[str, object]] = []
     trusted: list[dict[str, object]] = []

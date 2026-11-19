@@ -20,7 +20,7 @@
  */
 
 import { state } from "./state.mjs";
-import { esc, escapeAttr } from "./text-format.mjs";
+import { esc, escapeAttr, escVal } from "./text-format.mjs";
 import {
   ADJUST_SLIDERS,
   ASPECT_RATIOS,
@@ -176,7 +176,7 @@ export function _renderFoldOut(section) {
     </div>
     <div class="editor-slider-track-wrap">
       <input type="range" class="editor-slider" id="es-${s.key}"
-        min="${s.min}" max="${s.max}" step="${s.step}" value="${val}"
+        min="${s.min}" max="${s.max}" step="${s.step}" value="${escVal(val)}"
         data-oninput="_editorSliderChange" data-slider-key="${s.key}"
         style="--pct: ${pct}%">
       <div class="editor-slider-midpoint" style="left: ${defaultPct}%"></div>
@@ -268,7 +268,7 @@ export function _renderCropControls() {
         </div>
         <div class="editor-slider-track-wrap">
           <input type="range" class="editor-slider" id="es-straighten"
-            min="-45" max="45" step="0.1" value="${straightenVal}"
+            min="-45" max="45" step="0.1" value="${escVal(straightenVal)}"
             data-oninput="_editorSliderChange" data-slider-key="straighten"
             style="--pct: ${(((straightenVal + 45) / 90) * 100).toFixed(0)}%">
           <div class="editor-slider-midpoint" style="left: 50%"></div>
@@ -282,7 +282,7 @@ export function _renderCropControls() {
         </div>
         <div class="editor-slider-track-wrap">
           <input type="range" class="editor-slider" id="es-perspective_v"
-            min="-1" max="1" step="0.01" value="${perspVVal}"
+            min="-1" max="1" step="0.01" value="${escVal(perspVVal)}"
             data-oninput="_editorSliderChange" data-slider-key="perspective_v"
             style="--pct: ${(((perspVVal + 1) / 2) * 100).toFixed(0)}%">
           <div class="editor-slider-midpoint" style="left: 50%"></div>
@@ -295,7 +295,7 @@ export function _renderCropControls() {
         </div>
         <div class="editor-slider-track-wrap">
           <input type="range" class="editor-slider" id="es-perspective_h"
-            min="-1" max="1" step="0.01" value="${perspHVal}"
+            min="-1" max="1" step="0.01" value="${escVal(perspHVal)}"
             data-oninput="_editorSliderChange" data-slider-key="perspective_h"
             style="--pct: ${(((perspHVal + 1) / 2) * 100).toFixed(0)}%">
           <div class="editor-slider-midpoint" style="left: 50%"></div>

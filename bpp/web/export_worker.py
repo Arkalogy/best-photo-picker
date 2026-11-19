@@ -17,10 +17,13 @@ in the same envelope import + analyze already use.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from bpp.utils.logging import get_logger
 from bpp.web.base_worker import BackgroundWorker
+
+if TYPE_CHECKING:
+    from bpp.utils.path_validation import FolderSet
 
 log = get_logger(__name__)
 
@@ -58,6 +61,7 @@ class ExportWorker(BackgroundWorker):
         write_xmp: bool = False,
         library_path: str = "",
         strip_metadata: bool = True,
+        source_roots: list[str] | FolderSet | None = None,
     ) -> bool:
         return self._start_thread(
             selected,
@@ -73,6 +77,7 @@ class ExportWorker(BackgroundWorker):
             write_xmp,
             library_path,
             strip_metadata,
+            source_roots,
         )
 
     def _run(  # type: ignore[override]
@@ -90,6 +95,7 @@ class ExportWorker(BackgroundWorker):
         write_xmp: bool,
         library_path: str,
         strip_metadata: bool,
+        source_roots: list[str] | FolderSet | None = None,
     ) -> None:
         # Bookend logs — same pattern as the face worker / Phase 5.
         import time as _time
@@ -133,6 +139,7 @@ class ExportWorker(BackgroundWorker):
                 strip_metadata=strip_metadata,
                 on_progress=_on_progress,
                 cancel_event=self._cancelled,
+                source_roots=source_roots,
             )
         finally:
             log.info(
@@ -160,5 +167,6 @@ class ExportWorker(BackgroundWorker):
                 "failed": result.failed,
                 "disk_error": result.disk_error,
                 "metadata_kept": result.metadata_kept,
+                "outside_source": result.outside_source,
             }
         )

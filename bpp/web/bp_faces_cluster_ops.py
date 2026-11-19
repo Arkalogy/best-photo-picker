@@ -36,6 +36,7 @@ from bpp.errors import ValidationError
 from bpp.scoring.face_threshold import face_threshold
 from bpp.utils.logging import get_logger
 from bpp.web.face_merge_core import assert_merge_within_cap, perform_face_merge
+from bpp.web.request_validation import json_bool
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx, with_face_lock
 
@@ -252,7 +253,7 @@ def api_faces_restore() -> tuple[Response, int]:
 
     ctx = get_ctx()
     data = request.get_json(silent=True) or {}
-    restore_all = data.get("all", False)
+    restore_all = json_bool(data, "all", default=False)
     face_ids = data.get("face_ids")
 
     if not restore_all and not face_ids:

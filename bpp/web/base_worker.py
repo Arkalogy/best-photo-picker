@@ -102,6 +102,8 @@ class BackgroundWorker:
         #: The previous run's log, kept so a reader still on it gets the
         #: run's end (done / cancelled) before it moves to the new run.
         self._prev_events: tuple[int, int, list[dict[str, Any]]] | None = None
+        #: Set by forget_runs() while a forgotten run is still winding down.
+        self._muted = False
         # Drop-warning rate limiter: (last_log_time, drops_since_last_log)
         self._drop_log_state: tuple[float, int] = (0.0, 0)
         self._drop_log_lock = threading.Lock()
@@ -135,6 +137,7 @@ class BackgroundWorker:
             return False
 
         self.running = True
+        self._muted = False
         self._cancelled.clear()
 
         # Drain any stale progress messages; a new run starts a new log.
@@ -165,6 +168,27 @@ class BackgroundWorker:
             return False
         self._cancelled.set()
         return True
+
+    def forget_runs(self) -> None:
+        """Drop what this worker's runs reported (file names, counts).
+        Called when the library changes: a progress stream opened on the
+        next library must not replay the last one's run."""
+        with self._events_cond:
+            end = self._events_base + len(self._events)
+            last = self._events[-1] if self._events else None
+            if last is not None and last.get("type") in ("done", "cancelled", "error"):
+                # Only that the run ended (no names, no counts): a reader
+                # still on it closes normally instead of reporting a crash.
+                self._prev_events = (self.run_id, end - 1, [{"type": last["type"]}])
+            else:
+                self._prev_events = None
+            self._events = []
+            self._events_base = 0
+            self.run_id += 1
+            # A worker that outlived the cancel keeps running old-library
+            # work: nothing it reports from here on is kept.
+            self._muted = self.is_alive
+            self._events_cond.notify_all()
 
     def cancel_and_join(self, timeout: float = WORKER_JOIN_TIMEOUT_S) -> None:
         """Cancel and wait for the worker thread to finish.
@@ -203,6 +227,8 @@ class BackgroundWorker:
         # queue. The intent is "the worker is doing work right now,"
         # not "an SSE consumer received an event."
         self._last_activity = time.time()
+        if self._muted:
+            return  # a run the app has already let go of (see forget_runs)
         with self._events_cond:
             self._events.append(msg)
             if len(self._events) > _PROGRESS_QUEUE_MAX:

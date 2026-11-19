@@ -35,7 +35,8 @@ from bpp.db.photos import (
     soft_delete_photos,
     unhide_photos,
 )
-from bpp.errors import ValidationError
+from bpp.db.photos_lifecycle import sidecars_of
+from bpp.errors import ConflictError, ValidationError
 from bpp.utils.logging import get_logger
 from bpp.web.request_validation import field, validate_json
 from bpp.web.share import requires_local_app
@@ -112,12 +113,25 @@ def api_photos_delete_permanent() -> tuple[Response, int]:
     filepaths = data.get("filepaths", [])
     if not filepaths:
         raise ValidationError("filepaths required", field="filepaths")
+    if ctx.worker.is_alive or ctx.import_worker.is_alive:
+        # A run in progress holds these photos in memory and writes them
+        # back when it ends (rows, analysis file, cache): the delete
+        # would be undone. Same rule as Clear Library.
+        raise ConflictError(
+            "Photos can't be deleted permanently while an analysis or import is running; "
+            "try again when it has finished",
+            blocker="analysis_or_import",
+        )
     conn = ctx.get_conn()
     # Rows of this library that are in the recycle bin: the DB half only
     # ever deletes those, and the journal (replayed on disk after a
     # crash) must name no more than the DB half can delete — a photo
     # restored in another tab keeps its file.
     path_to_id = get_photo_id_map_by_paths(conn, filepaths, binned=True)
+    # A Live Photo's hidden companion frame (the one proven to be the
+    # same picture: see soft_delete_photos) is deleted with it.
+    companions = sidecars_of(conn, list(path_to_id.values()))
+    path_to_id.update(companions)
     # Grab sha256 before deletion (needed for content-addressed inpaint cache).
     # Helper lives in bp_photos_manage — lazy import avoids any
     # ordering-sensitivity from blueprint registration.
@@ -152,10 +166,13 @@ def api_photos_delete_permanent() -> tuple[Response, int]:
         result.removed,
     )
     ctx.invalidate_analysis()
+    # The owner chose photos; their companions are not counted as more.
+    companions_left = set(get_photo_id_map_by_paths(conn, list(companions)))
+    photos_deleted = result.rows_deleted - (len(companions) - len(companions_left))
     return jsonify(
         {
             "status": "partial" if result.failed else "ok",
-            "count": result.rows_deleted,
+            "count": max(0, photos_deleted),
             "files_removed": result.removed,
             "files_failed": result.failed,
         }

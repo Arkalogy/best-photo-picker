@@ -19,6 +19,7 @@ from typing import Any, TypedDict, cast
 from bpp.constants import SENSITIVE_NUDITY_THRESHOLD
 from bpp.scoring.registry import get_api_score_fields
 from bpp.utils.json_utils import safe_json_loads
+from bpp.utils.typed_values import as_date_text, as_float, as_int
 from bpp.web.thumbnails import ThumbnailCache
 
 
@@ -36,7 +37,12 @@ def is_sensitive_item(item: dict[str, Any], threshold: float = SENSITIVE_NUDITY_
     override = item.get("sensitive_override")
     if override is not None:
         return bool(override)
-    return (item.get("nudity_score") or 0) >= threshold
+    score = item.get("nudity_score")
+    if score is not None and as_float(score) is None:
+        # Not a number (a library can hold any text there). SQLite sorts
+        # text above every number, so the SQL side flags it: so do we.
+        return True
+    return (score or 0) >= threshold
 
 
 class PhotoDict(TypedDict, total=False):
@@ -102,6 +108,12 @@ class PhotoMapDict(TypedDict):
     aggregate_score: float
 
 
+def _number(value: Any) -> Any:
+    """A score or a count as stored (int stays int), or None when the
+    stored value isn't a number."""
+    return value if as_float(value) is not None else None
+
+
 def build_photo_dict(
     item: dict[str, Any],
     thumbs: ThumbnailCache | None,
@@ -120,37 +132,37 @@ def build_photo_dict(
     """
     fp = item["filepath"]
     photo: PhotoDict = {
-        "id": item.get("id"),
+        "id": as_int(item.get("id")),
         "filepath": fp,
         "filename": os.path.basename(fp),
-        "date": item.get("date") or "",
-        "date_day": item.get("date_day") or "",
-        "date_month": item.get("date_month") or "",
-        "file_size": item.get("file_size") or 0,
+        "date": as_date_text(item.get("date")),
+        "date_day": as_date_text(item.get("date_day")),
+        "date_month": as_date_text(item.get("date_month")),
+        "file_size": as_int(item.get("file_size")) or 0,
         "thumb_hash": thumbs.get_hash(fp) if thumbs else "",
-        "cluster_size": item.get("cluster_size") or 1,
-        "dup_cluster_id": item.get("dup_cluster_id") or 0,
-        "moment_cluster_id": item.get("moment_cluster_id") or 0,
-        "moment_size": item.get("moment_size") or 1,
+        "cluster_size": as_int(item.get("cluster_size")) or 1,
+        "dup_cluster_id": as_int(item.get("dup_cluster_id")) or 0,
+        "moment_cluster_id": as_int(item.get("moment_cluster_id")) or 0,
+        "moment_size": as_int(item.get("moment_size")) or 1,
         "deleted_at": item.get("deleted_at"),
         "hidden_at": item.get("hidden_at"),
         "is_video": bool(item.get("is_video")),
-        "video_duration": item.get("video_duration"),
-        "video_width": item.get("video_width"),
-        "video_height": item.get("video_height"),
-        "video_fps": item.get("video_fps"),
+        "video_duration": as_float(item.get("video_duration")),
+        "video_width": as_int(item.get("video_width")),
+        "video_height": as_int(item.get("video_height")),
+        "video_fps": as_float(item.get("video_fps")),
         "video_codec": item.get("video_codec"),
         "is_raw": bool(item.get("is_raw")),
         # Live Photo sidecar fields — sidecars are excluded from active
         # queries so is_live_photo_sidecar will always be 0 here, but
         # live_photo_sidecar_count > 0 on a parent triggers the ⊙ badge.
         "is_live_photo_sidecar": bool(item.get("is_live_photo_sidecar")),
-        "live_photo_sidecar_count": int(item.get("live_photo_sidecar_count") or 0),
+        "live_photo_sidecar_count": as_int(item.get("live_photo_sidecar_count")) or 0,
         # Sensitive flag: derived server-side so every consumer (export
         # gate, lightbox chip, grid filters) reads ONE verdict instead of
         # re-deriving with its own threshold.
         "is_sensitive": is_sensitive_item(item, sensitive_threshold),
-        "sensitive_override": item.get("sensitive_override"),
+        "sensitive_override": as_int(item.get("sensitive_override")),
     }
 
     # Add all score fields from registry. The TypedDict deliberately
@@ -159,11 +171,11 @@ def build_photo_dict(
     photo_dyn = cast(dict[str, Any], photo)
     for field_name, default in get_api_score_fields().items():
         if default is None:
-            photo_dyn[field_name] = item.get(field_name)  # Optional field
+            photo_dyn[field_name] = _number(item.get(field_name))  # Optional field
         elif isinstance(default, bool):
             photo_dyn[field_name] = bool(item.get(field_name))
         else:
-            photo_dyn[field_name] = item.get(field_name) or default
+            photo_dyn[field_name] = _number(item.get(field_name)) or default
     # EXIF metadata (stored as JSON text in DB).
     # cache the parsed result back on the item dict. The
     # `analysis` list is held in WebAppState across requests, so
@@ -209,12 +221,12 @@ def build_similar_entry(item: dict[str, Any], thumbs: Any, *, similarity: float 
         "filepath": fp,
         "thumb_hash": thumbs.get_hash(fp) if thumbs else "",
         "similarity": similarity,
-        "aggregate_score": item.get("aggregate_score") or 0,
-        "blur_score": item.get("blur_score") or 0,
-        "exposure_score": item.get("exposure_score") or 0,
-        "face_score": item.get("face_score") or 0,
-        "composition_score": item.get("composition_score") or 0,
-        "date_day": item.get("date_day") or "",
+        "aggregate_score": _number(item.get("aggregate_score")) or 0,
+        "blur_score": _number(item.get("blur_score")) or 0,
+        "exposure_score": _number(item.get("exposure_score")) or 0,
+        "face_score": _number(item.get("face_score")) or 0,
+        "composition_score": _number(item.get("composition_score")) or 0,
+        "date_day": as_date_text(item.get("date_day")),
         "filename": item.get("original_filename") or item.get("filename") or os.path.basename(fp),
     }
 

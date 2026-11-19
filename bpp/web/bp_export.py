@@ -16,6 +16,7 @@ from bpp.constants import WORKER_JOIN_TIMEOUT_S
 from bpp.errors import BppError, ConflictError, NotFoundError, ValidationError
 from bpp.output.export import export_selected
 from bpp.utils.logging import get_logger
+from bpp.utils.path_validation import FolderSet
 from bpp.web.share import requires_local_app
 from bpp.web.sse import captured_device_fingerprint, stream_worker_progress
 from bpp.web.state import get_ctx
@@ -81,6 +82,7 @@ def api_export() -> tuple[Response, int]:
             write_xmp=params.get("write_xmp", False),
             library_path=ctx.state.get("library_path", ""),
             strip_metadata=params.get("strip_metadata", True),
+            source_roots=_source_roots(ctx),
         )
     except Exception as e:
         raise BppError(
@@ -104,8 +106,29 @@ def api_export() -> tuple[Response, int]:
             "failed": result.failed,
             "disk_error": result.disk_error,
             "metadata_kept": result.metadata_kept,
+            "outside_source": result.outside_source,
         }
     ), 200
+
+
+def _source_roots(ctx) -> FolderSet:
+    """The folders an export may read photos from: the open library, its
+    workdir, and the folders the owner analyzed in place for this
+    library (in this run or an earlier one). All of them come from the
+    owner (launch arguments or their Analyze requests), never from the
+    library's rows."""
+    from bpp.utils.path_validation import build_library_allowlist
+
+    roots = build_library_allowlist(
+        library_path=ctx.state.get("library_path"), workdir=ctx.state.get("workdir")
+    )
+    from bpp.utils.path_validation import is_path_under_any
+
+    # Links inside the library's own folders are not the owner's: only
+    # folders outside it count as followed. Links resolved, so another
+    # spelling of a folder inside the library is still inside it.
+    followed = [f for f in sorted(ctx.export_followed_dirs) if not is_path_under_any(f, roots)]
+    return FolderSet([*roots, *sorted(ctx.export_source_dirs)], followed=followed)
 
 
 def _validate_export_params(ctx, params):
@@ -227,6 +250,7 @@ def api_export_start() -> tuple[Response, int]:
         write_xmp=params.get("write_xmp", False),
         library_path=ctx.state.get("library_path", ""),
         strip_metadata=params.get("strip_metadata", True),
+        source_roots=_source_roots(ctx),
     )
     if not started:
         raise ConflictError(

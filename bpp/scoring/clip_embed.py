@@ -191,6 +191,10 @@ def _get_text_session():
 # ---------------------------------------------------------------------------
 
 
+#: Longest side kept before resizing, in multiples of the short side.
+_MAX_ASPECT = 8
+
+
 def _preprocess(image: np.ndarray) -> np.ndarray:
     """Preprocess an image for CLIP: resize, center crop, normalize.
 
@@ -202,6 +206,20 @@ def _preprocess(image: np.ndarray) -> np.ndarray:
     """
     # Convert BGR to RGB
     rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB) if len(image.shape) == 3 else image
+
+    # A very long, thin image (over _MAX_ASPECT : 1): keep only the
+    # middle of the long side. The centre crop below never looks further
+    # out, and resizing the whole strip would allocate
+    # (long / short) x 224 x 224 pixels. Anything up to that shape,
+    # panoramas included, is prepared exactly as before.
+    h, w = rgb.shape[:2]
+    keep = _MAX_ASPECT * min(h, w)
+    if h > keep:
+        top = (h - keep) // 2
+        rgb = rgb[top : top + keep]
+    elif w > keep:
+        left = (w - keep) // 2
+        rgb = rgb[:, left : left + keep]
 
     # Resize shortest side to 224, then center crop
     h, w = rgb.shape[:2]

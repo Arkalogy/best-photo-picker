@@ -10,6 +10,7 @@ from bpp.db.clip import (
     CLIP_EMBEDDING_MAX_ROWS,
     CLIP_MAX_OVERRIDE_BYPASS,
     CLIP_MAX_OVERRIDE_KEY,
+    _rows_this_computer_holds,
 )
 from bpp.db.settings import get_setting
 from bpp.utils.logging import get_logger
@@ -32,7 +33,7 @@ def clip_cap_status(conn: Any, clip_count: int) -> dict[str, Any]:
     over_cap = clip_count > cap
     if not over_cap:
         state = "enabled"
-    elif overridden:
+    elif overridden and clip_count <= _rows_this_computer_holds():
         state = "enabled_override"
     else:
         state = "disabled_too_large"

@@ -33,6 +33,7 @@ from bpp.db.photos import (
 from bpp.errors import NotFoundError, ValidationError
 from bpp.utils.logging import get_logger
 from bpp.web.photo_dict import build_photo_dict_map
+from bpp.web.request_validation import json_bool
 from bpp.web.share import requires_local_app
 from bpp.web.state import get_ctx
 from bpp.web.thumbnails import ThumbnailCache
@@ -356,13 +357,13 @@ def api_batch_favorite() -> tuple[Response, int]:
     ctx = get_ctx()
     data = request.get_json(silent=True) or {}
     filepaths = data.get("filepaths", [])
-    favorite = data.get("favorite", True)
+    favorite = json_bool(data, "favorite", default=True)
     if not filepaths:
         raise ValidationError("filepaths required", field="filepaths")
     conn = ctx.get_conn()
     album_id = ensure_all_photos_album(conn)
     photo_ids = get_photo_ids_by_paths(conn, filepaths)
-    count = db_set_favorites_bulk(conn, album_id, photo_ids, bool(favorite))
+    count = db_set_favorites_bulk(conn, album_id, photo_ids, favorite)
     return jsonify({"status": "ok", "count": count}), 200
 
 

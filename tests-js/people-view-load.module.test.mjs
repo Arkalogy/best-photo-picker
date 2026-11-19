@@ -20,6 +20,7 @@ vi.mock("../bpp/web/static/js/modules/people-actions.mjs", () => ({
 }));
 vi.mock("../bpp/web/static/js/modules/people-review.mjs", () => ({
   getAmbiguousPairCount: () => 0,
+  isPairReviewOwnerOnly: () => false,
   refreshAmbiguousPairCount: vi.fn(),
 }));
 

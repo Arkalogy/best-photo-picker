@@ -61,6 +61,7 @@ def api_faces_threshold() -> tuple[Response, int]:
 
 
 @bp.get("/api/v1/faces/review-pairs/count")
+@requires_local_app
 @with_face_lock
 def api_faces_review_pairs_count() -> tuple[Response, int]:
     """Return just the count of reviewable ambiguous pairs.
@@ -74,6 +75,7 @@ def api_faces_review_pairs_count() -> tuple[Response, int]:
 
 
 @bp.get("/api/v1/faces/review-pairs/next")
+@requires_local_app
 @with_face_lock
 def api_faces_review_pairs_next() -> tuple[Response, int]:
     """Return ambiguous cluster pairs for the "Same person?" review flow.

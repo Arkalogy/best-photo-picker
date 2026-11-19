@@ -239,7 +239,7 @@ class TestGroupMinPhotosSetting:
         set_setting(conn, "group_min_photos", "2")
         assert group_min_photos(conn) == 2
         set_setting(conn, "group_min_photos", "0")
-        assert group_min_photos(conn) == 1, "must floor at 1"
+        assert group_min_photos(conn) == 3, "outside the setting's 1-10 range: the default"
         set_setting(conn, "group_min_photos", "junk")
         assert group_min_photos(conn) == 3, "junk falls back to default"
         conn.close()

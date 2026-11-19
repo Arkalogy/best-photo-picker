@@ -245,15 +245,23 @@ class TestRemoveModelDispatch:
         self,
         face_embeddings_db: sqlite3.Connection,
     ) -> None:
-        """Removing SFace is meaningful only via the remote-registry
-        overlay; the in-process removal must refuse with
-        a directive message."""
-        with pytest.raises(ModelRemovalError, match="built-in"):
+        """A built-in entry can't be removed in-process (it follows the
+        signed registry). Asked without a purge, the removal refuses and
+        says nothing was changed; asked with one, the purge stands and
+        the result says the entry stayed."""
+        with pytest.raises(ModelRemovalError, match="built-in") as refused:
             remove_model_with_derived_choice(
                 "sface_yunet",
-                purge_derived=True,
+                purge_derived=False,
                 conn=face_embeddings_db,
             )
+        assert "Nothing was changed" in str(refused.value)
+        result = remove_model_with_derived_choice(
+            "sface_yunet",
+            purge_derived=True,
+            conn=face_embeddings_db,
+        )
+        assert result.entry_kind == "built_in" and result.entry_removed is False
 
     def test_unknown_id_raises_no_built_in_no_byom(
         self,

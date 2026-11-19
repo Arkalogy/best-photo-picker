@@ -25,7 +25,7 @@
 
 import { apiFetch } from "./api-client.mjs";
 import { state } from "./state.mjs";
-import { esc, escapeAttr } from "./text-format.mjs";
+import { esc, escapeAttr, escVal } from "./text-format.mjs";
 import { loadAlbumList } from "./albums.mjs";
 import { loadFaceClusters, refreshSmartAlbums } from "./faces.mjs";
 import { toast, toastError } from "./toast.mjs";
@@ -170,7 +170,7 @@ export function _reviewAutocomplete(query) {
   if (matches.length === 0) { dropdown.innerHTML = ""; return; }
 
   dropdown.innerHTML = matches.map(a =>
-    `<div class="review-ac-item" data-action="_reviewSelectMerge" data-arg0="${a.rule.cluster_id}" data-arg1="${escapeAttr(a.name)}">
+    `<div class="review-ac-item" data-action="_reviewSelectMerge" data-arg0="${escVal(a.rule.cluster_id)}" data-arg1="${escapeAttr(a.name)}">
       Merge into <strong>${esc(a.name)}</strong>
     </div>`
   ).join("");
@@ -335,6 +335,7 @@ import {
   _renderPairReviewCard,
   _showPairReviewOverlay,
   getAmbiguousPairCount,
+  isPairReviewOwnerOnly,
   refreshAmbiguousPairCount,
   startFacePairReview,
 } from "./people-pair-review.mjs";
@@ -346,6 +347,7 @@ export {
   _renderPairReviewCard,
   _showPairReviewOverlay,
   getAmbiguousPairCount,
+  isPairReviewOwnerOnly,
   refreshAmbiguousPairCount,
   startFacePairReview,
 };

@@ -9,6 +9,8 @@ catalog download endpoints live in ``bp_catalog``.
 
 from __future__ import annotations
 
+import os
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +26,7 @@ from bpp.registry import (
     remove_model_with_derived_choice,
 )
 from bpp.utils.logging import get_logger
+from bpp.web.request_validation import json_bool
 from bpp.web.share import requires_local_app
 
 log = get_logger(__name__)
@@ -165,13 +168,15 @@ def api_remove_model() -> tuple[Any, int]:
     model_id = (body.get("model_id") or "").strip()
     if not model_id:
         raise ValidationError("model_id is required")
-    if "purge_derived" not in body:
-        raise ValidationError(
+    purge_derived = json_bool(
+        body,
+        "purge_derived",
+        missing_message=(
             "purge_derived is required (true or false). The endpoint "
             "fails closed because a silent default that leaves "
             "biometric data behind would undercut the privacy posture."
-        )
-    purge_derived = bool(body.get("purge_derived"))
+        ),
+    )
     ctx = get_ctx()
     conn = ctx.get_conn()
     try:
@@ -180,8 +185,16 @@ def api_remove_model() -> tuple[Any, int]:
         conn.rollback()
         raise ValidationError(str(exc)) from exc
     conn.commit()
+    if result.purged:
+        # The face pictures cut from the photos and the grouping held in
+        # memory are the same data in another form.
+        crop_dir = ctx.dirs.get("face_crops")
+        if crop_dir and os.path.isdir(crop_dir) and not os.path.islink(crop_dir):
+            shutil.rmtree(crop_dir, ignore_errors=True)
+        ctx.invalidate_face_cluster_map()
     log.info(
-        "Model removed via API: id=%s kind=%s purged=%s",
+        "Model %s via API: id=%s kind=%s purged=%s",
+        "removed" if result.entry_removed else "data purged (built-in entry kept)",
         result.model_id,
         result.entry_kind,
         result.purged,
@@ -195,6 +208,7 @@ def api_remove_model() -> tuple[Any, int]:
                 "distinct_clusters_affected": (result.derived_summary.distinct_clusters),
                 "distinct_photos_affected": (result.derived_summary.distinct_photos),
                 "purged": result.purged,
+                "entry_removed": result.entry_removed,
             }
         ),
         200,

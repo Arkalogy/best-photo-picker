@@ -106,6 +106,13 @@ class WorkerPool:
 
     # ── lifecycle ──
 
+    def forget_runs(self) -> None:
+        """Every worker drops its last run's log (see BaseWorker.forget_runs)."""
+        for worker in self._workers.values():
+            forget = getattr(worker, "forget_runs", None)
+            if callable(forget):
+                forget()
+
     def cancel_and_join_all(self, timeout: float) -> None:
         """Cancel every worker, wait up to ``timeout`` seconds for each
         to finish. Continues through workers that fail to join — the

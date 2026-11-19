@@ -15,6 +15,7 @@
  */
 
 import { focusInto, restoreFocusFrom } from "./dialog-focus.mjs";
+import { escVal } from "./text-format.mjs";
 
 /** @type {((value: any) => void) | null} */
 let _modalResolve = null;
@@ -51,7 +52,7 @@ export function showModal(icon, title, body, opts) {
     const dangerClass = opts.danger ? "modal-btn-danger" : "modal-btn-primary";
     actionsEl.innerHTML = `
       <button class="modal-btn modal-btn-secondary" data-action="resolveModal" data-arg0="false">Cancel</button>
-      <button class="modal-btn ${dangerClass}" data-action="resolveModal" data-arg0="true">${opts.confirm}</button>
+      <button class="modal-btn ${dangerClass}" data-action="resolveModal" data-arg0="true">${escVal(opts.confirm)}</button>
     `;
   } else {
     actionsEl.innerHTML =

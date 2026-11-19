@@ -9,10 +9,10 @@
  * keep working unchanged.
  */
 
-import { apiFetch, authedSrc } from "./api-client.mjs";
+import { apiFetch, thumbUrl } from "./api-client.mjs";
 import { viewFetch } from "./view-guard.mjs";
 import { toast, toastError } from "./toast.mjs";
-import { esc, escapeAttr } from "./text-format.mjs";
+import { esc, escapeAttr, escVal } from "./text-format.mjs";
 
 /**
  * @typedef {Object} Memory
@@ -87,11 +87,11 @@ export function renderMemoriesSidebar() {
     .slice(0, 8)
     .map((m) => {
       const dateRange = _memoryDateRange(m);
-      return `<div class="memory-card" tabindex="0" role="button" data-key-activate data-action="openMemory" data-arg0="${m.id}" title="${escapeAttr(m.title)}">
-      <div class="memory-card-bg"${m.hero_hash ? ` style="background-image:url(${authedSrc("/thumb/" + m.hero_hash)})"` : ""}></div>
+      return `<div class="memory-card" tabindex="0" role="button" data-key-activate data-action="openMemory" data-arg0="${escVal(m.id)}" title="${escapeAttr(m.title)}">
+      <div class="memory-card-bg"${m.hero_hash ? ` style="background-image:url(${thumbUrl(m.hero_hash)})"` : ""}></div>
       <div class="memory-card-overlay">
         <div class="memory-card-title">${esc(m.title)}</div>
-        <div class="memory-card-meta">${m.photo_count} photos${dateRange ? " &middot; " + esc(dateRange) : ""}</div>
+        <div class="memory-card-meta">${escVal(m.photo_count)} photos${dateRange ? " &middot; " + esc(dateRange) : ""}</div>
       </div>
     </div>`;
     })

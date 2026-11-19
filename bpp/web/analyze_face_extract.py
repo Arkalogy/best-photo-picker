@@ -286,11 +286,9 @@ def _config_uses_process_pool(config_snapshot: dict[str, Any]) -> bool:
     Python interpreter, so memory reclaims at pool close. Chunking
     on top of that would just pay the model-load cost N extra times.
     """
-    try:
-        n_workers = int(config_snapshot.get("_face_extract_workers") or 1)
-    except (TypeError, ValueError):
-        n_workers = 1
-    if n_workers <= 1:
+    from bpp.web.face_extraction_phase5 import face_worker_count
+
+    if face_worker_count(config_snapshot) <= 1:
         return False
     pool_kind = (config_snapshot.get("_face_extract_pool") or "process").lower()
     return pool_kind == "process"

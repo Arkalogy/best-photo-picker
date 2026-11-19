@@ -120,6 +120,20 @@ const RULES = [
       `Couldn’t find “${m[1]}” after ${m[2] === "re-clustering" ? "re-clustering" : "the face-model switch"} — the name comes back when their photos are found again`,
   },
 
+  // ── Sharing: settings that came with a library folder were removed ────
+  {
+    re: /^Sharing was turned off for this library/i,
+    level: "WARNING",
+    text: "Sharing was turned off: this library’s sharing settings were not made by this copy of the app (a library from another computer or account, or one first opened after an update). Turn it on again in Settings → Share",
+  },
+
+  // ── File permissions had no effect: the database is readable ──────────
+  {
+    re: /^This library's database can be read by other accounts/i,
+    level: "WARNING",
+    text: "Other accounts on this computer can read this library’s database, sharing link included: its file permissions could not be restricted",
+  },
+
   // ── Startup / backfill / recovery noise (all hidden) ──────────────────
   { re: /backfill/i, hide: true },
   { re: /^Smart album/i, hide: true },

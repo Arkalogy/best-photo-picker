@@ -61,8 +61,19 @@ function _onConfirmKey(e) {
   if (e.key === "Escape") {
     e.stopPropagation();
     e.stopImmediatePropagation();
-    resolveConfirm(false);
+    dismissConfirm();
   }
+}
+
+/**
+ * Esc, or a click on the backdrop: cancel the dialog. Not while it
+ * shows work in progress (its Close button is disabled until the work
+ * ends): hiding it then would also hide how the work ended.
+ */
+export function dismissConfirm() {
+  const overlay = document.getElementById("confirm-overlay");
+  if (overlay?.querySelector("button:disabled")) return;
+  resolveConfirm(false);
 }
 
 /**

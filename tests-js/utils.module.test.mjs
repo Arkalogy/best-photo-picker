@@ -9,6 +9,7 @@ import {
   hide,
   openBrowser,
   openExportBrowser,
+  outsideSourceMessage,
   recomputeHashes,
   show,
   toggleExportQuality,
@@ -430,5 +431,26 @@ describe("doExport after a cancel", () => {
     expect(document.querySelector("#toast-container .toast")?.textContent).toContain(
       "Export stopped after 12 photos"
     );
+  });
+});
+
+describe("outsideSourceMessage", () => {
+  test("says nothing when no file was refused", () => {
+    expect(outsideSourceMessage({ failed: 2, outside_source: 0 })).toBe("");
+    expect(outsideSourceMessage({ failed: 0 })).toBe("");
+  });
+
+  test("names the reason and the way out for one refused file", () => {
+    const msg = outsideSourceMessage({ failed: 1, outside_source: 1 });
+    expect(msg).toContain("1 photo wasn't exported");
+    expect(msg).toContain("outside this library");
+    expect(msg).toContain("Analyze that folder again");
+    expect(msg).not.toContain("more failed");
+  });
+
+  test("counts several refused files and the other failures apart", () => {
+    const msg = outsideSourceMessage({ failed: 5, outside_source: 3 });
+    expect(msg).toContain("3 photos weren't exported");
+    expect(msg).toContain("2 more failed");
   });
 });

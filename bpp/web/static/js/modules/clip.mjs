@@ -14,7 +14,7 @@
  * still reference these names.
  */
 
-import { apiFetch, authEventSource, authedSrc } from "./api-client.mjs";
+import { apiFetch, authEventSource, thumbUrl } from "./api-client.mjs";
 import { parseSSE } from "./format-helpers.mjs";
 import { escapeAttr } from "./text-format.mjs";
 import { showToast, toast, toastError } from "./toast.mjs";
@@ -182,16 +182,21 @@ async function _setClipCapOverride(enable) {
       clip_cap_status: data.clip_cap_status,
       clip_cap: data.clip_cap,
       clip_cap_peak_mb: data.clip_cap_peak_mb,
-      // re-render needs the photo count too; the override response
-      // doesn't ship it, but the active-state message only depends
-      // on the cap + peak so an empty count is fine here.
-      clip_embedding_count: 0,
+      clip_embedding_count: data.clip_embedding_count || 0,
     });
-    toast(
-      enable
-        ? "Semantic dedup enabled — restart not required"
-        : "Semantic dedup disabled — cap will apply on next load",
-    );
+    if (enable && data.clip_cap_status === "disabled_too_large") {
+      // Raised as far as this computer's memory allows, and still not enough.
+      toast(
+        "Semantic dedup stays off: this library is larger than this computer's memory can hold",
+        true,
+      );
+    } else {
+      toast(
+        enable
+          ? "Semantic dedup enabled — restart not required"
+          : "Semantic dedup disabled — cap will apply on next load",
+      );
+    }
   } catch (e) {
     console.warn("clip_max_override toggle failed:", e);
     toastError("save the setting", e);
@@ -306,12 +311,12 @@ export function updateLightboxSimilar(p) {
       strip.classList.add("lb-moment-strip");
       strip.innerHTML =
         `<div class="lb-similar-item lb-moment-current" title="This photo">` +
-        `<img src="${authedSrc("/thumb/" + p.thumb_hash)}" alt="" data-onerror="_bppThumbBroken"></div>` +
+        `<img src="${thumbUrl(p.thumb_hash)}" alt="" data-onerror="_bppThumbBroken"></div>` +
         p.similar_photos
           .map(
             (s, i) =>
               `<div class="lb-similar-item" data-action="_openSiblingCompare" data-arg0="${i}" title="Compare with this shot">
-        <img src="${authedSrc("/thumb/" + s.thumb_hash)}" alt="" data-onerror="_bppThumbBroken">
+        <img src="${thumbUrl(s.thumb_hash)}" alt="" data-onerror="_bppThumbBroken">
       </div>`,
           )
           .join("");
@@ -328,7 +333,7 @@ export function updateLightboxSimilar(p) {
             ? `${(s.similarity * 100).toFixed(0)}% similar — click to compare`
             : "Similar shot — click to compare";
           return `<div class="lb-similar-item" data-action="_openSiblingCompare" data-arg0="${i}" title="${escapeAttr(title)}">
-        <img src="${authedSrc("/thumb/" + s.thumb_hash)}" alt="" data-onerror="_bppThumbBroken">
+        <img src="${thumbUrl(s.thumb_hash)}" alt="" data-onerror="_bppThumbBroken">
         <span class="lb-similar-pct">${pct}</span>
       </div>`;
         })

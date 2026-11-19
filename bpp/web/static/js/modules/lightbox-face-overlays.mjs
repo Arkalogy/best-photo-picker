@@ -25,7 +25,7 @@
 
 import { apiFetch, faceCropUrl } from "./api-client.mjs";
 import { appConfirm } from "./dialogs.mjs";
-import { esc, escapeAttr } from "./text-format.mjs";
+import { esc, escapeAttr, escVal } from "./text-format.mjs";
 import { toast, toastError } from "./toast.mjs";
 import { switchAlbum } from "./albums.mjs";
 import { _iphShowTagPicker } from "./inspector.mjs";
@@ -101,10 +101,10 @@ export async function updateLightboxFaces(p) {
     .map((f) => {
       const name = f.name || personDisplayName(f.cluster_id) || `Person ${f.cluster_id + 1}`;
       const cropUrl = faceCropUrl(p.thumb_hash, f.face_index);
-      return `<div class="lb-face-chip" data-cluster-id="${f.cluster_id}" data-action="_lbOpenPersonAlbum" data-pass-event="true" data-arg0="${f.cluster_id}" data-oncontextmenu="showPersonCtxMenu" title="Open ${escapeAttr(name)}'s photos &nbsp;·&nbsp; right-click for options">
+      return `<div class="lb-face-chip" data-cluster-id="${escVal(f.cluster_id)}" data-action="_lbOpenPersonAlbum" data-pass-event="true" data-arg0="${escVal(f.cluster_id)}" data-oncontextmenu="showPersonCtxMenu" title="Open ${escapeAttr(name)}'s photos &nbsp;·&nbsp; right-click for options">
       <img src="${cropUrl}">
       <span class="lb-face-name">${esc(name)}</span>
-      <span class="lb-face-untag" title="Dismiss this detection (this photo only)" data-action="_lbDismissDetectedFace" data-pass-event="true" data-arg0="${f.face_id}" data-arg1="${escapeAttr(name)}">&#215;</span>
+      <span class="lb-face-untag" title="Dismiss this detection (this photo only)" data-action="_lbDismissDetectedFace" data-pass-event="true" data-arg0="${escVal(f.face_id)}" data-arg1="${escapeAttr(name)}">&#215;</span>
     </div>`;
     })
     .join("");
@@ -120,10 +120,10 @@ export async function updateLightboxFaces(p) {
       const img = avatarUrl
         ? `<img src="${avatarUrl}">`
         : `<span class="lb-face-add-icon" style="font-size:14px">&#128100;</span>`;
-      return `<div class="lb-face-chip" data-cluster-id="${pt.cluster_id}" data-action="_lbOpenPersonAlbum" data-pass-event="true" data-arg0="${pt.cluster_id}" data-oncontextmenu="showPersonCtxMenu" title="${escapeAttr(label)} (tagged) &nbsp;·&nbsp; click to open ${escapeAttr(label)}'s photos">
+      return `<div class="lb-face-chip" data-cluster-id="${escVal(pt.cluster_id)}" data-action="_lbOpenPersonAlbum" data-pass-event="true" data-arg0="${escVal(pt.cluster_id)}" data-oncontextmenu="showPersonCtxMenu" title="${escapeAttr(label)} (tagged) &nbsp;·&nbsp; click to open ${escapeAttr(label)}'s photos">
       ${img}
       <span class="lb-face-name">${esc(label)}</span>
-      <span class="lb-face-untag" title="Remove tag (this photo only)" data-action="_lbUntagPerson" data-pass-event="true" data-arg0="${p.thumb_hash}" data-arg1="${pt.cluster_id}">&#215;</span>
+      <span class="lb-face-untag" title="Remove tag (this photo only)" data-action="_lbUntagPerson" data-pass-event="true" data-arg0="${escVal(p.thumb_hash)}" data-arg1="${escVal(pt.cluster_id)}">&#215;</span>
     </div>`;
     })
     .join("");
@@ -139,7 +139,7 @@ export async function updateLightboxFaces(p) {
 
   const addChip =
     faceClusters.length > 0
-      ? `<div class="lb-face-chip lb-face-add" title="Tag a person" data-action="_iphShowTagPicker" data-pass-event="true" data-arg0="${p.thumb_hash}"><span class="lb-face-add-icon">+</span></div>`
+      ? `<div class="lb-face-chip lb-face-add" title="Tag a person" data-action="_iphShowTagPicker" data-pass-event="true" data-arg0="${escVal(p.thumb_hash)}"><span class="lb-face-add-icon">+</span></div>`
       : "";
 
   container.innerHTML = `<div class="lb-faces-label">People</div><div class="lb-faces-row">${chips}${tagChips}${unassignedChip}${addChip}</div>`;

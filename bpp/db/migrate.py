@@ -40,8 +40,19 @@ def migrate(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def import_from_analysis_json(conn: sqlite3.Connection, json_path: str) -> int:
-    """Import photos from a legacy analysis.json file. Returns count imported."""
+def import_from_analysis_json(
+    conn: sqlite3.Connection,
+    json_path: str,
+    *,
+    existing_only: bool = False,
+    workdir: str | None = None,
+    library_root: str | None = None,
+) -> int:
+    """Import photos from a legacy analysis.json file. Returns count imported.
+
+    With *existing_only*, entries for photos the library does not have
+    are left out: the file is older than the library's deletions, and
+    importing them would bring permanently deleted photos back."""
     if not os.path.exists(json_path):
         log.warning("analysis.json not found at %s", json_path)
         return 0
@@ -50,7 +61,27 @@ def import_from_analysis_json(conn: sqlite3.Connection, json_path: str) -> int:
     if data is None:  # load_json_file already logged why
         return 0
 
-    count = bulk_upsert_photos(conn, [d for d in data if isinstance(d, dict)])
+    # Each row is keyed on its path: an entry without a usable one is skipped.
+    rows = [
+        d
+        for d in data
+        if isinstance(d, dict) and isinstance(d.get("filepath"), str) and d["filepath"]
+    ]
+    if len(rows) < len(data):
+        log.warning(
+            "Skipped %d entries without a file path in %s", len(data) - len(rows), json_path
+        )
+    if existing_only:
+        known = {r[0] for r in conn.execute("SELECT filepath FROM photos")}
+        rows = [d for d in rows if d["filepath"] in known]
+    # Photos deleted for good whose removal from this file is still
+    # waiting (the rewrite failed, or has not run): never imported.
+    from bpp.db.analysis_leftovers import without_pending
+
+    # The note is in the workdir, or in the library root when a session
+    # kept its data there: every one is checked, whichever copy is read.
+    rows = without_pending(rows, workdir, os.path.dirname(json_path), library_root)
+    count = bulk_upsert_photos(conn, rows)
     log.info("Imported %d photos from %s", count, json_path)
     return count
 

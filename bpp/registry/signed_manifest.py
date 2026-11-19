@@ -321,7 +321,15 @@ def verify_manifest(
     errors.extend(sig_errors)
 
     trusted_by_id = {tk.key_id: tk for tk in trusted_keys}
-    payload = canonical_manifest_bytes(manifest)
+    try:
+        payload = canonical_manifest_bytes(manifest)
+    except (UnicodeError, TypeError, ValueError) as exc:
+        # Text JSON accepts but UTF-8 can't carry (a lone surrogate), or a
+        # value that can't be serialised: nothing was signed over it.
+        return ManifestVerificationResult(
+            is_valid=False,
+            errors=(*errors, f"manifest can't be encoded: {type(exc).__name__}"),
+        )
     # Deduplicate by key_id: the overlay merger gates restriction downgrades
     # on the COUNT of valid signatures as a proxy for "N distinct trusted
     # keys signed this". Counting raw signatures would let one key signing

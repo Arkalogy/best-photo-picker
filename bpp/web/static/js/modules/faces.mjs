@@ -20,7 +20,7 @@ import { apiFetch, faceCropUrl, LONG_OP_TIMEOUT_MS } from "./api-client.mjs";
 import { showModal } from "./modal.mjs";
 import {getSetting, saveSetting} from "./settings-client.mjs";
 import { showNudge } from "./nudges.mjs";
-import { esc, escapeAttr } from "./text-format.mjs";
+import { esc, escapeAttr, escVal } from "./text-format.mjs";
 import { toast, toastError } from "./toast.mjs";
 
 
@@ -240,7 +240,7 @@ export function renderFaceGallery() {
       const name = personDisplayName(c.cluster_id);
       const tip = name ? `${name} — ${c.photo_count} photos` : `${c.photo_count} photos`;
       const label = name || shortCount(c.photo_count);
-      return `<div class="boost-chip${sel}" data-action="toggleFace" data-arg0="${c.cluster_id}"
+      return `<div class="boost-chip${sel}" data-action="toggleFace" data-arg0="${escVal(c.cluster_id)}"
                  title="${escapeAttr(tip)}">
       <div class="boost-chip-img"><img src="${faceCropUrl(rep.thumb_hash, rep.face_index)}" loading="lazy"></div>
       <span class="boost-chip-name">${esc(label)}</span>

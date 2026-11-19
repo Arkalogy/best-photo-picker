@@ -15,7 +15,7 @@ import { state } from "./state.mjs";
 import { parseSSE } from "./format-helpers.mjs";
 import { showNudge } from "./nudges.mjs";
 import { toast, toastError } from "./toast.mjs";
-import { esc } from "./text-format.mjs";
+import { esc, escVal } from "./text-format.mjs";
 
 /**
  * Human-readable label per server-side phase. The server emits 7
@@ -114,7 +114,7 @@ export function listenImportProgress() {
         const banner = document.getElementById("analyzing-banner");
         if (banner) {
           banner.innerHTML =
-            `Analyzing ${msg.current}/${msg.total}…<div class="ab-progress">` +
+            `Analyzing ${escVal(msg.current)}/${escVal(msg.total)}…<div class="ab-progress">` +
             `<div class="ab-fill" id="ab-fill" style="width:${pct}%"></div></div>`;
         }
       }

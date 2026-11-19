@@ -152,7 +152,7 @@ bpp serve
 bpp serve --library ~/Photos/2024
 ```
 
-Your browser opens the app. If it doesn't, use the link the terminal prints: it carries a one-time key, so other programs on the machine can't open your library (pass `--open-loopback` to skip the key). Import folders, adjust scoring weights with sliders, and export your curated selection.
+Your browser opens the app. If it doesn't, use the link the terminal prints: it carries a key for this run only, so other programs on the machine can't open your library (pass `--open-loopback` to skip the key). Import folders, adjust scoring weights with sliders, and export your curated selection.
 
 ### CLI Mode (Batch Processing)
 
@@ -162,8 +162,10 @@ bpp run --input ~/Photos/MyKid --k 50 --out ~/curated --gallery
 
 # Or step-by-step:
 bpp analyze --input ~/Photos/MyKid --out ~/workdir
-bpp select --workdir ~/workdir --k 50 --out ~/curated --gallery
+bpp select --workdir ~/workdir --source-root ~/Photos/MyKid --k 50 --out ~/curated --gallery
 ```
+
+`bpp select` and `bpp pick` copy photos only from the workdir or library you point them at, plus any folder you name with `--source-root`. Name the folder you analyzed; a file anywhere else is skipped and reported.
 
 ## How It Works
 
@@ -260,7 +262,9 @@ on Apple Silicon (roughly 0.5 s/photo). Two config knobs let operators
 trade RAM for time:
 
 ```yaml
-# settings table or YAML config
+# YAML config file (--config). These describe the computer, not a
+# library, so they are not read from a library's settings table.
+# Workers are capped at 8 and at the number of CPU cores.
 _face_extract_workers: 4        # number of parallel workers
 _face_extract_pool: process     # "process" | "thread"
 ```
@@ -340,8 +344,8 @@ to the wrong person):
 - **Pending requests** with badge count when phones are waiting
 - **Trusted devices** with last-seen timestamps and a "previously
   revoked" tag if you'd kicked them before
-- **Recent access** — last 10 share-link auth events (deduped per
-  10-minute window)
+- **Recent access** — last 10 visits by approved devices, under the
+  name you approved them with (one per device per 10-minute window)
 
 ### Security model
 
@@ -378,9 +382,11 @@ docker pull ghcr.io/arkalogy/bppicker
 
 It has the web, HEIC and camera RAW support and every scorer except
 the legacy dlib face backend. Apart from two small detectors that ship
-inside the packages, models download on first use into the `/data`
+inside the packages, models download on first use into the `/state`
 volume, along with your model-license acceptances, so both survive
-re-creating the container. Create the host folders you mount before
+re-creating the container. `/state` is this installation's own folder
+and is kept apart from the library folder (`/data`). Create the host
+folders you mount before
 the first run: `--user` runs the container as you, so the files it
 writes are yours, and Docker would otherwise create missing folders
 owned by root, which the container then can't write to. There are two
@@ -398,10 +404,10 @@ you like:
 
 ```bash
 docker run --rm -it --no-healthcheck --user "$(id -u):$(id -g)" \
-    -v /path/to/bpp-data:/data ghcr.io/arkalogy/bppicker \
+    -v /path/to/bpp-state:/state ghcr.io/arkalogy/bppicker \
     bpp model accept-attribution
 docker run --rm --no-healthcheck --user "$(id -u):$(id -g)" \
-    -v /path/to/bpp-data:/data \
+    -v /path/to/bpp-state:/state \
     -v /path/to/photos:/photos:ro -v /path/to/best:/best \
     ghcr.io/arkalogy/bppicker \
     bpp run --input /photos --k 50 --out /best --copy
@@ -412,13 +418,21 @@ container points at `/photos/...`, which doesn't exist on the host.
 `--no-healthcheck` because the image's health check watches the
 app's web server, which a headless run doesn't start.
 
+Upgrading from an image that kept everything under `/data`: for
+headless use, mount the same host folder at `/state` instead of
+`/data`. For the full app, move the `.config` and `.cache` folders out
+of your library folder into a new folder and mount that at `/state`.
+Without the move, models download again, the license questions are
+asked again, and sharing settings stored in the library are turned off.
+
 **The full app.** `bpp serve` is the image's default command. Publish
 the port to the host's loopback only, and mount your photos so you
 can import them from `/photos`:
 
 ```bash
 docker run -d --name bpp --user "$(id -u):$(id -g)" -p 127.0.0.1:5001:5001 \
-    -v /path/to/library:/data -v /path/to/photos:/photos:ro \
+    -v /path/to/library:/data -v /path/to/bpp-state:/state \
+    -v /path/to/photos:/photos:ro \
     ghcr.io/arkalogy/bppicker
 docker logs bpp 2>&1 | grep 'Open Best Photo Picker at' | tail -1
 ```
@@ -461,10 +475,10 @@ bpp serve [--library PATH] [--host HOST] [--port 5001] [--no-browser] [--open-lo
 bpp demo [--port 5001] [--no-browser] [--open-loopback] [--keep]
 bpp web [--input DIR] [--workdir DIR] [--host HOST] [--port 5001] [--no-browser] [--open-loopback]
 bpp analyze --input DIR --out WORKDIR [--config FILE] [--max N] [--workers K]
-bpp select --workdir DIR --k N --out DIR [--copy|--hardlink|--symlink] [--gallery]
+bpp select --workdir DIR --k N --out DIR [--source-root DIR]... [--copy|--hardlink|--symlink] [--gallery]
 bpp run --input DIR --k N --out DIR [all options from analyze + select]
 bpp pick LIBRARY [--top N] [--boost-face NAME]... [--out DIR] [--json|--paths-only]
-                 [--quality original|high|medium|low] [--dry-run]
+                 [--quality original|high|medium|low] [--source-root DIR]... [--dry-run]
 bpp model {list|accept|accept-attribution|accepted|use-context|byom|remove|registry}
                  — text-mode parity with the GUI click-through for
                    restricted-license models. Use when running headless,

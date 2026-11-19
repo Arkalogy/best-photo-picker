@@ -340,7 +340,7 @@ function _renderRow(entry) {
       </div>
     </td>
     <td class="fe-cell-license">
-      <span class="${licenseClass}" title="${escapeAttr(licenseTip)}">${licenseText}</span>
+      <span class="${escapeAttr(licenseClass)}" title="${escapeAttr(licenseTip)}">${esc(licenseText)}</span>
       ${licenseDetail}
     </td>
     <td class="fe-cell-status">${_statusCell(state)}</td>

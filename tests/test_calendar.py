@@ -77,13 +77,13 @@ class TestGetDailyCounts:
         result = get_daily_counts(conn, 2024, 6)
         assert len(result) == 1
 
-    def test_top_photo_hash(self, conn):
-        """Each day should include the hash of the top-scored photo."""
+    def test_top_photo_of_the_day(self, conn):
+        """Each day names its top-scored photo."""
         _insert(conn, "/a.jpg", "2024-06-15 10:00:00", 0.3)
         _insert(conn, "/b.jpg", "2024-06-15 14:00:00", 0.9)
         result = get_daily_counts(conn, 2024, 6)
         assert len(result) == 1
-        assert result[0]["top_hash"] == "/b.jpg"  # sha256 = filepath in test
+        assert result[0]["top_path"] == "/b.jpg"  # the highest scored
 
     def test_padded_month(self, conn):
         """Single-digit months should work correctly."""

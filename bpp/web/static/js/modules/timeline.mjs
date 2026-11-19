@@ -14,7 +14,7 @@
  */
 
 import { MONTHS_FULL, MONTHS_SHORT } from "./date-format.mjs";
-import { escapeAttr } from "./text-format.mjs";
+import { escapeAttr, escVal } from "./text-format.mjs";
 
 /** @type {string | null} Active month filter, e.g. "2024-01". */
 let timelineFilter = null;
@@ -113,10 +113,10 @@ export function buildTimeline() {
       '<div class="tl-seg' +
       active +
       '" data-month="' +
-      mo +
+      escVal(mo) +
       '"' +
       ' data-action="applyTimelineFilter" data-arg0="' +
-      mo +
+      escVal(mo) +
       '"' +
       ' title="' +
       escapeAttr(label) +
@@ -127,7 +127,7 @@ export function buildTimeline() {
       h +
       'px"></div>' +
       (showLabel
-        ? '<div class="tl-seg-label">' + _tlShort(mo) + "</div>"
+        ? '<div class="tl-seg-label">' + escVal(_tlShort(mo)) + "</div>"
         : '<div class="tl-seg-label tl-seg-label-empty"></div>') +
       "</div>";
   });
@@ -137,7 +137,7 @@ export function buildTimeline() {
     const ct = counts[timelineFilter] || 0;
     html +=
       '<div class="tl-active-chip" data-action="clearTimelineFilter">' +
-      _tlLabel(timelineFilter) +
+      escVal(_tlLabel(timelineFilter)) +
       " (" +
       ct +
       ') <span class="tl-clear">&times;</span></div>';

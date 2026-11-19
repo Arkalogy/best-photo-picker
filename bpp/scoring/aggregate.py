@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from typing import Any
 
 import cv2
@@ -50,6 +51,9 @@ log = get_logger(__name__)
 
 _DEFAULT_FACE_CONF = DEFAULTS["face_detection_confidence"]
 DB_NAME = "analysis_cache.db"
+#: One writer of analysis.json at a time in this process: the analysis
+#: that writes it, and the rewrite after a permanent delete.
+ANALYSIS_FILE_LOCK = threading.Lock()
 
 
 def init_analysis_db(db_path: str) -> None:
@@ -462,7 +466,7 @@ def analyze_all(
     from bpp.utils.retry import retry_io
 
     def _write():
-        with open(results_path, "w") as f:
+        with ANALYSIS_FILE_LOCK, open(results_path, "w") as f:
             json.dump(valid, f, indent=2)
 
     results_path = os.path.join(workdir, "analysis.json")
@@ -471,8 +475,10 @@ def analyze_all(
     return {"processed": len(valid), "skipped": skipped, "results": valid}
 
 
-def load_analysis(workdir: str) -> list[dict[str, Any]]:
-    """Load previously saved analysis results."""
+def load_analysis(workdir: str, *, notes_in: tuple[str | None, ...] = ()) -> list[dict[str, Any]]:
+    """Load previously saved analysis results, without the photos noted
+    as deleted for good: in a note beside the file, or in the library's
+    other folders (*notes_in*: its workdir and its root)."""
     from bpp.utils.retry import retry_io
 
     results_path = os.path.join(workdir, "analysis.json")
@@ -484,4 +490,7 @@ def load_analysis(workdir: str) -> list[dict[str, Any]]:
             data = f.read()
         return safe_json_loads(data, [], context="analysis.json", expected_type=list)
 
-    return retry_io(_read, label="load_analysis_json")
+    from bpp.db.analysis_leftovers import without_pending
+
+    # Photos deleted for good whose removal from the file is still waiting.
+    return without_pending(retry_io(_read, label="load_analysis_json"), workdir, *notes_in)

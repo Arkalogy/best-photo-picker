@@ -8,11 +8,11 @@
  * updateBreadcrumbs / saveNavState — all still classic state.
  */
 
-import { apiFetch, authedSrc } from "./api-client.mjs";
+import { apiFetch, thumbUrl } from "./api-client.mjs";
 import { viewFetch } from "./view-guard.mjs";
 import { state } from "./state.mjs";
 import { toast, toastError } from "./toast.mjs";
-import { esc } from "./text-format.mjs";
+import { esc, escVal } from "./text-format.mjs";
 import { renderGridFromItems } from "./memories.mjs";
 
 /**
@@ -93,17 +93,17 @@ export function renderOnThisDay() {
         .slice(1, 3)
         .map((p, i) =>
           p.hash
-            ? `<div class="otd-fan otd-fan-${i + 1}" style="background-image:url(${authedSrc("/thumb/" + p.hash)})"></div>`
+            ? `<div class="otd-fan otd-fan-${i + 1}" style="background-image:url(${thumbUrl(p.hash)})"></div>`
             : "",
         )
         .join("");
-      return `<div class="otd-card" tabindex="0" role="button" data-key-activate data-action="openOnThisDayYear" data-arg0="${yr.year}" data-arg1="${m}" data-arg2="${d}" title="${yr.years_ago} year${yr.years_ago !== 1 ? "s" : ""} ago">
+      return `<div class="otd-card" tabindex="0" role="button" data-key-activate data-action="openOnThisDayYear" data-arg0="${escVal(yr.year)}" data-arg1="${escVal(m)}" data-arg2="${escVal(d)}" title="${escVal(yr.years_ago)} year${yr.years_ago !== 1 ? "s" : ""} ago">
       ${fanHtml}
       <div class="otd-card-main">
-        <div class="memory-card-bg"${yr.hero_hash ? ` style="background-image:url(${authedSrc("/thumb/" + yr.hero_hash)})"` : ""}></div>
+        <div class="memory-card-bg"${yr.hero_hash ? ` style="background-image:url(${thumbUrl(yr.hero_hash)})"` : ""}></div>
         <div class="memory-card-overlay">
-          <div class="memory-card-title">${yr.year}</div>
-          <div class="memory-card-meta">${yr.years_ago} year${yr.years_ago !== 1 ? "s" : ""} ago &middot; ${yr.count} photo${yr.count !== 1 ? "s" : ""}</div>
+          <div class="memory-card-title">${escVal(yr.year)}</div>
+          <div class="memory-card-meta">${escVal(yr.years_ago)} year${yr.years_ago !== 1 ? "s" : ""} ago &middot; ${escVal(yr.count)} photo${yr.count !== 1 ? "s" : ""}</div>
         </div>
       </div>
     </div>`;

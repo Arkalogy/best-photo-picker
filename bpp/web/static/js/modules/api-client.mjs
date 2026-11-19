@@ -62,6 +62,33 @@ export function authedSrc(url) {
 }
 
 /**
+ * One path segment of a URL, from a value the library supplied. Encodes
+ * everything `encodeURIComponent` does plus the characters it leaves
+ * that end a quoted attribute or a CSS `url(...)`, so the result can be
+ * written into either.
+ * @param {unknown} value
+ * @returns {string}
+ */
+function _segment(value) {
+  return encodeURIComponent(String(value)).replace(
+    /['()!*]/g,
+    (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase()
+  );
+}
+
+/**
+ * The (authed) URL of a photo's thumbnail: built here, nowhere else.
+ * `version` (any changing value) makes the browser fetch it again.
+ * @param {unknown} thumbHash
+ * @param {unknown} [version]
+ * @returns {string}
+ */
+export function thumbUrl(thumbHash, version) {
+  const again = version == null ? "" : "?t=" + _segment(version);
+  return authedSrc("/thumb/" + _segment(thumbHash) + again);
+}
+
+/**
  * The (authed) URL of one face's crop: built here, nowhere else.
  * @param {string} thumbHash
  * @param {number | string} faceIndex
@@ -69,7 +96,7 @@ export function authedSrc(url) {
  */
 export function faceCropUrl(thumbHash, faceIndex) {
   return authedSrc(
-    `/api/v1/faces/crop/${encodeURIComponent(thumbHash)}/${encodeURIComponent(String(faceIndex))}`
+    `/api/v1/faces/crop/${_segment(thumbHash)}/${_segment(faceIndex)}`
   );
 }
 
@@ -80,7 +107,7 @@ export function faceCropUrl(thumbHash, faceIndex) {
  */
 export function petCropUrl(thumbHash, detectionIndex) {
   return authedSrc(
-    `/api/v1/pets/crop/${encodeURIComponent(thumbHash)}/${encodeURIComponent(String(detectionIndex))}`
+    `/api/v1/pets/crop/${_segment(thumbHash)}/${_segment(detectionIndex)}`
   );
 }
 
@@ -118,7 +145,9 @@ export async function apiFetch(url, opts) {
     // disabled, token rotated). Reload → server serves the appropriate
     // page (pair.html with revoked state, or full SPA if still trusted).
     // Only fires once to avoid a storm if many in-flight calls all 403.
-    if (resp.status === 403 && !_sessionLostHandled) {
+    // (Not for "this is the owner's": a paired device that asks for an
+    // owner-only route keeps its session; the caller shows the refusal.)
+    if (resp.status === 403 && body.code !== "owner_only" && !_sessionLostHandled) {
       _sessionLostHandled = true;
       // Tiny delay so any cleanup tasks (timers, abort signals) settle.
       // The reload carries the boot key only to a listener that proved
@@ -133,6 +162,12 @@ export async function apiFetch(url, opts) {
     );
     err.status = resp.status;
     err.body = body;
+    if (body.code === "owner_only") {
+      // In words a person on a paired phone can act on; toastError
+      // reads the flag (no "try again": it can't work from here).
+      /** @type {any} */ (err).ownerOnly = true;
+      err.message = "only the computer running Best Photo Picker can do this";
+    }
     throw err;
   }
   return resp.json();

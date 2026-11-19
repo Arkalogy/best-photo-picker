@@ -5,7 +5,7 @@ from __future__ import annotations
 import errno
 import os
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -32,6 +32,7 @@ from bpp.output.export_modes import (  # noqa: F401 — re-exported for plugins/
 )
 from bpp.output.export_reports import _write_manifest, _write_reports
 from bpp.utils.logging import get_logger
+from bpp.utils.path_validation import FolderSet
 from bpp.utils.paths import safe_join
 from bpp.utils.video import is_video_file
 
@@ -47,6 +48,11 @@ __all__ = [
 ]
 
 log = get_logger(__name__)
+
+#: ``reason`` of a per-photo failure refused by ``source_roots``, and the
+#: text shown for it.
+OUTSIDE_SOURCE = "outside_source"
+OUTSIDE_SOURCE_ERROR = "the file is outside the folders this export may read"
 
 
 # OSError errnos that mean "every subsequent write to this output
@@ -85,6 +91,9 @@ class ExportResult:
     #: The run was cancelled between photos: ``exported`` counts what was
     #: written before the stop; no manifest, report, gallery or bundle.
     cancelled: bool = False
+    #: Of ``failed``: files refused because they are outside the folders
+    #: this export may read (``source_roots``).
+    outside_source: int = 0
 
     def __iter__(self):
         # Back-compat for any caller that still tuple-unpacks the
@@ -106,6 +115,30 @@ class _WritePlan:
     process: bool  # format / resize conversion needed
 
 
+def _selected_dir(outdir: str, bundle_zip: bool) -> str:
+    """The folder this run writes photos into (created here).
+
+    The export merges into an existing folder rather than wiping it: a
+    wipe on "Overwrite" removed everything when the owner pointed at
+    ~/Downloads or any folder with unrelated files. Same-named files are
+    overwritten in place; other files in the destination stay.
+
+    "zip" is a bundle mode: each photo is written exactly as copy mode
+    would (so format / resize / strip-metadata all apply), then the
+    staging folder is packed into one archive after the loop. The staging
+    folder is this export's own temporary one, so bundling removes only
+    what this export wrote, never an earlier export's files in
+    ``selected/``."""
+    if bundle_zip:
+        import tempfile
+
+        os.makedirs(outdir, exist_ok=True)
+        return tempfile.mkdtemp(prefix=".bundle-", dir=outdir)
+    selected_dir = os.path.join(outdir, "selected")
+    os.makedirs(selected_dir, exist_ok=True)
+    return selected_dir
+
+
 def export_selected(
     selected: list[dict[str, Any]],
     analysis: list[dict[str, Any]],
@@ -123,6 +156,7 @@ def export_selected(
     strip_metadata: bool = True,
     on_progress: Callable[[int, int, str], None] | None = None,
     cancel_event: threading.Event | None = None,
+    source_roots: Sequence[str] | FolderSet | None = None,
 ) -> ExportResult:
     """Export selected photos and write reports.
 
@@ -147,32 +181,18 @@ def export_selected(
     preserve original image bytes intentionally.
 
     ``cancel_event`` is checked between photos: once set, the loop stops,
-    what was written stays, and the sidecar files are skipped."""
+    what was written stays, and the sidecar files are skipped.
+
+    ``source_roots`` are the folders this run may read photos from: the
+    ones the owner chose (the library, the workdir, a folder they analyzed
+    or named), never paths taken from the rows being exported. A file
+    that resolves outside them is a per-photo failure, not a copy. Every
+    caller in the app passes them; ``None`` (a direct call) checks nothing."""
     if config is None:
         config = {}
 
-    # Merge into the existing folder rather than wiping it. The previous
-    # behavior (rmtree on force, refuse otherwise) was a foot-gun: if the
-    # user pointed at ~/Downloads or any folder with unrelated files,
-    # 'Overwrite' silently nuked everything. Now we create the folder if
-    # missing and let individual photo writes overwrite same-named files
-    # in place. Non-export files in the destination are preserved.
-    # "zip" is a bundle mode: write each photo exactly as copy mode would
-    # (so format/resize/strip-metadata all apply — Option A), then pack
-    # the staging folder into a single archive after the loop. The
-    # per-photo write therefore uses the "copy" code path. The staging
-    # folder is this export's own temporary one, so bundling removes
-    # only what this export wrote — never an earlier export's files in
-    # ``selected/``.
     bundle_zip = mode == "zip"
-    if bundle_zip:
-        import tempfile
-
-        os.makedirs(outdir, exist_ok=True)
-        selected_dir = tempfile.mkdtemp(prefix=".bundle-", dir=outdir)
-    else:
-        selected_dir = os.path.join(outdir, "selected")
-        os.makedirs(selected_dir, exist_ok=True)
+    selected_dir = _selected_dir(outdir, bundle_zip)
     effective_mode = "copy" if bundle_zip else mode
     plan = _WritePlan(
         mode=effective_mode,
@@ -194,7 +214,14 @@ def export_selected(
     keep_staging = False  # the photos stay, visible or not: never removed
     try:
         exported, failed, disk_error, metadata_kept, cancelled = _write_photos(
-            selected, selected_dir, plan, score_pairs, write_xmp, on_progress, cancel_event
+            selected,
+            selected_dir,
+            plan,
+            score_pairs,
+            write_xmp,
+            on_progress,
+            cancel_event,
+            source_roots,
         )
         if failed:
             log.warning("Export completed with %d failures out of %d", len(failed), len(selected))
@@ -236,7 +263,9 @@ def export_selected(
     if gallery and not bundle_zip and not cancelled:
         from bpp.output.gallery import generate_gallery
 
-        generate_gallery(selected, outdir)
+        # Only what was exported: the gallery reads each source file again.
+        done = {id(e["item"]) for e in exported}
+        generate_gallery([s for s in selected if id(s) in done], outdir)
 
     return ExportResult(
         exported=len(exported),
@@ -245,6 +274,7 @@ def export_selected(
         failures=failed,
         metadata_kept=metadata_kept,
         cancelled=cancelled,
+        outside_source=sum(1 for f in failed if f.get("reason") == OUTSIDE_SOURCE),
     )
 
 
@@ -307,6 +337,7 @@ def _write_photos(
     write_xmp: bool,
     on_progress: Callable[[int, int, str], None] | None,
     cancel_event: threading.Event | None = None,
+    source_roots: Sequence[str] | FolderSet | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None, int, bool]:
     """The per-photo loop. Returns ``(exported, failed, disk_error,
     metadata_kept, cancelled)``; the loop stops at the first OSError
@@ -318,6 +349,11 @@ def _write_photos(
     metadata_kept = 0
     cancelled = False
     total = len(selected)
+    readable = (
+        source_roots
+        if source_roots is None or isinstance(source_roots, FolderSet)
+        else FolderSet(list(source_roots))
+    )
     for i, item in enumerate(selected, 1):
         if cancel_event is not None and cancel_event.is_set():
             cancelled = True
@@ -325,7 +361,6 @@ def _write_photos(
         src = item["filepath"]
         orig_name = os.path.basename(src)
         dest_name = f"{i:03d}_{orig_name}"
-        dest = safe_join(selected_dir, dest_name)
         # Progress callback fires per-photo so the UI can show
         # determinate progress on long exports (100+ photos with
         # format conversion ran for 30-60s with no feedback before).
@@ -336,8 +371,19 @@ def _write_photos(
             except Exception:
                 log.debug("export progress callback raised", exc_info=True)
 
-        is_vid = item.get("is_video") or is_video_file(src)
+        if readable is not None and not readable.holds(src):
+            log.warning("Not exporting %s: %s", src, OUTSIDE_SOURCE_ERROR)
+            failed.append(
+                {"index": i, "source": src, "error": OUTSIDE_SOURCE_ERROR, "reason": OUTSIDE_SOURCE}
+            )
+            continue
+        # The file's own type, not a stored flag: a row can't turn another
+        # kind of file into a byte-for-byte "video" copy.
+        is_vid = is_video_file(src)
         try:
+            # Inside the try: a name the folder can't take (a NUL byte)
+            # fails this photo, not the run.
+            dest = safe_join(selected_dir, dest_name)
             dest = _write_one(src, dest, bool(is_vid), plan)
             dest_name = os.path.basename(dest)
             exported.append({"index": i, "source": src, "dest": dest_name, "item": item})

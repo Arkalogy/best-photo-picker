@@ -103,13 +103,16 @@ class TestTypeCoercion:
         set_setting(conn, "follow_symlinks", "false")
         assert cfg.get("follow_symlinks") is False
 
-    def test_db_invalid_int_falls_back_to_zero(self, conn, make_conn):
+    def test_db_invalid_int_is_ignored_for_the_default(self, conn, make_conn):
+        """A stored value its setting can't take is not used at all (it
+        used to become 0, which is outside the setting's own limits)."""
+        from bpp.config import DEFAULTS
         from bpp.config_resolver import Config
         from bpp.db.settings import set_setting
 
         cfg = Config({}, get_conn=make_conn)
         set_setting(conn, "max_long_side", "not-an-int")
-        assert cfg.get("max_long_side") == 0
+        assert cfg.get("max_long_side") == DEFAULTS["max_long_side"]
 
 
 # ── Dict-compat surface ─────────────────────────────────────────────

@@ -16,7 +16,7 @@
  */
 
 import { apiFetch, authedSrc } from "./api-client.mjs";
-import { esc } from "./text-format.mjs";
+import { esc, escVal } from "./text-format.mjs";
 import { saveOverrides } from "./toolbar.mjs";
 import { scheduleRecompute } from "./analysis.mjs";
 import { showToast, toastError } from "./toast.mjs";
@@ -187,9 +187,9 @@ export function showAlbumPickerModal() {
     list.innerHTML = manualAlbums
       .map(
         (a) =>
-          `<div class="album-picker-item" data-action="batchAddToAlbum" data-arg0="${a.id}">
+          `<div class="album-picker-item" data-action="batchAddToAlbum" data-arg0="${escVal(a.id)}">
         <span>${esc(a.name)}</span>
-        <span class="album-picker-count">${a.photo_count} photos</span>
+        <span class="album-picker-count">${escVal(a.photo_count)} photos</span>
       </div>`
       )
       .join("");

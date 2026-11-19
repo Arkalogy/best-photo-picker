@@ -33,6 +33,52 @@ from bpp.utils.logging import get_logger
 log = get_logger(__name__)
 
 
+#: Settings that describe this computer or deployment, not a library.
+#: The library database travels with its folder and may come from someone
+#: else, so these are read from the owner's YAML (or the defaults) only.
+MACHINE_KEYS = frozenset(
+    {"ssl_context", "behind_proxy", "_face_extract_workers", "_face_extract_pool"}
+)
+
+
+def checked_setting(conn: Any, key: str) -> Any:
+    """A library-stored setting read straight from a connection, with the
+    same check as :class:`Config`: the stored value when it is inside the
+    setting's declared limits, else the default."""
+    from bpp.db.settings import get_setting
+
+    raw = get_setting(conn, key)
+    value = stored_value(key, raw) if isinstance(raw, str) else _REJECTED
+    return DEFAULTS.get(key) if value is _REJECTED else value
+
+
+_REJECTED = object()
+_warned_rejections: set[tuple[str, str]] = set()
+
+
+def stored_value(key: str, raw: str) -> Any:
+    """A library-stored setting as the app may use it: coerced and inside
+    the limits its schema declares, else ``_REJECTED`` (warned once). Keys
+    without a schema are returned as stored."""
+    from bpp.config_schema import get_schema, validate_value
+
+    schema = get_schema(key)
+    if schema is None:
+        return raw
+    if getattr(schema, "type", str) not in (bool, int, float, str):
+        # A plugin's list / dict / own type: stored as text the app can't
+        # turn back, and its validator was written for the real value.
+        # Returned as stored, as before.
+        return raw
+    try:
+        return validate_value(key, raw)
+    except Exception as exc:  # a plugin's validator may raise anything
+        if (key, raw) not in _warned_rejections:
+            _warned_rejections.add((key, raw))
+            log.warning("Ignoring the library's stored setting %s: %s", key, exc)
+        return _REJECTED
+
+
 def _coerce(value: str, target_type: type) -> Any:
     """Coerce a DB string to the target type implied by DEFAULTS.
 
@@ -91,6 +137,10 @@ class Config:
         # 1. DB layer (highest priority)
         db_value = self._db_get(key)
         if db_value is not None:
+            db_value = stored_value(key, db_value)
+        if db_value is not None and db_value is not _REJECTED:
+            if not isinstance(db_value, str):
+                return db_value  # checked and coerced by its schema
             target_type = type(DEFAULTS.get(key)) if key in DEFAULTS else None
             if target_type is None and key in self._yaml:
                 target_type = type(self._yaml[key])
@@ -182,7 +232,7 @@ class Config:
     # ── Internals ────────────────────────────────────────────────────
 
     def _db_get(self, key: str) -> str | None:
-        if self._get_conn is None:
+        if self._get_conn is None or key in MACHINE_KEYS:
             return None
         from bpp.db.settings import get_setting
 
@@ -206,7 +256,16 @@ class Config:
         from bpp.db.settings import get_all_settings
 
         try:
-            return list(get_all_settings(self._get_conn()).keys())
+            stored = get_all_settings(self._get_conn())
+            for key in sorted(MACHINE_KEYS & stored.keys()):
+                if ("machine", key) not in _warned_rejections:
+                    _warned_rejections.add(("machine", key))
+                    log.warning(
+                        "Ignoring %s from the library's settings: it configures this "
+                        "computer, so set it in the YAML config file instead",
+                        key,
+                    )
+            return [k for k in stored if k not in MACHINE_KEYS]
         except Exception:
             log.warning(
                 "Config DB enumerate failed — settings layer skipped",

@@ -11,7 +11,7 @@
  */
 
 import { apiFetch, faceCropUrl } from "./api-client.mjs";
-import { esc, escapeAttr } from "./text-format.mjs";
+import { esc, escapeAttr, escVal } from "./text-format.mjs";
 import { toastError } from "./toast.mjs";
 
 /**
@@ -141,6 +141,11 @@ export async function renameGroup(group, newName) {
  * @param {HTMLElement} el
  */
 export function startGroupRename(group, el) {
+  // From a click on the name the dispatcher passes the group's index
+  // and sets `this` to the name; its parent is the label.
+  if (typeof group === "number") group = _getFaceGroups()[group];
+  if (!(el instanceof Element)) el = this instanceof Element ? this.parentElement : null;
+  if (!group || !el) return;
   // Inline rename runs from an inline onclick handler that uses the
   // implicit `event` global; preserve that behavior.
   /** @type {any} */ (window).event?.stopPropagation?.();
@@ -245,8 +250,8 @@ export function showGroupsView() {
         ${groupAvatarsHTML(g)}
       </div>
       <div class="person-label" id="group-label-${idx}">
-        <div class="${nameCls}" title="${escapeAttr(name)}" data-stop-propagation="true" data-action="startGroupRename" data-arg0="_getFaceGroups()[${idx}]" data-arg1="this.parentElement">${esc(name)}</div>
-        <div class="person-count">${g.photo_count} photo${g.photo_count === 1 ? "" : "s"}</div>
+        <div class="${nameCls}" title="${escapeAttr(name)}" data-stop-propagation="true" data-action="startGroupRename" data-arg0="${idx}">${esc(name)}</div>
+        <div class="person-count">${escVal(g.photo_count)} photo${g.photo_count === 1 ? "" : "s"}</div>
       </div>
     </div>`;
     })
@@ -284,7 +289,7 @@ export async function _renderGroupsMergeNudge(view) {
   banner.className = "groups-merge-nudge";
   banner.innerHTML =
     `<span>Some people may be split into duplicates, which makes these group counts look low. ` +
-    `<strong>${n}</strong> pair${n === 1 ? "" : "s"} look like the same person.</span>` +
+    `<strong>${escVal(n)}</strong> pair${n === 1 ? "" : "s"} look like the same person.</span>` +
     `<button class="preset-btn save" data-action="startFacePairReview">Review merges</button>`;
   view.insertBefore(banner, view.firstChild);
 }

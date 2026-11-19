@@ -45,6 +45,10 @@ def api_calendar_days() -> tuple[Response, int]:
     ctx = get_ctx()
     conn = ctx.get_conn()
     days = get_daily_counts(conn, year, month)
+    for day in days:
+        # The page shows the day's best photo with /thumb/<hash>.
+        path = day.pop("top_path", None)
+        day["top_hash"] = ctx.thumbs.get_hash(path) if path and ctx.thumbs else None
     return jsonify({"days": days, "year": year, "month": month}), 200
 
 

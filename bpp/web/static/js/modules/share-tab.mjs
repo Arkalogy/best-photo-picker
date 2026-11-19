@@ -11,7 +11,7 @@
 
 import { apiFetch, authedSrc } from "./api-client.mjs";
 import { appConfirm } from "./dialogs.mjs";
-import { esc, escapeAttr } from "./text-format.mjs";
+import { esc, escapeAttr, escVal } from "./text-format.mjs";
 import { toast, toastError } from "./toast.mjs";
 
 /**
@@ -22,6 +22,8 @@ import { toast, toastError } from "./toast.mjs";
  *
  * @typedef {Object} ShareInfo
  * @property {boolean} enabled
+ * @property {boolean} [key_unreadable] - this installation's key file can't be read; sharing is held off
+ * @property {boolean} [restart_required] - switched on, but this run listens on this computer only
  * @property {string|null} lan_ip
  * @property {number} port
  * @property {string|null} share_url
@@ -111,14 +113,32 @@ function _shareTabHTML(info, devices) {
           </div>
         </div>
         <label class="setting-toggle">
-          <input type="checkbox" id="share-toggle" ${info.enabled ? "checked" : ""}
-                 data-onchange="_shareToggle">
+          <input type="checkbox" id="share-toggle" ${info.enabled || info.restart_required ? "checked" : ""}
+                 data-onchange="_shareToggle"${info.key_unreadable ? " disabled" : ""}>
           <span class="toggle-track"></span>
         </label>
       </div>
     </div>
   `;
 
+  if (info.key_unreadable) {
+    return `
+      ${toggle}
+      <div class="setting-item">
+        <div class="setting-label">Sharing is held off: this app's own sharing key file can't be read</div>
+        <div class="setting-hint">Nothing was removed. Fix the file's permissions (its path is in the server log), then restart Best Photo Picker.</div>
+      </div>`;
+  }
+  if (info.restart_required) {
+    // Switched on, but this run started with sharing off and listens on
+    // this computer only: say so, never show a link no phone can open.
+    return `
+      ${toggle}
+      <div class="setting-item">
+        <div class="setting-label">Restart Best Photo Picker to finish turning sharing on</div>
+        <div class="setting-hint">Sharing is switched on, but the app is still only reachable from this computer until it is restarted.</div>
+      </div>`;
+  }
   if (!info.enabled) {
     const ipHint = info.lan_ip
       ? `Your LAN IP is <code>${esc(info.lan_ip)}</code>.`
@@ -182,8 +202,8 @@ function _devicesHTML(devices) {
             <div style="color:var(--text-secondary);font-size:0.82em">${esc(d.ip_at_pair)} · ${esc(_relTime(d.first_seen))}</div>
           </div>
           <div style="display:flex;gap:6px">
-            <button class="preset-btn save" data-action="_approveDevice" data-arg0="${d.id}" title="Approve this device">Approve</button>
-            <button class="preset-btn" data-action="_blockDevice" data-arg0="${d.id}" title="Block this device">Block</button>
+            <button class="preset-btn save" data-action="_approveDevice" data-arg0="${escVal(d.id)}" title="Approve this device">Approve</button>
+            <button class="preset-btn" data-action="_blockDevice" data-arg0="${escVal(d.id)}" title="Block this device">Block</button>
           </div>
         </div>
       `
@@ -200,7 +220,7 @@ function _devicesHTML(devices) {
             <div style="font-weight:500">${esc(d.name || "Unknown device")}${d.prev_revoked ? `<span style="color:var(--text-secondary);font-size:0.78em;margin-left:8px;font-weight:normal">re-approved after revoke</span>` : ""}</div>
             <div style="color:var(--text-secondary);font-size:0.82em">${esc(d.ip_at_pair)} · last seen ${esc(_relTime(d.last_seen))}</div>
           </div>
-          <button class="preset-btn" data-action="_revokeDevice" data-arg0="${d.id}" title="Revoke access for this device">Revoke</button>
+          <button class="preset-btn" data-action="_revokeDevice" data-arg0="${escVal(d.id)}" title="Revoke access for this device">Revoke</button>
         </div>
       `
         )
@@ -310,7 +330,7 @@ function _recentAccessHTML(entries) {
         </div>
         <div style="margin-top:4px">${rows}</div>
         <div style="color:var(--text-secondary);font-size:0.82em;margin-top:6px">
-          See something you don't recognize? Click <strong>Revoke</strong> above to kill the current URL.
+          See something you don't recognize? Remove that device under <strong>Trusted devices</strong>, then click <strong>Revoke</strong> above so the link can't be used again.
         </div>
       </div>
     </div>
@@ -362,7 +382,7 @@ export async function _shareToggle(enabled) {
 export async function _revokeShareLink() {
   const ok = await appConfirm(
     "Revoke share link?",
-    "The current URL will stop working immediately. Anyone using it will lose access. You'll get a fresh URL.",
+    "The current link will stop working for new devices, and you'll get a fresh one. Devices you already approved keep their access: remove those under Trusted devices.",
     { okLabel: "Revoke" }
   );
   if (!ok) return;

@@ -6,8 +6,8 @@
  * manual naming) and the panel frame. Split out for the 500-LOC cap.
  */
 
-import { authedSrc, faceCropUrl } from "./api-client.mjs";
-import { esc, escapeAttr, escapeJsAttr } from "./text-format.mjs";
+import { faceCropUrl, thumbUrl } from "./api-client.mjs";
+import { esc, escapeAttr, escVal } from "./text-format.mjs";
 import { reviewMetaLine, reviewMetaText } from "./review-meta.mjs";
 
 /**
@@ -34,7 +34,7 @@ export function reviewCompleteHTML(total) {
       </div>
       <div class="review-done">
         <div class="review-done-icon">&#10003;</div>
-        <p>All ${total} people have been reviewed.</p>
+        <p>All ${escVal(total)} people have been reviewed.</p>
         <button class="btn btn-primary" data-action="_closeReviewOverlay">Done</button>
       </div>
     </div>`;
@@ -52,7 +52,7 @@ export function reviewSamplesHTML(c) {
     || (c.sample_hashes || []).map((/** @type {string} */ h) => ({ hash: h }));
   return sampleItems.map((/** @type {any} */ s) => {
     const tip = reviewMetaText(s) || "Click to see the full photo";
-    return `<img class="review-sample-img review-clickable" src="${authedSrc("/thumb/" + s.hash)}" loading="lazy"
+    return `<img class="review-sample-img review-clickable" src="${thumbUrl(s.hash)}" loading="lazy"
        data-action="openPhotoPreview" data-arg0="${escapeAttr(s.hash)}"${_previewArgs(s)} title="${escapeAttr(tip)}">`;
   }).join("");
 }
@@ -83,7 +83,7 @@ export function suggestionAvatarHTML(rep, suggestion) {
           ${reviewMetaLine(rep)}
         </div>
         <div class="review-match-indicator">
-          <div class="review-match-pct">${conf}%</div>
+          <div class="review-match-pct">${escVal(conf)}%</div>
           <div class="review-match-label">match</div>
         </div>
         <div class="review-avatar-side">
@@ -132,7 +132,7 @@ export function manualActionsHTML(cid, currentName, extraAttrs = "") {
           <button class="btn btn-secondary" title="Skip for now, come back later"
             data-action="_reviewSkip">Skip</button>
           <button class="btn btn-secondary btn-danger-text" title="Hide this face permanently"
-            data-action="_reviewDismiss" data-arg0="${cid}">Dismiss</button>
+            data-action="_reviewDismiss" data-arg0="${escVal(cid)}">Dismiss</button>
         </div>
       </div>`;
 }
@@ -149,13 +149,13 @@ export function suggestionActionsHTML(suggestion, cid) {
         <div class="review-suggestion-label">Is this <strong>${esc(suggestion.name)}</strong>?</div>
         <div class="review-actions">
           <button class="btn btn-primary" title="Combine these faces into one person"
-            data-action="_reviewMergeInto" data-arg0="${suggestion.cluster_id}" data-arg1="${escapeJsAttr(suggestion.name)}">Yes, merge</button>
+            data-action="_reviewMergeInto" data-arg0="${escVal(suggestion.cluster_id)}" data-arg1="${escapeAttr(suggestion.name)}">Yes, merge</button>
           <button class="btn btn-secondary" title="Not the same person — let me name manually"
             data-action="_reviewShowManual">No</button>
           <button class="btn btn-secondary" title="Skip for now, come back later"
             data-action="_reviewSkip">Skip</button>
           <button class="btn btn-secondary btn-danger-text" title="Hide this face permanently"
-            data-action="_reviewDismiss" data-arg0="${cid}">Dismiss</button>
+            data-action="_reviewDismiss" data-arg0="${escVal(cid)}">Dismiss</button>
         </div>
       </div>` + manualActionsHTML(cid, "", ' id="review-manual" style="display:none"');
 }
@@ -174,7 +174,7 @@ export function reviewPanelHTML({ progress, total, photoCount, avatarHTML, sampl
   return `<div class="review-panel">
     <div class="review-header">
       <h2>Review People</h2>
-      <span class="review-progress">${progress + 1} of ${total}</span>
+      <span class="review-progress">${escVal(progress + 1)} of ${escVal(total)}</span>
       <button class="review-close-btn" title="Close review"
         data-action="_closeReviewOverlay">&times;</button>
     </div>
@@ -184,7 +184,7 @@ export function reviewPanelHTML({ progress, total, photoCount, avatarHTML, sampl
     <div class="review-body">
       ${avatarHTML}
       <div class="review-info">
-        <div class="review-cluster-label">${photoCount} photo${photoCount !== 1 ? 's' : ''}</div>
+        <div class="review-cluster-label">${escVal(photoCount)} photo${photoCount !== 1 ? 's' : ''}</div>
         <div class="review-sample-grid">${samplesHTML}</div>
       </div>
       ${actionHTML}

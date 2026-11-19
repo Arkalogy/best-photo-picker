@@ -185,7 +185,12 @@ class AnalyzeWorker(BackgroundWorker):
         from bpp.utils.retry import retry_io
 
         results_path = os.path.join(workdir, "analysis.json")
-        retry_io(_write_analysis_json, results_path, valid, label="write_analysis_json")
+        from bpp.scoring.aggregate import ANALYSIS_FILE_LOCK
+
+        # Not while a delete's rewrite of the same file is in flight: its
+        # copy, read before this write, would replace this run's results.
+        with ANALYSIS_FILE_LOCK:
+            retry_io(_write_analysis_json, results_path, valid, label="write_analysis_json")
 
         # Write final results with normalized scores to DB. The counts
         # are filled in phase by phase, so a failure in a later phase

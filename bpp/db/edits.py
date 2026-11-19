@@ -13,7 +13,11 @@ def save_photo_edits(
     photo_id: int,
     edits: dict,
 ) -> None:
-    """Save or update edit parameters for a photo."""
+    """Save or update edit parameters for a photo. Values are brought
+    inside their ranges first (see :mod:`bpp.db.edit_limits`)."""
+    from bpp.db.edit_limits import clean_edits
+
+    edits = clean_edits(edits)
     redeye_points = valid_redeye_points(edits.get("redeye_points"))
     redeye_json = json.dumps(redeye_points) if redeye_points else None
 
@@ -152,6 +156,13 @@ def get_photo_edits(conn: sqlite3.Connection, photo_id: int) -> dict | None:
         safe_json_loads(redeye_raw, context="redeye edits", expected_type=list)
     )
 
+    from bpp.db.edit_limits import clean_edits
+
+    # What is stored may not be what this app saved: bring it in range.
+    return clean_edits(_edits_from_row(row, redeye_points))
+
+
+def _edits_from_row(row: sqlite3.Row, redeye_points: list) -> dict:
     return {
         "brightness": row["brightness"],
         "contrast": row["contrast"],

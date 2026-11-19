@@ -60,20 +60,24 @@ RUN python -c "import cv2, scipy, ai_edge_litert.interpreter, pillow_heif, rawpy
 COPY LICENSE NOTICE.txt /usr/share/doc/bppicker/
 
 # Non-root user — defence-in-depth if an RCE is found
+# /state is writable by any uid so `--user "$(id -u):$(id -g)"` works
+# even when no host folder is mounted there (nothing is kept then).
 RUN useradd --create-home --shell /bin/false bpp \
-    && mkdir -p /data && chown bpp /data
+    && mkdir -p /data /state && chown bpp /data /state && chmod 1777 /state
 USER bpp
 
-# Keep downloaded models and model acceptances on the volume so they
-# survive container re-creation (default would be the container's home).
-# HOME too: run with `--user "$(id -u):$(id -g)"` the uid has no passwd
-# entry, and HOME would fall back to `/`, which the export and
+# Downloaded models, model acceptances and the sharing key go to /state,
+# a mount of their own, so they survive container re-creation. They are
+# this installation's, so they are NOT kept under /data: /data is the
+# library folder, and a library folder can come from someone else.
+# HOME stays /data: run with `--user "$(id -u):$(id -g)"` the uid has no
+# passwd entry, and HOME would fall back to `/`, which the export and
 # open-folder path checks would then treat as the home folder.
 # PYTHONNOUSERSITE: the image's packages are fixed; without it an in-app
 # install would land in /data/.local and shadow them across upgrades.
 ENV HOME=/data \
-    BPP_CACHE_DIR=/data/.cache/bpp \
-    XDG_CONFIG_HOME=/data/.config \
+    BPP_CACHE_DIR=/state/.cache/bpp \
+    XDG_CONFIG_HOME=/state/.config \
     PYTHONNOUSERSITE=1
 
 EXPOSE 5001
@@ -93,7 +97,7 @@ EXPOSE 5001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=150s --retries=3 \
     CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5001/static/manifest.json', timeout=4)" || exit 1
 
-VOLUME /data
+VOLUME /data /state
 
 # Trust the Docker bridge gateway range AND Docker Desktop's host
 # alias range. Requests whose immediate peer IP is in these ranges are
@@ -107,7 +111,8 @@ VOLUME /data
 #
 # CRITICAL: this is only safe if the container port is published to
 # host loopback:
-#     docker run -p 127.0.0.1:5001:5001 -v /path/to/library:/data <image>
+#     docker run -p 127.0.0.1:5001:5001 -v /path/to/library:/data 
+#         -v /path/to/bpp-state:/state <image>
 # If you publish to all interfaces (`-p 5001:5001`), other machines on
 # your network can reach the port, and their traffic can also arrive
 # from an address inside these trusted ranges (e.g. via Docker

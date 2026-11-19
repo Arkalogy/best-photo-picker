@@ -86,17 +86,30 @@ def recover_interrupted_rename(conn: sqlite3.Connection, library_path: str) -> l
         return []
 
     reverted: list[dict[str, Any]] = []
-    malformed = retry = False
+    malformed = retry = refused = False
     for entry in entries:
         old_path = entry.get("old") if isinstance(entry, dict) else None
         new_path = entry.get("new") if isinstance(entry, dict) else None
         if not (isinstance(old_path, str) and old_path and isinstance(new_path, str) and new_path):
             malformed = True
             continue
-        if committed.get(entry.get("id")) == new_path:
+        photo_id = entry.get("id")
+        if isinstance(photo_id, bool) or not isinstance(photo_id, int):
+            photo_id = None
+        if photo_id is not None and committed.get(photo_id) == new_path:
             # The database already names the new path: that rename was
             # committed before the crash, so the file is where the row
             # says. Reverting it would strand the row.
+            continue
+        why = _replay_refusal(committed, photo_id, old_path, new_path, library_path)
+        if why is not None:
+            refused = True
+            logger.warning("Rename journal entry not replayed (%s): %s", why, old_path)
+            continue
+        if "file" in entry and _file_identity(new_path) != entry["file"]:
+            # The file under the new name is not the one this batch
+            # started with (the batch skipped this entry, and another
+            # photo's file has that name): it was never renamed.
             continue
         # If new_path exists on disk but old_path does not, revert.
         if os.path.exists(new_path) and not os.path.exists(old_path):
@@ -112,8 +125,9 @@ def recover_interrupted_rename(conn: sqlite3.Connection, library_path: str) -> l
         # A revert failed (locked file, offline volume): keep the record
         # in place so the next start tries again.
         logger.warning("Kept rename journal %s to retry the failed reverts", jp)
-    elif malformed:
-        # Some entries couldn't be read: keep the journal for a manual fix.
+    elif malformed or refused:
+        # Some entries couldn't be read, or named paths this library has
+        # no business moving: keep the journal aside for a manual look.
         try:
             move_aside(jp, context="rename journal")
         except OSError as exc:
@@ -123,6 +137,37 @@ def recover_interrupted_rename(conn: sqlite3.Connection, library_path: str) -> l
     if reverted:
         logger.info("Recovered %d interrupted renames from journal", len(reverted))
     return reverted
+
+
+def _file_identity(path: str) -> list[int] | None:
+    """``[inode, size]`` of the file at ``path`` (None when there is
+    none). Journaled before a batch so recovery reverts only a file the
+    batch itself moved: a rename within a folder keeps both."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return [int(st.st_ino), int(st.st_size)]
+
+
+def _replay_refusal(
+    committed: dict[int, str], photo_id: int | None, old_path: str, new_path: str, library_path: str
+) -> str | None:
+    """Why recovery must not act on a journal entry, or None when it may.
+
+    The journal sits in the library folder, so a folder from someone else
+    can carry any paths in it. An entry is replayed only when both paths
+    resolve inside the open library and the photo row it names still owns
+    the old path (the rename was never committed).
+    """
+    from bpp.utils.path_validation import is_path_under_any
+
+    roots = [library_path]
+    if not (is_path_under_any(old_path, roots) and is_path_under_any(new_path, roots)):
+        return "path outside the library"
+    if photo_id is None or committed.get(photo_id) != old_path:
+        return "no photo row owns the old path"
+    return None
 
 
 def _committed_paths(conn: sqlite3.Connection, entries: list[Any]) -> dict[int, str]:
@@ -271,6 +316,22 @@ def _entry_refusal(
     """Why a rename entry can't run, or None when it may: both paths
     inside the library, the entry names a photo that owns ``old_path``,
     the target is free and the source exists."""
+    refusal = _scope_refusal(owners, old_path, new_path, photo_id, allowed_base)
+    if refusal is not None:
+        return refusal
+    if os.path.exists(new_path) and new_path != old_path:
+        return f"Target already exists: {new_path}"
+    if not os.path.exists(old_path):
+        return f"File not found: {old_path}"
+    return None
+
+
+def _scope_refusal(
+    owners: dict[int, str], old_path: str, new_path: str, photo_id: Any, allowed_base: Any
+) -> str | None:
+    """The part of ``_entry_refusal`` that doesn't depend on what earlier
+    renames in the batch did: paths inside the library, and a photo row
+    that owns ``old_path``. Entries failing it are never journaled."""
     from pathlib import Path
 
     if allowed_base is not None:
@@ -286,10 +347,6 @@ def _entry_refusal(
         return "Entry names no photo"
     if owners.get(int(photo_id)) != old_path:
         return "Photo id and path don't match"
-    if os.path.exists(new_path) and new_path != old_path:
-        return f"Target already exists: {new_path}"
-    if not os.path.exists(old_path):
-        return f"File not found: {old_path}"
     return None
 
 
@@ -311,17 +368,26 @@ def apply_rename(
     allowed_base = Path(library_path).resolve() if library_path else None
     results: list[dict[str, Any]] = []
 
-    # Write journal before starting so crash recovery can revert.
     changed = [e for e in mapping if e.get("changed", False)]
-    jp: str | None = None
-    if library_path and changed:
-        jp = _journal_path(library_path)
-        journal_entries = [
-            {"old": e["old_filepath"], "new": e["new_filepath"], "id": e.get("id")} for e in changed
-        ]
-        _write_journal(jp, journal_entries)
-
     owners = _owners(conn, changed)
+
+    # Write journal before starting so crash recovery can revert. Only
+    # entries that may run are recorded: recovery refuses the rest.
+    jp: str | None = None
+    journal_entries = [
+        {
+            "old": e["old_filepath"],
+            "new": e["new_filepath"],
+            "id": e.get("id"),
+            "file": _file_identity(e["old_filepath"]),
+        }
+        for e in changed
+        if _scope_refusal(owners, e["old_filepath"], e["new_filepath"], e.get("id"), allowed_base)
+        is None
+    ]
+    if library_path and journal_entries:
+        jp = _journal_path(library_path)
+        _write_journal(jp, journal_entries)
 
     for entry in mapping:
         if not entry.get("changed", False):

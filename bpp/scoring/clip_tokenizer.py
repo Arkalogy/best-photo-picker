@@ -203,6 +203,16 @@ def _clean_text(text: str) -> str:
     return text.lower()
 
 
+#: Characters of text the tokenizer looks at. The model reads 77 tokens;
+#: merging a longer unbroken run of letters only burns time.
+MAX_QUERY_CHARS = 512
+
+
+def _clip_input(text: str) -> str:
+    """*text* cut to what can still reach the model."""
+    return text[:MAX_QUERY_CHARS]
+
+
 def tokenize(text: str, context_length: int = CONTEXT_LENGTH) -> np.ndarray:
     """Tokenize a text string into CLIP token IDs.
 
@@ -211,7 +221,7 @@ def tokenize(text: str, context_length: int = CONTEXT_LENGTH) -> np.ndarray:
     _, encoder, _ = _load_vocab()
     byte_enc = _bytes_to_unicode()
 
-    text = _clean_text(text)
+    text = _clip_input(_clean_text(text))
     tokens = [SOT_TOKEN]
 
     for match in _PAT.findall(text):

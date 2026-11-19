@@ -276,8 +276,8 @@ class TestMemoryPersistence:
         second = list_memories(conn)
         assert len(first) == len(second)
 
-    def test_hero_hash_included(self, conn):
-        """Memories should include hero photo hash for thumbnail."""
+    def test_hero_photo_included(self, conn):
+        """Memories name their hero photo, for the thumbnail."""
         for i in range(5):
             _insert_photo(conn, f"/p/img{i}.jpg", f"2024-06-15 {10 + i}:00:00", 0.5)
         # Add sha256 to one photo
@@ -286,5 +286,5 @@ class TestMemoryPersistence:
         generate_memories(conn)
         memories = list_memories(conn)
         assert len(memories) >= 1
-        # hero_hash may or may not be the one with sha256, but the field should exist
-        assert "hero_hash" in memories[0]
+        # The hero photo's path: the API layer turns it into the thumbnail hash.
+        assert memories[0]["hero_path"].startswith("/p/img")

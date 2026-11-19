@@ -39,6 +39,7 @@ from bpp.db.face_cluster_ops import (  # noqa: E402
 from bpp.db.face_cluster_ops import (  # noqa: E402, F401
     sync_face_counts_for_photos as _sync_face_counts_for_photos,
 )
+from bpp.web.request_validation import json_bool  # noqa: E402
 
 
 @bp.post("/api/v1/faces/tag")
@@ -250,7 +251,7 @@ def api_faces_purge() -> tuple[Response, int]:
     conn = ctx.get_conn()
 
     face_ids = data.get("face_ids")
-    purge_all = data.get("all", False)
+    purge_all = json_bool(data, "all", default=False)
 
     if purge_all:
         row = conn.execute(

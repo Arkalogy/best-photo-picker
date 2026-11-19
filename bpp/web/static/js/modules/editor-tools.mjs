@@ -20,7 +20,8 @@ import { _refreshStylesTab } from "./editor-styles.mjs";
 import { _edits } from "./editor.mjs";
 
 export function _editorSliderChange(key, val) {
-  if (val === undefined) { val = key; key = this.dataset.sliderKey; }
+  // From the input dispatcher: (value, event), with the slider as `this`.
+  if (val === undefined || typeof val === "object") { val = key; key = this.dataset.sliderKey; }
   const v = parseFloat(String(val));
   const e = _edits();
   e[key] = v;

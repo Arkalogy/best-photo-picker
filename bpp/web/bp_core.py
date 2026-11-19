@@ -37,6 +37,7 @@ from bpp.scoring.nudity import is_active as nudenet_active
 from bpp.scoring.nudity import is_available as nudenet_available
 from bpp.scoring.pets import is_available as pets_available
 from bpp.utils.logging import get_logger
+from bpp.web.boot_key import presents_boot_key
 from bpp.web.face_worker import has_face_data, needs_face_clustering
 from bpp.web.install_status import install_status_fields
 from bpp.web.share import (
@@ -44,7 +45,6 @@ from bpp.web.share import (
     FP_COOKIE_NAME,
     _device_name_from_ua,
     _sanitize_device_name,  # re-exported for tests/test_share_cookie.py
-    _token_equals,
     principal_is_local_app,
     requires_local_app,
 )
@@ -101,18 +101,6 @@ def _asset_version() -> str:
         return "0"
 
 
-def _presents_boot_secret(ctx: Any) -> bool:
-    """Whether this loopback request carries the boot secret as the
-    ``_boot`` query parameter. Never a cookie: browsers send cookies to
-    every port of 127.0.0.1, which would hand the key to any other
-    local listener. The page keeps the key in ``sessionStorage`` (scoped
-    to the origin, port included) and re-presents it on reload."""
-    secret = ctx.boot_secret
-    if not secret:
-        return True
-    return _token_equals(request.args.get("_boot") or "", secret)
-
-
 @bp.get("/boot-check")
 def api_boot_check() -> Response:
     """The desktop shell asks the server to prove it was started with
@@ -153,6 +141,7 @@ def index() -> Response:
         find_or_create_pending_device,
         get_share_token,
         is_lan_sharing_enabled,
+        is_loopback_address,
     )
 
     remote = request.remote_addr or ""
@@ -164,11 +153,7 @@ def index() -> Response:
     # deployments work; they do NOT promote arbitrary LAN clients
     # to owner. See bpp/web/share.py:_is_trusted_peer for the
     # blast-radius limit.
-    is_loopback = (
-        remote in ("127.0.0.1", "::1", "localhost")
-        or remote.startswith("127.")
-        or _is_trusted_peer(remote)
-    )
+    is_loopback = is_loopback_address(remote) or _is_trusted_peer(remote)
 
     if not is_loopback and is_lan_sharing_enabled(ctx.get_conn()):
         token = get_share_token(ctx.get_conn())
@@ -179,10 +164,11 @@ def index() -> Response:
         import secrets
 
         from bpp.web.share import _token_equals, consume_pair_request_token
-        from bpp.web.share_devices import get_device_by_fingerprint
+        from bpp.web.share_devices import get_device_by_fingerprint, prune_expired_pending
 
         conn = ctx.get_conn()
         fp = request.cookies.get(FP_COOKIE_NAME)
+        prune_expired_pending(conn)  # a request that ran out is not a known device
         known = get_device_by_fingerprint(conn, fp) if fp else None
         if known is None:
             # A device the owner has never seen joins the pending list only
@@ -237,7 +223,7 @@ def index() -> Response:
         # caller that presents it (the launcher's first navigation, or
         # the page re-presenting it from sessionStorage) gets the token;
         # others get a locked page.
-        booted = _presents_boot_secret(ctx)
+        booted = presents_boot_key(ctx)
         if ctx.boot_secret and not booted:
             resp = make_response(render_template("loopback_locked.html"), 403)
             resp.headers["Referrer-Policy"] = "no-referrer"

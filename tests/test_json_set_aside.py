@@ -286,6 +286,21 @@ def _journal(tmp_path, monkeypatch, content: str):
     return batch_rename, journal
 
 
+def _photo_row(tmp_path, filepath):
+    """A database whose one photo row owns ``filepath`` (recovery only
+    reverts a rename for a row that still owns the old path)."""
+    from bpp.db.connection import init_db
+
+    conn = init_db(str(tmp_path / "rename.db"))
+    cur = conn.execute(
+        "INSERT INTO photos (filepath, sha256, original_filename, file_size, file_mtime) "
+        "VALUES (?, 'h', 'a.jpg', 1, 0.0)",
+        (str(filepath),),
+    )
+    conn.commit()
+    return conn, cur.lastrowid
+
+
 def test_a_rename_journal_that_cant_be_read_now_is_kept_for_next_start(tmp_path, monkeypatch):
     import builtins
 
@@ -307,9 +322,11 @@ def test_a_rename_journal_that_cant_be_read_now_is_kept_for_next_start(tmp_path,
 def test_a_rename_journal_with_a_bad_entry_reverts_the_rest_and_is_kept(tmp_path, monkeypatch):
     old, new = tmp_path / "a.jpg", tmp_path / "b.jpg"
     new.write_bytes(b"x")  # renamed on disk, DB still has the old name
-    content = json.dumps([{"old": str(old), "new": str(new)}, {"old": 5}])
+    conn, photo_id = _photo_row(tmp_path, old)
+    content = json.dumps([{"old": str(old), "new": str(new), "id": photo_id}, {"old": 5}])
     batch_rename, journal = _journal(tmp_path, monkeypatch, content)
-    reverted = batch_rename.recover_interrupted_rename(None, str(tmp_path))
+    reverted = batch_rename.recover_interrupted_rename(conn, str(tmp_path))
+    conn.close()
     assert [e["old"] for e in reverted] == [str(old)]
     assert old.exists()
     (copy,) = _corrupt_copies(journal)
@@ -326,14 +343,16 @@ def test_a_clean_rename_journal_is_removed(tmp_path, monkeypatch):
 def test_a_failed_revert_keeps_the_rename_journal_in_place(tmp_path, monkeypatch):
     old, new = tmp_path / "a.jpg", tmp_path / "b.jpg"
     new.write_bytes(b"x")
+    conn, photo_id = _photo_row(tmp_path, old)
     batch_rename, journal = _journal(
-        tmp_path, monkeypatch, json.dumps([{"old": str(old), "new": str(new)}])
+        tmp_path, monkeypatch, json.dumps([{"old": str(old), "new": str(new), "id": photo_id}])
     )
 
     def locked(src, dst):
         raise PermissionError(13, "locked")
 
     monkeypatch.setattr(batch_rename.os, "rename", locked)
-    assert batch_rename.recover_interrupted_rename(None, str(tmp_path)) == []
+    assert batch_rename.recover_interrupted_rename(conn, str(tmp_path)) == []
+    conn.close()
     assert journal.exists()  # retried next start
     assert _corrupt_copies(journal) == []
